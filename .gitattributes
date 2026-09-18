@@ -1,0 +1,31 @@
+# Line endings are not cosmetic here.
+#
+# The hub SERVES dist/setup.sh to macOS teammates, who run it with bash. A file
+# checked out with CRLF on this Windows machine and then uploaded produces
+# `$'\r': command not found` on their side — a setup script that fails on the
+# first line, for a reason nothing in the error names. That happened on the
+# first deploy and had to be fixed with a `sed -i` on the server, which is a
+# repair, not a fix.
+#
+# So: everything textual is LF in the repository and LF in the working tree,
+# whatever platform it is checked out on. Node does not care about CRLF, bash
+# does, and one rule for both is fewer things to remember.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.mjs  text eol=lf
+*.js   text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+
+# PowerShell is the one exception: it is only ever run on Windows, and CRLF is
+# what every other .ps1 on that machine uses.
+*.ps1  text eol=crlf
+
+# Binaries, untouched.
+*.woff2 binary
+*.png   binary
+*.ico   binary
+*.exe   binary
