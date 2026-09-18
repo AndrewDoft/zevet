@@ -220,6 +220,18 @@ describe("the POSIX branch, which no Mac has yet run", () => {
 describe("the opt-in list decides what reaches the hub", () => {
   /** One Codex event, exactly as Codex delivers it: cwd in the payload, flag on argv. */
   async function fire(repo, zevetHome) {
+    // Stamp the update check as just-done BEFORE the hook runs.
+    //
+    // ZEVET_UPDATE_INTERVAL_MS alone does NOT stop the updater: hook.mjs only
+    // skips when a `last-check` stamp exists and is fresh, and a brand-new temp
+    // ZEVET_HOME has none — so the first hook of every test spawned a detached
+    // updater that wrote into <home>/client while the test's cleanup was trying
+    // to remove it. On Windows that surfaced as
+    //   ENOTEMPTY: directory not empty, rmdir '...\zevet\client'
+    // on the CI runner and never once on a dev box, which is exactly the shape
+    // CLAUDE.md 9.1 warns about. Writing the stamp removes the race rather than
+    // widening the retry window around it.
+    writeFileSync(path.join(zevetHome, "last-check"), String(Date.now()), "utf8");
     return runScript("hook.mjs", {
       args: ["--zevet-hook", "--zevet-agent", "codex"],
       stdin: JSON.stringify({
