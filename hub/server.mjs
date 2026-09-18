@@ -525,6 +525,10 @@ server.on("error", (err) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`zevet hub listening on http://127.0.0.1:${PORT}`);
-  console.log(`open the board:  http://127.0.0.1:${PORT}/?token=<ZEVET_TOKEN>`);
+  // Report the port the OS actually gave us, not the one we asked for. With
+  // PORT=0 those differ, and printing the request rather than the result is
+  // how a process ends up unreachable at the address it just announced.
+  const actual = server.address().port;
+  console.log(`zevet hub listening on http://127.0.0.1:${actual}`);
+  console.log(`open the board:  http://127.0.0.1:${actual}/?token=<ZEVET_TOKEN>`);
 });
