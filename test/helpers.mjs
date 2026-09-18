@@ -83,9 +83,9 @@ export function tempDir(prefix = "zevet-test-") {
 }
 
 /** Runs a client script with stdin, capturing stdout and stderr separately. */
-export function runScript(script, { stdin = "", env = {}, cwd = ROOT } = {}) {
+export function runScript(script, { stdin = "", env = {}, cwd = ROOT, args = [] } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [path.join(ROOT, "client", script)], {
+    const child = spawn(process.execPath, [path.join(ROOT, "client", script), ...args], {
       cwd,
       env: { ...process.env, ...env },
       stdio: ["pipe", "pipe", "pipe"],
