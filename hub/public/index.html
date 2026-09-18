@@ -279,6 +279,10 @@
 
   var HUE_COUNT = 5;
   var params = new URLSearchParams(location.search);
+  // The token is no longer expected in the URL: the hub exchanges `?token=`
+  // for an HttpOnly cookie and redirects to a clean address, so by the time
+  // this runs the secret is in the cookie jar and not in the address bar.
+  // EventSource and fetch send that cookie automatically, same-origin.
   var token = params.get("token") || "";
   // How much history the lanes show. Eight minutes suits a team mid-session;
   // a shorter span is better when you are watching one thing land.
@@ -291,6 +295,7 @@
   var idleAfterMs = 90000;
   var filterActor = null;
   var conn = "init"; // init | live | down
+  var needsToken = false;
   var lastError = "";
   /**
    * Hub clock minus this browser's clock.
@@ -506,7 +511,7 @@
     host.textContent = "";
 
     var box = el("div", "empty");
-    if (!token) {
+    if (needsToken || (!token && conn === "down" && needsToken)) {
       box.className = "empty failed";
       box.appendChild(text(el("h2"), "This board needs a token."));
       var p1 = el("p");
@@ -554,7 +559,7 @@
   }
 
   function connect() {
-    var es = new EventSource("/events?token=" + encodeURIComponent(token));
+    var es = new EventSource("/events");
     es.addEventListener("hello", function (m) {
       setConn("live", "live");
       applySnapshot(JSON.parse(m.data));
@@ -562,10 +567,27 @@
     es.addEventListener("activity", function (m) { pushEvent(JSON.parse(m.data)); });
     es.onopen = function () { setConn("live", "live"); render(); };
     es.onerror = function () {
-      // EventSource reconnects on its own. Saying so beats a board that looks
-      // live while receiving nothing.
-      setConn("down", "reconnecting", "Lost the connection to the hub. It retries automatically.");
-      render();
+      // EventSource cannot tell us WHY it failed — the spec gives the handler
+      // no status — and "reconnecting" forever is what a wrong token used to
+      // look like. So ask the API, which can answer, and say the true thing.
+      fetch("/api/state", { credentials: "same-origin" })
+        .then(function (r) {
+          if (r.status === 401) {
+            es.close();
+            needsToken = true;
+            setConn("down", "not signed in");
+          } else if (r.status === 429) {
+            es.close();
+            setConn("down", "rate limited", "Too many failed attempts from this address. Wait a few minutes.");
+          } else {
+            setConn("down", "reconnecting", "Lost the connection to the hub. It retries automatically.");
+          }
+          render();
+        })
+        .catch(function () {
+          setConn("down", "reconnecting", "Lost the connection to the hub. It retries automatically.");
+          render();
+        });
     };
   }
 
@@ -577,7 +599,8 @@
   }, 1000);
 
   text($("clock"), hhmmss(serverNow()));
-  if (!token) { setConn("down", "no token"); render(); } else { render(); connect(); }
+  render();
+  connect();
 })();
 </script>
 </body>

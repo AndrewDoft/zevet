@@ -6,7 +6,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { startHub, runScript, state, tempDir, TOKEN, ROOT } from "./helpers.mjs";
 
@@ -216,6 +216,100 @@ describe("what the hook reports", () => {
   });
 });
 
+describe("secrets never reach the hub", () => {
+  // THIS TEST EXISTS BECAUSE THE FEATURE SHIPPED BROKEN AND SILENT. The
+  // patterns were written through a heredoc that turned every `\b` into a
+  // literal backspace character (0x08), so they matched nothing at all. The
+  // suite was green, the code looked right in an editor — which strips those
+  // bytes from the display — and a live Stripe key went to the hub verbatim.
+  // Redaction that is not tested is decoration.
+  let repo;
+  before(() => {
+    repo = makeRepo("main");
+  });
+  after(() => repo.cleanup());
+
+  const cases = {
+    "a stripe key": "export STRIPE_KEY=sk_live_51H8xQ2abcdefghijklmnop && deploy",
+    "a github token": "curl -H 'x: ghp_AbCdEfGhIjKlMnOpQrStUvWxYz012345' https://api.github.com",
+    "a bearer header": 'curl -H "Authorization: Bearer abc123def456ghi789jkl" https://x.test',
+    "an anthropic key": "ANTHROPIC_API_KEY=sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv npm start",
+    "an aws key id": "aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE",
+    "a password assignment": "psql 'password=hunter2correcthorse' -c 'select 1'",
+  };
+
+  for (const [label, command] of Object.entries(cases)) {
+    test(`redacts ${label} from a shell command`, async () => {
+      await runScript("hook.mjs", {
+        stdin: JSON.stringify({
+          cwd: repo.dir,
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: { command },
+        }),
+        env: hookEnv(),
+      });
+      const { body } = await state(hub.base);
+      const sent = body.events.at(-1).detail;
+      assert.match(sent, /\[redacted\]/, `nothing was redacted from: ${sent}`);
+      // And the secret itself must be gone, not merely accompanied by a marker.
+      const secret = command.match(/(sk_live_\S+|ghp_\S+|sk-ant-\S+|AKIA\w+|hunter2\S*|abc123def456ghi789jkl)/);
+      if (secret) {
+        assert.ok(!sent.includes(secret[1]), `the secret survived: ${sent}`);
+      }
+    });
+  }
+
+  test("redacts a secret pasted into a prompt", async () => {
+    await runScript("hook.mjs", {
+      stdin: JSON.stringify({
+        cwd: repo.dir,
+        hook_event_name: "UserPromptSubmit",
+        prompt: "here is the key sk_live_51H8xQ2abcdefghijklmnop, use it to test billing",
+      }),
+      env: hookEnv(),
+    });
+    const { body } = await state(hub.base);
+    const sent = body.events.at(-1).detail;
+    assert.ok(!sent.includes("sk_live_51H8xQ2abcdefghijklmnop"), `the secret survived: ${sent}`);
+  });
+
+  test("ordinary commands are left alone", async () => {
+    await runScript("hook.mjs", {
+      stdin: JSON.stringify({
+        cwd: repo.dir,
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command: "pnpm test -- --watch=false" },
+      }),
+      env: hookEnv(),
+    });
+    const { body } = await state(hub.base);
+    assert.equal(body.events.at(-1).detail, "pnpm test -- --watch=false");
+  });
+
+  test("ZEVET_DETAIL=brief keeps only the first word, and no prompt bodies", async () => {
+    await runScript("hook.mjs", {
+      stdin: JSON.stringify({
+        cwd: repo.dir,
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command: "psql postgres://user:pw@host/db -c 'select 1'" },
+      }),
+      env: hookEnv({ ZEVET_DETAIL: "brief" }),
+    });
+    let snap = await state(hub.base);
+    assert.equal(snap.body.events.at(-1).detail, "psql");
+
+    await runScript("hook.mjs", {
+      stdin: JSON.stringify({ cwd: repo.dir, hook_event_name: "UserPromptSubmit", prompt: "something private" }),
+      env: hookEnv({ ZEVET_DETAIL: "brief" }),
+    });
+    snap = await state(hub.base);
+    assert.equal(snap.body.events.at(-1).detail, "");
+  });
+});
+
 describe("the installer", () => {
   /**
    * A copy of the client in a directory that is NOT called "zevet".
@@ -234,7 +328,10 @@ describe("the installer", () => {
     const t = tempDir("somewhere-else-");
     const dest = path.join(t.dir, "tooling", "client");
     mkdirSync(dest, { recursive: true });
-    for (const f of ["install.mjs", "hook.mjs", "updater.mjs"]) {
+    // Every client file, not a hand-kept subset: install.mjs imports detect.mjs
+    // and install-codex.mjs, and a staging list that drifts from the real one
+    // fails as "module not found" rather than as the thing under test.
+    for (const f of readdirSync(path.join(ROOT, "client")).filter((n) => n.endsWith(".mjs"))) {
       writeFileSync(path.join(dest, f), readFileSync(path.join(ROOT, "client", f)));
     }
     return { installer: path.join(dest, "install.mjs"), cleanup: t.cleanup };
@@ -344,10 +441,16 @@ describe("the installer", () => {
       const cmd = cfg.hooks.PreToolUse[0].hooks[0].command;
       // Quoted for a shell, not escaped for JSON: no doubled separators.
       assert.ok(!cmd.includes("\\\\"), `doubled backslashes in: ${cmd}`);
-      assert.equal((cmd.match(/"/g) || []).length, 4, `expected two quoted paths: ${cmd}`);
-      const hookPath = (cmd.match(/" "(.+?)" --zevet-hook$/) || [])[1];
-      assert.ok(hookPath, `command should end with the marker flag: ${cmd}`);
+      // node, hook and repo — three quoted paths, six quote characters.
+      assert.equal((cmd.match(/"/g) || []).length, 6, `expected three quoted paths: ${cmd}`);
+      const hookPath = (cmd.match(/" "(.+?)" --zevet-hook\b/) || [])[1];
+      assert.ok(hookPath, `command should carry the marker flag: ${cmd}`);
       assert.ok(existsSync(hookPath), `the command points at a file that exists: ${hookPath}`);
+      // The repo is on the command line because Codex's hook payload has no
+      // cwd; without it, every Codex event is attributed to whatever directory
+      // the agent happened to be started from.
+      assert.match(cmd, /--zevet-repo "/, `command should carry the repo: ${cmd}`);
+      assert.match(cmd, /--zevet-agent claude-code\b/, `command should name the agent: ${cmd}`);
     } finally {
       repo.cleanup();
     }

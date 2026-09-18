@@ -1,16 +1,21 @@
-// Wires zevet's hook into one repo's .claude/settings.json, on Windows or macOS.
+// Wires zevet's hook into one repo, for whichever agents are on this machine.
 //
 //   node client/install.mjs <repo-path>
 //   node client/install.mjs <repo-path> --remove
+//   node client/install.mjs <repo-path> --agents=claude-code,codex
 //
-// Existing hooks are preserved; ours are stripped and rewritten every run, so
-// installing twice leaves one copy rather than two.
+// Nobody should have to tell zevet which agent they use: it looks, and wires
+// what it finds. Existing config is preserved; ours is stripped and rewritten
+// every run, so installing twice leaves one copy rather than two.
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, copyFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { detectAgents } from "./detect.mjs";
+import { installCodex } from "./install-codex.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.resolve(HERE, "hook.mjs");
+
 /**
  * How we recognise our own hook entries.
  *
@@ -24,49 +29,27 @@ const HOOK = path.resolve(HERE, "hook.mjs");
  *   --remove   -> "removed 0 hook entries"                   (a no-op)
  *
  * so the board triple-counted every tool call and the documented uninstall
- * could not undo it. The repo's own test did not catch this because it ran
- * from a directory that happened to be called `zevet`; a test whose result
- * depends on where it is checked out is not testing the thing it claims to.
- *
- * This flag is ours, it is in the command whatever the path looks like, and
- * the hook ignores it.
+ * could not undo it. The repo's own test did not catch it because it ran from
+ * a directory that happened to be called `zevet`; a test whose result depends
+ * on where it is checked out is not testing the thing it claims to.
  */
 const MARK = "--zevet-hook";
-const EVENTS = ["UserPromptSubmit", "PreToolUse", "Stop"];
+const CLAUDE_EVENTS = ["UserPromptSubmit", "PreToolUse", "Stop"];
 
-/**
- * Is this hook entry one of ours?
- *
- * MEASURED BUG, Windows only: this compared `h.command.includes(MARK)` against
- * a command holding `C:\dev\GitHub\zevet\client\hook.mjs`. Backslashes never
- * match a forward-slash marker, so the strip below quietly removed nothing and
- * every re-install stacked another copy of all three hooks — after two runs the
- * board double-counted every tool call. On macOS the same code was correct,
- * which is exactly why it survived: the platform that worked was the one being
- * looked at. Normalise the separators before comparing, always.
- */
 function isOurs(entry) {
   if (!entry || typeof entry.command !== "string") return false;
   // Also recognise entries written by earlier versions, which carried no flag
   // and were matched by path. Without this, upgrading leaves the old entry
-  // behind next to the new one and every tool call is counted twice.
+  // beside the new one and every tool call is counted twice.
   const norm = entry.command.split("\\").join("/").replace(/\/{2,}/g, "/");
   return entry.command.includes(MARK) || /(^|\/)\.?zevet\/client\/hook\.mjs/.test(norm);
 }
 
 /**
- * Quote a path for the shell Claude Code runs hook commands through.
- *
- * NOT JSON.stringify: that escapes backslashes for JSON, and the result then
- * gets JSON-escaped a second time when the settings file is written. Plain
- * double quotes are what both cmd.exe and sh actually want around a path with
- * a space in it.
- */
-/**
  * The interpreter to put in the hook command.
  *
  * NOT `process.execPath` unconditionally. Inside the packaged desktop app that
- * is `zevet.exe` — an Electron binary — and Claude Code will not set
+ * is `zevet.exe` — an Electron binary — and the agent does not set
  * ELECTRON_RUN_AS_NODE when it runs a hook. MEASURED against the real build:
  *
  *   stdout bytes: 2        <- Chromium wrote to stdout. Rule 1, broken.
@@ -75,17 +58,11 @@ function isOurs(entry) {
  * and on any machine without an instance already running it would boot a
  * window per tool call. A hook that starts a GUI is the Amoeba failure with
  * different stage dressing.
- *
- * So when we are running inside Electron, find a real node instead. The setup
- * scripts already require Node 20+, so this is not a new dependency; it is the
- * one this was always relying on.
  */
 function interpreter() {
   if (!process.versions.electron) return process.execPath;
-
   const exts = process.platform === "win32" ? [".exe", ".cmd", ""] : [""];
-  const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
-  for (const dir of dirs) {
+  for (const dir of (process.env.PATH || "").split(path.delimiter).filter(Boolean)) {
     for (const ext of exts) {
       const candidate = path.join(dir, `node${ext}`);
       try {
@@ -100,6 +77,14 @@ function interpreter() {
   process.exit(1);
 }
 
+/**
+ * Quote a path for the shell the agent runs hook commands through.
+ *
+ * NOT JSON.stringify: that escapes backslashes for JSON, and the result then
+ * gets JSON-escaped a second time when the settings file is written. Plain
+ * double quotes are what both cmd.exe and sh actually want around a path with
+ * a space in it.
+ */
 function shellQuote(p) {
   if (p.includes('"')) {
     console.error(`zevet: refusing to build a command from a path containing a quote: ${p}`);
@@ -108,8 +93,68 @@ function shellQuote(p) {
   return `"${p}"`;
 }
 
+// ---- Claude Code ----------------------------------------------------------
+
+function installClaude(repo, node, remove) {
+  const dir = path.join(repo, ".claude");
+  const file = path.join(dir, "settings.json");
+  mkdirSync(dir, { recursive: true });
+
+  let cfg = {};
+  if (existsSync(file)) {
+    copyFileSync(file, `${file}.bak.${new Date().toISOString().replace(/[:.]/g, "-")}`);
+    try {
+      cfg = JSON.parse(readFileSync(file, "utf8").replace(/^\ufeff/, "") || "{}");
+    } catch (err) {
+      return { ok: false, detail: `${file} is not valid JSON (${err.message}). Fix or move it first.` };
+    }
+  }
+  cfg.hooks = cfg.hooks && typeof cfg.hooks === "object" ? cfg.hooks : {};
+
+  // Strip ours first, so install is idempotent and --remove is just
+  // install-without-the-add. This also clears entries from older versions.
+  let removed = 0;
+  for (const evt of Object.keys(cfg.hooks)) {
+    const groups = Array.isArray(cfg.hooks[evt]) ? cfg.hooks[evt] : [];
+    for (const g of groups) {
+      if (!Array.isArray(g.hooks)) continue;
+      const before = g.hooks.length;
+      g.hooks = g.hooks.filter((h) => !isOurs(h));
+      removed += before - g.hooks.length;
+    }
+    cfg.hooks[evt] = groups.filter((g) => Array.isArray(g.hooks) && g.hooks.length > 0);
+    if (cfg.hooks[evt].length === 0) delete cfg.hooks[evt];
+  }
+
+  if (!remove) {
+    // The repo is passed explicitly as well as relying on the payload's cwd:
+    // Claude Code sends one, Codex does not, and one command shape for both is
+    // one fewer thing to get wrong.
+    const command = `${shellQuote(node)} ${shellQuote(HOOK)} ${MARK} --zevet-agent claude-code --zevet-repo ${shellQuote(repo)}`;
+    for (const evt of CLAUDE_EVENTS) {
+      const entry = { type: "command", command, timeout: 10 };
+      const groups = Array.isArray(cfg.hooks[evt]) ? cfg.hooks[evt] : [];
+      groups.push(evt.endsWith("ToolUse") ? { matcher: "*", hooks: [entry] } : { hooks: [entry] });
+      cfg.hooks[evt] = groups;
+    }
+  }
+
+  writeFileSync(file, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+  return { ok: true, detail: file, removed };
+}
+
+// ---- main ------------------------------------------------------------------
+
 const args = process.argv.slice(2);
 const remove = args.includes("--remove");
+const onlyArg = args.find((a) => a.startsWith("--agents="));
+const only = onlyArg
+  ? onlyArg
+      .slice("--agents=".length)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  : null;
 const repo = path.resolve(args.find((a) => !a.startsWith("--")) || process.cwd());
 
 if (!existsSync(repo)) {
@@ -121,70 +166,68 @@ if (!existsSync(HOOK)) {
   process.exit(1);
 }
 
-const dir = path.join(repo, ".claude");
-const file = path.join(dir, "settings.json");
-mkdirSync(dir, { recursive: true });
+const detected = detectAgents();
+// On --remove, clean up every agent we know how to wire, whether or not it is
+// still installed: uninstalling after removing an agent should still tidy up.
+const targets = detected.filter((a) => a.hooks && (remove || a.installed) && (!only || only.includes(a.id)));
 
-let cfg = {};
-if (existsSync(file)) {
-  const backup = `${file}.bak.${new Date().toISOString().replace(/[:.]/g, "-")}`;
-  copyFileSync(file, backup);
-  console.log(`backed up existing settings -> ${backup}`);
-  try {
-    cfg = JSON.parse(readFileSync(file, "utf8") || "{}");
-  } catch (err) {
-    console.error(`zevet: ${file} is not valid JSON (${err.message}). Fix or move it first.`);
-    process.exit(1);
+if (targets.length === 0) {
+  console.error("zevet: found no agent to wire up here.");
+  for (const a of detected) {
+    const state = a.installed ? "installed" : "not installed";
+    console.error(`       ${a.label.padEnd(12)} ${state}${a.hooks ? "" : " (no hook contract)"}`);
   }
+  console.error("       Install Claude Code or Codex, then run this again.");
+  process.exit(1);
 }
 
-cfg.hooks = cfg.hooks && typeof cfg.hooks === "object" ? cfg.hooks : {};
+const node = remove ? "" : interpreter();
+let failed = false;
+const notes = [];
 
-// Strip ours first, so install is idempotent and --remove is just
-// install-without-the-add. This also clears entries from older versions that
-// registered events we no longer use.
-let removed = 0;
-for (const evt of Object.keys(cfg.hooks)) {
-  const groups = Array.isArray(cfg.hooks[evt]) ? cfg.hooks[evt] : [];
-  for (const g of groups) {
-    if (!Array.isArray(g.hooks)) continue;
-    const before = g.hooks.length;
-    g.hooks = g.hooks.filter((h) => !isOurs(h));
-    removed += before - g.hooks.length;
+for (const agent of targets) {
+  if (agent.id === "claude-code") {
+    const r = installClaude(repo, node, remove);
+    if (!r.ok) {
+      console.error(`zevet: ${r.detail}`);
+      failed = true;
+      continue;
+    }
+    console.log(
+      remove
+        ? `Claude Code   removed ${r.removed} hook entr${r.removed === 1 ? "y" : "ies"} from ${r.detail}`
+        : `Claude Code   3 hooks -> ${r.detail}${r.removed ? ` (replaced ${r.removed})` : ""}`,
+    );
+  } else if (agent.id === "codex") {
+    const r = installCodex(repo, { hookPath: HOOK, node, mark: MARK, remove });
+    if (!r.ok) {
+      console.error(`zevet: ${r.detail}`);
+      failed = true;
+      continue;
+    }
+    console.log(remove ? `Codex         ${r.detail}` : `Codex         3 hooks -> ${r.detail}`);
+    if (!remove && r.trusted === false) {
+      notes.push(
+        "Codex will IGNORE the hooks just installed until this project is trusted, and it will\n" +
+          "  not tell you — an untrusted project looks exactly like zevet being broken. Run\n" +
+          `  \`codex\` once in ${repo} and accept the trust prompt, or add to ${r.globalConfig}:\n` +
+          `\n      [projects.'${repo}']\n      trust_level = "trusted"`,
+      );
+    }
   }
-  cfg.hooks[evt] = groups.filter((g) => Array.isArray(g.hooks) && g.hooks.length > 0);
-  if (cfg.hooks[evt].length === 0) delete cfg.hooks[evt];
 }
-
-// Declared out here because the summary below reports it. Resolved only when
-// actually installing, so `--remove` still works on a machine without node.
-let node = "";
 
 if (!remove) {
-  // Quoted so a space in "C:\Program Files" or "/Users/kai/My Code" survives
-  // instead of splitting into two arguments.
-  node = interpreter();
-  const command = `${shellQuote(node)} ${shellQuote(HOOK)} ${MARK}`;
-  for (const evt of EVENTS) {
-    const entry = { type: "command", command, timeout: 10 };
-    const groups = Array.isArray(cfg.hooks[evt]) ? cfg.hooks[evt] : [];
-    // PreToolUse takes a matcher; the prompt and stop events do not.
-    groups.push(evt.endsWith("ToolUse") ? { matcher: "*", hooks: [entry] } : { hooks: [entry] });
-    cfg.hooks[evt] = groups;
+  console.log("");
+  console.log(`  node:  ${node}`);
+  console.log(`  hook:  ${HOOK}`);
+  for (const a of detected.filter((x) => x.installed && !x.hooks)) {
+    console.log(`  note:  ${a.label} is installed, but zevet has no hook contract for it.`);
+  }
+  for (const n of notes) {
+    console.log("");
+    console.log(`  ${n}`);
   }
 }
 
-writeFileSync(file, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
-
-if (remove) {
-  console.log(`zevet: removed ${removed} hook entr${removed === 1 ? "y" : "ies"} from ${file}`);
-} else {
-  console.log(`zevet: installed ${EVENTS.length} hooks into ${file} (replaced ${removed})`);
-  console.log(`      node:  ${node}`);
-  console.log(`      hook:  ${HOOK}`);
-  console.log("");
-  console.log("Set these in your shell, then start Claude Code in that repo:");
-  console.log(`      ZEVET_HUB=${process.env.ZEVET_HUB || "http://127.0.0.1:8787"}`);
-  console.log("      ZEVET_TOKEN=<the shared secret>");
-  console.log(`      ZEVET_ACTOR=${process.env.ZEVET_ACTOR || "your-name"}`);
-}
+process.exit(failed ? 1 : 0);

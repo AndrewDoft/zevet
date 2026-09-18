@@ -39,7 +39,7 @@ function log(msg) {
 function readConfig() {
   try {
     // See hook.mjs: a BOM here meant updates silently never installed.
-    return JSON.parse(readFileSync(path.join(HOME, "config.json"), "utf8").replace(/^﻿/, ""));
+    return JSON.parse(readFileSync(path.join(HOME, "config.json"), "utf8").replace(/^\uFEFF/, ""));
   } catch {
     return {};
   }
@@ -96,7 +96,7 @@ function validManifest(m) {
 
 function localManifest() {
   try {
-    return JSON.parse(readFileSync(MANIFEST, "utf8").replace(/^﻿/, ""));
+    return JSON.parse(readFileSync(MANIFEST, "utf8").replace(/^\uFEFF/, ""));
   } catch {
     return { version: "0.0.0", files: [] };
   }

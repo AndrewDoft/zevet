@@ -36,7 +36,7 @@ function settings() {
     // `Set-Content -Encoding UTF8`, and JSON.parse rejects a leading U+FEFF —
     // which silently sent every Windows teammate back to the 127.0.0.1 default
     // and kept them off the board entirely.
-    const raw = readFileSync(path.join(home, "config.json"), "utf8").replace(/^﻿/, "");
+    const raw = readFileSync(path.join(home, "config.json"), "utf8").replace(/^\uFEFF/, "");
     file = JSON.parse(raw);
   } catch {
     // No config yet, or unreadable. Environment variables may still carry it.
@@ -59,6 +59,14 @@ function settings() {
 }
 
 const { hub: HUB, token: TOKEN, actor: ACTOR } = settings();
+
+/** `--zevet-repo <path>` / `--zevet-agent <id>`, written into the command by install.mjs. */
+function flag(name) {
+  const i = process.argv.indexOf(name);
+  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : null;
+}
+const REPO_FLAG = flag("--zevet-repo");
+const AGENT_FLAG = flag("--zevet-agent");
 const TIMEOUT_MS = Number(process.env.ZEVET_TIMEOUT_MS || 1500);
 
 function warn(msg) {
@@ -132,6 +140,39 @@ function repoRelative(file, root) {
   }
 }
 
+/**
+ * Never put a credential on the wire or on three screens.
+ *
+ * This reports what people type: prompts, and shell commands verbatim. That is
+ * the feature — "michael is running the migration" is the whole point — but it
+ * means an `export STRIPE_KEY=sk_live_...`, a `curl -H "Authorization: Bearer
+ * ..."` or a password pasted into a prompt would otherwise be transmitted in
+ * clear and drawn on everybody's board, where it also sits in the hub's memory.
+ *
+ * So the obvious shapes are replaced before the event is built. This is a net,
+ * not a guarantee — a secret that looks like an English sentence goes through,
+ * and no regex fixes that. `ZEVET_DETAIL=brief` keeps only the first word of a
+ * command and drops prompt bodies entirely, for anyone who would rather not
+ * rely on a net at all.
+ */
+const SECRET_PATTERNS = [
+  /\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{16,}/g, // stripe, openai and friends
+  /\bsk-ant-[A-Za-z0-9_-]{16,}/g,
+  /\bgh[pousr]_[A-Za-z0-9]{16,}/g, // github tokens
+  /\bAKIA[0-9A-Z]{16}\b/g, // aws access key id
+  /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, // slack
+  /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // jwt
+  /\b(?:bearer|token|api[-_]?key|secret|password|passwd|pwd)\b[\s"':=]+\S+/gi,
+  /\b[A-Fa-f0-9]{40,}\b/g, // long hex blobs
+];
+
+function scrub(text) {
+  if (typeof text !== "string" || !text) return text;
+  let out = text;
+  for (const re of SECRET_PATTERNS) out = out.replace(re, "[redacted]");
+  return out;
+}
+
 /** The one file or command this tool call is about. */
 function describe(input) {
   const i = input && typeof input === "object" ? input : {};
@@ -171,19 +212,32 @@ async function main() {
   // board and doubled the hook traffic on every turn for no added meaning.
   if (eventName === "PostToolUse") return;
 
-  const cwd = p.cwd || process.cwd();
+  // Claude Code sends `cwd`. CODEX DOES NOT — its hook stdin vocabulary has no
+  // such field — so without the flag written into the command, every Codex
+  // event would be attributed to whatever directory the agent happened to be
+  // started from. Payload first, flag second, process cwd last.
+  const cwd = p.cwd || REPO_FLAG || process.cwd();
   const { repo, branch, root } = repoInfo(cwd);
+
+  // full  — prompts and commands as typed, with secrets scrubbed (default)
+  // brief — the first word of a command, no prompt bodies
+  // none  — nothing but the tool name and file
+  const detailLevel = (process.env.ZEVET_DETAIL || "full").toLowerCase();
 
   let body;
   if (eventName === "UserPromptSubmit") {
-    body = { kind: "prompt", tool: "", target: null, detail: String(p.prompt || "").slice(0, 400) };
+    const prompt = detailLevel === "full" ? scrub(String(p.prompt || "")).slice(0, 400) : "";
+    body = { kind: "prompt", tool: "", target: null, detail: prompt };
   } else if (eventName === "Stop" || eventName === "SubagentStop") {
     body = { kind: "turn_end", tool: "", target: null, detail: "" };
   } else {
     const tool = p.tool_name || p.toolName || "";
     if (!tool) return;
     const { file, detail } = describe(p.tool_input || p.toolInput);
-    body = { kind: "tool", tool, target: file ? repoRelative(file, root) : null, detail };
+    let shown = "";
+    if (detailLevel === "full") shown = scrub(detail);
+    else if (detailLevel === "brief") shown = String(detail || "").trim().split(/\s+/)[0] || "";
+    body = { kind: "tool", tool, target: file ? repoRelative(file, root) : null, detail: shown };
   }
 
   let machine = "";
@@ -193,7 +247,12 @@ async function main() {
     machine = "";
   }
 
-  const payload = { ...body, actor: ACTOR, machine, repo, branch, agent: "claude-code" };
+  // Which agent produced this. Codex payloads carry `agent_type`/`turn_id`;
+  // Claude Code's carry `cwd`. The flag is authoritative because install.mjs
+  // knows exactly which config file it wrote the command into.
+  const agent = AGENT_FLAG || (p.cwd ? "claude-code" : p.agent_type || p.turn_id ? "codex" : "claude-code");
+
+  const payload = { ...body, actor: ACTOR, machine, repo, branch, agent };
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
