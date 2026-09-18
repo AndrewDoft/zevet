@@ -178,5 +178,8 @@ export function installCodex(repo, { hookPath, node, mark, remove = false }) {
   writeFileSync(file, `${base}${base.length ? "\n" : ""}${block}`, "utf8");
 
   const trust = isTrusted(repo);
-  return { ok: true, detail: file, trusted: trust.trusted, globalConfig: trust.globalConfig };
+  // Codex writes its own trust keys lowercased with backslashes; hand back a
+  // string in that spelling so a copy-paste matches what it would have written.
+  const trustKey = path.resolve(repo).split(path.sep).join(path.win32.sep).toLowerCase();
+  return { ok: true, detail: file, trusted: trust.trusted, globalConfig: trust.globalConfig, trustKey };
 }

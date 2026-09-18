@@ -169,13 +169,13 @@ if (!existsSync(HOOK)) {
 const detected = detectAgents();
 // On --remove, clean up every agent we know how to wire, whether or not it is
 // still installed: uninstalling after removing an agent should still tidy up.
-const targets = detected.filter((a) => a.hooks && (remove || a.installed) && (!only || only.includes(a.id)));
+const targets = detected.filter((a) => a.wireable && (remove || a.installed) && (!only || only.includes(a.id)));
 
 if (targets.length === 0) {
   console.error("zevet: found no agent to wire up here.");
   for (const a of detected) {
     const state = a.installed ? "installed" : "not installed";
-    console.error(`       ${a.label.padEnd(12)} ${state}${a.hooks ? "" : " (no hook contract)"}`);
+    console.error(`       ${a.label.padEnd(12)} ${state}${a.wireable ? "" : " (no hook contract)"}`);
   }
   console.error("       Install Claude Code or Codex, then run this again.");
   process.exit(1);
@@ -206,12 +206,23 @@ for (const agent of targets) {
       continue;
     }
     console.log(remove ? `Codex         ${r.detail}` : `Codex         3 hooks -> ${r.detail}`);
+    if (!remove) {
+      notes.push(
+        "CODEX HOOKS ARE INSTALLED BUT UNPROVEN. The config zevet writes parses against\n" +
+          "  the real binary, and a deliberately wrong shape is rejected, so the SHAPE is\n" +
+          "  right. But in a controlled run — project trusted, features.hooks=true, hook\n" +
+          "  trust bypassed, stdin closed, turn completed — NO hook fired under\n" +
+          "  `codex exec`. Codex's interactive TUI has not been tested here.\n" +
+          "  If you do not show up on the board after a turn or two, that is why —\n" +
+          "  say so rather than assuming it is your setup.",
+      );
+    }
     if (!remove && r.trusted === false) {
       notes.push(
         "Codex will IGNORE the hooks just installed until this project is trusted, and it will\n" +
           "  not tell you — an untrusted project looks exactly like zevet being broken. Run\n" +
           `  \`codex\` once in ${repo} and accept the trust prompt, or add to ${r.globalConfig}:\n` +
-          `\n      [projects.'${repo}']\n      trust_level = "trusted"`,
+          `\n      [projects.'${r.trustKey || repo}']\n      trust_level = "trusted"`,
       );
     }
   }
@@ -221,7 +232,7 @@ if (!remove) {
   console.log("");
   console.log(`  node:  ${node}`);
   console.log(`  hook:  ${HOOK}`);
-  for (const a of detected.filter((x) => x.installed && !x.hooks)) {
+  for (const a of detected.filter((x) => x.installed && !x.wireable)) {
     console.log(`  note:  ${a.label} is installed, but zevet has no hook contract for it.`);
   }
   for (const n of notes) {

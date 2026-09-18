@@ -95,7 +95,17 @@ const AGENTS = [
     id: "codex",
     label: "Codex",
     bin: "codex",
-    hooks: true,
+    // "unverified", not true. The config zevet writes parses against the real
+    // binary (codex-cli 0.155.0-alpha.2.6) and the wrong shape is rejected, so
+    // the shape is right. But in a controlled run — project trusted, valid
+    // TOML, features.hooks=true, --dangerously-bypass-hook-trust, stdin closed,
+    // turn completed — NO hook fired under `codex exec`. Codex's interactive
+    // TUI, which is what people actually use, has not been tested here.
+    //
+    // So this ships installed and labelled, and the installer says plainly
+    // that it has never been seen to fire. Claiming coverage that has not been
+    // observed is the one thing this project will not do.
+    hooks: "unverified",
     extraPaths: () => [
       path.join(HOME, ".codex", "bin", "codex"),
       path.join(APPDATA, "npm", "codex"),
@@ -153,13 +163,15 @@ export function detectAgents() {
       signedIn: Boolean(authFile),
       authFile,
       hooks: a.hooks,
+      /** Can zevet wire it at all? "unverified" still installs. */
+      wireable: a.hooks === true || a.hooks === "unverified",
     };
   });
 }
 
 /** The ones zevet can actually instrument on this machine. */
 export function watchableAgents() {
-  return detectAgents().filter((a) => a.installed && a.hooks);
+  return detectAgents().filter((a) => a.installed && a.wireable);
 }
 
 // Run directly for a human-readable report: `node client/detect.mjs`
@@ -174,8 +186,9 @@ if (process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1])))
     console.log(`${a.label.padEnd(12)} ${state}`);
     if (a.bin) console.log(`             ${a.bin}  (${a.foundVia})`);
     if (a.installed && !a.hooks) console.log("             zevet can see it, but has no hook contract for it");
+    if (a.hooks === "unverified") console.log("             hooks install, but have not been seen to fire — see the note on install");
   }
-  const watchable = found.filter((a) => a.installed && a.hooks);
+  const watchable = found.filter((a) => a.installed && a.wireable);
   console.log("");
   console.log(
     watchable.length
