@@ -55,8 +55,8 @@
     --who-4: #a8743a;
 
     --rail: 224px;
-    --tree: 330px;
-    --streams: 380px;
+    --tree: 286px;
+    --streams: 340px;
 
     --font-sans: "Jost", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -161,6 +161,12 @@
   .ws-item[data-sel="true"] { color: var(--ink); }
   .ws-item .branch { font-size: 11px; color: var(--faint); }
 
+  .ws-add {
+    display: block; width: 100%; text-align: left;
+    padding: 8px 0 2px; font-size: 12.5px; color: var(--cerulean);
+  }
+  .ws-note { font-size: 11px; color: var(--faint); padding-top: 6px; }
+
   /* ---- file tree ------------------------------------------------------ */
   .tree { padding: 2px 0 20px; }
   .node {
@@ -231,6 +237,60 @@
 
   .idle-note { font-size: 12px; color: var(--faint); }
 
+  /* ---- your own agent, running here ------------------------------------ */
+  .newagent { display: flex; flex-direction: column; gap: 9px; padding: 4px 16px 16px; }
+  .launch-controls { display: flex; gap: 8px; }
+  .launch-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .launch-select, .launch-model {
+    font: inherit; font-size: 12px; padding: 5px 8px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  }
+  .launch-select { flex: 0 0 auto; }
+  .launch-model { flex: 1 1 auto; min-width: 0; }
+  .launch-warn { font-size: 11.5px; color: var(--alert); }
+  .newagent-btn[data-danger="true"] { border-color: var(--alert); color: var(--alert); }
+  .newagent-btn[data-danger="true"]:hover { background: var(--alert); color: var(--paper); }
+  .posture { margin-left: 8px; font-size: 11px; color: var(--faint); }
+  .posture[data-danger="true"] { color: var(--alert); }
+  .newagent-btn {
+    padding: 6px 13px; border: 1px solid var(--cerulean);
+    color: var(--cerulean); font-size: 12.5px; border-radius: 100px;
+  }
+  .newagent-btn:hover { background: var(--cerulean); color: var(--paper); }
+  .newagent-none { font-size: 12px; color: var(--faint); }
+  .signin-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--warn, #a8743a); margin-left: 7px; vertical-align: middle;
+  }
+
+  .console { border-bottom: 1px solid var(--line); padding: 12px 16px 14px; background: #fff7; }
+  .console-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; }
+  .console-head .nm { font-size: 13px; letter-spacing: 0.02em; }
+  .console-head .where { font-size: 11px; color: var(--faint); }
+  .console-stop {
+    margin-left: auto; font-size: 11.5px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 100px; padding: 3px 10px;
+  }
+  .console-stop:hover { color: var(--alert); border-color: var(--alert); }
+  .console-err { font-size: 12px; color: var(--alert); margin-bottom: 8px; }
+  .console-out {
+    max-height: 300px; overflow-y: auto;
+    font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
+    background: #fffb; border: 1px solid var(--line); padding: 8px 10px;
+  }
+  .cline { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cline[data-kind="you"]   { color: var(--cerulean); }
+  .cline[data-kind="tool"]  { color: #9a5b3d; }
+  .cline[data-kind="err"]   { color: var(--alert); }
+  .cline[data-kind="meta"]  { color: var(--faint); }
+  .console-form { margin-top: 8px; }
+  .console-input {
+    width: 100%; padding: 7px 10px;
+    border: 1px solid var(--line); background: var(--paper);
+    font: inherit; font-size: 12.5px; color: var(--ink);
+  }
+  .console-input:focus { outline: 2px solid var(--cerulean); outline-offset: -1px; border-color: transparent; }
+
   /* ---- collisions ------------------------------------------------------ */
   .collide-bar {
     display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
@@ -253,6 +313,7 @@
   .dwho .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); }
   .dwho .when { color: var(--faint); font-size: 11.5px; margin-left: 2px; }
   .detail-events { padding: 0 18px 24px; }
+  .detail-events.after-code { padding-top: 16px; }
   .devent {
     display: grid; grid-template-columns: 70px 90px 74px 1fr;
     gap: 12px; align-items: baseline;
@@ -263,6 +324,34 @@
   .devent .da { color: var(--who); }
   .devent .dv { color: var(--ink); }
   .devent .dd { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---- the file viewer ------------------------------------------------- */
+  .viewer { padding: 0 18px 20px; min-width: 0; }
+  .viewer.loading, .viewer.err { color: var(--muted); font-size: 12.5px; padding: 8px 18px 20px; }
+  .viewer.err { color: var(--alert); }
+  .viewer .code {
+    margin: 0; padding: 12px 14px;
+    background: #fffb; border: 1px solid var(--line);
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.65;
+    color: var(--ink);
+    /* Scrolls sideways only. The pane it sits in already scrolls vertically,
+       and two nested vertical scrollbars means the wheel does the wrong thing
+       depending on where the pointer happens to be. */
+    overflow-x: auto; overflow-y: hidden;
+    white-space: pre;
+    tab-size: 2;
+  }
+  .viewer-note { font-size: 11px; color: var(--faint); padding-top: 6px; }
+  /* Syntax colours drawn from the same six tokens, so code does not become a
+     second palette living inside the first. */
+  .tok-com  { color: var(--faint); font-style: italic; }
+  .tok-str  { color: #4f7a4a; }
+  .tok-num  { color: #9a5b3d; }
+  .tok-kw   { color: var(--cerulean); }
+  .tok-fn   { color: #7a5a92; }
+  .tok-attr { color: #9a5b3d; }
+  .tok-tag  { color: var(--cerulean); }
+  .tok-punc { color: var(--muted); }
 
   /* ---- empty / onboarding --------------------------------------------- */
   .blank { padding: 56px 28px; max-width: 58ch; }
@@ -318,6 +407,7 @@
   </aside>
 </div>
 
+<script src="/highlight.js"></script>
 <script>
 (function () {
   "use strict";
@@ -338,6 +428,48 @@
   var selectedRepo = null;
   var collapsed = Object.create(null);
   var selectedPath = null;
+
+  /**
+   * Running inside the desktop app, where there is a real filesystem.
+   *
+   * In a browser the tree can only be built from the paths agents have named —
+   * the hub holds nothing else, by design. In the app there is a disk, so the
+   * tree is the REAL folder and the team's presence is overlaid on it. Same
+   * board, two levels of truth, and it says which one you are looking at
+   * rather than quietly showing a partial tree as if it were the whole repo.
+   */
+  var LOCAL = typeof window.zevetLocal === "object" && window.zevetLocal && window.zevetLocal.available;
+  var localWorkspaces = [];
+  var localRoot = null;
+  var localEntries = null;   // flat [{path, kind, depth}] from the app
+  var localFile = null;      // { path, text, truncated } for the viewer
+  var localError = null;
+  var localAgents = [];          // which CLIs this machine has
+  var myConsole = null;          // { id, agent, lines: [], running, error }
+  var launchModel = "";          // blank means "whatever the CLI defaults to"
+  var launchMode = "auto";
+
+  /**
+   * The postures zevet offers, in the order they escalate.
+   *
+   * The labels are zevet's; the flags behind them are each CLI's own, read off
+   * --help rather than remembered, and they differ per agent (claude has a
+   * plan mode, codex does not and falls back to a read-only sandbox). Keeping
+   * the vocabulary here and the flags in agent-console.js means the UI cannot
+   * drift into offering a mode the module does not implement.
+   */
+  var MODES = [
+    { id: "plan", label: "Plan only" },
+    { id: "ask", label: "Ask first" },
+    { id: "auto", label: "Auto" },
+    { id: "dangerous", label: "Skip permissions" },
+  ];
+
+  /** Model aliases each CLI accepts. Free text wins; these are a shortcut. */
+  var MODELS = {
+    claude: ["", "opus", "sonnet", "haiku"],
+    codex: ["", "gpt-5", "gpt-5-codex", "o3"],
+  };
 
   function $(id) { return document.getElementById(id); }
   function el(t, c) { var n = document.createElement(t); if (c) n.className = c; return n; }
@@ -441,24 +573,36 @@
    * so this shows exactly the part of the tree the team is working in and
    * nothing else.
    */
+  function blankNode(name, kind) {
+    return { name: name, kind: kind, children: Object.create(null), who: Object.create(null), lastTs: 0 };
+  }
+
   function buildTree() {
     var now = serverNow();
-    var root = { name: "", kind: "dir", children: Object.create(null), who: Object.create(null), lastTs: 0 };
+    var root = blankNode("", "dir");
+
+    // In the app, start from the real directory listing so the tree is the
+    // whole workspace rather than only the touched corner of it.
+    if (LOCAL && localEntries) {
+      localEntries.forEach(function (entry) {
+        var parts = String(entry.path).split("/").filter(Boolean);
+        var node = root;
+        parts.forEach(function (part, i) {
+          var isLast = i === parts.length - 1;
+          var kind = isLast ? entry.kind : "dir";
+          if (!node.children[part]) node.children[part] = blankNode(part, kind);
+          node = node.children[part];
+        });
+      });
+    }
+
     scoped().forEach(function (e) {
       if (!e.target || e.kind !== "tool") return;
       var parts = String(e.target).split("/").filter(Boolean);
       var node = root;
       parts.forEach(function (part, i) {
         var isFile = i === parts.length - 1;
-        if (!node.children[part]) {
-          node.children[part] = {
-            name: part,
-            kind: isFile ? "file" : "dir",
-            children: Object.create(null),
-            who: Object.create(null),
-            lastTs: 0,
-          };
-        }
+        if (!node.children[part]) node.children[part] = blankNode(part, isFile ? "file" : "dir");
         node = node.children[part];
         var prev = node.who[e.actor] || 0;
         if (e.ts > prev) node.who[e.actor] = e.ts;
@@ -542,9 +686,161 @@
     return parts.length ? parts.join("/") + "/" : "./";
   }
 
+  function refreshLocalWorkspaces() {
+    if (!LOCAL) return Promise.resolve();
+    return window.zevetLocal.workspaces().then(function (list) {
+      localWorkspaces = list || [];
+      render();
+    });
+  }
+
+  function openLocalRoot(dir) {
+    if (!LOCAL) return;
+    localRoot = dir;
+    localEntries = null;
+    localFile = null;
+    localError = null;
+    selectedPath = null;
+    render();
+    window.zevetLocal.tree(dir).then(function (r) {
+      if (r && r.ok) {
+        localEntries = r.entries;
+        localError = r.truncated ? "showing the first " + r.entries.length + " entries" : null;
+      } else {
+        localEntries = [];
+        localError = (r && r.error) || "could not read that folder";
+      }
+      render();
+    });
+  }
+
+  function openLocalFile(relPath) {
+    if (!LOCAL || !localRoot) return;
+    localFile = { path: relPath, text: null, loading: true };
+    render();
+    window.zevetLocal.read(localRoot, relPath).then(function (r) {
+      localFile = r && r.ok
+        ? { path: relPath, text: r.text, truncated: r.truncated, bytes: r.bytes }
+        : { path: relPath, error: (r && r.error) || "could not read it" };
+      render();
+    });
+  }
+
+  // ---- running an agent from here --------------------------------------
+
+  function refreshLocalAgents() {
+    if (!LOCAL) return;
+    window.zevetLocal.agents().then(function (list) {
+      localAgents = list || [];
+      render();
+    });
+  }
+
+  function startAgent(name) {
+    if (!LOCAL || !localRoot) return;
+    myConsole = { id: null, agent: name, lines: [], running: true, error: null, mode: launchMode, model: launchModel };
+    render();
+    window.zevetLocal.startAgent(name, localRoot, { model: launchModel, mode: launchMode }).then(function (r) {
+      if (!r || !r.ok) {
+        myConsole = { id: null, agent: name, lines: [], running: false, error: (r && r.error) || "could not start" };
+      } else {
+        myConsole.id = r.id;
+      }
+      render();
+    });
+  }
+
+  function pushConsoleLine(kind, text) {
+    if (!myConsole) return;
+    myConsole.lines.push({ kind: kind, text: String(text) });
+    // A console that grows without bound is a memory leak with a scrollbar.
+    if (myConsole.lines.length > 400) myConsole.lines.splice(0, myConsole.lines.length - 400);
+  }
+
+  if (LOCAL) {
+    window.zevetLocal.onAgentEvent(function (evt) {
+      if (!myConsole || (myConsole.id && evt.id && evt.id !== myConsole.id)) return;
+      if (evt.type === "exit") {
+        myConsole.running = false;
+        pushConsoleLine("meta", "agent exited (" + (evt.code === null ? "signal " + evt.signal : "code " + evt.code) + ")");
+      } else if (evt.type === "stderr") {
+        pushConsoleLine("err", evt.text || "");
+      } else if (evt.type === "agent") {
+        // Claude's stream-json. Show the parts a person reads, not the envelope.
+        var p = evt.payload || {};
+        if (p.type === "assistant" && p.message && Array.isArray(p.message.content)) {
+          p.message.content.forEach(function (c) {
+            if (c.type === "text" && c.text) pushConsoleLine("out", c.text);
+            if (c.type === "tool_use") pushConsoleLine("tool", c.name + "  " + shortInput(c.input));
+          });
+        } else if (p.type === "result") {
+          pushConsoleLine("meta", "turn finished (" + (p.terminal_reason || p.subtype || "done") + ")");
+        }
+      } else if (evt.type === "stdout-line") {
+        pushConsoleLine("out", evt.text || "");
+      }
+      render();
+    });
+  }
+
+  /**
+   * What a tool call is about, said the way the rest of the board says it.
+   *
+   * Found by watching a real agent run in here: the console printed
+   * `C:\dev\GitHub\zevet\hub\server.mjs` while the tree two panes to the
+   * left said `hub/server.mjs`. Same file, two spellings, and the long one
+   * pushed everything else out of a 340px column. The hook already
+   * relativises paths before sending them to the hub; this is the same rule
+   * applied to output that never goes near the hub.
+   */
+  function shortInput(input) {
+    if (!input || typeof input !== "object") return "";
+    var v = input.file_path || input.path || input.notebook_path || input.command || input.pattern || "";
+    var text = String(v);
+    if (localRoot) {
+      var norm = text.split("\\").join("/");
+      var root = localRoot.split("\\").join("/").replace(/\/+$/, "");
+      if (norm.toLowerCase().indexOf(root.toLowerCase() + "/") === 0) {
+        text = norm.slice(root.length + 1);
+      }
+    }
+    return text.slice(0, 90);
+  }
+
   function renderWorkspaces() {
     var host = $("workspaces");
     host.textContent = "";
+
+    if (LOCAL) {
+      localWorkspaces.forEach(function (w) {
+        var b = el("button", "ws-item");
+        b.dataset.sel = String(localRoot === w.dir);
+        b.appendChild(tx(el("span"), w.name));
+        b.appendChild(document.createElement("br"));
+        b.appendChild(tx(el("span", "branch"), w.repo ? "git repo" : w.dir));
+        b.addEventListener("click", function () {
+          if (localRoot === w.dir) { localRoot = null; localEntries = null; localFile = null; }
+          else openLocalRoot(w.dir);
+          render();
+        });
+        host.appendChild(b);
+      });
+      var add = el("button", "ws-add");
+      tx(add, "Open a folder…");
+      add.addEventListener("click", function () {
+        window.zevetLocal.addWorkspace().then(function (w) {
+          if (w) { return refreshLocalWorkspaces().then(function () { openLocalRoot(w.dir); }); }
+        });
+      });
+      host.appendChild(add);
+      if (localError) {
+        var note = el("div", "ws-note");
+        tx(note, localError);
+        host.appendChild(note);
+      }
+      return;
+    }
+
     var list = workspaces();
     list.forEach(function (w) {
       var b = el("button", "ws-item");
@@ -639,7 +935,11 @@
         row.dataset.sel = String(!isDir && selectedPath === path);
         row.addEventListener("click", function () {
           if (isDir) collapsed[path] = open;
-          else selectedPath = selectedPath === path ? null : path;
+          else {
+            selectedPath = selectedPath === path ? null : path;
+            if (selectedPath && LOCAL && localRoot) openLocalFile(selectedPath);
+            else localFile = null;
+          }
           render();
         });
         host.appendChild(row);
@@ -675,6 +975,31 @@
     tx($("detailTitle"), selectedPath);
     var touching = scoped().filter(function (e) { return e.target === selectedPath; });
 
+    // In the app, the file itself — read from this machine's disk, never from
+    // the hub, which has never held a byte of it.
+    if (LOCAL && localFile && localFile.path === selectedPath) {
+      var viewer = el("div", "viewer");
+      if (localFile.loading) {
+        tx(viewer, "reading…");
+        viewer.className = "viewer loading";
+      } else if (localFile.error) {
+        viewer.className = "viewer err";
+        tx(viewer, localFile.error);
+      } else {
+        var pre = el("pre", "code");
+        var lang = window.zevetHighlight ? window.zevetHighlight.languageFor(selectedPath) : "plain";
+        if (window.zevetHighlight) pre.innerHTML = window.zevetHighlight.highlight(localFile.text, lang);
+        else tx(pre, localFile.text);
+        viewer.appendChild(pre);
+        if (localFile.truncated) {
+          var t = el("div", "viewer-note");
+          tx(t, "truncated — showing the first part of the file");
+          viewer.appendChild(t);
+        }
+      }
+      host.appendChild(viewer);
+    }
+
     var whoLast = Object.create(null);
     touching.forEach(function (e) {
       if (!whoLast[e.actor] || e.ts > whoLast[e.actor]) whoLast[e.actor] = e.ts;
@@ -693,7 +1018,7 @@
       });
     host.appendChild(summary);
 
-    var list = el("div", "detail-events");
+    var list = el("div", LOCAL && localFile && !localFile.error ? "detail-events after-code" : "detail-events");
     touching.slice(-40).reverse().forEach(function (e) {
       var row = el("div", "devent");
       row.style.setProperty("--who", hueOf(e.actor));
@@ -736,9 +1061,142 @@
    * since — which is what a Codex or Claude Code pane shows, except there are
    * three of them and each is somebody else.
    */
+  function renderMyConsole(host) {
+    if (!LOCAL) return;
+
+    if (!myConsole) {
+      if (!localRoot) return;
+      var bar = el("div", "newagent");
+      var usable = localAgents.filter(function (a) { return a.ok; });
+      if (!usable.length) {
+        var none = el("div", "newagent-none");
+        tx(none, localAgents.length ? "no agent CLI found on this machine" : "looking for agents…");
+        bar.appendChild(none);
+      } else {
+        var controls = el("div", "launch-controls");
+
+        var modeSel = el("select", "launch-select");
+        MODES.forEach(function (m) {
+          var o = el("option");
+          o.value = m.id;
+          tx(o, m.label);
+          if (m.id === launchMode) o.selected = true;
+          modeSel.appendChild(o);
+        });
+        modeSel.addEventListener("change", function () { launchMode = modeSel.value; render(); });
+        controls.appendChild(modeSel);
+
+        var modelInput = el("input", "launch-model");
+        modelInput.type = "text";
+        modelInput.placeholder = "model (default)";
+        modelInput.value = launchModel;
+        modelInput.setAttribute("list", "zevet-models");
+        modelInput.addEventListener("change", function () { launchModel = modelInput.value.trim(); });
+        controls.appendChild(modelInput);
+
+        var dl = el("datalist");
+        dl.id = "zevet-models";
+        var pool = [];
+        usable.forEach(function (a) { pool = pool.concat(MODELS[a.name] || []); });
+        pool.filter(Boolean).forEach(function (v) {
+          var o = el("option");
+          o.value = v;
+          dl.appendChild(o);
+        });
+        controls.appendChild(dl);
+        bar.appendChild(controls);
+
+        var row = el("div", "launch-row");
+        usable.forEach(function (a) {
+          var b = el("button", "newagent-btn");
+          tx(b, "Start " + a.name);
+          if (!a.signedIn) {
+            var warnDot = el("span", "signin-dot");
+            warnDot.title = "no account found for " + a.name;
+            b.appendChild(warnDot);
+          }
+          b.title = a.detail + (a.signedIn ? "  (signed in)" : "  (no account found)");
+          b.dataset.danger = String(launchMode === "dangerous");
+          b.addEventListener("click", function () { startAgent(a.name); });
+          row.appendChild(b);
+        });
+        bar.appendChild(row);
+
+        if (launchMode === "dangerous") {
+          var warn = el("div", "launch-warn");
+          tx(warn, "This agent will not ask before running commands or editing files.");
+          bar.appendChild(warn);
+        }
+      }
+      host.appendChild(bar);
+      return;
+    }
+
+    var card = el("div", "console");
+    var head = el("div", "console-head");
+    head.appendChild(tx(el("span", "nm"), myConsole.agent));
+    head.appendChild(tx(el("span", "where"), localRoot ? localRoot.split(/[\/]/).pop() : ""));
+    var posture = el("span", "posture");
+    posture.dataset.danger = String(myConsole.mode === "dangerous");
+    var modeLabel = (MODES.find(function (m) { return m.id === myConsole.mode; }) || {}).label || myConsole.mode;
+    tx(posture, modeLabel + (myConsole.model ? "  ·  " + myConsole.model : ""));
+    head.appendChild(posture);
+    var stop = el("button", "console-stop");
+    tx(stop, myConsole.running ? "Stop" : "Close");
+    stop.addEventListener("click", function () {
+      if (myConsole.running && myConsole.id) window.zevetLocal.stopAgent(myConsole.id);
+      myConsole = null;
+      render();
+    });
+    head.appendChild(stop);
+    card.appendChild(head);
+
+    if (myConsole.error) {
+      var e = el("div", "console-err");
+      tx(e, myConsole.error);
+      card.appendChild(e);
+    }
+
+    var out = el("div", "console-out");
+    myConsole.lines.slice(-120).forEach(function (l) {
+      var row = el("div", "cline");
+      row.dataset.kind = l.kind;
+      tx(row, l.text);
+      out.appendChild(row);
+    });
+    card.appendChild(out);
+
+    if (myConsole.running) {
+      var form = el("form", "console-form");
+      var input = el("input", "console-input");
+      input.type = "text";
+      input.placeholder = "Tell it what to do…";
+      form.appendChild(input);
+      form.addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        var text = input.value.trim();
+        if (!text || !myConsole.id) return;
+        pushConsoleLine("you", text);
+        input.value = "";
+        window.zevetLocal.sendToAgent(myConsole.id, text).then(function (r) {
+          if (r && r.ok === false) pushConsoleLine("err", r.error || "could not send");
+          render();
+        });
+        render();
+      });
+      card.appendChild(form);
+    }
+
+    host.appendChild(card);
+    // Keep the newest output in view without yanking the page around.
+    var o = card.querySelector(".console-out");
+    if (o) o.scrollTop = o.scrollHeight;
+  }
+
   function renderStreams(now) {
     var host = $("streams");
     host.textContent = "";
+    renderMyConsole(host);
     var shown = roster.filter(function (r) { return !selectedActor || r.actor === selectedActor; });
 
     shown.forEach(function (r) {
@@ -900,6 +1358,8 @@
   };
 
   render();
+  refreshLocalWorkspaces();
+  refreshLocalAgents();
   connect();
 })();
 </script>

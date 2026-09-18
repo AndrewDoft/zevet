@@ -21,7 +21,7 @@
     "productName": "zevet",
     "copyright": "Copyright © 2026 Andrew Doft",
     "directories": { "output": "out", "buildResources": "build" },
-    "files": ["main.js", "preload.js", "setup.html", "fonts/**", "build/icon.png", "!out/**", "!make-icon.mjs"],
+    "files": ["main.js", "preload.js", "local-fs.js", "agent-console.js", "setup.html", "fonts/**", "build/icon.png", "!out/**", "!make-icon.mjs"],
     "extraResources": [{ "from": "../client", "to": "client", "filter": ["*.mjs"] }],
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],

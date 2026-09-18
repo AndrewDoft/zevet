@@ -477,6 +477,17 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  // One more static file, allowlisted by exact name like the rest.
+  if (url.pathname === "/highlight.js") {
+    try {
+      const buf = await readFile(path.join(HERE, "public", "highlight.js"));
+      res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-store" });
+      return res.end(buf);
+    } catch (err) {
+      return json(res, 500, { error: `cannot read highlight.js: ${err.message}` });
+    }
+  }
+
   if (url.pathname === "/" || url.pathname === "/index.html") {
     // A link is how somebody is told where the board is, so `?token=` has to
     // work — but it should not SURVIVE. Exchange it for an HttpOnly cookie and
