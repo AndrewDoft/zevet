@@ -78,6 +78,34 @@ installs nothing unless all of them match — see the caveat above for what that
 check is and isn't worth. It also refuses any filename that is not a plain name,
 because `path.join` treats `../evil.mjs` as an instruction rather than a file.
 
+### The downloadable app
+
+`desktop/` is an Electron app: a setup window that collects the hub, token and
+name and tests the connection before saving, a native folder picker that wires
+a repo, and OS notifications when a teammate touches a file you are also in
+(raised from the main process, so they arrive when the window is in the
+background — the only time a notification is worth anything).
+
+```bash
+cd desktop && npm install
+npm run dist:win     # -> desktop/out/zevet-<version>-windows-x64-setup.exe
+```
+
+**A .dmg cannot be built on Windows.** electron-builder needs macOS to make
+one, so `.github/workflows/build.yml` builds both on their own runners; start it
+from the Actions tab and download the artifacts.
+
+**Neither artifact is signed**, and the build log says so: *"no signing info
+identified, signing is skipped."* macOS will tell your teammate the app
+*"can't be opened because Apple cannot check it for malicious software"* until
+they right-click → Open, and Windows SmartScreen hides Run behind "More info".
+Signing properly costs an Apple Developer account (99 USD/year) and a Windows
+certificate. Worth deciding deliberately rather than finding out on the phone.
+
+The app still needs Node on the machine: the hooks are run by `node`, never by
+the app binary. (An earlier build pointed them at `zevet.exe`, which booted
+Chromium on every tool call and wrote to stdout — see the commit.)
+
 ### Shipping a change
 
 Edit a file in `client/`, bump `version` in `package.json`, reload the hub.

@@ -1,0 +1,85 @@
+# Builds the downloadable apps.
+#
+# Exists because a .dmg cannot be produced on Windows: electron-builder needs
+# macOS to make one, and both of Andrew's teammates are on Apple silicon. This
+# runs the mac build on a mac runner and the Windows build on a Windows runner,
+# and hands both back as artifacts.
+#
+# Run it from the Actions tab (workflow_dispatch), or push a v* tag.
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+            artifact: zevet-windows
+          - os: macos-latest
+            target: --mac
+            artifact: zevet-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The hub and the client have no dependencies, so this is the whole suite.
+      # It runs on both runners on purpose: the bugs this project keeps finding
+      # are the ones that are correct on one platform and wrong on the other.
+      - name: Test
+        run: node --test "test/**/*.test.mjs"
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build
+        working-directory: desktop
+        # CSC_IDENTITY_AUTO_DISCOVERY=false stops electron-builder hunting for a
+        # signing identity that is not there and failing the mac job over it.
+        # See the note below about what unsigned means for the people you send
+        # this to.
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder ${{ matrix.target }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            desktop/out/*.exe
+            desktop/out/*.dmg
+            desktop/out/*.zip
+          if-no-files-found: error
+          retention-days: 30
+# ---------------------------------------------------------------------------
+# UNSIGNED, AND WHAT THAT COSTS
+#
+# Neither artifact is code-signed, and the build log says so out loud
+# ("no signing info identified, signing is skipped").
+#
+#   macOS: Gatekeeper refuses it with "zevet can't be opened because Apple
+#          cannot check it for malicious software." The recipient has to
+#          right-click -> Open and confirm, every first run, or clear the
+#          quarantine flag by hand:
+#              xattr -dr com.apple.quarantine /Applications/zevet.app
+#          It looks exactly like the app is broken.
+#
+#   Windows: SmartScreen shows "Windows protected your PC" and hides the Run
+#          button behind "More info".
+#
+# Fixing it properly means an Apple Developer account (99 USD/year) for signing
+# and notarisation, plus a Windows code-signing certificate. For three friends
+# it may be cheaper to accept the friction and tell them what to click — but it
+# is friction that reads as "this is broken", and it is worth deciding on
+# deliberately rather than discovering on the phone with Kai.
