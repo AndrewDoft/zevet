@@ -31,7 +31,7 @@
 import { readFileSync, writeFileSync, existsSync, copyFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { installCodex, codexConfigPathFor, BLOCK_START } from "./install-codex.mjs";
+import { installCodex, codexConfigPathFor, stripBlock, BLOCK_START } from "./install-codex.mjs";
 
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
 const WORKSPACES = path.join(HOME, "workspaces.json");
@@ -133,31 +133,64 @@ function removeClaude(repo) {
   return { state: "removed", detail: `removed ${removed} hook entr${removed === 1 ? "y" : "ies"} from ${file}` };
 }
 
-/** @returns {{state: "removed"|"clean"|"absent"|"failed", detail: string}} */
+/**
+ * Codex has TWO places to clean.
+ *
+ * The live one is the global `$CODEX_HOME/config.toml`, because a repo-local
+ * hooks block never fires and nothing installs there any more. The other is
+ * exactly that dead repo-local block, which earlier versions did write -- it
+ * does nothing, but leaving our marker in somebody's repo after they asked us
+ * to leave is still litter, and it would confuse the next person who reads it.
+ *
+ * @returns {{state: "removed"|"clean"|"absent"|"failed", detail: string}}
+ */
 function removeCodex(repo) {
-  const file = codexConfigPathFor(repo);
-  if (!existsSync(file)) return { state: "absent", detail: "no .codex/config.toml" };
+  const notes = [];
+  let failed = false;
+  let removed = false;
 
-  let text;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch (err) {
-    return { state: "failed", detail: `could not read ${file} (${err.message})` };
+  // 1. The legacy per-repo block, by text surgery -- installCodex no longer
+  //    points at this file at all.
+  const legacy = codexConfigPathFor(repo);
+  if (existsSync(legacy)) {
+    try {
+      const text = readFileSync(legacy, "utf8");
+      if (text.includes(BLOCK_START)) {
+        const stripped = stripBlock(text);
+        if (stripped.malformed) {
+          failed = true;
+          notes.push(`${legacy} has a zevet block with no end marker — left untouched`);
+        } else {
+          backup(legacy);
+          writeFileSync(legacy, stripped.text, "utf8");
+          removed = true;
+          notes.push(`removed the (inert) legacy block from ${legacy}`);
+        }
+      }
+    } catch (err) {
+      failed = true;
+      notes.push(`could not clean ${legacy} (${err.message})`);
+    }
   }
-  // Same reasoning as above: installCodex would back the file up and rewrite it
-  // even when there is no block to take out.
-  if (!text.includes(BLOCK_START)) return { state: "clean", detail: `no zevet block in ${file}` };
 
-  let r;
+  // 2. The global block, which is the one that actually runs.
   try {
-    // The install side owns the shape of that managed block, so it owns taking
-    // it out too. hookPath/node/mark are unused on the remove path.
-    r = installCodex(repo, { hookPath: "", node: "", mark: MARK, remove: true });
+    const r = installCodex(repo, { hookPath: "", node: "", mark: MARK, remove: true });
+    if (!r.ok) {
+      failed = true;
+      notes.push(r.detail);
+    } else {
+      removed = true;
+      notes.push(r.detail);
+    }
   } catch (err) {
-    return { state: "failed", detail: `${file}: ${err.message}` };
+    failed = true;
+    notes.push(err.message);
   }
-  if (!r.ok) return { state: "failed", detail: r.detail };
-  return { state: "removed", detail: r.detail };
+
+  if (failed) return { state: "failed", detail: notes.join("; ") };
+  if (!removed) return { state: "clean", detail: notes.join("; ") || "nothing of zevet's in the Codex config" };
+  return { state: "removed", detail: notes.join("; ") };
 }
 
 // ---- main ------------------------------------------------------------------

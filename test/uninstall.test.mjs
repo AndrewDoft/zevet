@@ -72,7 +72,14 @@ async function uninstall(t, { repos = {}, args = [], config = true, workspaces }
     const list = workspaces !== undefined ? workspaces : Object.values(made);
     writeFileSync(path.join(home.dir, "workspaces.json"), JSON.stringify(list));
 
-    const r = await runScript("uninstall.mjs", { args, env: { ZEVET_HOME: home.dir } });
+    // CODEX_HOME as well as ZEVET_HOME: the Codex hooks block lives in the
+    // GLOBAL Codex config, so an unfenced uninstall run strips the developer's
+    // real ~/.codex/config.toml. It did exactly that once -- the suite was
+    // green while quietly unwiring this machine.
+    const r = await runScript("uninstall.mjs", {
+      args,
+      env: { ZEVET_HOME: home.dir, CODEX_HOME: path.join(home.dir, "codex") },
+    });
     const read = (name, rel) => readFileSync(path.join(made[name], rel), "utf8");
     const backupsFor = (name, dir) => {
       const d = path.join(made[name], dir);
@@ -179,7 +186,9 @@ describe("the uninstaller keeps going and says what it did", () => {
     assert.ok(home.dir.startsWith(tmpdir()));
     try {
       writeFileSync(path.join(home.dir, "workspaces.json"), "{ not json");
-      const r = await runScript("uninstall.mjs", { env: { ZEVET_HOME: home.dir } });
+      const r = await runScript("uninstall.mjs", {
+        env: { ZEVET_HOME: home.dir, CODEX_HOME: path.join(home.dir, "codex") },
+      });
       assertExitZero(r, "broken workspaces");
       assert.match(r.stdout, /workspaces\s+.*is not valid JSON/);
       // And it still tells the reader how to finish by hand.

@@ -40,9 +40,63 @@ function codexHome() {
   return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 }
 
+/**
+ * Where Codex hooks ACTUALLY have to live: the global config.
+ *
+ * MEASURED 2026-09-18 against codex-cli 0.155.0-alpha.2.6. A `[hooks]` block in
+ * `<repo>/.codex/config.toml` never fires -- not once, on any event, trusted or
+ * with `--dangerously-bypass-hook-trust`. The identical block in
+ * `$CODEX_HOME/config.toml` fires on every turn. Codex reads repo-local files
+ * for some purposes, but hooks is not one of them in this version.
+ *
+ * This is why zevet's Codex support was labelled "installs but has never been
+ * seen to fire" for its whole life: it was writing a file Codex ignores.
+ */
+export function codexGlobalConfigPath() {
+  return path.join(codexHome(), "config.toml");
+}
+
+/**
+ * The LEGACY per-repo location. Retained only so an uninstall can clean up the
+ * blocks earlier versions wrote there; nothing installs into it any more.
+ */
 export function codexConfigPathFor(repo) {
   return path.join(repo, ".codex", "config.toml");
 }
+
+/**
+ * Codex hooks are global, so the hook itself has to decide which repos count.
+ * This file is that list; hook.mjs reads it and stays silent for anything not
+ * on it, which keeps the per-repo opt-in zevet had when the config was
+ * per-repo. Without it, wiring up one repo would publish every repo on the
+ * machine to a hub the whole team can read.
+ */
+export function codexReposPath() {
+  return path.join(process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet"), "codex-repos.json");
+}
+
+/** Read the opt-in list; a missing or corrupt file is an empty list, never a throw. */
+export function readCodexRepos() {
+  try {
+    const raw = readFileSync(codexReposPath(), "utf8").replace(/^﻿/, "");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((d) => typeof d === "string" && d.trim()) : [];
+  } catch {
+    // Unreadable and absent are the same answer here: nothing is opted in.
+    return [];
+  }
+}
+
+function writeCodexRepos(list) {
+  const file = codexReposPath();
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(list, null, 2)}
+`, "utf8");
+}
+
+/** Case-insensitive on Windows, exact elsewhere. */
+const sameRepo = (a, b) =>
+  process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 
 /**
  * A TOML literal string: single quotes, no escape sequences at all.
@@ -95,7 +149,7 @@ export function isTrusted(repo) {
   return { trusted: false, globalConfig };
 }
 
-function stripBlock(text) {
+export function stripBlock(text) {
   const start = text.indexOf(BLOCK_START);
   if (start === -1) return { text, had: false };
   const endIdx = text.indexOf(BLOCK_END, start);
@@ -120,7 +174,7 @@ function hasForeignHooks(text) {
  * @returns {{ok: boolean, detail: string, trusted?: boolean, globalConfig?: string}}
  */
 export function installCodex(repo, { hookPath, node, mark, remove = false }) {
-  const file = codexConfigPathFor(repo);
+  const file = codexGlobalConfigPath();
   mkdirSync(path.dirname(file), { recursive: true });
 
   let existing = "";
@@ -139,6 +193,19 @@ export function installCodex(repo, { hookPath, node, mark, remove = false }) {
   }
 
   if (remove) {
+    // The block is shared by every wired repo, so removing one repo removes its
+    // entry from the opt-in list and leaves the block alone unless that was the
+    // last one. Taking the block out while another repo still expects it is how
+    // an uninstall of repo A silently unwires repo B.
+    const left = readCodexRepos().filter((d) => !sameRepo(d, path.resolve(repo)));
+    writeCodexRepos(left);
+    if (left.length) {
+      writeFileSync(file, existing, "utf8");
+      return {
+        ok: true,
+        detail: `${path.resolve(repo)} is no longer watched; ${left.length} repo${left.length === 1 ? "" : "s"} still wired, so the hooks block in ${file} stays`,
+      };
+    }
     writeFileSync(file, stripped.text, "utf8");
     return { ok: true, detail: stripped.had ? `removed zevet's hooks from ${file}` : `nothing of zevet's in ${file}` };
   }
@@ -155,10 +222,34 @@ export function installCodex(repo, { hookPath, node, mark, remove = false }) {
 
   let command;
   try {
-    // The repo is passed explicitly: Codex's hook payload carries no cwd, and
-    // assuming the process cwd is the repo is exactly the kind of guess that
-    // produces a hook which reports the wrong project.
-    command = `${tomlLiteral(`"${node}" "${hookPath}" ${mark} --zevet-agent codex --zevet-repo "${repo}"`)}`;
+    // No --zevet-repo: the hooks block is global now, so a repo baked into the
+    // command would label every project on the machine with the first one that
+    // was wired. MEASURED: the Codex payload carries a real `cwd`, and hook.mjs
+    // already prefers it, so the repo comes from the event itself.
+    //
+    // The command string is NOT passed to a shell, and Codex resolves the
+    // program from the FIRST whitespace-delimited token WITHOUT honouring
+    // quotes around it. MEASURED, all four on codex 0.155.0-alpha.2.6:
+    //
+    //   node C:/x/hook.mjs                            -> Completed
+    //   node "C:/dir with space/hook.mjs"             -> Completed  (args quote fine)
+    //   "C:/Program Files/nodejs/node.exe" C:/x.mjs   -> FAILED     (so does '...')
+    //   cmd /c "C:/Program Files/nodejs/node.exe" ... -> Completed
+    //
+    // So a program path containing a space cannot be written directly, and
+    // Windows puts node under "Program Files" by default. `cmd` has no space
+    // and is always present, and it re-parses the rest with normal Windows
+    // quoting rules. On macOS and Linux node lives somewhere unspaced
+    // (/usr/local/bin, /opt/homebrew/bin) and needs no wrapper.
+    const inner = `"${node}" "${hookPath}" ${mark} --zevet-agent codex`;
+    const line = process.platform === "win32" ? `cmd /c ${inner}` : `${node} "${hookPath}" ${mark} --zevet-agent codex`;
+    if (process.platform !== "win32" && /\s/.test(node)) {
+      return {
+        ok: false,
+        detail: `the node binary path contains a space (${node}), which Codex cannot run as a hook program on this platform`,
+      };
+    }
+    command = `${tomlLiteral(line)}`;
   } catch (err) {
     return { ok: false, detail: err.message };
   }
@@ -176,6 +267,13 @@ export function installCodex(repo, { hookPath, node, mark, remove = false }) {
 
   const base = stripped.text.length && !stripped.text.endsWith("\n") ? `${stripped.text}\n` : stripped.text;
   writeFileSync(file, `${base}${base.length ? "\n" : ""}${block}`, "utf8");
+
+  // Opt this repo in. The block is global; this list is what keeps the hook
+  // quiet about every other project on the machine.
+  const here = path.resolve(repo);
+  const repos = readCodexRepos();
+  if (!repos.some((d) => sameRepo(d, here))) repos.push(here);
+  writeCodexRepos(repos);
 
   const trust = isTrusted(repo);
   // Codex writes its own trust keys lowercased with backslashes; hand back a

@@ -95,17 +95,23 @@ const AGENTS = [
     id: "codex",
     label: "Codex",
     bin: "codex",
-    // "unverified", not true. The config zevet writes parses against the real
-    // binary (codex-cli 0.155.0-alpha.2.6) and the wrong shape is rejected, so
-    // the shape is right. But in a controlled run — project trusted, valid
-    // TOML, features.hooks=true, --dangerously-bypass-hook-trust, stdin closed,
-    // turn completed — NO hook fired under `codex exec`. Codex's interactive
-    // TUI, which is what people actually use, has not been tested here.
+    // OBSERVED FIRING 2026-09-18 on codex-cli 0.155.0-alpha.2.6. A real turn in
+    // C:\dev\GitHub\zevet produced `prompt` and `turn_end` on the live hub,
+    // tagged agent=codex. The earlier "never seen to fire" had two causes, both
+    // now fixed and both ours:
+    //   1. the block was written to <repo>/.codex/config.toml, which Codex does
+    //      not read for hooks -- it reads $CODEX_HOME/config.toml;
+    //   2. the command named the program as a quoted path with a space
+    //      ("C:/Program Files/nodejs/node.exe" -- with backslashes in real life),
+    //      and Codex resolves the program from the first whitespace-delimited
+    //      token WITHOUT honouring quotes, so it never found node. Spaces in an
+    //      ARGUMENT quote fine; only the program name is affected.
+    //      quotes, so it never found node.
     //
-    // So this ships installed and labelled, and the installer says plainly
-    // that it has never been seen to fire. Claiming coverage that has not been
-    // observed is the one thing this project will not do.
-    hooks: "unverified",
+    // Still `true` with a caveat rather than bare `true`: hooks do not run
+    // until hook trust is granted, and `codex exec` neither prompts nor warns.
+    // See docs/contracts/codex-hooks.md.
+    hooks: true,
     extraPaths: () => [
       path.join(HOME, ".codex", "bin", "codex"),
       path.join(APPDATA, "npm", "codex"),

@@ -10,6 +10,24 @@ import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync } from 
 import path from "node:path";
 import { startHub, runScript, state, tempDir, TOKEN, ROOT } from "./helpers.mjs";
 
+/**
+ * Every installer run in this file is fenced to throwaway HOMEs.
+ *
+ * Codex hooks live in $CODEX_HOME/config.toml -- the GLOBAL file -- because a
+ * repo-local block never fires. That makes an unfenced installer run in a test
+ * an edit to the developer's own ~/.codex/config.toml, which is exactly what
+ * happened the first time this moved: the suite quietly wired the real Codex
+ * install on this machine to a temp repo. A test may touch its fixtures and
+ * nothing else.
+ */
+const SANDBOX_HOME = tempDir("zevet-testhome-");
+const SANDBOX = {
+  ...process.env,
+  CODEX_HOME: path.join(SANDBOX_HOME.dir, "codex"),
+  ZEVET_HOME: path.join(SANDBOX_HOME.dir, "zevet"),
+};
+after(() => SANDBOX_HOME.cleanup());
+
 let hub;
 let home;
 
@@ -351,7 +369,7 @@ describe("the installer", () => {
     const staged = stagedClient();
     try {
       for (let i = 0; i < 3; i++) {
-        execFileSync(process.execPath, [staged.installer, repo.dir], { stdio: "pipe" });
+        execFileSync(process.execPath, [staged.installer, repo.dir], { stdio: "pipe", env: SANDBOX });
       }
       const counts = entriesPerEvent(path.join(repo.dir, ".claude", "settings.json"));
       for (const [evt, n] of Object.entries(counts)) assert.equal(n, 1, `${evt} had ${n}`);
@@ -366,8 +384,8 @@ describe("the installer", () => {
     const repo = tempDir("zevet-rm-");
     const staged = stagedClient();
     try {
-      execFileSync(process.execPath, [staged.installer, repo.dir], { stdio: "pipe" });
-      execFileSync(process.execPath, [staged.installer, repo.dir, "--remove"], { stdio: "pipe" });
+      execFileSync(process.execPath, [staged.installer, repo.dir], { stdio: "pipe", env: SANDBOX });
+      execFileSync(process.execPath, [staged.installer, repo.dir, "--remove"], { stdio: "pipe", env: SANDBOX });
       const cfg = JSON.parse(readFileSync(path.join(repo.dir, ".claude", "settings.json"), "utf8"));
       assert.deepEqual(cfg.hooks, {}, `hooks should be empty, got ${JSON.stringify(cfg.hooks)}`);
     } finally {
@@ -395,7 +413,7 @@ describe("the installer", () => {
         },
       };
       writeFileSync(path.join(dir, "settings.json"), JSON.stringify(legacy), "utf8");
-      execFileSync(process.execPath, [staged.installer, repo.dir], { stdio: "pipe" });
+      execFileSync(process.execPath, [staged.installer, repo.dir], { stdio: "pipe", env: SANDBOX });
       const counts = entriesPerEvent(path.join(dir, "settings.json"));
       assert.equal(counts.PreToolUse, 1, `PreToolUse had ${counts.PreToolUse}`);
     } finally {
@@ -418,13 +436,13 @@ describe("the installer", () => {
       };
       writeFileSync(path.join(dir, "settings.json"), JSON.stringify(theirs), "utf8");
 
-      execFileSync(process.execPath, [path.join(ROOT, "client", "install.mjs"), repo.dir], { stdio: "pipe" });
+      execFileSync(process.execPath, [path.join(ROOT, "client", "install.mjs"), repo.dir], { stdio: "pipe", env: SANDBOX });
       let cfg = JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8"));
       assert.ok(JSON.stringify(cfg.hooks.PreToolUse).includes("their-hook.js"), "their PreToolUse survived install");
       assert.ok(cfg.hooks.Notification, "their unrelated hook survived");
       assert.deepEqual(cfg.someOtherSetting, { keepMe: true }, "unrelated settings survived");
 
-      execFileSync(process.execPath, [path.join(ROOT, "client", "install.mjs"), repo.dir, "--remove"], { stdio: "pipe" });
+      execFileSync(process.execPath, [path.join(ROOT, "client", "install.mjs"), repo.dir, "--remove"], { stdio: "pipe", env: SANDBOX });
       cfg = JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8"));
       assert.ok(JSON.stringify(cfg.hooks.PreToolUse).includes("their-hook.js"), "their PreToolUse survived remove");
       assert.ok(!JSON.stringify(cfg.hooks).includes("zevet"), "ours is gone");
@@ -436,7 +454,7 @@ describe("the installer", () => {
   test("the command it writes is runnable as written", async () => {
     const repo = tempDir("zevet-inst3-");
     try {
-      execFileSync(process.execPath, [path.join(ROOT, "client", "install.mjs"), repo.dir], { stdio: "pipe" });
+      execFileSync(process.execPath, [path.join(ROOT, "client", "install.mjs"), repo.dir], { stdio: "pipe", env: SANDBOX });
       const cfg = JSON.parse(readFileSync(path.join(repo.dir, ".claude", "settings.json"), "utf8"));
       const cmd = cfg.hooks.PreToolUse[0].hooks[0].command;
       // Quoted for a shell, not escaped for JSON: no doubled separators.
@@ -484,7 +502,7 @@ describe("the installer", () => {
       const staged = existsSync(installer) ? installer : path.join(ROOT, "client", "install.mjs");
       execFileSync(appBinary, [staged, repo.dir], {
         stdio: "pipe",
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        env: { ...SANDBOX, ELECTRON_RUN_AS_NODE: "1" },
       });
       const cfg = JSON.parse(readFileSync(path.join(repo.dir, ".claude", "settings.json"), "utf8"));
       const cmd = cfg.hooks.PreToolUse[0].hooks[0].command;
@@ -505,7 +523,7 @@ describe("the installer", () => {
       mkdirSync(path.join(repo.dir, ".claude"), { recursive: true });
       writeFileSync(path.join(repo.dir, ".claude", "settings.json"), "{ this is not json", "utf8");
       assert.throws(() =>
-        execFileSync(process.execPath, [path.join(ROOT, "client", "install.mjs"), repo.dir], { stdio: "pipe" }),
+        execFileSync(process.execPath, [path.join(ROOT, "client", "install.mjs"), repo.dir], { stdio: "pipe", env: SANDBOX }),
       );
       // and did not clobber it
       assert.equal(readFileSync(path.join(repo.dir, ".claude", "settings.json"), "utf8"), "{ this is not json");

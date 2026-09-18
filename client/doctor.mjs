@@ -293,6 +293,7 @@ function checkAgents() {
     else if (!a.signedIn) detail = `installed (${a.foundVia}), but no account file found`;
     else detail = `installed (${a.foundVia}), signed in`;
     if (a.installed && a.hooks === "unverified") detail += "; hooks install but have never been seen to fire";
+    if (a.installed && a.id === "codex") detail += "; hooks need one-time trust (run `codex` once here)";
     // [ok] means zevet can watch it. Installed-but-unwatchable is reported as
     // [--] because from the board's point of view it is the same as absent.
     report(Boolean(a.installed && a.wireable), a.label.toLowerCase().replace(/\s+/g, "-"), detail);

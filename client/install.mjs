@@ -208,13 +208,10 @@ for (const agent of targets) {
     console.log(remove ? `Codex         ${r.detail}` : `Codex         3 hooks -> ${r.detail}`);
     if (!remove) {
       notes.push(
-        "CODEX HOOKS ARE INSTALLED BUT UNPROVEN. The config zevet writes parses against\n" +
-          "  the real binary, and a deliberately wrong shape is rejected, so the SHAPE is\n" +
-          "  right. But in a controlled run — project trusted, features.hooks=true, hook\n" +
-          "  trust bypassed, stdin closed, turn completed — NO hook fired under\n" +
-          "  `codex exec`. Codex's interactive TUI has not been tested here.\n" +
-          "  If you do not show up on the board after a turn or two, that is why —\n" +
-          "  say so rather than assuming it is your setup.",
+        "Codex hooks go in the GLOBAL config, because a hooks block inside a repo never\n" +
+          "  fires. So this one install covers every repo on this machine, and the list in\n" +
+          "  ~/.zevet/codex-repos.json decides which of them actually report -- repos you\n" +
+          "  have not installed into stay off the board.",
       );
     }
     if (!remove && r.trusted === false) {

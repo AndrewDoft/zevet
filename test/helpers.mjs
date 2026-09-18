@@ -79,7 +79,14 @@ export async function startHub(env = {}) {
 
 export function tempDir(prefix = "zevet-test-") {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return {
+    dir,
+    // maxRetries, because Windows. A child that has only just exited can still
+    // hold a handle on its cwd for a few milliseconds, and rmSync then throws
+    // ENOTEMPTY -- a cleanup failure that fails the test around it and reads
+    // exactly like a real defect. Retrying is the documented remedy.
+    cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 25 }),
+  };
 }
 
 /** Runs a client script with stdin, capturing stdout and stderr separately. */

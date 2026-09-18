@@ -69,6 +69,34 @@ const REPO_FLAG = flag("--zevet-repo");
 const AGENT_FLAG = flag("--zevet-agent");
 const TIMEOUT_MS = Number(process.env.ZEVET_TIMEOUT_MS || 1500);
 
+/**
+ * Which agent is calling. The flag is authoritative -- the installer wrote the
+ * command and knows. The payload sniff only covers a hook installed by an
+ * older version, whose command carries no flag.
+ */
+const isCodex = AGENT_FLAG ? AGENT_FLAG === "codex" : false;
+
+/** The repos this machine opted in to reporting Codex activity for. */
+function repoIsOptedIn(dir) {
+  let list;
+  try {
+    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    const raw = readFileSync(path.join(home, "codex-repos.json"), "utf8").replace(/^﻿/, "");
+    const parsed = JSON.parse(raw);
+    list = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    // No list, no opt-in. Silence is the safe direction for a global hook:
+    // better to report nothing than to publish a repo nobody chose.
+    return false;
+  }
+  const here = path.resolve(dir || "");
+  return list.some((d) => {
+    if (typeof d !== "string" || !d.trim()) return false;
+    const there = path.resolve(d);
+    return process.platform === "win32" ? there.toLowerCase() === here.toLowerCase() : there === here;
+  });
+}
+
 function warn(msg) {
   try {
     process.stderr.write(`[zevet] ${msg}\n`);
@@ -212,12 +240,22 @@ async function main() {
   // board and doubled the hook traffic on every turn for no added meaning.
   if (eventName === "PostToolUse") return;
 
-  // Claude Code sends `cwd`. CODEX DOES NOT — its hook stdin vocabulary has no
-  // such field — so without the flag written into the command, every Codex
-  // event would be attributed to whatever directory the agent happened to be
-  // started from. Payload first, flag second, process cwd last.
+  // Both agents send `cwd`. The claim that Codex does not was wrong, and it was
+  // wrong in a load-bearing way: it is why the installer baked a --zevet-repo
+  // into the command, which only works while the hooks config is per-repo.
+  // MEASURED on codex-cli 0.155.0-alpha.2.6, the Stop payload is
+  //   {session_id, turn_id, transcript_path, cwd, hook_event_name, model,
+  //    permission_mode, stop_hook_active, last_assistant_message}
+  // Payload first, flag second, process cwd last.
   const cwd = p.cwd || REPO_FLAG || process.cwd();
   const { repo, branch, root } = repoInfo(cwd);
+
+  // Codex's hooks live in the GLOBAL config (a repo-local block never fires),
+  // so this hook is invoked for every project on the machine. The opt-in list
+  // is what keeps zevet from publishing unrelated work to a shared hub: no
+  // entry, no event, no noise. Claude Code is wired per repo and needs no such
+  // filter -- if its hook ran, somebody installed it there on purpose.
+  if (isCodex && !repoIsOptedIn(root || cwd)) return;
 
   // full  — prompts and commands as typed, with secrets scrubbed (default)
   // brief — the first word of a command, no prompt bodies
@@ -250,7 +288,7 @@ async function main() {
   // Which agent produced this. Codex payloads carry `agent_type`/`turn_id`;
   // Claude Code's carry `cwd`. The flag is authoritative because install.mjs
   // knows exactly which config file it wrote the command into.
-  const agent = AGENT_FLAG || (p.cwd ? "claude-code" : p.agent_type || p.turn_id ? "codex" : "claude-code");
+  const agent = isCodex ? "codex" : "claude-code";
 
   const payload = { ...body, actor: ACTOR, machine, repo, branch, agent };
 

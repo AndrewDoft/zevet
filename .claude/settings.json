@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\dev\\GitHub\\zevet\\client\\hook.mjs\" --zevet-hook --zevet-agent claude-code --zevet-repo \"C:\\dev\\GitHub\\zevet\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\dev\\GitHub\\zevet\\client\\hook.mjs\" --zevet-hook --zevet-agent claude-code --zevet-repo \"C:\\dev\\GitHub\\zevet\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\dev\\GitHub\\zevet\\client\\hook.mjs\" --zevet-hook --zevet-agent claude-code --zevet-repo \"C:\\dev\\GitHub\\zevet\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
