@@ -48,7 +48,22 @@ Send them **one link and two values**:
 - the hub URL
 - the shared token
 
-They run it, answer three prompts, and they're on the board:
+They run it, answer three prompts, and they're on the board.
+
+> **Read this before you send it.** The hub is also the update server, which
+> means it can replace code that runs on your teammates' machines before every
+> tool call. Over plain `http://` that authority belongs to anyone who can
+> alter traffic on the way — café wifi, a hotel router, a compromised switch —
+> not just to you. **Put the hub behind HTTPS before you send this to anyone
+> outside your own LAN.** The setup scripts warn about this; they do not
+> prevent it, because sometimes a trusted LAN is genuinely fine.
+>
+> The per-file sha256 in the manifest is a **corruption check, not a security
+> control.** The manifest and the files it describes come from the same place
+> over the same connection, so whoever can forge one can forge the other. It
+> catches a truncated download; it does not catch a hostile hub. Making it
+> load-bearing would need a signature the client checks against a key it did
+> not fetch from the hub. That is not built.
 
 ```bash
 curl -fsSL <hub>/setup.sh -o setup.sh && bash setup.sh      # macOS
@@ -58,8 +73,10 @@ curl -fsSL <hub>/setup.sh -o setup.sh && bash setup.sh      # macOS
 irm <hub>/setup.ps1 -OutFile setup.ps1; powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-The setup script verifies every file it downloads against the hub's manifest
-(sha256 per file) and refuses to install anything that doesn't match.
+The setup script checks every file it downloads against the hub's manifest and
+installs nothing unless all of them match — see the caveat above for what that
+check is and isn't worth. It also refuses any filename that is not a plain name,
+because `path.join` treats `../evil.mjs` as an instruction rather than a file.
 
 ### Shipping a change
 
@@ -71,18 +88,26 @@ no build and nothing to tag. Teammates converge on their next check.
 
 ## Windows and macOS are both first-class
 
-Every path here has been run on Windows and written to work identically on
-macOS. Three things were got wrong first and fixed, and they are the reason to
-be careful:
+Every path here is written to work identically on both, and the ones below were
+run on Windows to prove it. That sentence used to read "every path here has been
+run on Windows", which was not true and cost a whole class of bug: Windows
+PowerShell 5.1 writes a UTF-8 BOM, `JSON.parse` rejects it, and every Windows
+teammate silently fell back to `127.0.0.1`, never appeared on the board and
+never received an update — while setup printed "Done." Five things were got
+wrong first and fixed, and they are the reason to be careful:
+
+- **Config is written without a BOM, and setup reads it back the way the client
+  does.** The verification step originally used `require()`, which strips a BOM
+  and therefore could never detect the one failure it existed to detect.
+- **The installer recognises its own hooks by a flag it owns**, not by a path
+  substring. Matching `zevet/client/hook.mjs` worked only because `.zevet/`
+  contains `zevet/`; from a ZIP unpacked as `zevet-main/`, three installs
+  stacked three copies of every hook and `--remove` removed none of them.
 
 - **File paths are stored relative to the repo root**, never absolute. Andrew's
   `C:\dev\masora\src\db.ts` and Kai's `/Users/kai/code/masora/src/db.ts` are the
   same file. Comparing absolute paths would mean the collision warning silently
   never fires in a mixed-OS team — which is the only kind of team this is for.
-- **The installer matches its own hooks separator-insensitively.** Matching
-  `zevet/client/hook.mjs` against a Windows command containing backslashes
-  fails, the strip quietly removes nothing, and re-installing stacks duplicate
-  hooks. It was correct on macOS the whole time.
 - **Hook commands are shell-quoted, not JSON-escaped**, so `C:\Program Files`
   and `/Users/kai/My Code` both survive.
 
@@ -98,6 +123,16 @@ in a position to ruin someone's session, so it is written not to be able to:
    flow untouched.
 2. **It always exits 0**, on every path including its own bugs. Diagnostics go
    to stderr.
+
+**What it does not promise: zero cost.** Claude Code waits for a hook to exit,
+so the hook is on the critical path of every tool call whether it likes it or
+not. A refused connection fails in about 46ms and is unnoticeable. A hub that
+*accepts* the connection and then stalls — a VPN dropping, a sleeping host —
+costs the full `ZEVET_TIMEOUT_MS`: measured at ~1580ms per tool call, so a
+40-call turn pays about a minute. An earlier draft of this file said the hook
+"never blocks a turn". That was wrong. What the hook genuinely cannot do is
+*end* a turn or change a permission decision, and that is the property the two
+rules above actually defend.
 
 This is not hypothetical caution. Amoeba's equivalent hook answered
 `permissionDecision: "defer"` when its daemon had nothing to say, on the
@@ -149,7 +184,7 @@ hub/server.mjs         the hub: ingest, live feed, board, update channel.
 hub/public/index.html  the board. one file, no build step.
 client/hook.mjs        runs on every prompt and tool call. silent, fails open.
 client/install.mjs     writes/removes the hooks in a repo's .claude/settings.json
-client/updater.mjs     keeps this machine in step with the hub. never blocks.
+client/updater.mjs     keeps this machine in step with the hub. runs detached.
 dist/setup.ps1         what a Windows teammate runs once.
 dist/setup.sh          what a macOS teammate runs once.
 ```
@@ -166,7 +201,7 @@ Teammates get this written for them by the setup script, into
 | `ZEVET_HUB` | client | `http://127.0.0.1:8787` | Where hooks send events. |
 | `ZEVET_ACTOR` | client | OS username | Your name in the lanes. |
 | `ZEVET_HOME` | client | `~/.zevet` | Where the client and its config live. |
-| `ZEVET_TIMEOUT_MS` | client | `1500` | Give-up time per event. Never blocks a turn. |
+| `ZEVET_TIMEOUT_MS` | client | `1500` | Give-up time per event. This is the worst case a stalled hub can add to one tool call. |
 | `ZEVET_UPDATE_INTERVAL_MS` | client | `1800000` | How often to check for a new build. |
 | `ZEVET_COLLISION_WINDOW_MS` | hub | `600000` | How recent two edits must be to collide. |
 | `ZEVET_DEBUG` | client | unset | Print each raw hook payload to stderr. |

@@ -11,7 +11,27 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.resolve(HERE, "hook.mjs");
-const MARK = "zevet/client/hook.mjs";
+/**
+ * How we recognise our own hook entries.
+ *
+ * A LITERAL FLAG ON THE COMMAND, not a path substring. The previous version
+ * matched `zevet/client/hook.mjs` against the command text, which is true of
+ * `~/.zevet/client/hook.mjs` only because `.zevet/` happens to contain
+ * `zevet/`. MEASURED from a checkout named anything else — a GitHub ZIP that
+ * unpacks to `zevet-main/`, a custom ZEVET_HOME, a clone under another name:
+ *
+ *   3 installs -> UserPromptSubmit 3, PreToolUse 3, Stop 3   (stacked)
+ *   --remove   -> "removed 0 hook entries"                   (a no-op)
+ *
+ * so the board triple-counted every tool call and the documented uninstall
+ * could not undo it. The repo's own test did not catch this because it ran
+ * from a directory that happened to be called `zevet`; a test whose result
+ * depends on where it is checked out is not testing the thing it claims to.
+ *
+ * This flag is ours, it is in the command whatever the path looks like, and
+ * the hook ignores it.
+ */
+const MARK = "--zevet-hook";
 const EVENTS = ["UserPromptSubmit", "PreToolUse", "Stop"];
 
 /**
@@ -27,13 +47,11 @@ const EVENTS = ["UserPromptSubmit", "PreToolUse", "Stop"];
  */
 function isOurs(entry) {
   if (!entry || typeof entry.command !== "string") return false;
-  // Collapse repeated separators too: an earlier version built the command
-  // with JSON.stringify and then wrote it inside another JSON.stringify, so
-  // the stored command held `C:\\dev\\GitHub\\zevet` with doubled backslashes.
-  // It ran anyway — Windows collapses repeated separators — which is how a
-  // double-encoded path went unnoticed while quietly defeating this match.
+  // Also recognise entries written by earlier versions, which carried no flag
+  // and were matched by path. Without this, upgrading leaves the old entry
+  // behind next to the new one and every tool call is counted twice.
   const norm = entry.command.split("\\").join("/").replace(/\/{2,}/g, "/");
-  return norm.includes(MARK);
+  return entry.command.includes(MARK) || /(^|\/)\.?zevet\/client\/hook\.mjs/.test(norm);
 }
 
 /**
@@ -103,7 +121,7 @@ for (const evt of Object.keys(cfg.hooks)) {
 if (!remove) {
   // Quoted so a space in "C:\Program Files" or "/Users/kai/My Code" survives
   // instead of splitting into two arguments.
-  const command = `${shellQuote(process.execPath)} ${shellQuote(HOOK)}`;
+  const command = `${shellQuote(process.execPath)} ${shellQuote(HOOK)} ${MARK}`;
   for (const evt of EVENTS) {
     const entry = { type: "command", command, timeout: 10 };
     const groups = Array.isArray(cfg.hooks[evt]) ? cfg.hooks[evt] : [];

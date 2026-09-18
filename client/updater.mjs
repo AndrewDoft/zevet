@@ -38,7 +38,8 @@ function log(msg) {
 
 function readConfig() {
   try {
-    return JSON.parse(readFileSync(path.join(HOME, "config.json"), "utf8"));
+    // See hook.mjs: a BOM here meant updates silently never installed.
+    return JSON.parse(readFileSync(path.join(HOME, "config.json"), "utf8").replace(/^﻿/, ""));
   } catch {
     return {};
   }
@@ -95,7 +96,7 @@ function validManifest(m) {
 
 function localManifest() {
   try {
-    return JSON.parse(readFileSync(MANIFEST, "utf8"));
+    return JSON.parse(readFileSync(MANIFEST, "utf8").replace(/^﻿/, ""));
   } catch {
     return { version: "0.0.0", files: [] };
   }
@@ -144,6 +145,10 @@ async function main() {
       const res = await fetch(`${hub}/dist/manifest.json`, {
         headers: { "x-zevet-token": token },
         signal: ac.signal,
+        // A custom header survives a cross-origin redirect (only Authorization
+        // and Cookie are stripped), so following one hands the team's shared
+        // secret to wherever the hub points. It never legitimately redirects.
+        redirect: "error",
       });
       if (!res.ok) {
         log(`hub answered ${res.status} for the manifest — staying on the current build`);
@@ -178,8 +183,13 @@ async function main() {
     // half-finished update cannot leave a mixed set of files behind.
     const staged = [];
     for (const f of stale) {
+      // A deadline of its own: only the manifest fetch had one, so a hub that
+      // accepted the connection and then trickled bytes stalled here until the
+      // 60s watchdog fired.
       const res = await fetch(`${hub}/dist/${encodeURIComponent(f.name)}`, {
         headers: { "x-zevet-token": token },
+        redirect: "error",
+        signal: AbortSignal.timeout(30000),
       });
       if (!res.ok) {
         log(`could not fetch ${f.name} (${res.status}) — update abandoned, current build kept`);
@@ -213,6 +223,24 @@ async function main() {
   } catch (err) {
     log(`check failed (${err.name === "AbortError" ? "hub did not answer in 10s" : err.message}) — current build kept`);
   } finally {
+    // STAMP THE CLOCK WHATEVER HAPPENED.
+    //
+    // It used to be written on exactly two paths — "already current" and
+    // "update installed" — so an unreachable hub, a 401, a failed checksum or
+    // a blocked rename all left the stamp stale. The hook reads that stamp to
+    // decide whether to check again, so the moment updating started failing it
+    // spawned a fresh detached node process on EVERY tool call, forever. A
+    // busy turn is 20-60 tool calls a minute, and a 401 is the steady state
+    // for anyone whose config is wrong. The failure mode scaled with the
+    // failure, which is the wrong way round.
+    //
+    // Backing off for the normal interval after a failed check is the point:
+    // the next attempt still happens, just not 60 times a minute.
+    try {
+      writeFileSync(STAMP, String(Date.now()), "utf8");
+    } catch {
+      // If we cannot even write the stamp, the next run re-checks. Acceptable.
+    }
     releaseLock();
   }
 }
@@ -224,7 +252,12 @@ async function main() {
 // loop drain is the correct exit; this unref'd timer only fires if something
 // is genuinely stuck, and cannot hold the process open by itself.
 setTimeout(() => {
+  // Release the lock FIRST. process.exit() skips the finally above, so a
+  // watchdog firing used to leave update.lock on disk, which then blocked
+  // every update for the next five minutes — a stall turning into a longer
+  // stall.
   log("still running after 60s — giving up");
+  releaseLock();
   process.exit(0);
 }, 60000).unref();
 

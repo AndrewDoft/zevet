@@ -32,14 +32,29 @@ function settings() {
   let file = {};
   try {
     const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
-    file = JSON.parse(readFileSync(path.join(home, "config.json"), "utf8"));
+    // Strip a UTF-8 BOM. Windows PowerShell 5.1 writes one with
+    // `Set-Content -Encoding UTF8`, and JSON.parse rejects a leading U+FEFF —
+    // which silently sent every Windows teammate back to the 127.0.0.1 default
+    // and kept them off the board entirely.
+    const raw = readFileSync(path.join(home, "config.json"), "utf8").replace(/^﻿/, "");
+    file = JSON.parse(raw);
   } catch {
     // No config yet, or unreadable. Environment variables may still carry it.
+  }
+  // os.userInfo() THROWS when the OS has no passwd entry for this uid — inside
+  // some containers, and on certain roaming/domain profiles. This runs at
+  // module scope, so an uncaught throw here exits non-zero with a stack trace
+  // on every single tool call, breaking rule 2 above at the first hurdle.
+  let username = "";
+  try {
+    username = os.userInfo().username || "";
+  } catch {
+    username = "";
   }
   return {
     hub: (process.env.ZEVET_HUB || file.hub || "http://127.0.0.1:8787").replace(/\/+$/, ""),
     token: process.env.ZEVET_TOKEN || file.token || "",
-    actor: process.env.ZEVET_ACTOR || file.actor || os.userInfo().username || "unknown",
+    actor: process.env.ZEVET_ACTOR || file.actor || username || "unknown",
   };
 }
 
@@ -171,7 +186,14 @@ async function main() {
     body = { kind: "tool", tool, target: file ? repoRelative(file, root) : null, detail };
   }
 
-  const payload = { ...body, actor: ACTOR, repo, branch, agent: "claude-code" };
+  let machine = "";
+  try {
+    machine = os.hostname() || "";
+  } catch {
+    machine = "";
+  }
+
+  const payload = { ...body, actor: ACTOR, machine, repo, branch, agent: "claude-code" };
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
@@ -181,8 +203,18 @@ async function main() {
       headers: { "content-type": "application/json", "x-zevet-token": TOKEN },
       body: JSON.stringify(payload),
       signal: ac.signal,
+      // MEASURED: fetch follows redirects by default and, per spec, strips only
+      // Authorization and Cookie when the origin changes. A custom header does
+      // NOT get stripped — a hub that 302s elsewhere (compromise, a proxy
+      // "canonicalising" the host, an injection over plain HTTP) receives the
+      // team's shared secret from every machine, silently. The hub never has a
+      // legitimate reason to redirect, so refusing costs nothing.
+      redirect: "error",
     });
     if (!res.ok) warn(`hub answered ${res.status} — this turn is unaffected`);
+    // Drain before exiting. process.exit() with an undici socket still in
+    // teardown is what tripped a libuv assertion in the updater.
+    await res.arrayBuffer().catch(() => {});
   } catch (err) {
     const why = err.name === "AbortError" ? `no answer in ${TIMEOUT_MS}ms` : err.message;
     warn(`hub unreachable (${why}) — this turn is unaffected`);
@@ -196,7 +228,7 @@ async function main() {
  *
  * Detached and unref'd: this process exits immediately whether or not the
  * updater has finished, so an update can never sit in front of somebody's
- * turn. The rate limit is a file mtime rather than a timer, because each hook
+ * turn. The rate limit is a timestamp written into a file, because each hook
  * run is a fresh process with no memory of the last one.
  */
 function maybeCheckForUpdates() {
@@ -209,7 +241,14 @@ function maybeCheckForUpdates() {
     const stamp = path.join(home, "last-check");
     if (existsSync(stamp)) {
       const age = Date.now() - Number(readFileSync(stamp, "utf8").trim() || 0);
-      if (age >= 0 && age < every) return;
+      // A NEGATIVE age means the stamp is in the future — a clock correction,
+      // or a dual-boot machine with the RTC in local time. The old condition
+      // was `age >= 0 && age < every`, which fell through on a future stamp
+      // and pinned the client into spawning a fresh node process on EVERY
+      // tool call, forever. Out-of-range in either direction means "do not
+      // trust it, and do not hammer": treat it as fresh and move on.
+      if (age < 0) return;
+      if (age < every) return;
     }
 
     const child = spawn(process.execPath, [updater], {

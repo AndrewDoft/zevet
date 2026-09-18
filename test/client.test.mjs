@@ -217,6 +217,29 @@ describe("what the hook reports", () => {
 });
 
 describe("the installer", () => {
+  /**
+   * A copy of the client in a directory that is NOT called "zevet".
+   *
+   * This matters more than it looks. The installer used to recognise its own
+   * hooks by the path substring `zevet/client/hook.mjs`, which matches
+   * `~/.zevet/client/hook.mjs` purely because `.zevet/` contains `zevet/`.
+   * These tests ran from the repo — also called `zevet` — so they passed while
+   * the installer stacked duplicates and `--remove` did nothing for anyone who
+   * had unpacked a ZIP named `zevet-main` or set ZEVET_HOME elsewhere.
+   *
+   * A test whose result depends on the name of the directory it was checked
+   * out into is not testing what it says it is.
+   */
+  function stagedClient() {
+    const t = tempDir("somewhere-else-");
+    const dest = path.join(t.dir, "tooling", "client");
+    mkdirSync(dest, { recursive: true });
+    for (const f of ["install.mjs", "hook.mjs", "updater.mjs"]) {
+      writeFileSync(path.join(dest, f), readFileSync(path.join(ROOT, "client", f)));
+    }
+    return { installer: path.join(dest, "install.mjs"), cleanup: t.cleanup };
+  }
+
   function entriesPerEvent(file) {
     const cfg = JSON.parse(readFileSync(file, "utf8"));
     const counts = {};
@@ -226,16 +249,60 @@ describe("the installer", () => {
     return counts;
   }
 
-  test("installing twice leaves one entry per event", async () => {
+  test("installing three times leaves one entry per event, from any directory", async () => {
     const repo = tempDir("zevet-inst-");
+    const staged = stagedClient();
     try {
       for (let i = 0; i < 3; i++) {
-        execFileSync(process.execPath, [path.join(ROOT, "client", "install.mjs"), repo.dir], { stdio: "pipe" });
+        execFileSync(process.execPath, [staged.installer, repo.dir], { stdio: "pipe" });
       }
       const counts = entriesPerEvent(path.join(repo.dir, ".claude", "settings.json"));
       for (const [evt, n] of Object.entries(counts)) assert.equal(n, 1, `${evt} had ${n}`);
       assert.ok(!("PostToolUse" in counts), "PostToolUse is not registered");
     } finally {
+      staged.cleanup();
+      repo.cleanup();
+    }
+  });
+
+  test("--remove actually removes, from any directory", async () => {
+    const repo = tempDir("zevet-rm-");
+    const staged = stagedClient();
+    try {
+      execFileSync(process.execPath, [staged.installer, repo.dir], { stdio: "pipe" });
+      execFileSync(process.execPath, [staged.installer, repo.dir, "--remove"], { stdio: "pipe" });
+      const cfg = JSON.parse(readFileSync(path.join(repo.dir, ".claude", "settings.json"), "utf8"));
+      assert.deepEqual(cfg.hooks, {}, `hooks should be empty, got ${JSON.stringify(cfg.hooks)}`);
+    } finally {
+      staged.cleanup();
+      repo.cleanup();
+    }
+  });
+
+  test("upgrading over a pre-flag install does not leave two copies", async () => {
+    // Older versions wrote the command with no marker flag. If those are not
+    // recognised, an upgrade silently doubles every event on the board.
+    const repo = tempDir("zevet-upg-");
+    const staged = stagedClient();
+    try {
+      const dir = path.join(repo.dir, ".claude");
+      mkdirSync(dir, { recursive: true });
+      const legacy = {
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "*",
+              hooks: [{ type: "command", command: '"C:\\Users\\kai\\.zevet\\client\\hook.mjs"', timeout: 10 }],
+            },
+          ],
+        },
+      };
+      writeFileSync(path.join(dir, "settings.json"), JSON.stringify(legacy), "utf8");
+      execFileSync(process.execPath, [staged.installer, repo.dir], { stdio: "pipe" });
+      const counts = entriesPerEvent(path.join(dir, "settings.json"));
+      assert.equal(counts.PreToolUse, 1, `PreToolUse had ${counts.PreToolUse}`);
+    } finally {
+      staged.cleanup();
       repo.cleanup();
     }
   });
@@ -278,7 +345,8 @@ describe("the installer", () => {
       // Quoted for a shell, not escaped for JSON: no doubled separators.
       assert.ok(!cmd.includes("\\\\"), `doubled backslashes in: ${cmd}`);
       assert.equal((cmd.match(/"/g) || []).length, 4, `expected two quoted paths: ${cmd}`);
-      const hookPath = cmd.split('" "')[1].replace(/"$/, "");
+      const hookPath = (cmd.match(/" "(.+?)" --zevet-hook$/) || [])[1];
+      assert.ok(hookPath, `command should end with the marker flag: ${cmd}`);
       assert.ok(existsSync(hookPath), `the command points at a file that exists: ${hookPath}`);
     } finally {
       repo.cleanup();
