@@ -48,6 +48,51 @@ function sha256(buf) {
   return createHash("sha256").update(buf).digest("hex");
 }
 
+/**
+ * A build-file name this updater is willing to write.
+ *
+ * The hub is trusted to ship new client code — that is the whole feature. It
+ * is NOT trusted to choose where on the machine that code lands, and over
+ * plain HTTP "the hub" may be whoever is on the network. `path.join` treats
+ * `../evil.mjs` as an instruction, not as a filename.
+ *
+ * This was already "safe" by accident: the staging file was named
+ * `.${name}.incoming`, so `../evil.mjs` became the literal directory `.../`,
+ * which does not exist, and the write failed with ENOENT before the rename
+ * could escape. MEASURED, by changing that one template to `${name}.incoming`
+ * and re-running: two of the five traversal cases immediately wrote outside
+ * the client directory. A protection that depends on the spelling of a temp
+ * file is not a protection; it is a coincidence with a short life expectancy.
+ *
+ * So: an allowlist, checked before anything is fetched. A build file is a
+ * plain name with no separator in it, and nothing else.
+ */
+function safeName(name) {
+  return (
+    typeof name === "string" &&
+    name.length > 0 &&
+    name.length <= 64 &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) &&
+    !name.includes("..")
+  );
+}
+
+/**
+ * Is this JSON actually a manifest? A hostile or broken hub can answer with
+ * anything at all, and every field below is used to drive a filesystem write.
+ */
+function validManifest(m) {
+  if (!m || typeof m !== "object" || !Array.isArray(m.files)) return "not shaped like a manifest";
+  for (const f of m.files) {
+    if (!f || typeof f !== "object") return "a file entry is not an object";
+    if (!safeName(f.name)) return `refusing the file name ${JSON.stringify(f && f.name)}`;
+    if (typeof f.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(f.sha256)) {
+      return `${f.name} has no usable sha256`;
+    }
+  }
+  return null;
+}
+
 function localManifest() {
   try {
     return JSON.parse(readFileSync(MANIFEST, "utf8"));
@@ -109,9 +154,17 @@ async function main() {
       clearTimeout(timer);
     }
 
+    // Validate the WHOLE manifest before acting on any of it. One hostile
+    // entry means the manifest is not one we trust, not one we partly obey.
+    const complaint = validManifest(remote);
+    if (complaint) {
+      log(`rejecting the hub's manifest: ${complaint} — current build kept`);
+      return;
+    }
+
     const local = localManifest();
     const localByName = new Map((local.files || []).map((f) => [f.name, f.sha256]));
-    const stale = (remote.files || []).filter((f) => localByName.get(f.name) !== f.sha256);
+    const stale = remote.files.filter((f) => localByName.get(f.name) !== f.sha256);
 
     if (stale.length === 0) {
       writeFileSync(STAMP, String(Date.now()), "utf8");

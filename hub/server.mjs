@@ -119,7 +119,32 @@ function snapshot() {
 
 function json(res, code, body) {
   const s = JSON.stringify(body);
-  res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" });
+  const headers = { "content-type": "application/json", "cache-control": "no-store" };
+
+  // MEASURED BUG: every early answer here — a 401 for a bad token, a 400 for an
+  // oversized body — was sent WITHOUT consuming the request body, so the rest
+  // of it was still arriving on a socket we had already finished with. Node
+  // then tore that socket down, and because keep-alive had already handed it
+  // back to the pool, the reset surfaced on a LATER, innocent request:
+  //
+  //   OVERSIZE:             HTTP 400 in 16ms
+  //   small after oversize: HTTP 200 in 14ms
+  //   small after that:     FAILED in 5988ms -> ECONNRESET
+  //
+  // A different event paid for it, six seconds later, with nothing connecting
+  // the two. Telling the client not to reuse the socket is the whole fix; the
+  // in-flight remainder is discarded with the connection.
+  //
+  // Narrow on purpose: a GET has no body to leave unread, and closing its
+  // connection would throw away keep-alive for the dashboard's own polling.
+  const req = res.req;
+  const unreadBody =
+    req &&
+    !req.readableEnded &&
+    (Number(req.headers["content-length"]) > 0 || Boolean(req.headers["transfer-encoding"]));
+  if (unreadBody) headers.connection = "close";
+
+  res.writeHead(code, headers);
   res.end(s);
 }
 

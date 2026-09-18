@@ -9,6 +9,7 @@
   },
   "scripts": {
     "hub": "node hub/server.mjs",
-    "install-hooks": "node client/install.mjs"
+    "install-hooks": "node client/install.mjs",
+    "test": "node --test \"test/**/*.test.mjs\""
   }
 }
