@@ -39,8 +39,40 @@ const SECRET = "zzsecret-token-qqxv-8f3a1c7e9b2d";
  */
 const CLEAN = { ZEVET_HUB: "", ZEVET_TOKEN: "", ZEVET_ACTOR: "", ZEVET_TIMEOUT_MS: "" };
 
-/** Somewhere nothing is listening, so "unreachable" is the finding under test. */
-const DEAD = "http://127.0.0.1:1";
+/**
+ * Somewhere nothing is listening, so "unreachable" is the finding under test.
+ *
+ * The port is ALLOCATED and released rather than hardcoded, so the refusal is a
+ * real ECONNREFUSED off the loopback stack. This was `127.0.0.1:1`, and port 1
+ * is on the WHATWG bad-port list: fetch() refuses it before opening a socket,
+ * so the reachability check this case is named for never ran. MEASURED -- the
+ * cause was `Error: bad port`, code undefined. See BAD_PORT below, which now
+ * covers that condition deliberately instead of by accident.
+ *
+ * (A port can in principle be taken between release and use; ephemeral ports
+ * are not handed straight back out, and a taken one would fail loudly here
+ * rather than quietly pass.)
+ */
+const DEAD = `http://127.0.0.1:${await closedPort()}`;
+
+/** Bind a port, learn its number, release it. */
+async function closedPort() {
+  const { createServer } = await import("node:net");
+  return await new Promise((resolve, reject) => {
+    const s = createServer();
+    s.on("error", reject);
+    s.listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+/** Escape a string for literal use inside a RegExp. */
+const esc = (str) => str.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
+
+/** A port fetch() will not dial at all -- someone will type one eventually. */
+const BAD_PORT = "http://127.0.0.1:1";
 
 /** Long enough that the network checks fail fast, short enough to be certain. */
 const QUICK = "300";
@@ -186,7 +218,14 @@ const INSTALLS = {
     config: { hub: DEAD, token: SECRET },
     env: { ZEVET_TIMEOUT_MS: QUICK },
     // The errno, not "fetch failed": reachability is the whole finding here.
-    expect: [/\[--\] hub {10}http:\/\/127\.0\.0\.1:1 unreachable \(\S+\)/],
+    expect: [/\[--\] hub {10}\S+ unreachable \(ECONNREFUSED\)/, /\[--\] token {8}not checked/],
+  },
+  "a hub on a port that cannot be dialled at all": {
+    config: { hub: BAD_PORT, token: SECRET },
+    env: { ZEVET_TIMEOUT_MS: QUICK },
+    // Not ECONNREFUSED -- nothing was refused, because nothing was attempted.
+    // What must not appear is the bare "fetch failed" this used to print.
+    expect: [/\[--\] hub {10}\S+ unreachable \(bad port\)/],
   },
   "a config with a BOM, as PowerShell 5.1 writes it": {
     config: `﻿${JSON.stringify({ hub: DEAD, token: SECRET })}`,
@@ -195,7 +234,8 @@ const INSTALLS = {
   },
   "settings that come from the environment, not the file": {
     env: { ZEVET_HUB: DEAD, ZEVET_TOKEN: SECRET, ZEVET_ACTOR: "tester", ZEVET_TIMEOUT_MS: QUICK },
-    expect: [/\[ok\] settings {5}hub http:\/\/127\.0\.0\.1:1, actor tester, token set/],
+    // Built from DEAD rather than retyped: the port is allocated at startup.
+    expect: [new RegExp(`\\[ok\\] settings {5}hub ${esc(DEAD)}, actor tester, token set`)],
   },
 };
 
