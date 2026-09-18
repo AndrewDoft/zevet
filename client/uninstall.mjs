@@ -31,7 +31,8 @@
 import { readFileSync, writeFileSync, existsSync, copyFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { installCodex, codexConfigPathFor, stripBlock, BLOCK_START } from "./install-codex.mjs";
+import { installCodex, codexConfigPathFor, codexGlobalConfigPath, stripBlock, BLOCK_START } from "./install-codex.mjs";
+import { stripTrustBlock, TRUST_START } from "./codex-trust.mjs";
 
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
 const WORKSPACES = path.join(HOME, "workspaces.json");
@@ -173,7 +174,32 @@ function removeCodex(repo) {
     }
   }
 
-  // 2. The global block, which is the one that actually runs.
+  // 2. The trust records. These name hook keys that are about to stop existing,
+  //    and a stale trusted_hash sitting in somebody's Codex config after they
+  //    uninstalled us is precisely the kind of leftover trust entry nobody
+  //    would think to look for.
+  const globalFile = codexGlobalConfigPath();
+  if (existsSync(globalFile)) {
+    try {
+      const text = readFileSync(globalFile, "utf8");
+      if (text.includes(TRUST_START)) {
+        const stripped = stripTrustBlock(text);
+        if (stripped.malformed) {
+          failed = true;
+          notes.push(`${globalFile} has a zevet trust block with no end marker — left untouched`);
+        } else {
+          writeFileSync(globalFile, stripped.text, "utf8");
+          removed = true;
+          notes.push(`removed zevet's hook trust records from ${globalFile}`);
+        }
+      }
+    } catch (err) {
+      failed = true;
+      notes.push(`could not clean trust records in ${globalFile} (${err.message})`);
+    }
+  }
+
+  // 3. The global hooks block, which is the one that actually runs.
   try {
     const r = installCodex(repo, { hookPath: "", node: "", mark: MARK, remove: true });
     if (!r.ok) {

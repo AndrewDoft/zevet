@@ -163,6 +163,60 @@ describe("the command string Codex can actually run", () => {
   });
 });
 
+describe("the POSIX branch, which no Mac has yet run", () => {
+  /**
+   * Michael and Kai are both on Apple silicon and no macOS machine was
+   * available, so this forces the platform rather than claiming coverage it
+   * does not have. It proves what zevet GENERATES on POSIX; whether Codex
+   * accepts it there is still open (INSUF-003). That is a smaller gap than
+   * "never exercised at all", which is what this was.
+   */
+  function asPlatform(name, fn) {
+    const real = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: name, configurable: true });
+    try {
+      return fn();
+    } finally {
+      Object.defineProperty(process, "platform", real);
+    }
+  }
+
+  test("writes a bare program path, with no cmd /c and no quoting around it", async (t) => {
+    const h = homes(t);
+    const repo = makeRepo(t, "posix");
+    asPlatform("darwin", () =>
+      withHomes(h, () =>
+        installCodex(repo, { hookPath: "/Users/m/.zevet/client/hook.mjs", node: "/opt/homebrew/bin/node", mark: "--zevet-hook" }),
+      ),
+    );
+    const text = readFileSync(path.join(h.codex, "config.toml"), "utf8");
+    const line = text.split("\n").find((l) => l.startsWith("Stop = "));
+    assert.ok(line, `no Stop handler in:\n${text}`);
+    const command = (line.match(/command = '([^']*)'/) || [])[1];
+    assert.ok(command, `no command in: ${line}`);
+    assert.ok(!command.startsWith("cmd /c"), `the Windows wrapper leaked onto POSIX: ${command}`);
+    const program = command.trim().split(/\s+/)[0];
+    assert.equal(program, "/opt/homebrew/bin/node", `wrong program token: ${program}`);
+    assert.ok(!program.startsWith('"'), "the program is quoted, which Codex does not resolve");
+    assert.ok(command.includes('"/Users/m/.zevet/client/hook.mjs"'), `the script should still be quoted: ${command}`);
+  });
+
+  test("refuses loudly if the POSIX node path has a space", async (t) => {
+    // The Windows lesson applied forward: a spaced program path cannot be
+    // written at all, so fail with a reason rather than emit a hook that will
+    // silently never fire.
+    const h = homes(t);
+    const repo = makeRepo(t, "posixspace");
+    const r = asPlatform("darwin", () =>
+      withHomes(h, () =>
+        installCodex(repo, { hookPath: "/tmp/hook.mjs", node: "/Applications/My Tools/node", mark: "--zevet-hook" }),
+      ),
+    );
+    assert.equal(r.ok, false, "a node path with a space was accepted on POSIX");
+    assert.match(r.detail, /space/, `unhelpful refusal: ${r.detail}`);
+  });
+});
+
 describe("the opt-in list decides what reaches the hub", () => {
   /** One Codex event, exactly as Codex delivers it: cwd in the payload, flag on argv. */
   async function fire(repo, zevetHome) {

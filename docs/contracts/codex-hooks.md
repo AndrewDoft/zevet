@@ -57,9 +57,42 @@ screen (`tui\src\startup_hooks_review.rs`, "Failed to trust hooks:"). For automa
 a terminal, which this session did not have. zevet therefore tells the user to run `codex` once
 in the repo and accept the prompt, and that instruction is untested. See `INSUFFICIENCIES.md`.
 
-Project trust (`[projects.'<path>'] trust_level = "trusted"`) is a **separate** gate, also
-required: *"Project-local config, hooks, and exec policies are disabled in the following
-folders until the project is trusted, but skills still load."*
+Project trust (`[projects.'<path>'] trust_level = "trusted"`) is a **separate** gate, and the
+binary carries the string *"Project-local config, hooks, and exec policies are disabled in the
+following folders until the project is trusted, but skills still load."*
+
+**CORRECTED 2026-09-18:** an earlier version of this note said project trust was *also required*
+for hooks to run. That was read off the string above, not observed, and it is wrong for hooks
+in the GLOBAL config. Measured: with `C:\dev\GitHub\zevet` reported untrusted by
+`isTrusted()`, a plain `codex exec` there still fired all three hooks and published to the hub.
+The string is about *project-local* config, which is the file Codex does not read hooks from
+anyway (§2). Hook trust is the gate that matters; project trust is not one for this purpose.
+
+### Granting hook trust without a terminal
+
+`codex app-server` speaks newline-delimited JSON-RPC 2.0 on stdio:
+
+```
+-> {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{...}}}
+-> {"jsonrpc":"2.0","id":2,"method":"hooks/list","params":{"cwds":["<repo>"]}}
+<- {"result":{"data":[{"cwd":"...","hooks":[{ key, currentHash, trustStatus, command, ... }]}]}}
+```
+
+`HookMetadata` carries `key` (`"<config path>:<event>:<n>:<n>"`), `currentHash`
+(`"sha256:..."`) and `trustStatus` (`managed | untrusted | trusted | modified`). Writing
+
+```toml
+[hooks.state.'<key>']
+trusted_hash = "<currentHash>"
+```
+
+into `$CODEX_HOME/config.toml` flips that hook to `trusted`, and it then runs under a plain
+`codex exec` with no bypass flag. Verified: status went `untrusted` -> `trusted`, and the hooks
+fired and reached the live hub.
+
+The hash is **read from Codex, never computed** — `client/codex-trust.mjs` asks and records the
+answer. zevet trusts only entries whose command carries its own marker, so a hook somebody else
+added keeps its review.
 
 ## 4. Event names
 

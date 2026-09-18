@@ -49,6 +49,10 @@ for (const name of process.platform === "win32" ? ["claude.cmd"] : ["claude"]) {
 const SANDBOX = {
   ...process.env,
   PATH: `${FAKE_BIN}${path.delimiter}${process.env.PATH || ""}`,
+  // The installer otherwise spawns the real `codex app-server` on every run to
+  // read hook hashes -- a very large binary, eight times over, which pushed the
+  // suite past two minutes. The block it writes is tested directly instead.
+  ZEVET_SKIP_CODEX_TRUST: "1",
   CODEX_HOME: path.join(SANDBOX_HOME.dir, "codex"),
   ZEVET_HOME: path.join(SANDBOX_HOME.dir, "zevet"),
 };

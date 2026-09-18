@@ -31,6 +31,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { listCodexHooks, ourHooks, trustBlockFor, stripTrustBlock } from "./codex-trust.mjs";
 
 export const BLOCK_START = "# zevet:hooks:start — managed block, do not edit by hand";
 export const BLOCK_END = "# zevet:hooks:end";
@@ -164,15 +165,82 @@ export function stripBlock(text) {
   return { text: before + after, had: true };
 }
 
-/** Does a `hooks` key already exist OUTSIDE our managed block? */
+/**
+ * Does a `hooks` key already exist OUTSIDE the blocks we manage?
+ *
+ * BOTH blocks are stripped first. zevet's own trust records are written as
+ * `[hooks.state.'<key>']`, which the foreign test below matches on sight -- so
+ * with only the hooks block stripped, a second install would find zevet's own
+ * trust block, call it somebody else's hook config and refuse. It did.
+ */
 function hasForeignHooks(text) {
-  const { text: without } = stripBlock(text);
+  const { text: noHooks } = stripBlock(text);
+  const { text: without } = stripTrustBlock(noHooks);
   return /^\s*\[hooks[\].]/m.test(without) || /^\s*hooks\s*\./m.test(without) || /^\s*hooks\s*=/m.test(without);
 }
 
 /**
  * @returns {{ok: boolean, detail: string, trusted?: boolean, globalConfig?: string}}
  */
+/**
+ * Record trust for the hooks we just wrote, so they actually run.
+ *
+ * Separate from installCodex and called after it on purpose: it needs Codex to
+ * read the config that installCodex has only just written, and it spawns a
+ * process, so it is async and it is allowed to fail without failing the
+ * install. A hook that is installed but untrusted is inert, not broken -- the
+ * caller prints what to do by hand.
+ *
+ * @returns {Promise<{ok: boolean, detail: string, granted?: number}>}
+ */
+export async function grantCodexHookTrust(codexBin, repo, mark) {
+  // Asking Codex costs a process spawn of a very large binary. The suite runs
+  // the installer many times over and does not need the real answer each time;
+  // the RPC has its own coverage, and the shape of what it writes is tested
+  // directly against captured hooks/list output.
+  if (process.env.ZEVET_SKIP_CODEX_TRUST === "1") {
+    return { ok: false, detail: "skipped (ZEVET_SKIP_CODEX_TRUST=1)" };
+  }
+  if (!codexBin) return { ok: false, detail: "no codex binary to ask" };
+  const listed = await listCodexHooks(codexBin, repo);
+  if (!listed.ok) return { ok: false, detail: listed.detail };
+
+  const mine = ourHooks(listed.hooks, mark);
+  if (!mine.length) {
+    return { ok: false, detail: "Codex reported no zevet hooks — the block may not have been read" };
+  }
+
+  const file = codexGlobalConfigPath();
+  let text = "";
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (err) {
+    return { ok: false, detail: `could not read ${file} (${err.message})` };
+  }
+  const stripped = stripTrustBlock(text);
+  if (stripped.malformed) {
+    return { ok: false, detail: `${file} has a zevet trust block with no end marker — left untouched` };
+  }
+  let block;
+  try {
+    block = trustBlockFor(mine);
+  } catch (err) {
+    return { ok: false, detail: err.message };
+  }
+  const base = stripped.text.length && !stripped.text.endsWith("\n") ? `${stripped.text}\n` : stripped.text;
+  try {
+    writeFileSync(file, `${base}${base.length ? "\n" : ""}${block}`, "utf8");
+  } catch (err) {
+    return { ok: false, detail: `could not write ${file} (${err.message})` };
+  }
+  const already = mine.filter((h) => h.trustStatus === "trusted").length;
+  return {
+    ok: true,
+    granted: mine.length,
+    detail: `trusted ${mine.length} zevet hook${mine.length === 1 ? "" : "s"}${already ? ` (${already} already were)` : ""}`,
+  };
+}
+
 export function installCodex(repo, { hookPath, node, mark, remove = false }) {
   const file = codexGlobalConfigPath();
   mkdirSync(path.dirname(file), { recursive: true });

@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, copyFileS
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectAgents } from "./detect.mjs";
-import { installCodex } from "./install-codex.mjs";
+import { installCodex, grantCodexHookTrust } from "./install-codex.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.resolve(HERE, "hook.mjs");
@@ -214,12 +214,28 @@ for (const agent of targets) {
           "  have not installed into stay off the board.",
       );
     }
+    if (!remove) {
+      // Hook trust, granted from what Codex itself reports rather than guessed.
+      // Without it the hooks are inert and Codex says nothing about why.
+      const t = await grantCodexHookTrust(agent.bin, repo, MARK);
+      if (t.ok) {
+        console.log(`              ${t.detail}`);
+      } else {
+        notes.push(
+          "COULD NOT RECORD CODEX HOOK TRUST, so the hooks just installed will not run" +
+            "\n  and Codex will not tell you why -- an untrusted hook looks exactly like zevet" +
+            "\n  being broken. Reason: " + t.detail +
+            "\n  Run `codex` once in this repo and accept the hook review, then try again.",
+        );
+      }
+    }
     if (!remove && r.trusted === false) {
       notes.push(
-        "Codex will IGNORE the hooks just installed until this project is trusted, and it will\n" +
-          "  not tell you — an untrusted project looks exactly like zevet being broken. Run\n" +
-          `  \`codex\` once in ${repo} and accept the trust prompt, or add to ${r.globalConfig}:\n` +
-          `\n      [projects.'${r.trustKey || repo}']\n      trust_level = "trusted"`,
+        "Codex also gates PROJECT trust separately. Hook trust above is what makes the" +
+          "\n  hooks run, and MEASURED they run without project trust -- but repo-local" +
+          "\n  config and exec policy stay disabled until you trust the project:" +
+          "\n\n      [projects.'" + (r.trustKey || repo) + "']" +
+          "\n      trust_level = \"trusted\"",
       );
     }
   }
