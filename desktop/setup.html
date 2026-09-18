@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self'" />
+<title>Set up zevet</title>
+<style>
+  /* Self-hosted, same faces as the board. font-src 'self' in the CSP above. */
+  @font-face {
+    font-family: "Hanken Grotesk";
+    src: url("fonts/hanken-grotesk-variable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "IBM Plex Mono";
+    src: url("fonts/ibm-plex-mono-400.woff2") format("woff2");
+    font-weight: 400;
+    font-display: swap;
+  }
+
+  :root {
+    color-scheme: dark;
+    --paper: #0d0a0a;
+    --surface: #16110f;
+    --line: #33221e;
+    --grid: #1a1312;
+    --ink: #f2e6e1;
+    --muted: #8f7d78;
+    --rust: #e07a62;
+    --rust-deep: #b0523c;
+    --rust-bright: #f09c86;
+    --fill: #2e1611;
+    --danger: #ef6a52;
+    --ok: #74bd94;
+    --font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background-color: var(--paper);
+    background-image: radial-gradient(var(--grid) 1px, transparent 1px);
+    background-size: 22px 22px;
+    color: var(--ink);
+    font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
+    letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+    padding: 34px 30px 26px;
+  }
+  h1 { font-size: 23px; font-weight: 500; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .lede { color: var(--muted); margin: 0 0 26px; max-width: 46ch; }
+  label { display: block; margin: 0 0 16px; }
+  .lbl { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  input {
+    width: 100%; padding: 9px 11px;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 4px;
+    font: inherit; font-size: 13px;
+  }
+  input:focus { outline: 2px solid var(--rust); outline-offset: 1px; border-color: transparent; }
+  input.mono { font-family: var(--font-mono); font-size: 12px; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 5px; }
+
+  .row { display: flex; gap: 9px; align-items: center; margin-top: 22px; }
+  button {
+    font: inherit; font-size: 13px; padding: 9px 15px; border-radius: 4px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+    cursor: pointer; transition: opacity 140ms;
+  }
+  button:hover:not(:disabled) { border-color: var(--rust-deep); }
+  button.primary { background: var(--rust-deep); border-color: var(--rust-deep); color: #fff; }
+  button.primary:hover:not(:disabled) { background: var(--rust); border-color: var(--rust); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .note { margin-top: 20px; padding: 11px 13px; border-left: 3px solid var(--line); background: var(--surface); font-size: 12px; color: var(--muted); border-radius: 0 4px 4px 0; }
+  .note.bad { border-left-color: var(--danger); color: var(--ink); }
+  .note.good { border-left-color: var(--ok); color: var(--ink); }
+  .note.warn { border-left-color: #d9a430; }
+  .note b { color: var(--ink); font-weight: 500; }
+  .note code { font-family: var(--font-mono); font-size: 11px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <h1>Set up zevet</h1>
+  <p class="lede">Three things nobody can guess. Whoever runs the hub has the first two.</p>
+
+  <label>
+    <span class="lbl">Hub address</span>
+    <input id="hub" class="mono" placeholder="https://zevet.example.com" autocomplete="off" spellcheck="false" />
+    <span class="hint">The address you were sent. Include https:// or http://</span>
+  </label>
+
+  <label>
+    <span class="lbl">Shared token</span>
+    <input id="token" class="mono" type="password" placeholder="the long random string" autocomplete="off" spellcheck="false" />
+  </label>
+
+  <label>
+    <span class="lbl">Your name on the board</span>
+    <input id="actor" placeholder="kai" autocomplete="off" spellcheck="false" />
+    <span class="hint">Short and lower case reads best in the lanes.</span>
+  </label>
+
+  <div class="row">
+    <button id="check">Check the connection</button>
+    <button id="finish" class="primary" disabled>Open the board</button>
+  </div>
+
+  <div id="msg" class="note" hidden></div>
+
+  <div id="repoStep" class="note" hidden>
+    <b>One more thing.</b> Pick the repo you'll be working in, and zevet will
+    wire its hooks into that folder's <code>.claude/settings.json</code>.
+    You can do this later from the menu.
+    <div class="row">
+      <button id="pick">Choose a folder…</button>
+    </div>
+    <div id="repoMsg" hidden style="margin-top:9px"></div>
+  </div>
+
+<script>
+  var $ = function (id) { return document.getElementById(id); };
+  var verified = false;
+
+  function say(kind, html) {
+    var m = $("msg");
+    m.hidden = false;
+    m.className = "note " + kind;
+    m.innerHTML = html;
+  }
+
+  // Prefill when re-opened from the menu to change the hub.
+  var q = new URLSearchParams(location.search);
+  if (q.get("hub")) $("hub").value = q.get("hub");
+  if (q.get("actor")) $("actor").value = q.get("actor");
+  window.zevet.config().then(function (c) {
+    if (!c) return;
+    if (!$("hub").value) $("hub").value = c.hub || "";
+    if (!$("actor").value) $("actor").value = c.actor || "";
+  });
+
+  function invalid() {
+    if (!$("hub").value.trim()) return "The hub address is required.";
+    if (!$("token").value) return "The token is required.";
+    if (!$("actor").value.trim()) return "Pick a name for the board.";
+    if (!/^https?:\/\//i.test($("hub").value.trim())) return "The hub address needs to start with http:// or https://";
+    return null;
+  }
+
+  $("check").addEventListener("click", async function () {
+    var bad = invalid();
+    if (bad) { say("bad", bad); return; }
+    $("check").disabled = true;
+    say("", "Asking the hub…");
+    var hub = $("hub").value.trim();
+    var res = await window.zevet.test(hub, $("token").value);
+    $("check").disabled = false;
+    if (!res.ok) { verified = false; $("finish").disabled = true; say("bad", res.why); return; }
+
+    verified = true;
+    $("finish").disabled = false;
+    var warn = "";
+    if (/^http:\/\//i.test(hub) && !/^http:\/\/(127\.0\.0\.1|localhost)/i.test(hub)) {
+      warn =
+        "<br><br><b>This hub is plain HTTP.</b> The token and everything zevet " +
+        "reports travel unencrypted, and anyone who can alter traffic on the way " +
+        "can replace the client code on this machine. Fine on a trusted network; " +
+        "not fine on café wifi.";
+    }
+    say(warn ? "warn" : "good", "Connected. The hub is running zevet " + (res.version || "?") + "." + warn);
+    await window.zevet.save(hub, $("token").value, $("actor").value.trim());
+    $("repoStep").hidden = false;
+  });
+
+  $("pick").addEventListener("click", async function () {
+    var repo = await window.zevet.pickRepo();
+    if (!repo) return;
+    var out = $("repoMsg");
+    out.hidden = false;
+    out.textContent = "Wiring up " + repo + "…";
+    var r = await window.zevet.install(repo);
+    out.textContent = r.ok ? "Wired up. " + repo : "Could not wire that up: " + r.detail;
+  });
+
+  $("finish").addEventListener("click", function () {
+    if (!verified) return;
+    window.zevet.done();
+  });
+
+  ["hub", "token", "actor"].forEach(function (id) {
+    $(id).addEventListener("input", function () {
+      verified = false;
+      $("finish").disabled = true;
+    });
+  });
+</script>
+</body>
+</html>

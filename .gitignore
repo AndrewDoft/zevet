@@ -4,3 +4,6 @@ node_modules/
 *.log
 data/
 .DS_Store
+desktop/node_modules/
+desktop/out/
+desktop/build/icon.png

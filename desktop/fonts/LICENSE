@@ -1,0 +1,12 @@
+The three faces in this directory are used under the SIL Open Font License 1.1,
+which permits bundling and redistribution:
+
+  hanken-grotesk-variable.woff2   Hanken Grotesk      (c) Hanken Design Co.
+  frank-ruhl-libre-variable.woff2 Frank Ruhl Libre    (c) Yanek Iontef et al.
+  ibm-plex-mono-400.woff2         IBM Plex Mono       (c) IBM Corp.
+
+Full licence text: https://openfontlicense.org/
+
+They are self-hosted rather than loaded from a CDN on purpose. A monitoring
+board that blanks its own labels because fonts.googleapis.com is slow, blocked
+or offline has stopped doing the one thing it is for.

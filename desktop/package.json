@@ -4,14 +4,43 @@
   "private": true,
   "description": "zevet — watch your team's coding agents",
   "main": "main.js",
+  "author": "Andrew Doft",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --publish never",
-    "dist:win": "electron-builder --win --publish never",
-    "dist:mac": "electron-builder --mac --publish never"
+    "icon": "node make-icon.mjs",
+    "dist": "node make-icon.mjs && electron-builder --publish never",
+    "dist:win": "node make-icon.mjs && electron-builder --win --publish never",
+    "dist:mac": "node make-icon.mjs && electron-builder --mac --publish never"
   },
   "devDependencies": {
     "electron": "38.1.2",
     "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.andrewdoft.zevet",
+    "productName": "zevet",
+    "copyright": "Copyright © 2026 Andrew Doft",
+    "directories": { "output": "out", "buildResources": "build" },
+    "files": ["main.js", "preload.js", "setup.html", "fonts/**", "build/icon.png", "!out/**", "!make-icon.mjs"],
+    "extraResources": [{ "from": "../client", "to": "client", "filter": ["*.mjs"] }],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "zevet-${version}-windows-x64-setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["arm64"] }],
+      "category": "public.app-category.developer-tools",
+      "artifactName": "zevet-${version}-macos-arm64.${ext}"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Development"
+    }
   }
 }

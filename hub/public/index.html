@@ -181,7 +181,7 @@
   @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
 
   .axis {
-    display: flex; justify-content: space-between;
+    position: relative; height: 16px;
     padding: 7px 18px 9px;
     /* The lane's first column (132px) PLUS its grid gap (16px). Omitting the
        gap left every label 16px to the left of the track it measures. */
@@ -414,13 +414,30 @@
       host.appendChild(lane);
     });
 
+    // Round gridlines, positioned where they actually fall. Dividing the window
+    // into four always gave labels like "-2.3m / -1.5m / -0.8m", which are
+    // arithmetic rather than a scale anyone reads.
     var axis = $("axis");
     axis.textContent = "";
-    for (var step = 4; step >= 0; step--) {
-      var mins = (WINDOW_MIN * step) / 4;
-      var label = step === 0 ? "now" : "-" + (Number.isInteger(mins) ? mins : mins.toFixed(1)) + "m";
-      axis.appendChild(text(el("span"), label));
+    var STEPS = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60];
+    var stepMin = STEPS[STEPS.length - 1];
+    for (var i = 0; i < STEPS.length; i++) {
+      if (WINDOW_MIN / STEPS[i] <= 6) { stepMin = STEPS[i]; break; }
     }
+    for (var at = Math.floor(WINDOW_MIN / stepMin) * stepMin; at > 0; at -= stepMin) {
+      var mark = el("span");
+      mark.style.position = "absolute";
+      // Right-anchored: "now" is the right edge, older is further left.
+      mark.style.right = ((at / WINDOW_MIN) * 100).toFixed(3) + "%";
+      mark.style.transform = "translateX(50%)";
+      text(mark, "-" + (at < 1 ? Math.round(at * 60) + "s" : at + "m"));
+      axis.appendChild(mark);
+    }
+    var nowMark = el("span");
+    nowMark.style.position = "absolute";
+    nowMark.style.right = "0";
+    text(nowMark, "now");
+    axis.appendChild(nowMark);
   }
 
   function renderCollisions(now) {
