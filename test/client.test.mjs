@@ -6,7 +6,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, chmodSync } from "node:fs";
 import path from "node:path";
 import { startHub, runScript, state, tempDir, TOKEN, ROOT } from "./helpers.mjs";
 
@@ -21,8 +21,34 @@ import { startHub, runScript, state, tempDir, TOKEN, ROOT } from "./helpers.mjs"
  * nothing else.
  */
 const SANDBOX_HOME = tempDir("zevet-testhome-");
+
+/**
+ * A stub `claude` on PATH, so the installer has something to wire.
+ *
+ * CI runners have no coding agent installed, so `install.mjs` correctly refused
+ * with "found no agent to wire up here" and every installer test died on a
+ * non-zero exit. That was invisible for this repo's whole life because the
+ * suite had never actually run on CI -- it only ever ran on a laptop where both
+ * agents happen to exist.
+ *
+ * Skipping these when no agent is present was the other option and it is worse:
+ * the installer is the component most likely to break per-platform, and a
+ * suite that quietly stops testing it on the only two platforms that matter is
+ * not coverage (CLAUDE.md 9.9). detect.mjs identifies an agent by finding a
+ * FILE of that name on PATH, so a file is all this needs to be.
+ */
+const FAKE_BIN = path.join(SANDBOX_HOME.dir, "bin");
+mkdirSync(FAKE_BIN, { recursive: true });
+for (const name of process.platform === "win32" ? ["claude.cmd"] : ["claude"]) {
+  const f = path.join(FAKE_BIN, name);
+  const body = process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\nexit 0\n";
+  writeFileSync(f, body);
+  if (process.platform !== "win32") chmodSync(f, 0o755);
+}
+
 const SANDBOX = {
   ...process.env,
+  PATH: `${FAKE_BIN}${path.delimiter}${process.env.PATH || ""}`,
   CODEX_HOME: path.join(SANDBOX_HOME.dir, "codex"),
   ZEVET_HOME: path.join(SANDBOX_HOME.dir, "zevet"),
 };

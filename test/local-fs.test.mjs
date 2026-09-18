@@ -275,7 +275,6 @@ describe("readTextFile", () => {
 
       const escapes = [
         "../outside/secret.txt", // resolves to a file that really exists
-        "..\\outside\\secret.txt", // the Windows spelling of the same attack
         "../../etc/passwd",
         "..",
         "a/../../outside/secret.txt", // only survives after `..` collapse
@@ -284,13 +283,34 @@ describe("readTextFile", () => {
         "\\\\server\\share\\file.txt", // UNC: path.resolve treats this as a root
         path.join(t.dir, "outside", "secret.txt"), // an absolute path, this platform
       ];
-      if (WIN) escapes.push("C:\\Windows\\win.ini", "C:/Windows/win.ini", "C:win.ini");
+      // The Windows spelling of the traversal is only a traversal ON Windows.
+      // On POSIX a backslash is an ordinary character in a filename, so
+      // "..\\outside\\secret.txt" is one odd-looking name INSIDE the workspace
+      // and refusing it as an escape would be wrong. It gets its own assertion
+      // below, because what matters either way is that it never reads the secret.
+      if (WIN) {
+        escapes.push(
+          "..\\outside\\secret.txt",
+          "C:\\Windows\\win.ini",
+          "C:/Windows/win.ini",
+          "C:win.ini",
+        );
+      }
 
       for (const bad of escapes) {
         const r = readTextFile(ws, bad);
         assert.equal(r.ok, false, `ACCEPTED ${JSON.stringify(bad)}`);
         assert.equal(r.error, "outside the workspace", `wrong refusal for ${JSON.stringify(bad)}`);
         assert.equal(r.text, undefined);
+      }
+
+      if (!WIN) {
+        // Refused, and above all NOT the secret: on POSIX this is simply a file
+        // that is not there. The security property is identical; only the
+        // reason differs, so the reason is what is asserted per platform.
+        const r = readTextFile(ws, "..\\outside\\secret.txt");
+        assert.equal(r.ok, false, "a backslash name was accepted on POSIX");
+        assert.notEqual(r.text, "THE SECRET", "the backslash spelling escaped the workspace on POSIX");
       }
 
       // The control: the guard refuses escapes, not everything.
