@@ -1,0 +1,32 @@
+Copyright (c) 2026 Andrew Doft. All rights reserved.
+
+PROPRIETARY — NO LICENSE GRANTED
+
+This source code is published publicly for one reason only: so that continuous
+integration can build the macOS and Windows applications distributed to a small
+private group. Public visibility is not an offer of any rights.
+
+NO permission is granted to any person to use, copy, modify, merge, publish,
+distribute, sublicense, sell, or create derivative works of this software or any
+portion of it, in source or binary form, for any purpose, commercial or
+non-commercial.
+
+Permission to RUN the compiled application is granted only to individuals who
+received a build directly from the copyright holder, for their own use, and is
+revocable at any time.
+
+THE ONLY EXCEPTION is what GitHub's Terms of Service compel as a condition of
+hosting a public repository: under those Terms, other GitHub users may view and
+fork this repository through GitHub. That is a permission granted to GitHub and
+its users by GitHub's Terms, not by this license, and it extends no further —
+forking on GitHub confers no right to use, run, modify, redistribute, or
+relicense this software anywhere. No other right is waived.
+
+Contributions are not solicited and will not be accepted.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
