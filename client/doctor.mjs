@@ -97,8 +97,16 @@ function redact(text, token) {
 /** "fetch failed" tells nobody anything; the cause's errno is the actual finding. */
 function why(err, token) {
   if (err && err.name === "AbortError") return `no answer in ${TIMEOUT_MS}ms`;
-  const code = err && err.cause && err.cause.code;
-  return redact(code || (err && err.message) || "unknown error", token);
+  const cause = err && err.cause;
+  // MEASURED on node v24.17: a refused connection puts the errno on `cause.code`
+  // (an AggregateError, when the host has both an A and an AAAA record, carries
+  // the same code and an EMPTY message -- so code must be tried first). But a
+  // URL fetch() declines to dial at all, such as a port on the WHATWG bad-port
+  // list, arrives as `cause.message` "bad port" with NO code, and falling
+  // straight through to err.message printed "fetch failed", which names nothing
+  // the reader can act on. Both are the finding; neither is the wrapper.
+  const detail = (cause && (cause.code || cause.message)) || (err && err.message);
+  return redact(detail || "unknown error", token);
 }
 
 async function get(url, headers) {
