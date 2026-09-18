@@ -68,6 +68,64 @@ jobs:
         # icon went missing from every build without a single failure.
         run: npm run ${{ matrix.script }}
 
+      # The only real Mac this project has access to.
+      #
+      # Until now "the macOS build works" meant "electron-builder produced a
+      # file": nobody had ever opened it, and the honest position in
+      # INSUFFICIENCIES.md was that a valid disk image is all anyone could
+      # claim. A macOS runner IS a Mac, so the claim can be tested instead of
+      # deferred to whoever downloads it first.
+      #
+      # What this proves and what it does not: it mounts the image, inspects
+      # the bundle, and LAUNCHES the app, requiring it to still be alive after
+      # a few seconds. It does not prove the UI is usable or that Gatekeeper
+      # behaves the same on a machine that downloaded the file from a browser
+      # (the runner's copy has no com.apple.quarantine attribute, because it
+      # was built here rather than downloaded). Both are stated in the output
+      # rather than implied.
+      - name: Smoke the macOS app on a real Mac
+        if: runner.os == 'macOS'
+        run: |
+          set -o pipefail
+          DMG=$(ls desktop/out/*.dmg)
+          echo "== image: $DMG ($(stat -f%z "$DMG") bytes)"
+
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint /tmp/zevetdmg
+          APP=$(ls -d /tmp/zevetdmg/*.app)
+          echo "== bundle: $APP"
+
+          BIN="$APP/Contents/MacOS/zevet"
+          test -x "$BIN" || { echo "no executable at $BIN"; exit 1; }
+          echo "== arch:"; lipo -archs "$BIN" || file "$BIN"
+
+          echo "== signature (expected: adhoc or absent — this build is unsigned):"
+          codesign -dv --verbose=2 "$APP" 2>&1 | sed 's/^/   /' || true
+          echo "== gatekeeper verdict (expected: rejected, unsigned):"
+          spctl --assess --type execute --verbose "$APP" 2>&1 | sed 's/^/   /' || true
+
+          # Copy out: the mounted image is read-only, and Electron writes into
+          # its own userData on first run.
+          cp -R "$APP" /tmp/zevet.app
+          hdiutil detach /tmp/zevetdmg
+
+          echo "== ELECTRON_RUN_AS_NODE: does the bundled runtime execute at all?"
+          ELECTRON_RUN_AS_NODE=1 "/tmp/zevet.app/Contents/MacOS/zevet" -e 'console.log("node inside the bundle:", process.version)'
+
+          echo "== launching the app for real"
+          "/tmp/zevet.app/Contents/MacOS/zevet" --no-sandbox > /tmp/zevet-launch.log 2>&1 &
+          PID=$!
+          sleep 12
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "   STILL RUNNING after 12s (pid $PID) — it launches"
+            kill "$PID" 2>/dev/null || true
+          else
+            wait "$PID"; CODE=$?
+            echo "   EXITED with code $CODE — it did not stay up"
+            echo "   ---- log ----"; sed 's/^/   /' /tmp/zevet-launch.log
+            exit 1
+          fi
+          echo "   ---- log ----"; sed 's/^/   /' /tmp/zevet-launch.log || true
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
