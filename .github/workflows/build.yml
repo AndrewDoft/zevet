@@ -20,10 +20,10 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            target: --win
+            script: dist:win
             artifact: zevet-windows
           - os: macos-latest
-            target: --mac
+            script: dist:mac
             artifact: zevet-macos
     runs-on: ${{ matrix.os }}
     steps:
@@ -32,6 +32,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      # build/icon.png is generated, not committed, and it must exist BEFORE the
+      # suite runs because the packaging test reads its pixels.
+      #
+      # This step also fixes a silent defect: the Build step below called
+      # `npx electron-builder` directly, which skips the `dist` npm script that
+      # generates the icon -- so every build produced before 2026-09-18 shipped
+      # with Electron's DEFAULT icon and nothing failed. Build now goes through
+      # the npm script, and this step keeps the test honest.
+      - name: Generate icon
+        working-directory: desktop
+        run: node make-icon.mjs
 
       # The hub and the client have no dependencies, so this is the whole suite.
       # It runs on both runners on purpose: the bugs this project keeps finding
@@ -51,7 +63,10 @@ jobs:
         # this to.
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npx electron-builder ${{ matrix.target }} --publish never
+        # Via the npm script, NOT `npx electron-builder`: the script regenerates
+        # the icon first, and calling the binary directly is exactly how the
+        # icon went missing from every build without a single failure.
+        run: npm run ${{ matrix.script }}
 
       - uses: actions/upload-artifact@v4
         with:

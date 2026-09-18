@@ -27,6 +27,25 @@ const os = require("node:os");
 
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
 const CONFIG = path.join(HOME, "config.json");
+
+/**
+ * The Windows application identity. MUST match `build.appId` in package.json.
+ *
+ * Without it, Windows treats the running window and the installed shortcut as
+ * two different applications: the taskbar shows a second, generic entry while
+ * the app runs, "Pin to taskbar" pins something that does not launch it back,
+ * and the Start Menu entry never links up with the live window. Electron
+ * defaults the model ID to the ELECTRON executable on Windows, which is why an
+ * unset one looks like a packaging fault rather than a missing line.
+ *
+ * Harmless on macOS and Linux, where the call is a no-op.
+ */
+const APP_ID = "com.andrewdoft.zevet";
+app.setAppUserModelId(APP_ID);
+
+/** The icon, for the dev run and for Linux; a packaged .exe carries its own. */
+const ICON = path.join(__dirname, "build", "icon.png");
+const iconOption = fs.existsSync(ICON) ? { icon: ICON } : {};
 const CLIENT_DIR = path.join(HOME, "client");
 // The eggshell the board is painted on. Used as the window background so there
 // is no white — or, as it was until now, near-black — flash before first paint.
@@ -78,6 +97,7 @@ function openBoard(cfg) {
     minHeight: 420,
     backgroundColor: PAPER, // no white flash before the page paints
     title: "zevet",
+    ...iconOption,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     autoHideMenuBar: true,
     webPreferences: {
@@ -163,6 +183,7 @@ function openSetup(existing) {
     resizable: false,
     backgroundColor: PAPER,
     title: "Set up zevet",
+    ...iconOption,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
