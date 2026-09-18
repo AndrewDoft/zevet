@@ -142,6 +142,31 @@ async function get(url, headers) {
   }
 }
 
+/**
+ * What state Codex's hooks are actually in, read from the config rather than
+ * assumed.
+ *
+ * Two separate things have to be true and BOTH fail silently: the hooks block
+ * must be in the GLOBAL config (a repo-local one never fires) and the trust
+ * records must be there too (an untrusted hook is skipped without a word). This
+ * is a file check, not an RPC -- the doctor must not spawn a 300MB binary -- so
+ * it reports what is written, which is the thing that goes missing.
+ */
+function codexHookState() {
+  const file = path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml");
+  let text;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (err) {
+    return `; could not read ${file} (${err.code || err.message})`;
+  }
+  const wired = text.includes("# zevet:hooks:start");
+  const trusted = text.includes("# zevet:trust:start");
+  if (!wired) return "; hooks NOT installed — run `node client/install.mjs <repo>`";
+  if (!trusted) return "; hooks installed but NOT trusted, so Codex will skip them silently — re-run the installer";
+  return "; hooks installed and trusted";
+}
+
 // ---- check 1: config -------------------------------------------------------
 
 /**
@@ -306,7 +331,7 @@ function checkAgents() {
     else if (!a.signedIn) detail = `installed (${a.foundVia}), but no account file found`;
     else detail = `installed (${a.foundVia}), signed in`;
     if (a.installed && a.hooks === "unverified") detail += "; hooks install but have never been seen to fire";
-    if (a.installed && a.id === "codex") detail += "; hooks need one-time trust (run `codex` once here)";
+    if (a.installed && a.id === "codex") detail += codexHookState();
     // [ok] means zevet can watch it. Installed-but-unwatchable is reported as
     // [--] because from the board's point of view it is the same as absent.
     report(Boolean(a.installed && a.wireable), a.label.toLowerCase().replace(/\s+/g, "-"), detail);
