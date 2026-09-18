@@ -1,0 +1,14 @@
+{
+  "name": "zevet",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "description": "Watch your team's AI coding agents work, live, in one place.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "hub": "node hub/server.mjs",
+    "install-hooks": "node client/install.mjs"
+  }
+}

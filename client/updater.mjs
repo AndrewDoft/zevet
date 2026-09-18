@@ -1,0 +1,181 @@
+// Keeps this machine's zevet client in step with the hub, quietly.
+//
+// WHY THE HUB IS THE UPDATE SERVER: everyone who can use zevet at all can
+// already reach the hub and already holds the shared token. Publishing builds
+// somewhere else would mean a second place to authenticate, a second thing to
+// keep online, and a public artifact of a private product. The update channel
+// is exactly as available as the product.
+//
+// WHAT THIS DELIBERATELY DOES NOT DO, having watched Amoeba get it wrong:
+//
+//   - It never decides "newer" from an HTTP status code. Amoeba's updater
+//     asked its feed for 204-means-current; its feed is a static file that
+//     answers 200 forever, so it re-downloaded the same build every five
+//     minutes for as long as the app was open. Here the manifest states a
+//     version and a sha256 per file, and "different sha256" is the whole test.
+//   - It never runs in the path of anybody's turn. The hook spawns this
+//     detached and forgets it; nothing waits on the result.
+//   - It never replaces a file it has not verified.
+import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import path from "node:path";
+import os from "node:os";
+
+const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const CLIENT_DIR = path.join(HOME, "client");
+const MANIFEST = path.join(HOME, "manifest.json");
+const STAMP = path.join(HOME, "last-check");
+const LOCK = path.join(HOME, "update.lock");
+const LOCK_STALE_MS = 5 * 60 * 1000;
+
+function log(msg) {
+  try {
+    process.stderr.write(`[zevet-update] ${msg}\n`);
+  } catch {
+    // A logger that throws would be the only thing here able to fail loudly.
+  }
+}
+
+function readConfig() {
+  try {
+    return JSON.parse(readFileSync(path.join(HOME, "config.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function sha256(buf) {
+  return createHash("sha256").update(buf).digest("hex");
+}
+
+function localManifest() {
+  try {
+    return JSON.parse(readFileSync(MANIFEST, "utf8"));
+  } catch {
+    return { version: "0.0.0", files: [] };
+  }
+}
+
+/** One updater at a time, and never wedged by a crashed one. */
+function takeLock() {
+  try {
+    if (existsSync(LOCK)) {
+      const age = Date.now() - Number(readFileSync(LOCK, "utf8").trim() || 0);
+      if (age < LOCK_STALE_MS) return false;
+      log(`clearing a stale lock (${Math.round(age / 1000)}s old)`);
+    }
+    mkdirSync(HOME, { recursive: true });
+    writeFileSync(LOCK, String(Date.now()), "utf8");
+    return true;
+  } catch (err) {
+    log(`could not take the lock: ${err.message}`);
+    return false;
+  }
+}
+
+function releaseLock() {
+  try {
+    rmSync(LOCK, { force: true });
+  } catch {
+    // Next run clears it as stale.
+  }
+}
+
+async function main() {
+  const cfg = readConfig();
+  const hub = (process.env.ZEVET_HUB || cfg.hub || "").replace(/\/+$/, "");
+  const token = process.env.ZEVET_TOKEN || cfg.token || "";
+  if (!hub || !token) {
+    log("no hub or token configured — nothing to check against");
+    return;
+  }
+  if (!takeLock()) return;
+
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 10000);
+    let remote;
+    try {
+      const res = await fetch(`${hub}/dist/manifest.json`, {
+        headers: { "x-zevet-token": token },
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        log(`hub answered ${res.status} for the manifest — staying on the current build`);
+        return;
+      }
+      remote = await res.json();
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const local = localManifest();
+    const localByName = new Map((local.files || []).map((f) => [f.name, f.sha256]));
+    const stale = (remote.files || []).filter((f) => localByName.get(f.name) !== f.sha256);
+
+    if (stale.length === 0) {
+      writeFileSync(STAMP, String(Date.now()), "utf8");
+      return; // current. say nothing; this runs constantly.
+    }
+
+    log(`updating ${local.version} -> ${remote.version} (${stale.length} file(s))`);
+    mkdirSync(CLIENT_DIR, { recursive: true });
+
+    // Download and VERIFY everything before moving anything into place, so a
+    // half-finished update cannot leave a mixed set of files behind.
+    const staged = [];
+    for (const f of stale) {
+      const res = await fetch(`${hub}/dist/${encodeURIComponent(f.name)}`, {
+        headers: { "x-zevet-token": token },
+      });
+      if (!res.ok) {
+        log(`could not fetch ${f.name} (${res.status}) — update abandoned, current build kept`);
+        return;
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      const got = sha256(buf);
+      if (got !== f.sha256) {
+        log(`${f.name} failed its checksum (wanted ${f.sha256.slice(0, 12)}, got ${got.slice(0, 12)}) — update abandoned`);
+        return;
+      }
+      const tmp = path.join(CLIENT_DIR, `.${f.name}.incoming`);
+      writeFileSync(tmp, buf);
+      staged.push({ tmp, dest: path.join(CLIENT_DIR, f.name), name: f.name });
+    }
+
+    for (const s of staged) {
+      try {
+        renameSync(s.tmp, s.dest);
+      } catch (err) {
+        // Windows can refuse a rename over a file another process has open.
+        // Leave the staged copy; the next run retries rather than pretending.
+        log(`could not replace ${s.name} (${err.code}) — will retry next time`);
+        return;
+      }
+    }
+
+    writeFileSync(MANIFEST, JSON.stringify(remote, null, 2), "utf8");
+    writeFileSync(STAMP, String(Date.now()), "utf8");
+    log(`now on ${remote.version}`);
+  } catch (err) {
+    log(`check failed (${err.name === "AbortError" ? "hub did not answer in 10s" : err.message}) — current build kept`);
+  } finally {
+    releaseLock();
+  }
+}
+
+// A safety net, not the normal exit. `process.exit(0)` in a finally() here
+// raced undici's socket teardown and tripped a libuv assertion on Windows
+// ("!(handle->flags & UV_HANDLE_CLOSING)") AFTER the update had been written —
+// so the work was done and the process still died loudly. Letting the event
+// loop drain is the correct exit; this unref'd timer only fires if something
+// is genuinely stuck, and cannot hold the process open by itself.
+setTimeout(() => {
+  log("still running after 60s — giving up");
+  process.exit(0);
+}, 60000).unref();
+
+main().catch((err) => {
+  log(`updater bug, ignored: ${err && err.message}`);
+  process.exitCode = 0;
+});
