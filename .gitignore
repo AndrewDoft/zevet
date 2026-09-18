@@ -7,3 +7,8 @@ data/
 desktop/node_modules/
 desktop/out/
 desktop/build/icon.png
+
+# Local install artifacts: install.mjs writes these into whatever repo you wire,
+# including this one. They carry absolute paths from one machine.
+.claude/settings.json
+*.bak.*
