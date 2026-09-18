@@ -71,11 +71,34 @@ function safeUrl(raw) {
   }
 }
 
+/**
+ * Anything that could carry a secret, with the secret taken out.
+ *
+ * FOUND BY THIS FILE'S OWN TEST, which is the best possible way to find it.
+ * A hub URL may legally carry credentials (`http://user:token@host`), and when
+ * it does, Node's own error text quotes the whole URL back:
+ *
+ *   Request cannot be constructed from a URL that includes credentials:
+ *   http://someone:zzsecret-token-...@127.0.0.1:1/healthz
+ *
+ * A doctor exists to be pasted into a chat window when something is wrong.
+ * Printing a live credential there is worse than any problem it was run to
+ * diagnose. The token is also redacted wherever it appears verbatim, because
+ * an error message is not the only thing that can quote it back.
+ */
+function redact(text, token) {
+  let out = String(text == null ? "" : text);
+  // userinfo in any URL, whatever the scheme.
+  out = out.replace(new RegExp("([a-z][a-z0-9+.-]*://)[^/\\s@]*@", "gi"), "$1[redacted]@");
+  if (token && token.length >= 8) out = out.split(token).join("[redacted]");
+  return out;
+}
+
 /** "fetch failed" tells nobody anything; the cause's errno is the actual finding. */
-function why(err) {
+function why(err, token) {
   if (err && err.name === "AbortError") return `no answer in ${TIMEOUT_MS}ms`;
   const code = err && err.cause && err.cause.code;
-  return code || (err && err.message) || "unknown error";
+  return redact(code || (err && err.message) || "unknown error", token);
 }
 
 async function get(url, headers) {
@@ -187,7 +210,7 @@ async function checkHub(settings) {
     report(false, "hub", `${base} answered ${res.status} on /healthz — is that really a zevet hub?`);
     return false;
   } catch (err) {
-    report(false, "hub", `${base} unreachable (${why(err)}) — is the hub running, and is this the right address?`);
+    report(false, "hub", `${redact(base, settings.token)} unreachable (${why(err, settings.token)}) — is the hub running, and is this the right address?`);
     return false;
   }
 }
@@ -213,7 +236,7 @@ async function checkToken(settings, hubUp) {
       report(false, "token", `the hub answered ${res.status} on /api/state`);
     }
   } catch (err) {
-    report(false, "token", `could not ask the hub (${why(err)})`);
+    report(false, "token", `could not ask the hub (${why(err, settings.token)})`);
   }
 }
 
@@ -311,6 +334,6 @@ setTimeout(() => {
 main().catch((err) => {
   // Including our own bugs: a doctor that crashes has diagnosed nothing and
   // told you less than it knew.
-  console.log(`  [--] doctor       crashed before finishing: ${err && err.message}`);
+  console.log(`  [--] doctor       crashed before finishing: ${redact(err && err.message, process.env.ZEVET_TOKEN)}`);
   process.exitCode = 0;
 });

@@ -265,7 +265,9 @@
 
   .console { border-bottom: 1px solid var(--line); padding: 12px 16px 14px; background: #fff7; }
   .console-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; }
+  .console-head .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
   .console-head .nm { font-size: 13px; letter-spacing: 0.02em; }
+  .console { border-left: 2px solid var(--who); }
   .console-head .where { font-size: 11px; color: var(--faint); }
   .console-stop {
     margin-left: auto; font-size: 11.5px; color: var(--muted);
@@ -445,7 +447,14 @@
   var localFile = null;      // { path, text, truncated } for the viewer
   var localError = null;
   var localAgents = [];          // which CLIs this machine has
-  var myConsole = null;          // { id, agent, lines: [], running, error }
+  /**
+   * Consoles started from THIS machine — plural, deliberately.
+   *
+   * It held one. Watching several agents work at once is the entire point of
+   * the product, and a surface that can only show your own one agent while
+   * showing three of everyone else's was telling on itself.
+   */
+  var myConsoles = [];
   var launchModel = "";          // blank means "whatever the CLI defaults to"
   var launchMode = "auto";
 
@@ -736,48 +745,71 @@
     });
   }
 
+  var consoleSeq = 0;
+
   function startAgent(name) {
     if (!LOCAL || !localRoot) return;
-    myConsole = { id: null, agent: name, lines: [], running: true, error: null, mode: launchMode, model: launchModel };
+    var c = {
+      key: ++consoleSeq,
+      id: null,
+      agent: name,
+      lines: [],
+      running: true,
+      error: null,
+      mode: launchMode,
+      model: launchModel,
+      root: localRoot,
+      hue: myConsoles.length % 5,
+    };
+    myConsoles.push(c);
     render();
     window.zevetLocal.startAgent(name, localRoot, { model: launchModel, mode: launchMode }).then(function (r) {
       if (!r || !r.ok) {
-        myConsole = { id: null, agent: name, lines: [], running: false, error: (r && r.error) || "could not start" };
+        c.running = false;
+        c.error = (r && r.error) || "could not start";
       } else {
-        myConsole.id = r.id;
+        c.id = r.id;
       }
       render();
     });
   }
 
-  function pushConsoleLine(kind, text) {
-    if (!myConsole) return;
-    myConsole.lines.push({ kind: kind, text: String(text) });
+  function consoleById(id) {
+    // A console that has not been told its id yet is the one that just started,
+    // so unclaimed events belong to it. Without this the first few lines of
+    // every run vanish into a console nobody can find.
+    return myConsoles.find(function (c) { return c.id === id; }) || myConsoles.find(function (c) { return c.id === null; });
+  }
+
+  function pushConsoleLine(c, kind, text) {
+    if (!c) return;
+    c.lines.push({ kind: kind, text: String(text) });
     // A console that grows without bound is a memory leak with a scrollbar.
-    if (myConsole.lines.length > 400) myConsole.lines.splice(0, myConsole.lines.length - 400);
+    if (c.lines.length > 400) c.lines.splice(0, c.lines.length - 400);
   }
 
   if (LOCAL) {
     window.zevetLocal.onAgentEvent(function (evt) {
-      if (!myConsole || (myConsole.id && evt.id && evt.id !== myConsole.id)) return;
+      var c = consoleById(evt.id);
+      if (!c) return;
       if (evt.type === "exit") {
-        myConsole.running = false;
-        pushConsoleLine("meta", "agent exited (" + (evt.code === null ? "signal " + evt.signal : "code " + evt.code) + ")");
+        c.running = false;
+        pushConsoleLine(c, "meta", "agent exited (" + (evt.code === null ? "signal " + evt.signal : "code " + evt.code) + ")");
       } else if (evt.type === "stderr") {
-        pushConsoleLine("err", evt.text || "");
+        pushConsoleLine(c, "err", evt.text || "");
       } else if (evt.type === "agent") {
         // Claude's stream-json. Show the parts a person reads, not the envelope.
         var p = evt.payload || {};
         if (p.type === "assistant" && p.message && Array.isArray(p.message.content)) {
-          p.message.content.forEach(function (c) {
-            if (c.type === "text" && c.text) pushConsoleLine("out", c.text);
-            if (c.type === "tool_use") pushConsoleLine("tool", c.name + "  " + shortInput(c.input));
+          p.message.content.forEach(function (part) {
+            if (part.type === "text" && part.text) pushConsoleLine(c, "out", part.text);
+            if (part.type === "tool_use") pushConsoleLine(c, "tool", part.name + "  " + shortInput(part.input));
           });
         } else if (p.type === "result") {
-          pushConsoleLine("meta", "turn finished (" + (p.terminal_reason || p.subtype || "done") + ")");
+          pushConsoleLine(c, "meta", "turn finished (" + (p.terminal_reason || p.subtype || "done") + ")");
         }
       } else if (evt.type === "stdout-line") {
-        pushConsoleLine("out", evt.text || "");
+        pushConsoleLine(c, "out", evt.text || "");
       }
       render();
     });
@@ -1064,101 +1096,106 @@
   function renderMyConsole(host) {
     if (!LOCAL) return;
 
-    if (!myConsole) {
-      if (!localRoot) return;
-      var bar = el("div", "newagent");
-      var usable = localAgents.filter(function (a) { return a.ok; });
-      if (!usable.length) {
-        var none = el("div", "newagent-none");
-        tx(none, localAgents.length ? "no agent CLI found on this machine" : "looking for agents…");
-        bar.appendChild(none);
-      } else {
-        var controls = el("div", "launch-controls");
+    myConsoles.forEach(function (c) { renderOneConsole(host, c); });
 
-        var modeSel = el("select", "launch-select");
-        MODES.forEach(function (m) {
-          var o = el("option");
-          o.value = m.id;
-          tx(o, m.label);
-          if (m.id === launchMode) o.selected = true;
-          modeSel.appendChild(o);
-        });
-        modeSel.addEventListener("change", function () { launchMode = modeSel.value; render(); });
-        controls.appendChild(modeSel);
-
-        var modelInput = el("input", "launch-model");
-        modelInput.type = "text";
-        modelInput.placeholder = "model (default)";
-        modelInput.value = launchModel;
-        modelInput.setAttribute("list", "zevet-models");
-        modelInput.addEventListener("change", function () { launchModel = modelInput.value.trim(); });
-        controls.appendChild(modelInput);
-
-        var dl = el("datalist");
-        dl.id = "zevet-models";
-        var pool = [];
-        usable.forEach(function (a) { pool = pool.concat(MODELS[a.name] || []); });
-        pool.filter(Boolean).forEach(function (v) {
-          var o = el("option");
-          o.value = v;
-          dl.appendChild(o);
-        });
-        controls.appendChild(dl);
-        bar.appendChild(controls);
-
-        var row = el("div", "launch-row");
-        usable.forEach(function (a) {
-          var b = el("button", "newagent-btn");
-          tx(b, "Start " + a.name);
-          if (!a.signedIn) {
-            var warnDot = el("span", "signin-dot");
-            warnDot.title = "no account found for " + a.name;
-            b.appendChild(warnDot);
-          }
-          b.title = a.detail + (a.signedIn ? "  (signed in)" : "  (no account found)");
-          b.dataset.danger = String(launchMode === "dangerous");
-          b.addEventListener("click", function () { startAgent(a.name); });
-          row.appendChild(b);
-        });
-        bar.appendChild(row);
-
-        if (launchMode === "dangerous") {
-          var warn = el("div", "launch-warn");
-          tx(warn, "This agent will not ask before running commands or editing files.");
-          bar.appendChild(warn);
-        }
-      }
+    if (!localRoot) return;
+    var bar = el("div", "newagent");
+    var usable = localAgents.filter(function (a) { return a.ok; });
+    if (!usable.length) {
+      var none = el("div", "newagent-none");
+      tx(none, localAgents.length ? "no agent CLI found on this machine" : "looking for agents…");
+      bar.appendChild(none);
       host.appendChild(bar);
       return;
     }
 
+    var controls = el("div", "launch-controls");
+    var modeSel = el("select", "launch-select");
+    MODES.forEach(function (m) {
+      var o = el("option");
+      o.value = m.id;
+      tx(o, m.label);
+      if (m.id === launchMode) o.selected = true;
+      modeSel.appendChild(o);
+    });
+    modeSel.addEventListener("change", function () { launchMode = modeSel.value; render(); });
+    controls.appendChild(modeSel);
+
+    var modelInput = el("input", "launch-model");
+    modelInput.type = "text";
+    modelInput.placeholder = "model (default)";
+    modelInput.value = launchModel;
+    modelInput.setAttribute("list", "zevet-models");
+    modelInput.addEventListener("change", function () { launchModel = modelInput.value.trim(); });
+    controls.appendChild(modelInput);
+
+    var dl = el("datalist");
+    dl.id = "zevet-models";
+    var pool = [];
+    usable.forEach(function (a) { pool = pool.concat(MODELS[a.name] || []); });
+    pool.filter(Boolean).forEach(function (v) {
+      var o = el("option");
+      o.value = v;
+      dl.appendChild(o);
+    });
+    controls.appendChild(dl);
+    bar.appendChild(controls);
+
+    var row = el("div", "launch-row");
+    usable.forEach(function (a) {
+      var b = el("button", "newagent-btn");
+      tx(b, (myConsoles.length ? "Another " : "Start ") + a.name);
+      if (!a.signedIn) {
+        var warnDot = el("span", "signin-dot");
+        warnDot.title = "no account found for " + a.name;
+        b.appendChild(warnDot);
+      }
+      b.title = a.detail + (a.signedIn ? "  (signed in)" : "  (no account found)");
+      b.dataset.danger = String(launchMode === "dangerous");
+      b.addEventListener("click", function () { startAgent(a.name); });
+      row.appendChild(b);
+    });
+    bar.appendChild(row);
+
+    if (launchMode === "dangerous") {
+      var warn = el("div", "launch-warn");
+      tx(warn, "This agent will not ask before running commands or editing files.");
+      bar.appendChild(warn);
+    }
+    host.appendChild(bar);
+  }
+
+  function renderOneConsole(host, c) {
     var card = el("div", "console");
+    card.style.setProperty("--who", "var(--who-" + c.hue + ")");
+
     var head = el("div", "console-head");
-    head.appendChild(tx(el("span", "nm"), myConsole.agent));
-    head.appendChild(tx(el("span", "where"), localRoot ? localRoot.split(/[\/]/).pop() : ""));
+    head.appendChild(el("span", "bead"));
+    head.appendChild(tx(el("span", "nm"), c.agent));
     var posture = el("span", "posture");
-    posture.dataset.danger = String(myConsole.mode === "dangerous");
-    var modeLabel = (MODES.find(function (m) { return m.id === myConsole.mode; }) || {}).label || myConsole.mode;
-    tx(posture, modeLabel + (myConsole.model ? "  ·  " + myConsole.model : ""));
+    posture.dataset.danger = String(c.mode === "dangerous");
+    var modeLabel = (MODES.find(function (m) { return m.id === c.mode; }) || {}).label || c.mode;
+    tx(posture, modeLabel + (c.model ? "  ·  " + c.model : ""));
     head.appendChild(posture);
+
     var stop = el("button", "console-stop");
-    tx(stop, myConsole.running ? "Stop" : "Close");
+    tx(stop, c.running ? "Stop" : "Close");
     stop.addEventListener("click", function () {
-      if (myConsole.running && myConsole.id) window.zevetLocal.stopAgent(myConsole.id);
-      myConsole = null;
+      if (c.running && c.id) window.zevetLocal.stopAgent(c.id);
+      myConsoles = myConsoles.filter(function (x) { return x !== c; });
       render();
     });
     head.appendChild(stop);
     card.appendChild(head);
 
-    if (myConsole.error) {
+    if (c.error) {
       var e = el("div", "console-err");
-      tx(e, myConsole.error);
+      tx(e, c.error);
       card.appendChild(e);
     }
 
     var out = el("div", "console-out");
-    myConsole.lines.slice(-120).forEach(function (l) {
+    c.lines.slice(-120).forEach(function (l) {
       var row = el("div", "cline");
       row.dataset.kind = l.kind;
       tx(row, l.text);
@@ -1166,7 +1203,7 @@
     });
     card.appendChild(out);
 
-    if (myConsole.running) {
+    if (c.running) {
       var form = el("form", "console-form");
       var input = el("input", "console-input");
       input.type = "text";
@@ -1175,11 +1212,11 @@
       form.addEventListener("submit", function (ev) {
         ev.preventDefault();
         var text = input.value.trim();
-        if (!text || !myConsole.id) return;
-        pushConsoleLine("you", text);
+        if (!text || !c.id) return;
+        pushConsoleLine(c, "you", text);
         input.value = "";
-        window.zevetLocal.sendToAgent(myConsole.id, text).then(function (r) {
-          if (r && r.ok === false) pushConsoleLine("err", r.error || "could not send");
+        window.zevetLocal.sendToAgent(c.id, text).then(function (r) {
+          if (r && r.ok === false) pushConsoleLine(c, "err", r.error || "could not send");
           render();
         });
         render();
@@ -1188,7 +1225,6 @@
     }
 
     host.appendChild(card);
-    // Keep the newest output in view without yanking the page around.
     var o = card.querySelector(".console-out");
     if (o) o.scrollTop = o.scrollHeight;
   }
