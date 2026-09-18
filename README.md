@@ -31,7 +31,27 @@ no re-install, nothing to email twice. Everyone who can use zevet at all can
 already reach the hub and already holds the shared token, so the update channel
 is exactly as available as the product.
 
-### Running the hub
+### Where it runs
+
+The hub is live at **https://157-245-87-197.sslip.io**, on the DigitalOcean
+droplet, behind the Caddy that already fronts usemasora.com. Real Let's Encrypt
+certificate, no DNS record needed: `sslip.io` resolves any dotted-quad hostname
+to that address, which is how a box with no spare domain gets HTTPS.
+
+    /srv/zevet                     the checkout
+    /srv/zevet/.env                ZEVET_TOKEN, 0600
+    docker container `zevet-hub`   node:22-alpine, --restart unless-stopped,
+                                   on Caddy's network, no published ports
+    Caddyfile                      one site block, reverse_proxy zevet-hub:8787
+                                   with flush_interval -1 (SSE must not buffer)
+
+To ship a new client build: push, then on the droplet
+`cd /srv/zevet && git pull && sudo docker restart zevet-hub`. Teammates
+converge on their next check.
+
+### Running your own hub
+
+
 
 ```bash
 export ZEVET_TOKEN="$(openssl rand -hex 24)"   # any long random string
@@ -42,11 +62,21 @@ The board is at `<hub>/?token=<ZEVET_TOKEN>`.
 
 ### Onboarding a teammate
 
-Send them **one link and two values**:
+Send them **one command and one secret**. On macOS:
 
-- the setup script — `<hub>/setup.sh` (macOS) or `<hub>/setup.ps1` (Windows)
-- the hub URL
-- the shared token
+```bash
+curl -fsSL https://157-245-87-197.sslip.io/setup.sh -o setup.sh && bash setup.sh
+```
+
+On Windows:
+
+```powershell
+irm https://157-245-87-197.sslip.io/setup.ps1 -OutFile setup.ps1; powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+It asks for the hub URL (that one), the shared token (send it separately, not in
+the same message as the link) and the name they want on the board. Then it finds
+their agents by itself — there is nothing to tell it about Claude Code or Codex.
 
 They run it, answer three prompts, and they're on the board.
 
