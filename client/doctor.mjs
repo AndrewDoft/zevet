@@ -40,7 +40,20 @@ const TIMEOUT_MS = Number(process.env.ZEVET_TIMEOUT_MS || 3000);
  * from the manifest on purpose: a doctor that asks a possibly-broken install
  * what it should contain cannot detect the case where the answer is missing.
  */
-const CLIENT_FILES = ["hook.mjs", "install.mjs", "updater.mjs", "detect.mjs", "install-codex.mjs"];
+const CLIENT_FILES = [
+  "hook.mjs",
+  "install.mjs",
+  "updater.mjs",
+  "detect.mjs",
+  "install-codex.mjs",
+  // codex-trust.mjs is imported BY install-codex.mjs and uninstall.mjs. Leaving
+  // it out shipped a client whose installer crashed on a missing import, and
+  // nothing would have caught it -- test/client.test.mjs now asserts that this
+  // list is closed under the imports of the files in it.
+  "codex-trust.mjs",
+  "uninstall.mjs",
+  "doctor.mjs",
+];
 
 let passed = 0;
 let failed = 0;

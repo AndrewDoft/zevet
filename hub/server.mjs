@@ -34,7 +34,20 @@ if (!TOKEN) {
 
 const CLIENT_DIR = path.join(HERE, "..", "client");
 /** Exactly what the update channel will serve. An allowlist, not a directory listing. */
-const CLIENT_FILES = ["hook.mjs", "install.mjs", "updater.mjs", "detect.mjs", "install-codex.mjs"];
+const CLIENT_FILES = [
+  "hook.mjs",
+  "install.mjs",
+  "updater.mjs",
+  "detect.mjs",
+  "install-codex.mjs",
+  // codex-trust.mjs is imported BY install-codex.mjs and uninstall.mjs. Leaving
+  // it out shipped a client whose installer crashed on a missing import, and
+  // nothing would have caught it -- test/client.test.mjs now asserts that this
+  // list is closed under the imports of the files in it.
+  "codex-trust.mjs",
+  "uninstall.mjs",
+  "doctor.mjs",
+];
 
 /** The self-hosted faces. All SIL OFL-1.1; see hub/public/fonts/LICENSE. */
 const FONT_FILES = [

@@ -141,3 +141,31 @@ describe("the block comes back out again", () => {
     assert.equal(r.text, text);
   });
 });
+
+describe("the shipped client is complete", () => {
+  test("every local import of a shipped file is itself shipped", async () => {
+    // The updater replaces the client with exactly the files the hub serves.
+    // codex-trust.mjs was imported by install-codex.mjs and uninstall.mjs while
+    // being absent from that list, which would have delivered a client whose
+    // installer died on a missing import -- with the hash check passing, because
+    // every file it DID ship was intact. A list is not closure; this asserts it.
+    const { readFileSync } = await import("node:fs");
+    const path = (await import("node:path")).default;
+    const { fileURLToPath } = await import("node:url");
+    const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+    const server = readFileSync(path.join(ROOT, "hub", "server.mjs"), "utf8");
+    const block = server.slice(server.indexOf("const CLIENT_FILES"), server.indexOf("];", server.indexOf("const CLIENT_FILES")));
+    const shipped = new Set([...block.matchAll(/"([a-z0-9-]+\.mjs)"/g)].map((m) => m[1]));
+    assert.ok(shipped.size >= 5, `could not parse CLIENT_FILES: ${block}`);
+
+    const missing = [];
+    for (const name of shipped) {
+      const src = readFileSync(path.join(ROOT, "client", name), "utf8");
+      for (const m of src.matchAll(/from\s+"\.\/([a-z0-9-]+\.mjs)"/g)) {
+        if (!shipped.has(m[1])) missing.push(`${name} imports ${m[1]}, which the hub does not serve`);
+      }
+    }
+    assert.deepEqual(missing, [], missing.join("\n"));
+  });
+});
