@@ -4,21 +4,19 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>zevet</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230d0a0a'/%3E%3Crect x='1' y='3' width='13' height='2' rx='1' fill='%23e07a62'/%3E%3Crect x='1' y='7' width='9' height='2' rx='1' fill='%23d9a430'/%3E%3Crect x='1' y='11' width='11' height='2' rx='1' fill='%23c2708f'/%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23eae7e2'/%3E%3Ccircle cx='4.5' cy='8' r='2' fill='%232f6f8f'/%3E%3Ccircle cx='9.5' cy='5' r='1.6' fill='%239a5b3d'/%3E%3Ccircle cx='10.5' cy='11' r='1.6' fill='%234f7a4a'/%3E%3C/svg%3E" />
 <style>
-  /* Type, self-hosted. Masora's system bans external font loading (lint 5): a
-     board that blanks its labels because a CDN is slow has stopped monitoring.
-     All three faces are SIL OFL-1.1 — see fonts/LICENSE. */
+  /* Type: Jost, at 200 and 300 only.
+     The landing page's own rule, quoted from its layout.tsx: "ONE FAMILY
+     CARRIES THE WHOLE SITE. Jost, a Futura-line geometric, set at 200 and 300
+     only. Hierarchy comes from size, tracking and air — never from weight, and
+     never from a second face." Mono is for paths and commands, which are data,
+     not prose. Self-hosted: a workspace that blanks its own labels because a
+     CDN is slow has stopped being a workspace. */
   @font-face {
-    font-family: "Hanken Grotesk";
-    src: url("/fonts/hanken-grotesk-variable.woff2") format("woff2");
+    font-family: "Jost";
+    src: url("/fonts/jost-variable.woff2") format("woff2");
     font-weight: 100 900;
-    font-display: swap;
-  }
-  @font-face {
-    font-family: "Frank Ruhl Libre";
-    src: url("/fonts/frank-ruhl-libre-variable.woff2") format("woff2");
-    font-weight: 400;
     font-display: swap;
   }
   @font-face {
@@ -29,300 +27,349 @@
   }
 
   :root {
-    color-scheme: dark;
+    color-scheme: light;
 
-    /* Masora's tokens, unchanged. apps/web/src/app/tokens.css is the source. */
-    --paper: #0d0a0a;
-    --surface: #16110f;
-    --surface-2: #1e1715;
-    --line: #33221e;
-    --grid: #1a1312;
-    --ink: #f2e6e1;
-    --muted: #8f7d78;
-    --rust: #e07a62;
-    --rust-deep: #b0523c;
-    --rust-bright: #f09c86;
-    --fill: #2e1611;
-    --fill-soft: #1b1210;
-    --warn: #d9a430;
-    --danger: #ef6a52;
-    --ok: #74bd94;
+    /* From masora-landing/src/app/globals.css, unchanged. */
+    --paper: #eae7e2;
+    --ink: #2c2f44;
+    --muted: #5f6274;
+    --faint: #9c9992;
+    --line: #cfccc6;
+    --fill: #dbdae1;
 
-    /* IDENTITY — the one place this steps outside masora's single-hue ramp,
-       deliberately and for a functional reason worth stating.
+    /* The one addition. The landing page defines no accent at all — six
+       tokens, no colour beyond the ink. Cerulean is chosen to sit beside
+       #2c2f44 rather than argue with it: same blue family, more saturation,
+       enough darker than the eggshell to hold small text. */
+    --cerulean: #2f6f8f;
+    --cerulean-soft: #d9e4ea;
+    --alert: #a8442f;
 
-       The house palette pins hue at 6-14 degrees with saturation falling as
-       value rises; that inversion is what makes the bright end read as heat.
-       Telling three people apart by value alone inside that ramp is legible
-       in a spec and not legible at a glance across three lanes, which is the
-       one thing this surface exists to do. The collision warning is only
-       useful if you can see WHOSE lane it ties together without reading.
+    /* Identity, and it has to work on a LIGHT ground: these are mid-dark and
+       muted, not the bright hues a dark board can afford. Andrew gets the
+       house cerulean. */
+    --who-0: #2f6f8f;
+    --who-1: #9a5b3d;
+    --who-2: #4f7a4a;
+    --who-3: #7a5a92;
+    --who-4: #a8743a;
 
-       So: hue spreads, but everything stays warm-biased and desaturated
-       enough to sit on --paper without shouting. --who-0 is the house rust,
-       so the most common case is still exactly on-system. */
-    --who-0: #e07a62;
-    --who-1: #d9a430;
-    --who-2: #c2708f;
-    --who-3: #8fae7a;
-    --who-4: #a78bc0;
+    --rail: 224px;
+    --tree: 330px;
+    --streams: 380px;
 
-    /* §7 density: chrome and data at 11px, prose at 15px, 4px rhythm. */
-    --t-2xs: 11px;
-    --t-xs: 12px;
-    --t-sm: 13px;
-    --t-base: 15px;
-
-    --font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    --font-display: "Frank Ruhl Libre", Georgia, serif;
+    --font-sans: "Jost", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
 
   * { box-sizing: border-box; }
-  html, body { height: 100%; }
+  html, body { height: 100%; margin: 0; }
 
   body {
-    margin: 0;
-    background-color: var(--paper);
-    /* The dot grid, as on masora's own body. */
-    background-image: radial-gradient(var(--grid) 1px, transparent 1px);
-    background-size: 22px 22px;
+    background: var(--paper);
     color: var(--ink);
     font-family: var(--font-sans);
-    font-size: var(--t-sm);
+    font-weight: 300;
+    font-size: 14px;
     line-height: 1.5;
-    letter-spacing: -0.006em;
     -webkit-font-smoothing: antialiased;
-    display: flex;
-    flex-direction: column;
-  }
-
-  /* §6: motion is opacity and transform only, and short. Colour snaps. */
-  * { transition-property: opacity, transform; transition-duration: 140ms; }
-
-  .mono { font-family: var(--font-mono); font-size: var(--t-xs); }
-  .num { font-variant-numeric: tabular-nums; }
-
-  button {
-    border: 0; background: none; color: inherit; font: inherit; cursor: pointer;
-  }
-  :focus-visible { outline: 2px solid var(--rust); outline-offset: 2px; }
-
-  /* ---- header: one rule, no gap ---------------------------------------- */
-  header {
-    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
-    padding: 13px 18px;
-    border-bottom: 1px solid var(--line);
-    background: rgb(13 10 10 / 0.86);
-  }
-  .wordmark {
-    font-family: var(--font-display);
-    font-size: 21px; font-weight: 400; letter-spacing: -0.01em;
-    color: var(--ink);
-  }
-  .scope { color: var(--muted); font-size: var(--t-xs); }
-  .spacer { flex: 1 1 auto; }
-  .conn { display: inline-flex; align-items: center; gap: 7px; font-size: var(--t-2xs); color: var(--muted); }
-  .conn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
-  .conn[data-state="live"] .dot { background: var(--ok); }
-  .conn[data-state="down"] .dot { background: var(--danger); }
-  .clock { font-size: var(--t-2xs); color: var(--muted); }
-
-  /* ---- lanes: the hero -------------------------------------------------- */
-  .lanes { border-bottom: 1px solid var(--line); }
-  .lane {
     display: grid;
-    grid-template-columns: 132px 1fr 232px;
-    align-items: center;
-    gap: 16px;
-    height: 48px;
-    padding: 0 18px;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+  }
+  .mono { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--cerulean); outline-offset: 2px; }
+
+  /* ---- title bar ---------------------------------------------------- */
+  .titlebar {
+    display: flex; align-items: center; gap: 18px;
+    padding: 0 18px; height: 46px;
     border-bottom: 1px solid var(--line);
-    width: 100%;
-    text-align: left;
+    background: var(--paper);
   }
-  .lane:last-child { border-bottom: 0; }
-  .lane:hover { background: var(--fill-soft); }
-  .lane[data-dimmed="true"] { opacity: 0.4; }
+  .wordmark { font-weight: 200; font-size: 19px; letter-spacing: 0.16em; text-transform: lowercase; }
+  .scope { color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
+  .spacer { flex: 1 1 auto; }
 
-  .who { display: flex; align-items: center; gap: 9px; min-width: 0; }
-  .who .chip {
-    width: 3px; height: 15px; border-radius: 1px; flex: none;
-    background: var(--who);
+  .presence { display: flex; align-items: center; gap: 4px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 4px 11px 4px 9px; border-radius: 100px;
+    font-size: 12.5px; color: var(--muted);
+    border: 1px solid transparent;
   }
-  .who .name {
-    font-size: var(--t-sm); font-weight: 500;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .lane[data-idle="true"] .name { color: var(--muted); font-weight: 400; }
-  .lane[data-idle="true"] .chip { opacity: 0.35; }
+  .chip[data-active="true"] { color: var(--ink); border-color: var(--line); background: #fff8; }
+  .chip .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
+  .chip[data-active="false"] .bead { opacity: 0.32; }
+  .chip[data-dim="true"] { opacity: 0.5; }
 
-  .track { position: relative; height: 100%; overflow: hidden; }
-  .tick {
-    position: absolute; bottom: 12px; width: 2px;
-    background: var(--who); border-radius: 1px;
-  }
-  .tick[data-kind="prompt"] { width: 3px; background: var(--ink); opacity: 0.9; }
-  .tick[data-kind="turn_end"] { background: var(--line); }
+  .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+  .conn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+  .conn[data-state="live"] .dot { background: #4f7a4a; }
+  .conn[data-state="down"] .dot { background: var(--alert); }
 
-  .now {
-    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
-    min-width: 0; font-size: var(--t-xs); color: var(--muted);
+  /* ---- shell ---------------------------------------------------------- */
+  .shell {
+    display: grid;
+    grid-template-columns: var(--rail) 1fr var(--streams);
+    min-height: 0;
   }
-  .now .verb { color: var(--ink); flex: none; }
-  .now .obj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* Masora has no spinners (lint 7) — a spinner claims progress it cannot
-     measure. The blinking caret is the house "working" mark. */
-  .caret {
-    width: 2px; height: 13px; flex: none; background: var(--who);
-    animation: blink 1.1s step-end infinite;
-  }
-  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-  @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+  .middle { display: grid; grid-template-columns: var(--tree) 1fr; min-height: 0; min-width: 0; }
+  .treecol { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .rail { border-right: 1px solid var(--line); }
+  .streams { border-left: 1px solid var(--line); }
 
-  .axis {
-    position: relative; height: 16px;
-    padding: 7px 18px 9px;
-    /* The lane's first column (132px) PLUS its grid gap (16px). Omitting the
-       gap left every label 16px to the left of the track it measures. */
-    margin-left: 148px; margin-right: 248px;
-    font-size: var(--t-2xs); color: var(--muted); opacity: 0.55;
+  .pane-title {
+    padding: 15px 16px 9px;
+    font-size: 10.5px; font-weight: 300;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--faint);
+    display: flex; align-items: center; gap: 8px;
   }
+  .pane-body { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 
-  /* ---- collisions ------------------------------------------------------- */
-  .collision {
-    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
-    padding: 11px 18px 11px 15px;
+  /* ---- people rail ---------------------------------------------------- */
+  .person {
+    display: grid; grid-template-columns: 10px 1fr; gap: 10px;
+    align-items: start;
+    width: 100%; text-align: left;
+    padding: 9px 16px;
+    border-left: 2px solid transparent;
+  }
+  .person:hover { background: #fff6; }
+  .person[data-sel="true"] { background: #fff9; border-left-color: var(--who); }
+  .person .bead { width: 9px; height: 9px; border-radius: 50%; background: var(--who); margin-top: 5px; }
+  .person[data-idle="true"] .bead { opacity: 0.3; }
+  .person .nm { display: block; font-size: 13.5px; letter-spacing: 0.01em; }
+  .person[data-idle="true"] .nm { color: var(--muted); }
+  .person .sub {
+    display: block;
+    font-size: 11.5px; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .person .sub .verb { margin-right: 6px; }
+  .person .sub .verb { color: var(--ink); }
+
+  .ws { padding: 6px 16px 10px; }
+  .ws-item {
+    display: block; width: 100%; text-align: left;
+    padding: 6px 0; font-size: 13px; color: var(--muted);
+  }
+  .ws-item[data-sel="true"] { color: var(--ink); }
+  .ws-item .branch { font-size: 11px; color: var(--faint); }
+
+  /* ---- file tree ------------------------------------------------------ */
+  .tree { padding: 2px 0 20px; }
+  .node {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%; text-align: left;
+    padding: 3px 16px 3px 0;
+    font-size: 13px;
+  }
+  .node[data-sel="true"] { background: var(--cerulean-soft); }
+  .node:hover { background: #fff7; }
+  .node .label { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 0 1 auto; }
+  .node .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node[data-kind="dir"] .name { color: var(--ink); }
+  .node[data-kind="file"] .name { color: var(--muted); }
+  .node[data-touched="true"][data-kind="file"] .name { color: var(--ink); }
+  .caret { width: 9px; color: var(--faint); flex: none; font-size: 9px; }
+  .ficon { width: 13px; height: 13px; flex: none; opacity: 0.55; }
+
+  .marks { display: flex; align-items: center; gap: 3px; flex: none; }
+  .mark { width: 7px; height: 7px; border-radius: 50%; background: var(--who); }
+  .mark[data-stale="true"] { opacity: 0.28; }
+  .node[data-collide="true"] { background: color-mix(in srgb, var(--alert) 9%, transparent); }
+  .node[data-collide="true"] .name { color: var(--alert); }
+
+  .empty-tree { padding: 30px 18px; color: var(--muted); font-size: 13px; max-width: 46ch; }
+
+  /* ---- agent streams --------------------------------------------------- */
+  .stream {
     border-bottom: 1px solid var(--line);
-    border-left: 3px solid var(--rust-deep);
-    background: var(--fill);
+    padding: 12px 16px 14px;
   }
-  .collision .file { font-size: var(--t-sm); color: var(--ink); }
-  .collision .parties { display: flex; gap: 20px; font-size: var(--t-xs); color: var(--muted); flex-wrap: wrap; }
-  .collision .parties b { font-weight: 500; color: var(--who); }
+  .stream-head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+  }
+  .stream-head .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
+  .stream-head .nm { font-size: 13px; letter-spacing: 0.02em; }
+  .dwho > span + span { margin-left: 0; }
+  .stream-head .agent {
+    font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--faint); margin-left: auto;
+  }
+  .bubble {
+    background: #fff9; border: 1px solid var(--line);
+    border-left: 2px solid var(--who);
+    padding: 8px 11px; margin-bottom: 7px;
+    font-size: 13px; line-height: 1.55;
+  }
+  .bubble.prompt { background: var(--cerulean-soft); border-color: transparent; border-left-color: var(--who); }
+  .step {
+    display: grid; grid-template-columns: 78px 1fr; gap: 10px;
+    align-items: baseline; padding: 2.5px 0; font-size: 12px;
+  }
+  .step .t { color: var(--faint); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .step .v { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step .v b { font-weight: 400; color: var(--ink); }
+  /* The house "working" mark. No spinners: a spinner claims progress it
+     cannot measure, and this one is measured — it is on while a turn is. */
+  .typing { display: inline-flex; gap: 3px; align-items: center; margin-left: 2px; }
+  .typing i {
+    width: 3px; height: 3px; border-radius: 50%; background: var(--who);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .typing i:nth-child(2) { animation-delay: 0.15s; }
+  .typing i:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .typing i { animation: none; opacity: 0.7; } }
 
-  /* ---- feed ------------------------------------------------------------- */
-  .feed-head {
-    display: flex; align-items: center; gap: 12px;
-    padding: 15px 18px 9px;
-    font-size: var(--t-2xs); color: var(--muted);
-  }
-  .pill {
-    padding: 3px 9px; border: 1px solid var(--line); border-radius: 3px;
-    font-size: var(--t-2xs); color: var(--muted);
-  }
-  .pill:hover { color: var(--ink); border-color: var(--rust-deep); }
+  .idle-note { font-size: 12px; color: var(--faint); }
 
-  .feed { flex: 1 1 auto; overflow-y: auto; border-top: 1px solid var(--line); }
-  .row {
-    display: grid; grid-template-columns: 74px 104px 84px 1fr;
-    gap: 14px; align-items: baseline;
-    padding: 6px 18px;
-    border-bottom: 1px solid var(--line);
-    font-size: var(--t-xs);
+  /* ---- collisions ------------------------------------------------------ */
+  .collide-bar {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 9px 16px;
+    background: color-mix(in srgb, var(--alert) 8%, var(--paper));
+    border-bottom: 1px solid color-mix(in srgb, var(--alert) 28%, var(--line));
+    font-size: 12.5px;
   }
-  .row:hover { background: var(--fill-soft); }
-  .row .t { color: var(--muted); opacity: 0.7; }
-  .row .a { color: var(--who); }
-  .row .k { color: var(--muted); }
-  .row .d { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row[data-kind="turn_end"] .d { color: var(--muted); opacity: 0.7; }
+  .collide-bar .file { color: var(--alert); }
+  .collide-bar .who-list { color: var(--muted); display: flex; gap: 14px; }
+  .collide-bar b { font-weight: 400; color: var(--who); }
 
-  /* ---- empty states: three cases, never conflated (masora §10) ---------- */
-  .empty { padding: 56px 18px; max-width: 60ch; }
-  .empty h2 {
-    font-family: var(--font-display); font-weight: 400;
-    font-size: 23px; margin: 0 0 10px; letter-spacing: -0.01em;
+  /* ---- file detail ----------------------------------------------------- */
+  .detail-who { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 18px 14px; }
+  .dwho {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 11px; border: 1px solid var(--line); border-radius: 100px;
+    font-size: 12.5px; background: #fff8;
   }
-  .empty p { color: var(--muted); font-size: var(--t-base); line-height: 1.65; margin: 0 0 12px; max-width: 58ch; }
-  .empty code {
-    font-family: var(--font-mono); font-size: var(--t-xs);
-    background: var(--surface); border: 1px solid var(--line);
-    padding: 2px 6px; border-radius: 3px; color: var(--ink);
+  .dwho .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); }
+  .dwho .when { color: var(--faint); font-size: 11.5px; margin-left: 2px; }
+  .detail-events { padding: 0 18px 24px; }
+  .devent {
+    display: grid; grid-template-columns: 70px 90px 74px 1fr;
+    gap: 12px; align-items: baseline;
+    padding: 5px 0; border-bottom: 1px solid var(--line);
+    font-size: 12.5px;
   }
-  .empty.failed h2 { color: var(--danger); }
+  .devent .dt { color: var(--faint); font-size: 11px; }
+  .devent .da { color: var(--who); }
+  .devent .dv { color: var(--ink); }
+  .devent .dd { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  @media (max-width: 800px) {
-    .lane { grid-template-columns: 96px 1fr; }
-    .now { display: none; }
-    .axis { margin-right: 18px; margin-left: 96px; }
-    .row { grid-template-columns: 62px 92px 1fr; }
-    .row .k { display: none; }
+  /* ---- empty / onboarding --------------------------------------------- */
+  .blank { padding: 56px 28px; max-width: 58ch; }
+  .blank h2 { font-weight: 200; font-size: 26px; letter-spacing: 0.01em; margin: 0 0 12px; }
+  .blank p { color: var(--muted); margin: 0 0 12px; line-height: 1.65; }
+  .blank code {
+    font-family: var(--font-mono); font-size: 12px;
+    background: #fff9; border: 1px solid var(--line); padding: 2px 6px;
+  }
+
+  @media (max-width: 1100px) {
+    .shell { grid-template-columns: 180px 1fr; }
+    .streams { display: none; }
+  }
+  @media (max-width: 700px) {
+    .shell { grid-template-columns: 1fr; }
+    .rail { display: none; }
   }
 </style>
 </head>
 <body>
-<header>
+<div class="titlebar">
   <span class="wordmark">zevet</span>
   <span class="scope" id="scope"></span>
   <span class="spacer"></span>
+  <span class="presence" id="presence"></span>
   <span class="conn" id="conn" data-state="init"><span class="dot"></span><span id="connText">connecting</span></span>
-  <span class="clock mono num" id="clock"></span>
-</header>
+</div>
 
-<main id="main" style="flex:1 1 auto; display:flex; flex-direction:column; min-height:0;">
-  <section class="lanes" id="lanes" hidden></section>
-  <div class="axis" id="axis" hidden></div>
-  <section id="collisions"></section>
-  <div class="feed-head" id="feedHead" hidden>
-    <span>Activity</span>
-    <span class="spacer"></span>
-    <button class="pill" id="clearFilter" hidden>Show everyone</button>
+<div class="shell">
+  <aside class="pane rail">
+    <div class="pane-title">People</div>
+    <div class="pane-body" id="people"></div>
+    <div class="pane-title" style="border-top:1px solid var(--line)">Workspaces</div>
+    <div class="ws" id="workspaces"></div>
+  </aside>
+
+  <div class="middle">
+    <div class="treecol">
+      <div class="pane-title" id="filesTitle">Files</div>
+      <div class="pane-body"><div class="tree" id="tree"></div></div>
+    </div>
+    <main class="detail">
+      <div id="collisions"></div>
+      <div class="pane-title" id="detailTitle">Nothing selected</div>
+      <div class="pane-body" id="detail"></div>
+    </main>
   </div>
-  <div class="feed" id="feed" hidden></div>
-  <div id="empty"></div>
-</main>
+
+  <aside class="pane streams">
+    <div class="pane-title">Agents</div>
+    <div class="pane-body" id="streams"></div>
+  </aside>
+</div>
 
 <script>
 (function () {
   "use strict";
 
-  var HUE_COUNT = 5;
+  var HUES = 5;
   var params = new URLSearchParams(location.search);
-  // The token is no longer expected in the URL: the hub exchanges `?token=`
-  // for an HttpOnly cookie and redirects to a clean address, so by the time
-  // this runs the secret is in the cookie jar and not in the address bar.
-  // EventSource and fetch send that cookie automatically, same-origin.
   var token = params.get("token") || "";
-  // How much history the lanes show. Eight minutes suits a team mid-session;
-  // a shorter span is better when you are watching one thing land.
-  var WINDOW_MIN = Math.min(120, Math.max(1, Number(params.get("minutes")) || 8));
-  var WINDOW_MS = WINDOW_MIN * 60 * 1000;
+  var IDLE_FALLBACK = 90000;
 
   var events = [];
   var roster = [];
   var collisions = [];
-  var idleAfterMs = 90000;
-  var filterActor = null;
-  var conn = "init"; // init | live | down
-  var needsToken = false;
-  var lastError = "";
-  /**
-   * Hub clock minus this browser's clock.
-   *
-   * Event timestamps are stamped hub-side on purpose — one clock means one
-   * ordering for everybody. But every comparison here was against the
-   * BROWSER's Date.now(), so a laptop whose clock had drifted (asleep for an
-   * hour, a dual-boot RTC, a bad NTP) rendered:
-   *   - every lane empty, because `age > WINDOW_MS` for all of it, while the
-   *     feed below scrolled happily — which reads as "the lanes are broken";
-   *   - or everyone permanently idle while actively working;
-   *   - or "-34s ago" on a collision card.
-   * The hub already sends its own `now` in every snapshot. It was being
-   * discarded. Ninety seconds of drift is unremarkable on a laptop.
-   */
+  var idleAfterMs = IDLE_FALLBACK;
   var skewMs = 0;
-  function serverNow() { return Date.now() + skewMs; }
+  var conn = "init";
+  var needsToken = false;
+  var selectedActor = null;
+  var selectedRepo = null;
+  var collapsed = Object.create(null);
+  var selectedPath = null;
 
   function $(id) { return document.getElementById(id); }
-  function el(tag, cls) { var n = document.createElement(tag); if (cls) n.className = cls; return n; }
-  function text(node, s) { node.textContent = s == null ? "" : String(s); return node; }
+  function el(t, c) { var n = document.createElement(t); if (c) n.className = c; return n; }
+  function tx(n, s) { n.textContent = s == null ? "" : String(s); return n; }
+  function serverNow() { return Date.now() + skewMs; }
 
-  function hueVar(actor) {
+  function hueOf(actor) {
     var i = roster.findIndex(function (r) { return r.actor === actor; });
-    return "var(--who-" + ((i < 0 ? 0 : i) % HUE_COUNT) + ")";
+    return "var(--who-" + ((i < 0 ? 0 : i) % HUES) + ")";
   }
-  function hhmmss(ts) { return new Date(ts).toLocaleTimeString([], { hour12: false }); }
+  /**
+   * A relative-time label that can be refreshed without rebuilding the DOM.
+   *
+   * The board used to re-render everything once a second, purely so "3s ago"
+   * stayed true. That threw away text selection mid-drag, made every click a
+   * race against the next tick, and rebuilt a file tree nobody had touched.
+   * Now the timer only rewrites elements carrying data-ago, and a full render
+   * happens when the DATA changes.
+   */
+  function agoEl(node, ts) {
+    node.dataset.ago = String(ts);
+    tx(node, ago(serverNow() - ts) + " ago");
+    return node;
+  }
+
+  function tickAgo() {
+    var now = serverNow();
+    document.querySelectorAll("[data-ago]").forEach(function (n) {
+      tx(n, ago(now - Number(n.dataset.ago)) + " ago");
+    });
+  }
+
   function ago(ms) {
     var s = Math.max(0, Math.round(ms / 1000));
     if (s < 60) return s + "s";
@@ -330,275 +377,528 @@
     if (m < 60) return m + "m";
     return Math.round(m / 60) + "h";
   }
+  function hhmm(ts) { return new Date(ts).toLocaleTimeString([], { hour12: false }); }
   function verbFor(e) {
     if (e.kind === "prompt") return "asked";
     if (e.kind === "turn_end") return "finished";
     return e.tool || "working";
   }
-  function shortPath(p) {
-    var parts = String(p).split(/[\\/]/).filter(Boolean);
-    return parts.slice(-2).join("/");
+  function isIdle(r, now) { return now - r.lastTs > idleAfterMs; }
+
+  /** Events for the workspace currently being looked at. */
+  function scoped() {
+    return events.filter(function (e) { return !selectedRepo || e.repo === selectedRepo; });
   }
-  function objFor(e) {
-    if (e.target) return shortPath(e.target);
-    if (e.detail) return e.detail;
-    return "";
-  }
+
+  // ---- data -------------------------------------------------------------
 
   function applySnapshot(s) {
     if (typeof s.now === "number") skewMs = s.now - Date.now();
     roster = s.roster || [];
     collisions = s.collisions || [];
-    idleAfterMs = s.idleAfterMs || idleAfterMs;
+    idleAfterMs = s.idleAfterMs || IDLE_FALLBACK;
     events = s.events || [];
+    if (!selectedRepo) selectedRepo = lastRepo();
     render();
   }
 
   function pushEvent(e) {
     events.push(e);
-    if (events.length > 600) events.shift();
-    var known = roster.some(function (r) { return r.actor === e.actor; });
-    if (!known) {
+    if (events.length > 900) events.shift();
+    if (!roster.some(function (r) { return r.actor === e.actor; })) {
       roster = roster.concat([{ actor: e.actor, lastTs: e.ts, lastEvent: e }]);
       roster.sort(function (a, b) { return a.actor.localeCompare(b.actor); });
     }
     var r = roster.find(function (x) { return x.actor === e.actor; });
     if (r) { r.lastTs = e.ts; r.lastEvent = e; }
+    if (!selectedRepo) selectedRepo = e.repo || null;
     render();
   }
 
-  function renderLanes(now) {
-    var host = $("lanes");
+  function lastRepo() {
+    for (var i = events.length - 1; i >= 0; i--) if (events[i].repo) return events[i].repo;
+    return null;
+  }
+
+  function workspaces() {
+    var seen = [];
+    events.forEach(function (e) {
+      if (!e.repo) return;
+      var hit = seen.find(function (w) { return w.repo === e.repo; });
+      if (!hit) seen.push({ repo: e.repo, branch: e.branch, lastTs: e.ts });
+      else { hit.lastTs = Math.max(hit.lastTs, e.ts); if (e.branch) hit.branch = e.branch; }
+    });
+    return seen.sort(function (a, b) { return b.lastTs - a.lastTs; });
+  }
+
+  /**
+   * The file tree, built from what people have actually touched.
+   *
+   * This is the multiplayer view the activity log could not be: a folder
+   * structure with WHO is in it, rather than a list of what happened. It is
+   * built from observed paths rather than a directory listing on purpose —
+   * the hub never receives anyone's files, only the paths their agents named,
+   * so this shows exactly the part of the tree the team is working in and
+   * nothing else.
+   */
+  function buildTree() {
+    var now = serverNow();
+    var root = { name: "", kind: "dir", children: Object.create(null), who: Object.create(null), lastTs: 0 };
+    scoped().forEach(function (e) {
+      if (!e.target || e.kind !== "tool") return;
+      var parts = String(e.target).split("/").filter(Boolean);
+      var node = root;
+      parts.forEach(function (part, i) {
+        var isFile = i === parts.length - 1;
+        if (!node.children[part]) {
+          node.children[part] = {
+            name: part,
+            kind: isFile ? "file" : "dir",
+            children: Object.create(null),
+            who: Object.create(null),
+            lastTs: 0,
+          };
+        }
+        node = node.children[part];
+        var prev = node.who[e.actor] || 0;
+        if (e.ts > prev) node.who[e.actor] = e.ts;
+        node.lastTs = Math.max(node.lastTs, e.ts);
+      });
+    });
+    return { root: root, now: now };
+  }
+
+  function collisionSet() {
+    var s = Object.create(null);
+    collisions.forEach(function (c) {
+      if (selectedRepo && c.repo && c.repo !== selectedRepo) return;
+      s[c.target] = true;
+    });
+    return s;
+  }
+
+  // ---- render ------------------------------------------------------------
+
+  function renderPresence(now) {
+    var host = $("presence");
     host.textContent = "";
     roster.forEach(function (r) {
-      var idle = now - r.lastTs > idleAfterMs;
-      var lane = el("button", "lane");
-      lane.style.setProperty("--who", hueVar(r.actor));
-      lane.dataset.idle = String(idle);
-      lane.dataset.dimmed = String(Boolean(filterActor) && filterActor !== r.actor);
-      lane.setAttribute("aria-label", "Show only " + r.actor);
-
-      var who = el("div", "who");
-      who.appendChild(el("span", "chip"));
-      who.appendChild(text(el("span", "name"), r.actor));
-      lane.appendChild(who);
-
-      var track = el("div", "track");
-      events.forEach(function (e) {
-        if (e.actor !== r.actor) return;
-        var age = now - e.ts;
-        if (age > WINDOW_MS) return;
-        // Clamp instead of dropping: a tiny negative age is an event that
-        // landed between the snapshot and this frame, not a broken event.
-        if (age < 0) age = 0;
-        var tick = el("div", "tick");
-        tick.dataset.kind = e.kind;
-        tick.style.left = "calc(" + ((1 - age / WINDOW_MS) * 100).toFixed(3) + "% - 1px)";
-        tick.style.height = e.kind === "prompt" ? "24px" : e.kind === "turn_end" ? "9px" : "15px";
-        tick.title = hhmmss(e.ts) + "  " + verbFor(e) + (objFor(e) ? "  " + objFor(e) : "");
-        track.appendChild(tick);
-      });
-      lane.appendChild(track);
-
-      var now_ = el("div", "now");
-      if (idle) {
-        now_.appendChild(text(el("span", "obj"), "idle " + ago(now - r.lastTs)));
-      } else {
-        var last = r.lastEvent || {};
-        now_.appendChild(el("span", "caret"));
-        now_.appendChild(text(el("span", "verb"), verbFor(last)));
-        var obj = el("span", last.kind === "prompt" ? "obj" : "obj mono");
-        now_.appendChild(text(obj, objFor(last)));
-      }
-      lane.appendChild(now_);
-
-      lane.addEventListener("click", function () {
-        filterActor = filterActor === r.actor ? null : r.actor;
+      var b = el("button", "chip");
+      b.style.setProperty("--who", hueOf(r.actor));
+      b.dataset.active = String(!isIdle(r, now));
+      b.dataset.dim = String(Boolean(selectedActor) && selectedActor !== r.actor);
+      b.appendChild(el("span", "bead"));
+      b.appendChild(tx(el("span"), r.actor));
+      b.addEventListener("click", function () {
+        selectedActor = selectedActor === r.actor ? null : r.actor;
         render();
       });
-      host.appendChild(lane);
+      host.appendChild(b);
+    });
+  }
+
+  function renderPeople(now) {
+    var host = $("people");
+    host.textContent = "";
+    roster.forEach(function (r) {
+      var idle = isIdle(r, now);
+      var b = el("button", "person");
+      b.style.setProperty("--who", hueOf(r.actor));
+      b.dataset.idle = String(idle);
+      b.dataset.sel = String(selectedActor === r.actor);
+      b.appendChild(el("span", "bead"));
+      var col = el("span");
+      col.appendChild(tx(el("span", "nm"), r.actor));
+      var sub = el("span", "sub");
+      var last = r.lastEvent;
+      if (idle) tx(sub, "idle " + ago(now - r.lastTs));
+      else if (last) {
+        var v = el("span", "verb");
+        tx(v, verbFor(last));
+        sub.appendChild(v);
+        sub.appendChild(document.createTextNode("  " + folderOf(last)));
+      }
+      col.appendChild(sub);
+      b.appendChild(col);
+      b.addEventListener("click", function () {
+        selectedActor = selectedActor === r.actor ? null : r.actor;
+        render();
+      });
+      host.appendChild(b);
+    });
+    if (!roster.length) {
+      var p = el("div");
+      p.style.cssText = "padding:14px 16px;color:var(--faint);font-size:12.5px";
+      tx(p, "nobody yet");
+      host.appendChild(p);
+    }
+  }
+
+  /** The folder a teammate is working in — the thing you want at a glance. */
+  function folderOf(e) {
+    if (!e || !e.target) return e && e.detail ? String(e.detail).slice(0, 40) : "";
+    var parts = String(e.target).split("/");
+    parts.pop();
+    return parts.length ? parts.join("/") + "/" : "./";
+  }
+
+  function renderWorkspaces() {
+    var host = $("workspaces");
+    host.textContent = "";
+    var list = workspaces();
+    list.forEach(function (w) {
+      var b = el("button", "ws-item");
+      b.dataset.sel = String(selectedRepo === w.repo);
+      b.appendChild(tx(el("span"), w.repo));
+      if (w.branch) {
+        b.appendChild(document.createElement("br"));
+        b.appendChild(tx(el("span", "branch"), w.branch));
+      }
+      b.addEventListener("click", function () {
+        selectedRepo = selectedRepo === w.repo ? null : w.repo;
+        render();
+      });
+      host.appendChild(b);
+    });
+    if (!list.length) {
+      var p = el("div");
+      p.style.cssText = "color:var(--faint);font-size:12.5px";
+      tx(p, "none yet");
+      host.appendChild(p);
+    }
+  }
+
+  var FILE_SVG =
+    '<svg class="ficon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2">' +
+    '<path d="M9 1.5H4.5A1.5 1.5 0 0 0 3 3v10a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 13 13V5.5L9 1.5Z"/>' +
+    '<path d="M9 1.5V5a.5.5 0 0 0 .5.5H13"/></svg>';
+
+  function renderTree(now) {
+    var host = $("tree");
+    host.textContent = "";
+    var built = buildTree();
+    var collide = collisionSet();
+    var any = Object.keys(built.root.children).length > 0;
+
+    tx($("filesTitle"), selectedRepo ? "Files — " + selectedRepo : "Files");
+
+    if (!any) {
+      var box = el("div", "empty-tree");
+      tx(box, needsToken
+        ? "Sign in to see what the team is working on."
+        : "No files touched yet. The tree fills in as agents read and edit — it shows the part of the repo the team is actually in, never file contents.");
+      host.appendChild(box);
+      return;
+    }
+
+    function walk(node, depth, prefix) {
+      var names = Object.keys(node.children).sort(function (a, b) {
+        var A = node.children[a], B = node.children[b];
+        if (A.kind !== B.kind) return A.kind === "dir" ? -1 : 1;
+        return a.localeCompare(b);
+      });
+      names.forEach(function (name) {
+        var child = node.children[name];
+        var path = prefix ? prefix + "/" + name : name;
+        var isDir = child.kind === "dir";
+        var open = !collapsed[path];
+
+        var row = el("button", "node");
+        row.dataset.kind = child.kind;
+        row.dataset.collide = String(Boolean(collide[path]));
+        var actorsHere = Object.keys(child.who);
+        row.dataset.touched = String(actorsHere.length > 0);
+        row.style.paddingLeft = 16 + depth * 14 + "px";
+
+        var label = el("span", "label");
+        var caret = el("span", "caret");
+        tx(caret, isDir ? (open ? "▾" : "▸") : "");
+        label.appendChild(caret);
+        if (!isDir) {
+          var icon = el("span");
+          icon.innerHTML = FILE_SVG;
+          label.appendChild(icon.firstChild);
+        }
+        label.appendChild(tx(el("span", "name"), name));
+        row.appendChild(label);
+
+        var marks = el("span", "marks");
+        actorsHere
+          .filter(function (a) { return !selectedActor || a === selectedActor; })
+          .sort(function (a, b) { return child.who[b] - child.who[a]; })
+          .slice(0, 4)
+          .forEach(function (a) {
+            var m = el("span", "mark");
+            m.style.setProperty("--who", hueOf(a));
+            m.dataset.stale = String(now - child.who[a] > idleAfterMs);
+            m.title = a + " · " + ago(now - child.who[a]) + " ago";
+            marks.appendChild(m);
+          });
+        row.appendChild(marks);
+
+        row.dataset.sel = String(!isDir && selectedPath === path);
+        row.addEventListener("click", function () {
+          if (isDir) collapsed[path] = open;
+          else selectedPath = selectedPath === path ? null : path;
+          render();
+        });
+        host.appendChild(row);
+
+        if (isDir && open) walk(child, depth + 1, path);
+      });
+    }
+    walk(built.root, 0, "");
+  }
+
+  /**
+   * What is known about one file.
+   *
+   * NOT its contents: the hub never receives a byte of anyone's source, by
+   * design, and inventing a preview here would be a lie about what this
+   * system holds. What it does know — and what you actually want when two
+   * people are in one file — is who has been in it, when, and with which
+   * tool. The desktop app can show real contents because it reads your own
+   * disk; that is a separate surface and is marked as such.
+   */
+  function renderDetail(now) {
+    var host = $("detail");
+    host.textContent = "";
+    if (!selectedPath) {
+      tx($("detailTitle"), "Nothing selected");
+      var hint = el("div", "blank");
+      hint.appendChild(tx(el("h2"), "Pick a file."));
+      hint.appendChild(tx(el("p"), "The tree shows the part of the repo the team is actually working in, built from what everyone's agents have touched. Select a file to see who has been in it."));
+      host.appendChild(hint);
+      return;
+    }
+
+    tx($("detailTitle"), selectedPath);
+    var touching = scoped().filter(function (e) { return e.target === selectedPath; });
+
+    var whoLast = Object.create(null);
+    touching.forEach(function (e) {
+      if (!whoLast[e.actor] || e.ts > whoLast[e.actor]) whoLast[e.actor] = e.ts;
     });
 
-    // Round gridlines, positioned where they actually fall. Dividing the window
-    // into four always gave labels like "-2.3m / -1.5m / -0.8m", which are
-    // arithmetic rather than a scale anyone reads.
-    var axis = $("axis");
-    axis.textContent = "";
-    var STEPS = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60];
-    var stepMin = STEPS[STEPS.length - 1];
-    for (var i = 0; i < STEPS.length; i++) {
-      if (WINDOW_MIN / STEPS[i] <= 6) { stepMin = STEPS[i]; break; }
-    }
-    for (var at = Math.floor(WINDOW_MIN / stepMin) * stepMin; at > 0; at -= stepMin) {
-      var mark = el("span");
-      mark.style.position = "absolute";
-      // Right-anchored: "now" is the right edge, older is further left.
-      mark.style.right = ((at / WINDOW_MIN) * 100).toFixed(3) + "%";
-      mark.style.transform = "translateX(50%)";
-      text(mark, "-" + (at < 1 ? Math.round(at * 60) + "s" : at + "m"));
-      axis.appendChild(mark);
-    }
-    var nowMark = el("span");
-    nowMark.style.position = "absolute";
-    nowMark.style.right = "0";
-    text(nowMark, "now");
-    axis.appendChild(nowMark);
+    var summary = el("div", "detail-who");
+    Object.keys(whoLast)
+      .sort(function (a, b) { return whoLast[b] - whoLast[a]; })
+      .forEach(function (a) {
+        var chip = el("span", "dwho");
+        chip.style.setProperty("--who", hueOf(a));
+        chip.appendChild(el("span", "bead"));
+        chip.appendChild(tx(el("span"), a));
+        chip.appendChild(agoEl(el("span", "when"), whoLast[a]));
+        summary.appendChild(chip);
+      });
+    host.appendChild(summary);
+
+    var list = el("div", "detail-events");
+    touching.slice(-40).reverse().forEach(function (e) {
+      var row = el("div", "devent");
+      row.style.setProperty("--who", hueOf(e.actor));
+      row.appendChild(tx(el("span", "dt"), hhmm(e.ts)));
+      row.appendChild(tx(el("span", "da"), e.actor));
+      row.appendChild(tx(el("span", "dv"), e.tool || verbFor(e)));
+      row.appendChild(tx(el("span", "dd mono"), e.detail || ""));
+      list.appendChild(row);
+    });
+    host.appendChild(list);
   }
 
   function renderCollisions(now) {
     var host = $("collisions");
     host.textContent = "";
-    collisions.slice(0, 5).forEach(function (c) {
-      var div = el("div", "collision");
-      div.appendChild(text(el("span", "file mono"), c.target));
-      var p = el("span", "parties");
-      c.actors.forEach(function (a) {
-        // One span per party, spaced by CSS. Three literal spaces collapse to
-        // one in HTML, which ran the names together: "michael 4s ago andrew 4s ago".
-        var party = el("span", "party");
-        party.style.setProperty("--who", hueVar(a.actor));
-        var b = el("b");
-        text(b, a.label || a.actor);
-        party.appendChild(b);
-        party.appendChild(text(el("span"), " " + ago(now - a.ts) + " ago"));
-        p.appendChild(party);
-      });
-      div.appendChild(p);
-      host.appendChild(div);
-    });
-  }
-
-  function renderFeed() {
-    var feed = $("feed");
-    $("clearFilter").hidden = !filterActor;
-    feed.textContent = "";
-    events
-      .filter(function (e) { return !filterActor || e.actor === filterActor; })
-      .slice(-240)
-      .reverse()
-      .forEach(function (e) {
-        var row = el("div", "row");
-        row.dataset.kind = e.kind;
-        row.style.setProperty("--who", hueVar(e.actor));
-        row.appendChild(text(el("span", "t mono num"), hhmmss(e.ts)));
-        row.appendChild(text(el("span", "a"), e.actor));
-        row.appendChild(text(el("span", "k"), verbFor(e)));
-        // Mono is for paths and shell commands. A prompt is prose, and setting
-        // English in a monospace face makes it read as data the reader has to
-        // decode rather than a sentence somebody typed.
-        var isProse = e.kind === "prompt";
-        var d = el("span", isProse ? "d" : "d mono");
-        text(d, e.target || e.detail || (e.kind === "turn_end" ? "turn ended" : ""));
-        row.appendChild(d);
-        feed.appendChild(row);
+    collisions
+      .filter(function (c) { return !selectedRepo || !c.repo || c.repo === selectedRepo; })
+      .slice(0, 3)
+      .forEach(function (c) {
+        var bar = el("div", "collide-bar");
+        bar.appendChild(tx(el("span", "file mono"), c.target));
+        var list = el("span", "who-list");
+        (c.actors || []).forEach(function (a) {
+          var s = el("span");
+          s.style.setProperty("--who", hueOf(a.actor));
+          var b = el("b");
+          tx(b, a.label || a.actor);
+          s.appendChild(b);
+          s.appendChild(document.createTextNode(" "));
+          s.appendChild(agoEl(el("span"), a.ts));
+          list.appendChild(s);
+        });
+        bar.appendChild(list);
+        host.appendChild(bar);
       });
   }
 
   /**
-   * Three cases, never conflated (masora DESIGN.md §10). "Nothing here" and
-   * "we could not ask" call for completely different actions, and showing one
-   * when it is the other is how a working product looks broken.
+   * One card per person: their prompt, then the steps their agent has taken
+   * since — which is what a Codex or Claude Code pane shows, except there are
+   * three of them and each is somebody else.
    */
-  function renderEmpty() {
-    var host = $("empty");
-    var hasPeople = roster.length > 0;
-    $("lanes").hidden = !hasPeople;
-    $("axis").hidden = !hasPeople;
-    $("feed").hidden = !hasPeople;
-    $("feedHead").hidden = !hasPeople;
-    if (hasPeople) { host.textContent = ""; host.hidden = true; return; }
-    host.hidden = false;
+  function renderStreams(now) {
+    var host = $("streams");
     host.textContent = "";
+    var shown = roster.filter(function (r) { return !selectedActor || r.actor === selectedActor; });
 
-    var box = el("div", "empty");
-    if (needsToken || (!token && conn === "down" && needsToken)) {
-      box.className = "empty failed";
-      box.appendChild(text(el("h2"), "This board needs a token."));
-      var p1 = el("p");
-      p1.appendChild(document.createTextNode("Open it with the shared token on the end of the URL: "));
-      p1.appendChild(text(el("code"), location.origin + "/?token=…"));
-      box.appendChild(p1);
-      box.appendChild(text(el("p"), "Ask whoever runs the hub for it. It is the same value their ZEVET_TOKEN is set to."));
-    } else if (conn === "down") {
-      box.className = "empty failed";
-      box.appendChild(text(el("h2"), "Can't reach the hub."));
-      box.appendChild(text(el("p"), lastError || "The connection dropped. Retrying on its own — nothing to do unless this stays red."));
-      box.appendChild(text(el("p"), "If it does: check the hub is still running, and that the token in this URL matches the one it was started with."));
-    } else {
-      box.appendChild(text(el("h2"), "Connected. Nothing running yet."));
-      box.appendChild(text(el("p"), "The hub is up and this board is listening. Nobody's agent has done anything yet — that is this working, not this broken."));
-      var p2 = el("p");
-      p2.appendChild(document.createTextNode("Start Claude Code in a repo where the hook is installed. To wire one up: "));
-      p2.appendChild(text(el("code"), "node client/install.mjs <repo>"));
-      box.appendChild(p2);
+    shown.forEach(function (r) {
+      var mine = scoped().filter(function (e) { return e.actor === r.actor; });
+      if (!mine.length) return;
+
+      // Everything since this person's most recent prompt is the current turn.
+      var startIdx = 0;
+      for (var i = mine.length - 1; i >= 0; i--) {
+        if (mine[i].kind === "prompt") { startIdx = i; break; }
+      }
+      var turn = mine.slice(startIdx);
+      var prompt = turn[0] && turn[0].kind === "prompt" ? turn[0] : null;
+      var steps = turn.filter(function (e) { return e.kind === "tool"; }).slice(-7);
+      var ended = turn.some(function (e) { return e.kind === "turn_end"; });
+      var idle = isIdle(r, now);
+
+      var card = el("div", "stream");
+      card.style.setProperty("--who", hueOf(r.actor));
+
+      var head = el("div", "stream-head");
+      head.appendChild(el("span", "bead"));
+      head.appendChild(tx(el("span", "nm"), r.actor));
+      var agentTag = el("span", "agent");
+      tx(agentTag, (r.lastEvent && r.lastEvent.agent) || "");
+      head.appendChild(agentTag);
+      card.appendChild(head);
+
+      if (prompt && prompt.detail) {
+        var bub = el("div", "bubble prompt");
+        tx(bub, prompt.detail);
+        card.appendChild(bub);
+      }
+
+      steps.forEach(function (e) {
+        var row = el("div", "step");
+        row.appendChild(tx(el("span", "t"), e.tool || "tool"));
+        var v = el("span", "v mono");
+        tx(v, e.target || e.detail || "");
+        row.appendChild(v);
+        card.appendChild(row);
+      });
+
+      var foot = el("div", "step");
+      foot.appendChild(tx(el("span", "t"), hhmm(r.lastTs)));
+      var state = el("span", "v");
+      if (idle) {
+        state.className = "v idle-note";
+        tx(state, "idle " + ago(now - r.lastTs));
+      } else if (ended) {
+        tx(state, "turn finished");
+      } else {
+        var w = el("b");
+        tx(w, "working");
+        state.appendChild(w);
+        var dots = el("span", "typing");
+        dots.appendChild(el("i"));
+        dots.appendChild(el("i"));
+        dots.appendChild(el("i"));
+        state.appendChild(dots);
+      }
+      foot.appendChild(state);
+      card.appendChild(foot);
+
+      host.appendChild(card);
+    });
+
+    if (!host.childNodes.length) {
+      var p = el("div");
+      p.style.cssText = "padding:16px;color:var(--faint);font-size:12.5px";
+      tx(p, roster.length ? "nothing in this workspace yet" : "no agents yet");
+      host.appendChild(p);
     }
-    host.appendChild(box);
   }
 
-  function render() {
-    var now = serverNow();
-    renderLanes(now);
-    renderCollisions(now);
-    renderFeed();
-    renderEmpty();
-
+  function renderScope() {
     var repos = [];
     var branches = [];
     events.forEach(function (e) {
       if (e.repo && repos.indexOf(e.repo) < 0) repos.push(e.repo);
       if (e.branch && branches.indexOf(e.branch) < 0) branches.push(e.branch);
     });
-    text($("scope"), repos.length ? repos.join(", ") + (branches.length === 1 ? "  ·  " + branches[0] : "") : "");
+    var label = selectedRepo || repos.join(", ");
+    var br = selectedRepo
+      ? (workspaces().find(function (w) { return w.repo === selectedRepo; }) || {}).branch
+      : branches.length === 1 ? branches[0] : "";
+    tx($("scope"), label ? label + (br ? "   " + br : "") : "");
   }
 
-  function setConn(stateName, label, err) {
-    conn = stateName;
-    lastError = err || "";
-    $("conn").dataset.state = stateName;
-    text($("connText"), label);
+  function renderBlank() {
+    if (roster.length) return false;
+    var main = $("tree");
+    main.textContent = "";
+    var box = el("div", "blank");
+    if (needsToken) {
+      box.appendChild(tx(el("h2"), "Not signed in."));
+      box.appendChild(tx(el("p"), "This board needs the shared token. Open the link you were sent, or ask whoever runs the hub for it."));
+    } else if (conn === "down") {
+      box.appendChild(tx(el("h2"), "Can't reach the hub."));
+      box.appendChild(tx(el("p"), "Retrying on its own. If this stays red, the hub is probably off."));
+    } else {
+      box.appendChild(tx(el("h2"), "Connected. Nobody is working yet."));
+      box.appendChild(tx(el("p"), "This is the hub working, not failing. Start an agent in a wired repo and the tree fills in with who is in which folder."));
+      var p = el("p");
+      p.appendChild(document.createTextNode("To wire a repo: "));
+      p.appendChild(tx(el("code"), "node client/install.mjs <repo>"));
+      box.appendChild(p);
+    }
+    main.appendChild(box);
+    return true;
+  }
+
+  function render() {
+    var now = serverNow();
+    renderPresence(now);
+    renderPeople(now);
+    renderWorkspaces();
+    renderCollisions(now);
+    renderScope();
+    if (!renderBlank()) { renderTree(now); renderDetail(now); }
+    renderStreams(now);
+  }
+
+  function setConn(state, label) {
+    conn = state;
+    $("conn").dataset.state = state;
+    tx($("connText"), label);
   }
 
   function connect() {
     var es = new EventSource("/events");
-    es.addEventListener("hello", function (m) {
-      setConn("live", "live");
-      applySnapshot(JSON.parse(m.data));
-    });
+    es.addEventListener("hello", function (m) { setConn("live", "live"); applySnapshot(JSON.parse(m.data)); });
     es.addEventListener("activity", function (m) { pushEvent(JSON.parse(m.data)); });
     es.onopen = function () { setConn("live", "live"); render(); };
     es.onerror = function () {
-      // EventSource cannot tell us WHY it failed — the spec gives the handler
-      // no status — and "reconnecting" forever is what a wrong token used to
-      // look like. So ask the API, which can answer, and say the true thing.
       fetch("/api/state", { credentials: "same-origin" })
         .then(function (r) {
-          if (r.status === 401) {
-            es.close();
-            needsToken = true;
-            setConn("down", "not signed in");
-          } else if (r.status === 429) {
-            es.close();
-            setConn("down", "rate limited", "Too many failed attempts from this address. Wait a few minutes.");
-          } else {
-            setConn("down", "reconnecting", "Lost the connection to the hub. It retries automatically.");
-          }
+          if (r.status === 401) { es.close(); needsToken = true; setConn("down", "not signed in"); }
+          else if (r.status === 429) { es.close(); setConn("down", "rate limited"); }
+          else setConn("down", "reconnecting");
           render();
         })
-        .catch(function () {
-          setConn("down", "reconnecting", "Lost the connection to the hub. It retries automatically.");
-          render();
-        });
+        .catch(function () { setConn("down", "reconnecting"); render(); });
     };
   }
 
-  $("clearFilter").addEventListener("click", function () { filterActor = null; render(); });
-
+  // Cheap every second; a full render only when something actually changed,
+  // or every 15s so idle transitions still surface.
+  var lastFull = 0;
   setInterval(function () {
-    text($("clock"), hhmmss(serverNow()));
-    render();
+    tickAgo();
+    if (serverNow() - lastFull > 15000) render();
   }, 1000);
 
-  text($("clock"), hhmmss(serverNow()));
+  var _render = render;
+  render = function () {
+    lastFull = serverNow();
+    _render();
+  };
+
   render();
   connect();
 })();

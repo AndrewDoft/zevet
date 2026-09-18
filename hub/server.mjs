@@ -38,9 +38,11 @@ const CLIENT_FILES = ["hook.mjs", "install.mjs", "updater.mjs", "detect.mjs", "i
 
 /** The self-hosted faces. All SIL OFL-1.1; see hub/public/fonts/LICENSE. */
 const FONT_FILES = [
+  "jost-variable.woff2",
+  "ibm-plex-mono-400.woff2",
+  // Kept so an older cached board does not 404 its own type mid-session.
   "hanken-grotesk-variable.woff2",
   "frank-ruhl-libre-variable.woff2",
-  "ibm-plex-mono-400.woff2",
 ];
 
 /**
