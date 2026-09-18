@@ -5,7 +5,7 @@
 //
 // Existing hooks are preserved; ours are stripped and rewritten every run, so
 // installing twice leaves one copy rather than two.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, copyFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -62,6 +62,44 @@ function isOurs(entry) {
  * double quotes are what both cmd.exe and sh actually want around a path with
  * a space in it.
  */
+/**
+ * The interpreter to put in the hook command.
+ *
+ * NOT `process.execPath` unconditionally. Inside the packaged desktop app that
+ * is `zevet.exe` — an Electron binary — and Claude Code will not set
+ * ELECTRON_RUN_AS_NODE when it runs a hook. MEASURED against the real build:
+ *
+ *   stdout bytes: 2        <- Chromium wrote to stdout. Rule 1, broken.
+ *   ERROR:net\disk_cache\cache_util_win.cc  Unable to move the cache
+ *
+ * and on any machine without an instance already running it would boot a
+ * window per tool call. A hook that starts a GUI is the Amoeba failure with
+ * different stage dressing.
+ *
+ * So when we are running inside Electron, find a real node instead. The setup
+ * scripts already require Node 20+, so this is not a new dependency; it is the
+ * one this was always relying on.
+ */
+function interpreter() {
+  if (!process.versions.electron) return process.execPath;
+
+  const exts = process.platform === "win32" ? [".exe", ".cmd", ""] : [""];
+  const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, `node${ext}`);
+      try {
+        if (existsSync(candidate) && !statSync(candidate).isDirectory()) return candidate;
+      } catch {
+        // Unreadable PATH entry; keep looking.
+      }
+    }
+  }
+  console.error("zevet: could not find node on PATH, and refuses to point the hook at the app binary.");
+  console.error("       Install Node 20 or newer from https://nodejs.org, then run this again.");
+  process.exit(1);
+}
+
 function shellQuote(p) {
   if (p.includes('"')) {
     console.error(`zevet: refusing to build a command from a path containing a quote: ${p}`);
@@ -118,10 +156,15 @@ for (const evt of Object.keys(cfg.hooks)) {
   if (cfg.hooks[evt].length === 0) delete cfg.hooks[evt];
 }
 
+// Declared out here because the summary below reports it. Resolved only when
+// actually installing, so `--remove` still works on a machine without node.
+let node = "";
+
 if (!remove) {
   // Quoted so a space in "C:\Program Files" or "/Users/kai/My Code" survives
   // instead of splitting into two arguments.
-  const command = `${shellQuote(process.execPath)} ${shellQuote(HOOK)} ${MARK}`;
+  node = interpreter();
+  const command = `${shellQuote(node)} ${shellQuote(HOOK)} ${MARK}`;
   for (const evt of EVENTS) {
     const entry = { type: "command", command, timeout: 10 };
     const groups = Array.isArray(cfg.hooks[evt]) ? cfg.hooks[evt] : [];
@@ -137,7 +180,7 @@ if (remove) {
   console.log(`zevet: removed ${removed} hook entr${removed === 1 ? "y" : "ies"} from ${file}`);
 } else {
   console.log(`zevet: installed ${EVENTS.length} hooks into ${file} (replaced ${removed})`);
-  console.log(`      node:  ${process.execPath}`);
+  console.log(`      node:  ${node}`);
   console.log(`      hook:  ${HOOK}`);
   console.log("");
   console.log("Set these in your shell, then start Claude Code in that repo:");

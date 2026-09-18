@@ -353,6 +353,49 @@ describe("the installer", () => {
     }
   });
 
+  test("the hook command never points at the app binary", async (t) => {
+    // THE PACKAGED-BUILD BUG. `process.execPath` inside the desktop app is
+    // zevet.exe, an Electron binary, and Claude Code does not set
+    // ELECTRON_RUN_AS_NODE when it runs a hook. Measured against the real
+    // build, the command it wrote booted Chromium: 2 bytes on stdout (rule 1
+    // of the hook, broken) and a GUI window per tool call on any machine
+    // without an instance already running.
+    //
+    // This can only be checked with a packaged build to hand, so it SKIPS
+    // LOUDLY rather than passing vacuously when there isn't one. Running it
+    // under plain node would assert that node is node, which proves nothing.
+    const candidates = [
+      path.join(ROOT, "desktop", "out", "win-unpacked", "zevet.exe"),
+      path.join(ROOT, "desktop", "out", "mac-arm64", "zevet.app", "Contents", "MacOS", "zevet"),
+      path.join(ROOT, "desktop", "out", "linux-unpacked", "zevet"),
+    ];
+    const appBinary = candidates.find((p) => existsSync(p));
+    if (!appBinary) {
+      t.skip("no packaged build in desktop/out — run `npm run dist` in desktop/ to cover this");
+      return;
+    }
+
+    const repo = tempDir("zevet-pkg-");
+    try {
+      const installer = path.join(path.dirname(appBinary), "resources", "client", "install.mjs");
+      const staged = existsSync(installer) ? installer : path.join(ROOT, "client", "install.mjs");
+      execFileSync(appBinary, [staged, repo.dir], {
+        stdio: "pipe",
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      });
+      const cfg = JSON.parse(readFileSync(path.join(repo.dir, ".claude", "settings.json"), "utf8"));
+      const cmd = cfg.hooks.PreToolUse[0].hooks[0].command;
+      const interp = (cmd.match(/^"([^"]+)"/) || [])[1] || "";
+      assert.match(
+        path.basename(interp).toLowerCase(),
+        /^node(\.exe)?$/,
+        `the hook must be run by node, not by ${interp}`,
+      );
+    } finally {
+      repo.cleanup();
+    }
+  });
+
   test("refuses a settings file that is not valid JSON", async () => {
     const repo = tempDir("zevet-inst4-");
     try {
