@@ -157,3 +157,58 @@ describe("the board page", () => {
     assert.ok(/document\.body\.setAttribute\("data-view", viewMode\)/.test(html));
   });
 });
+
+/* ==========================================================================
+ * THE SETUP WINDOW
+ *
+ * desktop/setup.html has the same problem the board has and had no test at
+ * all: ~140 lines of inline script with no build step between it and the
+ * user, reached on a FIRST RUN, where a ReferenceError is not a degraded
+ * feature -- it is an app that cannot be configured and a person with
+ * nowhere to go.
+ *
+ * ⚠️ THE id CHECK IS NOT PEDANTRY. `$("gh")` on an element that is not there
+ * returns null and throws on the next line, and the board shipped exactly
+ * this bug in a different alphabet the day before: a stylesheet rule written
+ * `.chat` for an element whose id was `chat`, which silently applied to
+ * nothing and was found in a screenshot rather than by a test.
+ * ======================================================================= */
+describe("the setup window", () => {
+  const html = readFileSync(path.join(ROOT, "desktop", "setup.html"), "utf8");
+
+  test("its inline script parses", () => {
+    const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    assert.equal(blocks.length, 1);
+    new vm.Script(blocks[0][1], { filename: "setup.html" });
+  });
+
+  test("every element the script reaches for exists in the markup", () => {
+    const ids = new Set([...html.matchAll(/\$\("([^"]+)"\)/g)].map((m) => m[1]));
+    assert.ok(ids.size > 8, "the id scrape found almost nothing — has $() been renamed?");
+    for (const id of ids) {
+      assert.ok(html.includes(`id="${id}"`), `setup.html calls $("${id}") and has no such element`);
+    }
+  });
+
+  test("GitHub sign-in is the primary action and the secret is the fallback", () => {
+    // The ordering IS the feature (Andrew: "without having to enter some long
+    // code"). A refactor that puts the secret field back at the top has undone
+    // the change while leaving every line of it in place.
+    assert.ok(/id="gh"[^>]*class="[^"]*primary/.test(html), "the GitHub button must be the primary one");
+    assert.ok(html.indexOf('id="gh"') < html.indexOf('id="token"'), "the secret field must come after the GitHub button");
+    assert.ok(/<details[^>]*id="manual"/.test(html), "the secret field must be folded away behind a disclosure");
+  });
+
+  test("the setup window never asks the main process for a credential back", () => {
+    // It writes credentials and is never given one. `zevet:config` redacts
+    // them for the same reason, and the board window -- which loads REMOTE
+    // html from the hub -- shares this preload.
+    for (const name of ["secret", "session"]) {
+      assert.equal(
+        new RegExp(`\b(c|cfg)\.${name}\b`).test(html),
+        false,
+        `setup.html reads .${name} off the config, which is redacted and will be undefined`,
+      );
+    }
+  });
+});

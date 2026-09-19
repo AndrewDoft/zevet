@@ -229,3 +229,103 @@ curl -so /dev/null -w "%{http_code}\n" -H "x-zevet-token: <derived>" https://34-
 because appending this file with a heredoc that CONTAINED a line reading `EOF`
 closed the outer heredoc early: half the text landed in the file and the rest
 was executed as shell. Nested heredocs need a distinct delimiter.
+
+---
+
+## Turning on GitHub sign-in
+
+One-time, and it needs a human with a GitHub account — there is no API for creating an
+OAuth app.
+
+1. github.com → Settings → Developer settings → **OAuth Apps** → New OAuth App.
+2. Name it `zevet`. Homepage `https://usemasora.com/zevet`. The callback URL is
+   **required by the form and never used** — device flow has no callback. Put the homepage
+   in again.
+3. ⚠️ **Tick “Enable Device Flow”.** This is the whole thing. Without it GitHub returns a
+   200 with an empty body and no explanation; `hub/github-auth.mjs` recognises that exact
+   shape and names this tickbox in the error, because nobody finds it by guessing.
+4. Copy the **Client ID** (`Iv1.…` or `Ov23…`). There is no client secret to copy, and if
+   you generate one you do not need it.
+
+Then on the hub (see **Deploying the hub** above for how to reach the box):
+
+```
+sudo tee -a /srv/zevet/.env >/dev/null <<'ZEOF'
+ZEVET_GITHUB_CLIENT_ID=<the client id>
+ZEVET_SECRET=<the existing master secret>
+ZEOF
+sudo sh -c "cd /srv/masora && docker compose up -d --force-recreate zevet-hub"
+```
+
+⚠️ **`ZEVET_SECRET` must be the secret already in the field, not a new one.** The hub hands
+it to whoever signs in, and every document already in a room is encrypted under it. A fresh
+one orphans all of them, silently — the editor opens blank and nothing logs an error.
+
+⚠️ **If `ZEVET_TOKEN` is also set, it must be the derivative of that secret, or the hub
+refuses to start** and prints the value it wanted. That refusal is deliberate: the two
+disagreeing is the cutover bug above, and a hub that boots into it looks perfectly healthy
+while 401-ing the whole team.
+
+⚠️ **`docker restart` will not do.** It does not re-read `env_file`; see the cutover notes.
+
+The client id is not a secret. Device flow has none, which is exactly why a desktop app is
+allowed to use it.
+
+### Claiming the hub
+
+The **first** GitHub sign-in becomes the owner and can invite everyone else from
+Settings → Account. So sign in yourself before telling anybody the address. Setting
+`ZEVET_GITHUB_OWNER=<your login>` beforehand closes the window entirely.
+
+State lives in `/srv/zevet/var/accounts.json`, mode 600 — the owner, the allowlist, the live
+sessions and the master secret.
+
+⚠️ **`var/` survives a deploy only because it is in `.gitignore`.** The release tarball is
+extracted over `/srv/zevet` in place; extraction does not delete what it does not mention,
+but a tracked `var/accounts.json` would overwrite the live one. That would sign the whole
+team out and orphan every encrypted document in a single command.
+
+### Back it up
+
+```
+sudo cp /srv/zevet/var/accounts.json /srv/masora/accounts.bak-$(date +%Y%m%d-%H%M%S).json
+```
+
+Losing this file loses the master secret, and with it every document in every room. It is
+now the single most valuable file on that box.
+
+---
+
+## Code signing
+
+Nothing is signed. The pipeline is built and inert: `desktop/electron-builder.config.js`
+computes the build config from the environment, and with no secrets set it produces exactly
+what it always did. `test/signing.test.mjs` pins both halves, including the case where only
+*some* of the Apple credentials are present — which would otherwise produce a signed,
+un-notarised app that Gatekeeper still refuses while the build log reads like a success.
+
+**macOS — Apple Developer Program, $99/yr.** Add as repository *secrets*:
+
+| Secret | What it is |
+| --- | --- |
+| `CSC_LINK` | the Developer ID Application `.p12`, base64-encoded |
+| `CSC_KEY_PASSWORD` | its export password |
+| `APPLE_ID` | the Apple ID email |
+| `APPLE_APP_SPECIFIC_PASSWORD` | an app-specific password, **not** the account password |
+| `APPLE_TEAM_ID` | the ten-character team id |
+
+This is also what unblocks **in-place auto-update on macOS**. macOS will not let an unsigned
+app replace itself, so `desktop/app-update.js` currently opens the disk image and asks the
+person to drag it across. Windows has had one-click update since 0.2.0; macOS cannot until
+this is bought.
+
+**Windows — Azure Trusted Signing, about $10/month.** Secrets `AZURE_TENANT_ID`,
+`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`; repository *variables*
+`AZURE_CODE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`,
+`AZURE_PUBLISHER_NAME`. Chosen over an OV/EV certificate because those now require the key
+on a hardware token, which a GitHub Actions runner cannot use.
+
+⚠️ `AZURE_PUBLISHER_NAME` must match the certificate subject exactly, or NSIS rejects its
+own signature at install time.
+
+Adding the secrets is the whole act of turning it on. The next tagged build signs.

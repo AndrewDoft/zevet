@@ -1,16 +1,16 @@
 {
   "name": "zevet-desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
-  "description": "zevet \u2014 watch your team's coding agents",
+  "description": "zevet — watch your team's coding agents",
   "main": "main.js",
   "author": "Andrew Doft",
   "scripts": {
     "start": "electron .",
     "icon": "node make-icon.mjs",
-    "dist": "node make-icon.mjs && electron-builder --publish never",
-    "dist:win": "node make-icon.mjs && electron-builder --win --publish never",
-    "dist:mac": "node make-icon.mjs && electron-builder --mac --publish never",
+    "dist": "node make-icon.mjs && electron-builder -c electron-builder.config.js --publish never",
+    "dist:win": "node make-icon.mjs && electron-builder -c electron-builder.config.js --win --publish never",
+    "dist:mac": "node make-icon.mjs && electron-builder -c electron-builder.config.js --mac --publish never",
     "smoke:mac": "node ../scripts/smoke-macos.mjs"
   },
   "devDependencies": {
@@ -22,9 +22,10 @@
     "@huggingface/transformers": "4.3.0"
   },
   "build": {
+    "afterPack": "./sign-macos.cjs",
     "appId": "com.andrewdoft.zevet",
     "productName": "zevet",
-    "copyright": "Copyright \u00a9 2026 Andrew Doft",
+    "copyright": "Copyright © 2026 Andrew Doft",
     "directories": {
       "output": "out",
       "buildResources": "build"
@@ -43,6 +44,7 @@
       "index-capability.js",
       "code-index.js",
       "app-update.js",
+      "github-signin.js",
       "setup.html",
       "fonts/**",
       "build/icon.png",
@@ -85,7 +87,6 @@
       "runAfterFinish": true
     },
     "mac": {
-      "sign": "./sign-macos.cjs",
       "target": [
         {
           "target": "dmg",

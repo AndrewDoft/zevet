@@ -298,6 +298,15 @@ describe("file-watch: seeing what an agent did on disk", () => {
     assert.ok(seen.every((e) => e.text === "after\n"));
   });
 
+  test("a save between the editor's read and watch registration reaches the editor", async () => {
+    writeFileSync(path.join(root, "source.txt"), "before\n");
+    const rendered = localFs.readTextFile(root, "source.txt", {}).text;
+    writeFileSync(path.join(root, "source.txt"), "after\n");
+    fw.watch(root, "source.txt", rendered);
+    assert.ok(await waitFor(() => seen.length === 1));
+    assert.equal(seen[0].text, "after\n");
+  });
+
   test("a directory-named event reconciles changed children without reporting unchanged files", async () => {
     writeFileSync(path.join(root, "changed.txt"), "before\n");
     writeFileSync(path.join(root, "same.txt"), "same\n");

@@ -49,7 +49,7 @@ jobs:
       # It runs on both runners on purpose: the bugs this project keeps finding
       # are the ones that are correct on one platform and wrong on the other.
       - name: Test
-        run: node --test "test/**/*.test.mjs"
+        run: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
 
       - name: Install desktop deps
         working-directory: desktop
@@ -57,11 +57,22 @@ jobs:
 
       - name: Build
         working-directory: desktop
-        # CI has no publisher certificate. The custom macOS signer still
-        # seals the finished bundle ad-hoc, so strict integrity checks work.
-        # This does not establish publisher trust or notarize the app.
+        # Signing is enabled when all publisher credentials are configured.
+        # Otherwise the Mac bundle gets an ad-hoc integrity seal.
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_CODE_SIGNING_ENDPOINT: ${{ vars.AZURE_CODE_SIGNING_ENDPOINT }}
+          AZURE_CODE_SIGNING_ACCOUNT: ${{ vars.AZURE_CODE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ vars.AZURE_CERT_PROFILE }}
+          AZURE_PUBLISHER_NAME: ${{ vars.AZURE_PUBLISHER_NAME }}
         # Via the npm script, NOT `npx electron-builder`: the script regenerates
         # the icon first, and calling the binary directly is exactly how the
         # icon went missing from every build without a single failure.
@@ -75,6 +86,8 @@ jobs:
       - name: Smoke the macOS app on Apple Silicon
         if: runner.os == 'macOS'
         working-directory: desktop
+        env:
+          ZEVET_EXPECT_SIGNED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && '1' || '0' }}
         run: npm run smoke:mac
 
       - uses: actions/upload-artifact@v4

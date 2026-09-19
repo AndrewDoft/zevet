@@ -53,6 +53,10 @@ try {
 
   run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
   console.log("Final bundle signature: valid (trust/notarization is separate)");
+  if (process.env.ZEVET_EXPECT_SIGNED === "1") {
+    run("spctl", ["--assess", "--type", "execute", "--verbose", app]);
+    console.log("Publisher-signed build: Gatekeeper accepted");
+  }
   const binaries = nativeFiles(app);
   assert.ok(binaries.length > 5, "Electron and its native dependencies must be present");
   for (const binary of binaries) {
@@ -67,7 +71,9 @@ try {
   fs.mkdirSync(home);
   const env = {
     ...process.env,
-    HOME: home,
+    SHELL: "/bin/zsh",
+    ZDOTDIR: home,
+    ZEVET_ALLOW_MULTI: "1",
     ZEVET_HOME: path.join(home, ".zevet"),
     // Prevent a smoke test from contacting the public update service.
     ZEVET_APP_FEED: "http://127.0.0.1:1/zevet-latest.json",

@@ -158,7 +158,7 @@ class FileWatch {
    *
    * @returns {{ok: true} | {ok: false, error: string}}
    */
-  watch(root, relPath) {
+  watch(root, relPath, initialText) {
     const key = FileWatch.key(root, relPath);
     if (this.subs.has(key)) return { ok: true };
 
@@ -200,7 +200,7 @@ class FileWatch {
       // What this file looked like the last time anybody was told about it.
       // Seeded from the read above, so the first report is a real change and
       // not "here is the file you already have". See `fire`.
-      lastHash: digest(first.text),
+      lastHash: digest(typeof initialText === "string" ? initialText : first.text),
     };
 
     let entry = this.dirs.get(foldCase(dir));
