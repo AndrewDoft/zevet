@@ -17,7 +17,7 @@
 //   2. Never be noisy. Diagnostics go nowhere unless ZEVET_DEBUG is set.
 //      (hook.mjs warns to stderr; a plugin's console is opencode's log surface,
 //      so silence is the default here rather than just silence on stdout.)
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
@@ -169,10 +169,16 @@ function describe(args) {
 }
 
 async function post(payload) {
+  await flushOutbox();
+  const r = await postEvent(payload, TIMEOUT_MS);
+  if (r.status === "failed") outboxAppend(payload);
+}
+
+async function postEvent(body, timeoutMs) {
   const { hub, token, actor } = settings();
   if (!token) {
     debug("no credential — nothing sent");
-    return;
+    return { status: "rejected", code: 0 };
   }
   let machine = "";
   try {
@@ -181,26 +187,99 @@ async function post(payload) {
     machine = "";
   }
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const res = await fetch(`${hub}/ingest`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-zevet-token": token },
-      body: JSON.stringify({ ...payload, actor, machine, agent: "opencode" }),
+      body: JSON.stringify({ ...body, actor, machine, agent: "opencode" }),
       signal: ac.signal,
       // Same reasoning as hook.mjs: a custom header survives a cross-origin
       // redirect, so a redirecting hub would collect the team's credential.
       // The hub never redirects; refusing costs nothing.
       redirect: "error",
     });
-    if (!res.ok) debug(`hub answered ${res.status} — turn unaffected`);
+    if (!res.ok) {
+      debug(`hub answered ${res.status} — turn unaffected`);
+      return { status: "rejected", code: res.status };
+    }
     await res.arrayBuffer().catch(() => {});
+    return { status: "sent" };
   } catch (err) {
-    const why = err.name === "AbortError" ? `no answer in ${TIMEOUT_MS}ms` : err.message;
-    debug(`hub unreachable (${why}) — turn unaffected`);
+    const why = err.name === "AbortError" ? `no answer in ${timeoutMs}ms` : err.message;
+    debug(`hub unreachable (${why}) — kept for later, turn unaffected`);
+    return { status: "failed", why };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Store-and-forward. Copy of the outbox in client/hook.mjs — same bounds
+ * (4 per run, 250ms each, 100 stored), same rule (only network failures are
+ * queued; answers are dropped). The two are copies, not imports: this file
+ * runs inside opencode with no access to the checkout. If one changes, the
+ * other changes with it.
+ */
+const OUTBOX_FLUSH_MAX = 4;
+const OUTBOX_TRY_MS = 250;
+const OUTBOX_MAX = 100;
+
+function outboxFile() {
+  const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+  return path.join(home, "outbox.jsonl");
+}
+
+function outboxRead() {
+  try {
+    const out = [];
+    for (const line of readFileSync(outboxFile(), "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const evt = JSON.parse(line);
+        if (evt && typeof evt === "object") out.push(evt);
+      } catch {
+        // One corrupt line is not a corrupt outbox.
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function outboxWrite(list) {
+  try {
+    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(outboxFile(), list.map((e) => JSON.stringify(e)).join("\n") + (list.length ? "\n" : ""), "utf8");
+  } catch (err) {
+    debug(`could not write the outbox (${err.message}) — the event is lost`);
+  }
+}
+
+function outboxAppend(body) {
+  const list = outboxRead();
+  list.push(body);
+  while (list.length > OUTBOX_MAX) list.shift();
+  outboxWrite(list);
+}
+
+async function flushOutbox() {
+  const list = outboxRead();
+  if (!list.length) return;
+  const rest = [];
+  let attempts = 0;
+  for (const body of list) {
+    if (attempts >= OUTBOX_FLUSH_MAX) {
+      rest.push(body);
+      continue;
+    }
+    attempts++;
+    const r = await postEvent(body, OUTBOX_TRY_MS);
+    if (r.status !== "sent") rest.push(body);
+  }
+  outboxWrite(rest);
 }
 
 /**

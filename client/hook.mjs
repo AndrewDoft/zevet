@@ -14,7 +14,7 @@
 //      stderr, which Claude Code surfaces without acting on.
 //
 // Everything else is best effort. If the hub is down, the turn does not care.
-import { readFileSync, existsSync, realpathSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -138,6 +138,128 @@ function warn(msg) {
   } catch {
     // Diagnostics must never be the thing that breaks the hook.
   }
+}
+
+/**
+ * Store-and-forward for a hub that is not there.
+ *
+ * The hook is fails-open by design: a dead hub costs the turn nothing, and
+ * the event is simply lost. That is the right trade for the turn and the
+ * wrong one for the board — a teammate on flaky wifi vanishes instead of
+ * appearing delayed. So an event the hub never acknowledged is appended to
+ * `~/.zevet/outbox.jsonl` (event bodies only, never the token), and each run
+ * offers the backlog first before sending its own event.
+ *
+ * THREE BOUNDS keep this off the turn's critical path:
+ *   1. at most OUTBOX_FLUSH_MAX events per run (oldest first);
+ *   2. OUTBOX_TRY_MS per attempt — a stalled hub fails fast here;
+ *   3. OUTBOX_MAX events stored; beyond that the oldest are dropped, because
+ *      an outbox that grows without bound is a disk leak with a purpose.
+ *
+ * Only network failures are queued (refused connection, timeout). An HTTP
+ * answer — even a 500 — means the hub is alive to be reasoned with later, and
+ * a 401 in particular means the credential is wrong, which retrying will not
+ * fix. Queued-forever on every run would turn one outage into a permanent
+ * slowdown, so answered events are dropped, not kept.
+ *
+ * The same shape lives in client/opencode-plugin.mjs. The two are copies, not
+ * imports: the plugin runs inside opencode with no access to this file. If
+ * this changes, that changes with it.
+ */
+const OUTBOX_FLUSH_MAX = 4;
+const OUTBOX_TRY_MS = 250;
+const OUTBOX_MAX = 100;
+
+function outboxFile() {
+  const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+  return path.join(home, "outbox.jsonl");
+}
+
+function outboxRead() {
+  try {
+    const raw = readFileSync(outboxFile(), "utf8");
+    const out = [];
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const evt = JSON.parse(line);
+        if (evt && typeof evt === "object") out.push(evt);
+      } catch {
+        // One corrupt line is not a corrupt outbox.
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function outboxWrite(list) {
+  try {
+    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(outboxFile(), list.map((e) => JSON.stringify(e)).join("\n") + (list.length ? "\n" : ""), "utf8");
+  } catch (err) {
+    warn(`could not write the outbox (${err.message}) — the event is lost`);
+  }
+}
+
+function outboxAppend(body) {
+  const list = outboxRead();
+  list.push(body);
+  while (list.length > OUTBOX_MAX) list.shift();
+  outboxWrite(list);
+}
+
+/**
+ * POST one event body. Never throws: a network failure resolves
+ * `{ status: "failed" }` (the caller queues it); an HTTP answer resolves
+ * `{ status: "sent" }` or `{ status: "rejected", code }`.
+ */
+async function postEvent(body, timeoutMs) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${HUB}/ingest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zevet-token": TOKEN },
+      body: JSON.stringify(body),
+      signal: ac.signal,
+      // Same redirect refusal as the old inline fetch below used to carry:
+      // a custom header survives a cross-origin redirect, so a hub that 302s
+      // elsewhere would collect the team's shared secret. The hub never
+      // redirects; refusing costs nothing.
+      redirect: "error",
+    });
+    // Drain before exiting. process.exit() with an undici socket still in
+    // teardown is what tripped a libuv assertion in the updater.
+    await res.arrayBuffer().catch(() => {});
+    if (!res.ok) return { status: "rejected", code: res.status };
+    return { status: "sent" };
+  } catch (err) {
+    const why = err.name === "AbortError" ? `no answer in ${timeoutMs}ms` : err.message;
+    return { status: "failed", why };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Offer the backlog first, oldest first. Budgeted; the turn comes first. */
+async function flushOutbox() {
+  const list = outboxRead();
+  if (!list.length) return;
+  const rest = [];
+  let attempts = 0;
+  for (const body of list) {
+    if (attempts >= OUTBOX_FLUSH_MAX) {
+      rest.push(body);
+      continue;
+    }
+    attempts++;
+    const r = await postEvent(body, OUTBOX_TRY_MS);
+    if (r.status !== "sent") rest.push(body);
+  }
+  outboxWrite(rest);
 }
 
 /**
@@ -327,31 +449,16 @@ async function main() {
 
   const payload = { ...body, actor: ACTOR, machine, repo, branch, agent };
 
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(`${HUB}/ingest`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-zevet-token": TOKEN },
-      body: JSON.stringify(payload),
-      signal: ac.signal,
-      // MEASURED: fetch follows redirects by default and, per spec, strips only
-      // Authorization and Cookie when the origin changes. A custom header does
-      // NOT get stripped — a hub that 302s elsewhere (compromise, a proxy
-      // "canonicalising" the host, an injection over plain HTTP) receives the
-      // team's shared secret from every machine, silently. The hub never has a
-      // legitimate reason to redirect, so refusing costs nothing.
-      redirect: "error",
-    });
-    if (!res.ok) warn(`hub answered ${res.status} — this turn is unaffected`);
-    // Drain before exiting. process.exit() with an undici socket still in
-    // teardown is what tripped a libuv assertion in the updater.
-    await res.arrayBuffer().catch(() => {});
-  } catch (err) {
-    const why = err.name === "AbortError" ? `no answer in ${TIMEOUT_MS}ms` : err.message;
-    warn(`hub unreachable (${why}) — this turn is unaffected`);
-  } finally {
-    clearTimeout(timer);
+  // The backlog goes first (oldest first, budgeted), so a teammate who was
+  // offline reappears in order rather than as a gap followed by now.
+  await flushOutbox();
+  const r = await postEvent(payload, TIMEOUT_MS);
+  if (r.status === "failed") {
+    // Network failure, not an answer: keep it for a run whose hub is back.
+    outboxAppend(payload);
+    warn(`hub unreachable (${r.why}) — kept for later, this turn is unaffected`);
+  } else if (r.status === "rejected") {
+    warn(`hub answered ${r.code} — this turn is unaffected`);
   }
 }
 
@@ -396,7 +503,13 @@ function maybeCheckForUpdates() {
 
 main()
   .catch((err) => warn(`hook bug, ignored: ${err && err.message}`))
-  .finally(() => {
+  .finally(async () => {
     maybeCheckForUpdates();
+    // Let undici finish tearing down live sockets before exiting.
+    // process.exit() mid-teardown trips a libuv assertion on Windows (a
+    // fastfail crash, which reads as the hook dying), and flushing the outbox
+    // means more live sockets at exit than there used to be. 50ms is nothing
+    // against the timeout budget above.
+    await new Promise((r) => setTimeout(r, 50));
     process.exit(0);
   });

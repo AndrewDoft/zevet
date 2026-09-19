@@ -398,6 +398,50 @@ async function checkToken(settings, hubUp) {
   }
 }
 
+// ---- check 3b: release skew --------------------------------------------------
+
+/**
+ * Is the hub serving what this checkout is?
+ *
+ * The 0.2.0 skew is why this exists: main was 0.2.1 plus new client files
+ * while production served the 0.2.0 manifest, and no check said so. The
+ * manifest is authenticated, so this runs after the token check; a hub that
+ * answers state but not the manifest is reported, not assumed.
+ */
+async function checkRelease(settings, hubUp) {
+  let local = null;
+  try {
+    local = JSON.parse(readFileSync(path.join(HERE, "..", "package.json"), "utf8")).version;
+  } catch {
+    // Installed clients have no package.json beside them; the hub half of the
+    // comparison is still worth reporting on its own.
+  }
+  if (!hubUp || !settings.token) {
+    report(false, "release", "not checked — the hub did not answer or no token is configured");
+    return;
+  }
+  try {
+    const res = await get(`${settings.hub}/dist/manifest.json`, { "x-zevet-token": settings.token });
+    if (!res.ok) {
+      report(false, "release", `the hub answered ${res.status} on /dist/manifest.json`);
+      return;
+    }
+    const m = await res.json().catch(() => null);
+    const serving = m && m.version;
+    if (!serving) {
+      report(false, "release", "the hub's manifest has no version");
+      return;
+    }
+    if (local && local !== serving) {
+      report(false, "release", `checkout is v${local} but the hub serves v${serving} — deploy is behind`);
+    } else {
+      report(true, "release", local ? `checkout and hub agree on v${serving}` : `hub serves v${serving}`);
+    }
+  } catch (err) {
+    report(false, "release", `could not ask the hub (${why(err, settings.token, settings.secret)})`);
+  }
+}
+
 // ---- check 4: client files -------------------------------------------------
 
 /**
@@ -468,6 +512,7 @@ async function main() {
   const settings = checkConfig();
   const hubUp = await checkHub(settings);
   await checkToken(settings, hubUp);
+  await checkRelease(settings, hubUp);
   checkClientFiles();
   const watchable = checkAgents();
 

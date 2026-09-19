@@ -10,6 +10,7 @@
 // installed. The same rule bought the same way twice.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { randomUUID, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -204,6 +205,40 @@ const events = [];
 const listeners = new Set();
 
 /**
+ * The board, surviving a restart.
+ *
+ * A hub that kept its events in memory alone forgot the whole board every
+ * deploy and every crash — and deploys are routine here. So every recorded
+ * event is appended to `var/events.jsonl` (next to the account store, and
+ * gitignored for the same reason: a tracked copy would overwrite the live one
+ * on deploy), and at boot the tail is replayed into memory. The replay is
+ * capped at MAX_EVENTS, so a log that grew for a year still boots in
+ * milliseconds; the in-memory window stays the board's working set, not an
+ * archive. `ZEVET_EVENTS` overrides the path exactly like `ZEVET_ACCOUNTS`
+ * does for the account store, and the test suite points every hub at a temp
+ * file so runs cannot see each other.
+ */
+const EVENTS_FILE = process.env.ZEVET_EVENTS || path.join(HERE, "..", "var", "events.jsonl");
+try {
+  mkdirSync(path.dirname(EVENTS_FILE), { recursive: true });
+  if (existsSync(EVENTS_FILE)) {
+    const lines = readFileSync(EVENTS_FILE, "utf8").split("\n").filter((l) => l.trim());
+    for (const line of lines.slice(-MAX_EVENTS)) {
+      try {
+        const evt = JSON.parse(line);
+        if (evt && typeof evt === "object") events.push(evt);
+      } catch {
+        // One corrupt line is not a corrupt log. Skip it and keep the rest.
+      }
+    }
+  }
+} catch (err) {
+  // A hub that cannot read its log still serves the board; it just starts
+  // empty. Say so once, on stderr, where the operator looks.
+  console.error(`zevet: event log unreadable (${err.message}) — starting with an empty board`);
+}
+
+/**
  * Is this credential good?
  *
  * ⚠️ THE SHARED TOKEN IS CHECKED FIRST AND IN CONSTANT TIME; the session lookup
@@ -349,6 +384,19 @@ function sessionCookie(req, token) {
 function record(evt) {
   events.push(evt);
   while (events.length > MAX_EVENTS) events.shift();
+  // Best effort, and deliberately synchronous: one small append per event, no
+  // queue to drain and no background writer to lose on crash. A hub that
+  // cannot write its log keeps serving — the board is live either way — but
+  // the first failure is said once on stderr, because a log that silently
+  // never lands is a restart away from an empty board nobody expected.
+  try {
+    appendFileSync(EVENTS_FILE, `${JSON.stringify(evt)}\n`);
+  } catch (err) {
+    if (!record.warned) {
+      record.warned = true;
+      console.error(`zevet: event log unwritable (${err.message}) — board will not survive a restart`);
+    }
+  }
   const frame = `event: activity\ndata: ${JSON.stringify(evt)}\n\n`;
   for (const res of listeners) {
     // MEASURED: `res.write()` on a reset socket returns false, it does NOT

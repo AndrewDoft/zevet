@@ -27,8 +27,21 @@ export const TOKEN = "test-token-0123456789abcdef";
  * between a suite that is slow and a suite that is flaky.
  */
 export async function startHub(env = {}) {
+  // Every test hub gets its own event log. Without this they share the repo's
+  // var/events.jsonl: runs see each other's boards, the file grows forever,
+  // and a restart test can never start empty. An explicit ZEVET_EVENTS wins,
+  // which is how the persistence tests hand one file to two hubs in a row.
+  const eventsDir = "ZEVET_EVENTS" in env
+    ? null
+    : mkdtempSync(path.join(tmpdir(), "zevet-hub-events-"));
   const child = spawn(process.execPath, [path.join(ROOT, "hub", "server.mjs")], {
-    env: { ...process.env, ZEVET_TOKEN: TOKEN, PORT: "0", ...env },
+    env: {
+      ...process.env,
+      ZEVET_TOKEN: TOKEN,
+      PORT: "0",
+      ...(eventsDir ? { ZEVET_EVENTS: path.join(eventsDir, "events.jsonl") } : {}),
+      ...env,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const stderr = [];
@@ -73,6 +86,7 @@ export async function startHub(env = {}) {
     async stop() {
       child.kill();
       await new Promise((r) => child.once("exit", r));
+      if (eventsDir) rmSync(eventsDir, { recursive: true, force: true });
     },
   };
 }
