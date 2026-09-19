@@ -16,6 +16,9 @@
     "electron": "38.1.2",
     "electron-builder": "25.1.8"
   },
+  "optionalDependencies": {
+    "@huggingface/transformers": "4.3.0"
+  },
   "build": {
     "appId": "com.andrewdoft.zevet",
     "productName": "zevet",
@@ -33,11 +36,17 @@
       "repo-stats.js",
       "file-watch.js",
       "status-sources.js",
+      "embedder.js",
+      "index-capability.js",
+      "code-index.js",
       "setup.html",
       "fonts/**",
       "build/icon.png",
       "!out/**",
-      "!make-icon.mjs"
+      "!make-icon.mjs",
+      "!node_modules/onnxruntime-web/**",
+      "!node_modules/onnxruntime-node/bin/napi-v6/*/!(${arch})/**",
+      "!node_modules/onnxruntime-node/bin/napi-v6/*/*/{DirectML.dll,dxcompiler.dll,dxil.dll}"
     ],
     "extraResources": [
       {

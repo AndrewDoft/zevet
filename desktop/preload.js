@@ -126,6 +126,20 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * affects the branch segment; it is re-checked against the opened
    * workspaces in the main process, as every path on this bridge is.
    */
+  /**
+   * The code index. Every one of these is inert on a machine the capability
+   * gate turned down, and `indexEnable` is the ONLY thing that fetches the
+   * model -- nothing here starts a download on its own.
+   */
+  indexStatus: (root) => ipcRenderer.invoke("local:indexStatus", { root }),
+  indexEnable: (root) => ipcRenderer.invoke("local:indexEnable", { root }),
+  indexSearch: (root, query, opts) =>
+    ipcRenderer.invoke("local:indexSearch", { root, query, ...(opts || {}) }),
+  onIndexEvent: (fn) => {
+    const handler = (_e, payload) => fn(payload);
+    ipcRenderer.on("local:indexEvent", handler);
+    return () => ipcRenderer.removeListener("local:indexEvent", handler);
+  },
   status: (root) => ipcRenderer.invoke("local:status", { root }),
   stats: (root, relPaths) => ipcRenderer.invoke("local:stats", { root, relPaths }),
   /**

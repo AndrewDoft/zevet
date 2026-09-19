@@ -113,7 +113,14 @@ describe("the bridge surface the renderer is written against", () => {
       .map((m) => m[1] || m[2]);
     assert.deepEqual(
       [...new Set(listened)].sort(),
-      ["doc:message", "doc:status", "local:agentEvent", "local:fileChanged"],
+      // ⚠️ A FROZEN LIST, ON PURPOSE. A push channel is main→renderer traffic
+      // the renderer did not ask for, and the renderer here is a page served by
+      // the hub. Adding one is a decision, so it costs an edit to this line and
+      // a sentence saying why.
+      //   local:indexEvent — code-index progress. Model download bytes and
+      //   refresh counts, so an 86MB fetch is not a frozen button. Carries no
+      //   file contents and no paths outside the workspace the user opened.
+      ["doc:message", "doc:status", "local:agentEvent", "local:fileChanged", "local:indexEvent"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {

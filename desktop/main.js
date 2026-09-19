@@ -29,6 +29,10 @@ const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
 const repoStats = require("./repo-stats.js");
 const statusSources = require("./status-sources.js");
+const crypto = require("node:crypto");
+const indexCapability = require("./index-capability.js");
+const embedder = require("./embedder.js");
+const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
@@ -831,6 +835,160 @@ function noteBurn(payload, sessionKey) {
  * status readout is not a reason to relax the one rule that stops a renderer
  * naming `C:\` and having git walk the disk.
  */
+/* ==========================================================================
+ * THE CODE INDEX
+ *
+ * Semantic search over the opened workspace: chunk the files, embed them, and
+ * rank by cosine similarity. It is the one feature in zevet that can genuinely
+ * be too much for a machine — it loads an ONNX model into memory and holds a
+ * vector store — so Andrew's requirement was explicit: *"make sure it only runs
+ * on boxes that can handle it, otherwise zevet should still work"*.
+ *
+ * ⚠️ THE ENTIRE FEATURE IS BEHIND TWO GATES, AND BOTH FAIL CLOSED.
+ *
+ *   1. `index-capability.assess()` decides whether this machine qualifies. If
+ *      it says no, nothing below ever runs: no model is fetched, no CPU is
+ *      spent, no directory is created. The renderer is told why, in words a
+ *      person can act on, and shows nothing else.
+ *   2. Nothing starts BY ITSELF even on a machine that qualifies. Enabling it
+ *      downloads ~86MB, and a desktop app that quietly pulls 86MB because you
+ *      opened a folder is a bad neighbour. `local:indexEnable` is a button.
+ *
+ * ⚠️ EVERY FAILURE HERE IS LOCAL TO THIS FEATURE. A missing native runtime, a
+ * failed download, a corrupt store: each returns `{ok:false, error}` and leaves
+ * the board, the editor and the agents exactly as they were. The optional
+ * dependency is `optionalDependencies` for the same reason — on a platform with
+ * no prebuild, npm shrugs and the guarded require answers MODULE_NOT_FOUND
+ * rather than failing the user's whole install.
+ * ======================================================================== */
+
+/** One index per workspace root, kept open for the life of the app. Opening is
+ *  not free (it reads the store) and a search should not pay for it. */
+const openIndexes = new Map();
+/** The shared embedder. One model in memory, not one per workspace. */
+let sharedEmbedder = null;
+let embedderPromise = null;
+/** Roots currently refreshing, so a second click does not start a second pass
+ *  over the same tree. */
+const refreshing = new Set();
+
+/**
+ * Where one root's store lives. Hashed, because a path is not a directory name
+ * -- it contains separators and, on Windows, a colon -- and because two roots
+ * with the same basename must not share a store.
+ */
+function indexDirFor(root) {
+  const hash = crypto.createHash("sha256").update(path.resolve(root)).digest("hex").slice(0, 16);
+  return path.join(HOME, "index", "stores", hash);
+}
+
+function indexProgress(payload) {
+  toBoard("local:indexEvent", payload);
+}
+
+async function ensureEmbedder() {
+  if (sharedEmbedder) return sharedEmbedder;
+  if (embedderPromise) return embedderPromise;
+  embedderPromise = embedder
+    .createEmbedder({
+      modelDir: indexCapability.modelDir(),
+      onProgress: (p) => indexProgress({ kind: "model", ...p }),
+    })
+    .then((r) => {
+      embedderPromise = null;
+      if (r && r.ok) sharedEmbedder = r;
+      return r;
+    });
+  return embedderPromise;
+}
+
+/** The capability answer, the model's state, and what this root's index holds.
+ *  Cheap enough to poll: assess() is a few syscalls and the rest is in memory. */
+ipcMain.handle("local:indexStatus", async (_e, arg) => {
+  const root = arg && typeof arg.root === "string" ? arg.root : null;
+  const dir = root ? knownRoot(root) : null;
+  const cap = indexCapability.assess({});
+  const model = embedder.modelState({ modelDir: indexCapability.modelDir() });
+  const idx = dir ? openIndexes.get(path.resolve(dir)) : null;
+  return {
+    ok: true,
+    capable: cap.capable,
+    reasons: cap.reasons,
+    measured: cap.measured,
+    budget: cap.budget,
+    model: { present: model.present, bytes: model.bytes },
+    // `null` means "no index for this root", which is different from an index
+    // with zero chunks -- one has never been built, the other found nothing.
+    stats: idx ? idx.stats() : null,
+    building: dir ? refreshing.has(path.resolve(dir)) : false,
+  };
+});
+
+/**
+ * Build or refresh this root's index. Fetches the model on first use.
+ *
+ * ⚠️ REFUSES ON AN INCAPABLE MACHINE even though the renderer already knows,
+ * because the renderer is the one input this process does not trust and a UI
+ * that has gone stale must not be able to start an 86MB download.
+ */
+ipcMain.handle("local:indexEnable", async (_e, arg) => {
+  const root = arg && typeof arg.root === "string" ? arg.root : null;
+  const dir = root ? knownRoot(root) : null;
+  if (!dir) return { ok: false, error: "not an opened workspace" };
+
+  const cap = indexCapability.assess({});
+  if (!cap.capable) {
+    return { ok: false, error: cap.reasons[0] || "this machine cannot run the index", reasons: cap.reasons };
+  }
+
+  const key = path.resolve(dir);
+  if (refreshing.has(key)) return { ok: false, error: "already building" };
+  refreshing.add(key);
+  try {
+    const emb = await ensureEmbedder();
+    if (!emb || !emb.ok) return { ok: false, error: (emb && emb.error) || "the embedding runtime would not load" };
+
+    let idx = openIndexes.get(key);
+    if (!idx) {
+      idx = await codeIndex.openIndex({
+        root: key,
+        dir: indexDirFor(key),
+        embedder: emb,
+        budget: cap.budget,
+      });
+      openIndexes.set(key, idx);
+    }
+    const result = await idx.refresh({
+      onProgress: (p) => indexProgress({ kind: "index", root: key, ...p }),
+    });
+    indexProgress({ kind: "done", root: key, ...result });
+    return { ok: true, ...result, stats: idx.stats() };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  } finally {
+    refreshing.delete(key);
+  }
+});
+
+ipcMain.handle("local:indexSearch", async (_e, arg) => {
+  const root = arg && typeof arg.root === "string" ? arg.root : null;
+  const dir = root ? knownRoot(root) : null;
+  if (!dir) return { ok: false, error: "not an opened workspace", hits: [] };
+  const idx = openIndexes.get(path.resolve(dir));
+  if (!idx) return { ok: false, error: "no index for this workspace yet", hits: [] };
+  const q = arg && typeof arg.query === "string" ? arg.query.trim() : "";
+  if (!q) return { ok: true, hits: [] };
+  try {
+    const hits = await idx.search(q, {
+      k: Number(arg.k) || 8,
+      filter: typeof arg.filter === "string" && arg.filter ? arg.filter : undefined,
+    });
+    return { ok: true, hits };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err), hits: [] };
+  }
+});
+
 ipcMain.handle("local:status", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
