@@ -57,10 +57,9 @@ jobs:
 
       - name: Build
         working-directory: desktop
-        # CSC_IDENTITY_AUTO_DISCOVERY=false stops electron-builder hunting for a
-        # signing identity that is not there and failing the mac job over it.
-        # See the note below about what unsigned means for the people you send
-        # this to.
+        # CI has no publisher certificate. The custom macOS signer still
+        # seals the finished bundle ad-hoc, so strict integrity checks work.
+        # This does not establish publisher trust or notarize the app.
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         # Via the npm script, NOT `npx electron-builder`: the script regenerates
@@ -68,63 +67,15 @@ jobs:
         # icon went missing from every build without a single failure.
         run: npm run ${{ matrix.script }}
 
-      # The only real Mac this project has access to.
-      #
-      # Until now "the macOS build works" meant "electron-builder produced a
-      # file": nobody had ever opened it, and the honest position in
-      # INSUFFICIENCIES.md was that a valid disk image is all anyone could
-      # claim. A macOS runner IS a Mac, so the claim can be tested instead of
-      # deferred to whoever downloads it first.
-      #
-      # What this proves and what it does not: it mounts the image, inspects
-      # the bundle, and LAUNCHES the app, requiring it to still be alive after
-      # a few seconds. It does not prove the UI is usable or that Gatekeeper
-      # behaves the same on a machine that downloaded the file from a browser
-      # (the runner's copy has no com.apple.quarantine attribute, because it
-      # was built here rather than downloaded). Both are stated in the output
-      # rather than implied.
-      - name: Smoke the macOS app on a real Mac
+      # Exercise the final DMG, not just electron-builder's exit status. The
+      # script checks the complete signature, every Mach-O architecture, the
+      # packaged native ONNX/Transformers modules, and a normal app launch.
+      # It isolates user data and never weakens the Chromium sandbox or macOS
+      # Gatekeeper. Ad-hoc integrity is not Apple publisher trust/notarization.
+      - name: Smoke the macOS app on Apple Silicon
         if: runner.os == 'macOS'
-        run: |
-          set -o pipefail
-          DMG=$(ls desktop/out/*.dmg)
-          echo "== image: $DMG ($(stat -f%z "$DMG") bytes)"
-
-          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint /tmp/zevetdmg
-          APP=$(ls -d /tmp/zevetdmg/*.app)
-          echo "== bundle: $APP"
-
-          BIN="$APP/Contents/MacOS/zevet"
-          test -x "$BIN" || { echo "no executable at $BIN"; exit 1; }
-          echo "== arch:"; lipo -archs "$BIN" || file "$BIN"
-
-          echo "== signature (expected: adhoc or absent — this build is unsigned):"
-          codesign -dv --verbose=2 "$APP" 2>&1 | sed 's/^/   /' || true
-          echo "== gatekeeper verdict (expected: rejected, unsigned):"
-          spctl --assess --type execute --verbose "$APP" 2>&1 | sed 's/^/   /' || true
-
-          # Copy out: the mounted image is read-only, and Electron writes into
-          # its own userData on first run.
-          cp -R "$APP" /tmp/zevet.app
-          hdiutil detach /tmp/zevetdmg
-
-          echo "== ELECTRON_RUN_AS_NODE: does the bundled runtime execute at all?"
-          ELECTRON_RUN_AS_NODE=1 "/tmp/zevet.app/Contents/MacOS/zevet" -e 'console.log("node inside the bundle:", process.version)'
-
-          echo "== launching the app for real"
-          "/tmp/zevet.app/Contents/MacOS/zevet" --no-sandbox > /tmp/zevet-launch.log 2>&1 &
-          PID=$!
-          sleep 12
-          if kill -0 "$PID" 2>/dev/null; then
-            echo "   STILL RUNNING after 12s (pid $PID) — it launches"
-            kill "$PID" 2>/dev/null || true
-          else
-            wait "$PID"; CODE=$?
-            echo "   EXITED with code $CODE — it did not stay up"
-            echo "   ---- log ----"; sed 's/^/   /' /tmp/zevet-launch.log
-            exit 1
-          fi
-          echo "   ---- log ----"; sed 's/^/   /' /tmp/zevet-launch.log || true
+        working-directory: desktop
+        run: npm run smoke:mac
 
       - uses: actions/upload-artifact@v4
         with:
@@ -138,21 +89,12 @@ jobs:
 # ---------------------------------------------------------------------------
 # UNSIGNED, AND WHAT THAT COSTS
 #
-# Neither artifact is code-signed, and the build log says so out loud
-# ("no signing info identified, signing is skipped").
+# Windows has no publisher signature. The macOS bundle is sealed ad-hoc to
+# keep its final resources and native code internally consistent, but it has
+# no Developer ID signature or notarization. Gatekeeper still rejects it as
+# untrusted; recipients must use macOS's explicit per-app approval flow.
+# The build and smoke test never remove quarantine or change Gatekeeper.
 #
-#   macOS: Gatekeeper refuses it with "zevet can't be opened because Apple
-#          cannot check it for malicious software." The recipient has to
-#          right-click -> Open and confirm, every first run, or clear the
-#          quarantine flag by hand:
-#              xattr -dr com.apple.quarantine /Applications/zevet.app
-#          It looks exactly like the app is broken.
-#
-#   Windows: SmartScreen shows "Windows protected your PC" and hides the Run
-#          button behind "More info".
-#
-# Fixing it properly means an Apple Developer account (99 USD/year) for signing
-# and notarisation, plus a Windows code-signing certificate. For three friends
-# it may be cheaper to accept the friction and tell them what to click — but it
-# is friction that reads as "this is broken", and it is worth deciding on
-# deliberately rather than discovering on the phone with Kai.
+# Trusted distribution requires the publisher's Apple Developer identity and
+# notarization, plus a Windows code-signing certificate. Those credentials are
+# intentionally not created or purchased by this build.
