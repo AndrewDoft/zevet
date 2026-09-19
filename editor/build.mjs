@@ -12,13 +12,19 @@
  * Run it with `npm run build` from editor/.
  */
 import { build } from "esbuild";
-import { statSync } from "node:fs";
+import { statSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = path.join(HERE, "src", "index.js");
 const OUT = path.join(HERE, "..", "hub", "public", "editor.js");
+const SRC = path.join(HERE, "src");
+/** The hash of every source file that went into the bundle above. Read by
+ *  test/highlight.test.mjs's companion check; see the comment where it is
+ *  written. */
+const STAMP = path.join(HERE, "..", "hub", "public", "editor.js.srchash");
 
 // esbuild resolves nothing by itself on failure — it throws, and an unhandled
 // rejection in an ESM entry point exits non-zero on its own. But relying on
@@ -68,6 +74,26 @@ try {
   for (const warning of result.warnings ?? []) {
     console.warn(`warning: ${warning.text}`);
   }
+
+  // ⚠️ A STAMP OF WHAT WAS BUILT, so the committed bundle cannot silently
+  // drift from the source it was built from.
+  //
+  // hub/public/editor.js is a 835 KB generated file that is COMMITTED, and
+  // nothing rebuilds it automatically -- not the gate, not CI, not the desktop
+  // build. DECISIONS.md (D-005) named this "the most likely way this rots":
+  // edit src/, forget to run this, and the board ships behaviour from an older
+  // source with a diff that shows the new one.
+  //
+  // Recomputing the bundle in the test suite is not an option: it needs
+  // editor/node_modules, which is 200 MB of build-time dependencies the gate
+  // does not install. Hashing the INPUTS costs nothing and catches the case
+  // that actually happens.
+  const srcHash = createHash("sha256");
+  for (const name of readdirSync(SRC).sort()) {
+    srcHash.update(name);
+    srcHash.update(readFileSync(path.join(SRC, name)));
+  }
+  writeFileSync(STAMP, srcHash.digest("hex") + "\n", "utf8");
 
   const bytes = statSync(OUT).size;
   const mapBytes = statSync(`${OUT}.map`).size;
