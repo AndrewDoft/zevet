@@ -14,7 +14,7 @@
 //      stderr, which Claude Code surfaces without acting on.
 //
 // Everything else is best effort. If the hub is down, the turn does not care.
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -117,10 +117,17 @@ function repoIsOptedIn(dir) {
     // better to report nothing than to publish a repo nobody chose.
     return false;
   }
-  const here = path.resolve(dir || "");
+  // macOS's /tmp and /var are aliases, and a user can pick a symlinked repo.
+  // Agents commonly report the real cwd, so lexical equality silently drops
+  // events from the very folder that was chosen. Resolve both sides; keep the
+  // exact fallback for paths that have since been deleted or become unreadable.
+  const canonical = (p) => {
+    try { return realpathSync(path.resolve(p)); } catch { return path.resolve(p); }
+  };
+  const here = canonical(dir || "");
   return list.some((d) => {
     if (typeof d !== "string" || !d.trim()) return false;
-    const there = path.resolve(d);
+    const there = canonical(d);
     return process.platform === "win32" ? there.toLowerCase() === here.toLowerCase() : there === here;
   });
 }

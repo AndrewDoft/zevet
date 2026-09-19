@@ -12,7 +12,7 @@
 // guards.
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, symlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -288,6 +288,24 @@ describe("the opt-in list decides what reaches the hub", () => {
     const r = await fire(repo, h.zevet); // nothing installed, so no list exists
     assert.equal(r.code, 0);
     assert.equal((await state(hub.base)).body.events.length, before, "a missing opt-in list fell open");
+  });
+
+  test("an opted-in folder keeps reporting when the agent resolves its symlink", async (t) => {
+    const h = homes(t);
+    const repo = makeRepo(t, "real-repo");
+    const alias = path.join(path.dirname(repo), "picked-alias");
+    symlinkSync(repo, alias, process.platform === "win32" ? "junction" : "dir");
+    const opts = { hookPath: "h.mjs", node: process.execPath, mark: "--zevet-hook" };
+    withHomes(h, () => installCodex(alias, opts));
+    const before = (await state(hub.base)).body.events.length;
+    const fired = await fire(repo, h.zevet);
+    assert.equal(fired.code, 0);
+    assert.equal(fired.stdout, "");
+    assert.equal((await state(hub.base)).body.events.length, before + 1, "the canonical path is the same chosen repo");
+    withHomes(h, () => installCodex(repo, opts));
+    assert.equal(withHomes(h, readCodexRepos).length, 1, "aliases must not create duplicate opt-ins");
+    withHomes(h, () => installCodex(repo, { ...opts, remove: true }));
+    assert.deepEqual(withHomes(h, readCodexRepos), [], "removing the canonical path must remove its alias too");
   });
 
   test("a corrupt list means silence too", async (t) => {
