@@ -61,10 +61,27 @@ Michael's Apple Developer membership was confirmed active through July 5, 2027.
 He created the Developer ID Application certificate on September 19. Its public
 key matches the prepared request and local private key. The identity and Apple's
 G2 intermediate are installed; macOS now reports one valid code-signing identity.
-No trust overrides were applied. Notarization still needs separate authentication,
-saved securely in Keychain; never put credentials in this repository or chat.
-The public download has not yet been signed or notarized. For `--prepackaged` builds, sign and notarize the app
+No trust overrides were applied. Notarization authentication is now saved and
+verified in Michael's local Keychain profile `zevet-notary`; never put credentials
+in this repository or chat. The official 0.2.1 app has been Developer ID signed,
+with secure timestamps and hardened runtime on all 20 native files. Its resources,
+plists, native executable content, paths, and permissions match the original
+release; only signature metadata changed. A real isolated launch, ONNX/Transformers
+loading, and strict signature checks passed.
+
+Apple submission `8f97d111-aa1d-48fa-83ce-b563cd2ef442` was uploaded on September 19
+at 19:26 UTC and is still processing. Resume that same submission; a local wait
+timeout does not cancel it. The public download has not yet been replaced with
+the signed app. Six local preflight warnings concern native code stored in
+Electron resource directories; no Error-level findings were returned. Apple's
+actual result, stapled tickets, and final Gatekeeper checks remain required.
+
+For `--prepackaged` builds, sign and notarize the app
 first: the pinned builder skips that work when given an existing app.
+
+This local signing setup does not configure GitHub Actions. Future public Mac
+releases must pass `ZEVET_EXPECT_SIGNED=1 npm run smoke:mac` and staple validation;
+the workflow's ad-hoc development builds are not trusted release installers.
 
 Server rollback files: `/srv/masora/Caddyfile.before-zevet-branded-v2-20260919T185500Z`
 and `/srv/masora/compose.before-zevet-download-page-20260919.yml`.
