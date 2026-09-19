@@ -120,7 +120,13 @@ describe("the bridge surface the renderer is written against", () => {
       //   local:indexEvent — code-index progress. Model download bytes and
       //   refresh counts, so an 86MB fetch is not a frozen button. Carries no
       //   file contents and no paths outside the workspace the user opened.
-      ["doc:message", "doc:status", "local:agentEvent", "local:fileChanged", "local:indexEvent"],
+      //   app:update — the desktop updater's phase, version and percentage, so
+      //   the rail can show a download in progress and then a Restart button.
+      //   Carries the update DIRECTORY path in `file`, which is inside
+      //   userData and is not a path the hub could not already guess; it
+      //   carries no credential and nothing about the user's repos. The board
+      //   cannot start an install with it — that is an invoke, from a click.
+      ["app:update", "doc:message", "doc:status", "local:agentEvent", "local:fileChanged", "local:indexEvent"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {

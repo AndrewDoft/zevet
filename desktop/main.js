@@ -34,6 +34,7 @@ const indexCapability = require("./index-capability.js");
 const embedder = require("./embedder.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
+const { AppUpdater } = require("./app-update.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -1473,8 +1474,47 @@ app.on("before-quit", () => {
 
 // ---- lifecycle -------------------------------------------------------------
 
+/* ==========================================================================
+ * KEEPING THIS MACHINE CURRENT
+ *
+ * Andrew: "every machine should auto-update when you release a new version."
+ *
+ * The updater lives in app-update.js and is deliberately ignorant of Electron;
+ * this block is the whole of the wiring. What it decides here:
+ *
+ *   - WHERE the feed is. The public download host, overridable with
+ *     ZEVET_APP_FEED for testing against something that is not production.
+ *   - WHERE the download lands: a directory of our own under userData, NOT the
+ *     system temp directory. Windows disk cleanup empties temp, and an
+ *     installer that vanishes between "ready" and the click is a bug report
+ *     nobody can reproduce.
+ *   - That the renderer is TOLD, and never asked. The board shows a row; the
+ *     person clicks it or does not.
+ * ======================================================================== */
+const appUpdater = new AppUpdater({
+  currentVersion: app.getVersion(),
+  feedUrl: process.env.ZEVET_APP_FEED || undefined,
+  dir: path.join(app.getPath("userData"), "updates"),
+  onStatus: (s) => toBoard("app:update", s),
+  log: (m) => console.log(`[zevet-app-update] ${m}`),
+  openImpl: (f) => shell.openPath(f),
+  quitImpl: () => {
+    // ⚠️ NOT app.quit(): the board's beforeunload and the single-instance
+    // lock both get in the way of a quit that has to be certain, and the
+    // installer is already running by the time this fires.
+    app.exit(0);
+  },
+});
+
+ipcMain.handle("app:updateStatus", () => appUpdater.status());
+ipcMain.handle("app:updateCheck", () => appUpdater.check());
+ipcMain.handle("app:updateInstall", () => appUpdater.install());
+
 app.whenReady().then(() => {
   buildMenu();
+  // After the window, never before it: an update check that delayed the
+  // board would be a worse app for a feature nobody asked to wait on.
+  appUpdater.start();
   const cfg = readConfig();
   if (cfg) openBoard(cfg);
   else openSetup(null);

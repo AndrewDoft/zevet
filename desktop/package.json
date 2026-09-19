@@ -39,6 +39,7 @@
       "embedder.js",
       "index-capability.js",
       "code-index.js",
+      "app-update.js",
       "setup.html",
       "fonts/**",
       "build/icon.png",

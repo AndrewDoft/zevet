@@ -193,3 +193,57 @@ the hub's env holds a derived token, every legacy install is locked out until it
 build step it has ever had. `hub/public/editor.js` is rebuilt by `npm run build` in `editor/`
 and must be rebuilt and re-committed whenever that source changes — there is no CI check that it
 is in step, which is a real gap and the most likely way this rots.
+
+---
+
+## D-006 — the desktop app updates itself, from the download host, and not with electron-updater
+
+**2026-09-18**
+
+**Decision.** zevet checks a JSON feed on the public download host, downloads a newer installer
+in the background, verifies its length and sha256, and offers a one-click restart. On Windows it
+runs the NSIS installer with `/S` and exits. On macOS it opens the disk image and the person
+drags the app across, as they did the first time. `desktop/app-update.js` is the whole thing;
+`scripts/make-feed.mjs` generates the feed from the artifacts.
+
+Asked for by Andrew (2026-09-18): *"every machine should auto-update when you release a new
+version. to find bugs and test this, build the last leg of zevet inside of zevet."*
+
+**Why not electron-updater**, which is the obvious answer and was the first one tried on paper.
+On macOS it cannot work here: Squirrel.Mac verifies the code signature of the replacement bundle
+before swapping it in, and zevet is unsigned — a standing decision, because signing means an
+Apple Developer account at 99 USD/year (see `.github/workflows/build.yml`). So electron-updater
+would have auto-updated the Windows machine and silently done nothing on both Macs, while
+everyone believed they were current. That is worse than no updater. The rejected alternatives,
+for the record:
+
+1. *electron-updater with a macOS carve-out.* A dependency with a large transitive tree, used
+   for one of three platforms, plus hand-written code for the other two anyway.
+2. *Buy the Apple account and sign.* Not rejected on merit — it is the right end state, and it
+   would also remove the Gatekeeper warning that makes first-run look broken. Rejected for now
+   as a purchase, not a code decision.
+3. *Serve updates from the team's hub*, as `client/updater.mjs` does for the hook client.
+   Rejected because it would put a 90 MB installer on every team's own box, and because a
+   machine with zevet installed but no hub configured would then never update.
+
+**⚠️ What the published sha256 does and does not buy.** It comes from the same origin as the
+file. It catches a truncated download, a corrupted object and a proxy that mangled bytes. It
+does **not** make a compromised download host safe: whoever can replace the `.exe` can replace
+the number beside it. Written down because the check *looks* like a security control and it is
+easy to start believing it is one. What actually stands between a user and a hostile installer
+is HTTPS to a host Andrew controls, plus the fact that installing is a deliberate click. Code
+signing is the thing that would fix it, and has not been bought.
+
+**Deliberately not automatic: the install.** The download is automatic — by the time anyone is
+told, the bytes are on the disk and the click has no wait. *Running* an unsigned installer
+without being asked is a different act, and one this app should not perform on somebody's
+machine while they are in the middle of something.
+
+**Verified in the running app**, not only in tests: a fake feed advertising 9.9.9 was served on
+localhost, the real Electron app found it on its own timer, streamed 3 MB, verified the
+checksum byte-for-byte, left no `.part` behind, and the rail offered "Restart to install".
+A second instance pointed at the same feed correctly declined to download the file again.
+
+**Reversibility.** High. The feature is inert without a published feed — a 404 is treated as
+"nothing to report", which is also the state of the download host today. Deleting
+`zevet-latest.json` turns it off for every machine at once.

@@ -437,6 +437,30 @@
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
     padding: 10px 16px; border-top: 1px solid var(--line);
   }
+
+  /* ---- the update row ----------------------------------------------------
+     Above the theme toggle, at the bottom of the rail: present enough to be
+     seen on the next glance at the window, quiet enough not to interrupt. It
+     is NOT a modal. A dialog in front of the board would stop somebody's work
+     to tell them about a version they can install whenever they like. */
+  .updaterow {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 11px 16px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--muted);
+  }
+  .updaterow[hidden] { display: none; }
+  .updaterow .hd { color: var(--ink); font-size: 12.5px; }
+  .updaterow .sub { color: var(--faint); font-size: 11px; }
+  .updaterow .go {
+    align-self: flex-start;
+    padding: 4px 12px; border: 1px solid var(--cerulean); color: var(--cerulean);
+    border-radius: 100px; font-size: 12px;
+  }
+  .updaterow .go:hover { background: var(--cerulean); color: var(--paper); }
+  /* A real bar, not a spinner: the length of this download is known, so the
+     progress can be honest about how far through it is. */
+  .updaterow .bar { height: 3px; background: var(--fill); overflow: hidden; }
+  .updaterow .bar i { display: block; height: 100%; background: var(--cerulean); transition: width 300ms; }
   /* ---- the sky toggle ----------------------------------------------------
      Andrew's, supplied as a styled-components React component. Ported to plain
      CSS because the component was a <div> wrapper around a style block and a
@@ -974,6 +998,10 @@
     <div class="pane-title">People</div>
     <div class="pane-body" id="people"></div>
     <div class="strip" id="strip"></div>
+    <!-- Only ever shown when there is something to say. A permanent "you are
+         up to date" row is a line of chrome that is right 99% of the time and
+         therefore never read. -->
+    <div class="updaterow" id="updateRow" hidden></div>
     <div class="railfoot">
       <button type="button" class="themer" id="themer" aria-pressed="false" title="Light or dark">
         <span class="sky">
@@ -2075,7 +2103,62 @@
     conn.appendChild(srow("Credential", credentialLabel()));
     sheet.appendChild(conn);
 
+    sheet.appendChild(versionSection());
+
     document.body.appendChild(sheet);
+  }
+
+  /**
+   * What version this is, and a way to ask now rather than wait for the timer.
+   *
+   * The button exists because the check runs 25 seconds after launch and then
+   * every six hours, which is right for a background task and useless to
+   * somebody who has just been told over chat that a new build is out.
+   */
+  function versionSection() {
+    var box = section("Version");
+    if (!LOCAL || typeof window.zevetLocal.updateStatus !== "function") {
+      var na = el("p", "snote");
+      tx(na, "This build has no updater. Downloads are at usemasora.com/zevet.");
+      box.appendChild(na);
+      return box;
+    }
+    var s = updateState || {};
+    box.appendChild(srow("Installed", s.current || "unknown"));
+
+    var state = "up to date";
+    if (s.phase === "checking") state = "checking…";
+    else if (s.phase === "downloading") state = "downloading " + s.version + " — " + (s.percent || 0) + "%";
+    else if (s.phase === "ready") state = s.version + " is ready to install";
+    else if (s.phase === "error") state = s.error || "the last check failed";
+    box.appendChild(srow("Status", state));
+
+    var btn = el("button", "sbtn");
+    btn.type = "button";
+    tx(btn, "Check now");
+    btn.disabled = s.phase === "checking" || s.phase === "downloading";
+    btn.addEventListener("click", function () {
+      btn.disabled = true;
+      tx(btn, "Checking…");
+      window.zevetLocal.updateCheck().then(function (r) {
+        updateState = r;
+        renderUpdate();
+        if (sheetOpen) renderSheet();
+      }, function () {
+        tx(btn, "Check failed");
+      });
+    });
+    box.appendChild(srow("Updates", btn));
+
+    // ⚠️ SAID OUT LOUD, because the alternative is somebody assuming the
+    // opposite. macOS cannot be updated in place here: the app is unsigned, so
+    // the new build is downloaded and opened and the person drags it across.
+    if (s.manual) {
+      var note = el("p", "snote");
+      tx(note, "On macOS zevet cannot replace itself — it is not code-signed. New versions are downloaded and opened for you to drag into Applications.");
+      box.appendChild(note);
+    }
+    return box;
   }
 
   function credentialLabel() {
@@ -3439,6 +3522,67 @@
     });
   }
 
+  /**
+   * The update row.
+   *
+   * ⚠️ THE STATE COMES FROM THE MAIN PROCESS AND IS NEVER COMPUTED HERE. This
+   * page is served BY THE HUB — a remote origin — and the updater it reports on
+   * downloads and runs an installer. The board's job is to draw a status and
+   * to forward one click; it does not get to say what the version is, where
+   * the file came from, or whether it is safe. Everything in `updateState`
+   * arrives over IPC from desktop/app-update.js.
+   *
+   * Silent in every phase except two. "Checking" and "you are current" are the
+   * normal state of this feature and are not news.
+   */
+  var updateState = null;
+  function renderUpdate() {
+    var host = $("updateRow");
+    if (!host) return;
+    var s = updateState;
+    var show = s && (s.phase === "downloading" || s.phase === "ready");
+    host.hidden = !show;
+    if (!show) { host.textContent = ""; return; }
+    host.textContent = "";
+
+    if (s.phase === "downloading") {
+      host.appendChild(tx(el("div", "hd"), "Getting " + s.version + "…"));
+      var bar = el("div", "bar");
+      var fill = el("i");
+      fill.style.width = Math.max(2, Math.min(100, s.percent || 0)) + "%";
+      bar.appendChild(fill);
+      host.appendChild(bar);
+      return;
+    }
+
+    host.appendChild(tx(el("div", "hd"), "Version " + s.version + " is ready."));
+    if (s.notes) host.appendChild(tx(el("div", "sub"), s.notes));
+    var btn = el("button", "go");
+    // ⚠️ TWO DIFFERENT PROMISES, AND THE BUTTON MUST NOT MAKE THE WRONG ONE.
+    // On Windows this restarts into the new version. On macOS the app is
+    // unsigned, so nothing is replaced: the disk image is opened and the
+    // person drags it across, exactly as they did the first time. A button
+    // that said "Restart" on a Mac would be a lie about what happens next.
+    tx(btn, s.manual ? "Open the installer" : "Restart to install");
+    btn.addEventListener("click", function () {
+      btn.disabled = true;
+      tx(btn, s.manual ? "Opening…" : "Restarting…");
+      window.zevetLocal.updateInstall().then(function (r) {
+        if (r && r.ok === false) {
+          btn.disabled = false;
+          tx(btn, "Try again");
+          var e = el("div", "sub");
+          e.style.color = "var(--alert)";
+          tx(e, r.error || "the installer did not start");
+          host.appendChild(e);
+        } else if (r && r.manual) {
+          tx(btn, "Opened — drag zevet to Applications");
+        }
+      });
+    });
+    host.appendChild(btn);
+  }
+
   function renderStreams(now) {
     // ⚠️ THE CONSOLE MOVES, IT IS NOT DUPLICATED. In agent view the thing you
     // are driving belongs in the wide middle column; in ide view it belongs in
@@ -3654,6 +3798,14 @@
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && sheetOpen) closeSettings();
   });
+
+  // Staying current. Both halves are guarded on the function existing: this
+  // page is also served to a plain browser tab, and to desktop builds older
+  // than the updater, and neither has it.
+  if (LOCAL && typeof window.zevetLocal.onUpdate === "function") {
+    window.zevetLocal.onUpdate(function (s) { updateState = s; renderUpdate(); });
+    window.zevetLocal.updateStatus().then(function (s) { updateState = s; renderUpdate(); }, function () {});
+  }
 
   if (LOCAL && typeof window.zevetLocal.onIndexEvent === "function") {
     window.zevetLocal.onIndexEvent(function (p) {

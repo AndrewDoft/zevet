@@ -1,0 +1,498 @@
+// Keeps the installed zevet app in step with the published one.
+//
+// Andrew: *"every machine should auto-update when you release a new version."*
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY THIS IS NOT electron-updater
+//
+// electron-updater is the obvious answer and it was rejected for one reason
+// that is not a matter of taste: on macOS it CANNOT WORK HERE. Squirrel.Mac
+// verifies the code signature of the replacement bundle before swapping it in,
+// and zevet is unsigned — a recorded decision (an Apple Developer account is
+// 99 USD/year, see .github/workflows/build.yml). An updater that silently does
+// nothing on half the team's machines is worse than no updater, because
+// everyone believes they are current.
+//
+// Hand-rolling it also keeps the shape this project already has: client/
+// updater.mjs updates the hook client from a manifest with a sha256 per file,
+// and this is the same idea pointed at the desktop artifacts. The two were
+// written to be read together.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// ⚠️ WHAT THE sha256 IN THE MANIFEST DOES AND DOES NOT BUY
+//
+// It comes from the SAME ORIGIN as the file it describes. So it catches a
+// truncated download, a corrupted CDN object and a proxy that mangled the
+// bytes. It does NOT make a compromised download host safe: whoever can
+// replace the .exe can replace the number next to it. The only thing that
+// would fix that is code signing, which zevet does not have.
+//
+// This is written down rather than implied because the check LOOKS like a
+// security control and it is easy to start believing it is one. What actually
+// stands between a user and a hostile installer here is HTTPS to a host Andrew
+// controls, plus the fact that installing is a deliberate click.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// WHAT IT ACTUALLY DOES, PER PLATFORM
+//
+//   Windows  Downloads the NSIS installer, verifies it, and on the person's
+//            click runs it with /S and quits. The installer replaces the app
+//            in place and relaunches it (runAfterFinish). This works unsigned;
+//            SmartScreen is not consulted for a process the app spawned.
+//
+//   macOS    Downloads the .dmg, verifies it, and OPENS it. It does not swap
+//            the bundle. Replacing a running .app from inside itself is
+//            possible and is how a signed updater does it, but doing it
+//            unsigned means stripping the quarantine attribute off a file
+//            fetched from the internet and then executing it — which is the
+//            exact move malware makes, and not one this app should teach a
+//            machine to accept. The person drags it to Applications, once,
+//            like every other unsigned Mac app they have.
+//
+//   Linux    Nothing. The AppImage target exists in the builder config and has
+//            never been produced or run; a code path for it would be fiction.
+//
+// Nothing here is on the path of anything the user is doing: the check is on a
+// timer, the download is a background stream, and the only blocking step is a
+// button.
+"use strict";
+
+const fs = require("node:fs");
+const path = require("node:path");
+const { createHash } = require("node:crypto");
+const { spawn } = require("node:child_process");
+
+/** Where the manifest lives when nothing says otherwise.
+ *
+ *  ⚠️ THE PUBLIC DOWNLOAD HOST, NOT THE HUB, and that is deliberate. The
+ *  artifacts are already there — it is what the landing page links to — and a
+ *  machine that has zevet installed but has not been pointed at a hub yet
+ *  still gets updates. Putting 100 MB installers on the team's hub would also
+ *  make every team run a file server to stay current. */
+const DEFAULT_FEED = "https://usemasora.com/download/zevet-latest.json";
+
+/** Nothing published is anywhere near this. It exists so a hostile or broken
+ *  feed cannot fill the disk: the stream is aborted the moment it is passed. */
+const MAX_BYTES = 400 * 1024 * 1024;
+
+/** How long to wait for the manifest. Short: nothing depends on the answer. */
+const MANIFEST_TIMEOUT_MS = 12000;
+
+/** First check after launch, then every interval. The delay keeps the update
+ *  check out of the startup path, where it would compete with the window. */
+const FIRST_CHECK_MS = 25 * 1000;
+const EVERY_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Tear a write stream down and wait for it to be finished with the file.
+ *
+ * The error listener is not laziness: once the download has been abandoned,
+ * every error the stream can still produce is about a file that is about to be
+ * deleted, and letting one escape turns a handled failure into a crash.
+ */
+function closeQuietly(stream) {
+  return new Promise((resolve) => {
+    stream.on("error", () => {});
+    stream.once("close", resolve);
+    stream.destroy();
+  });
+}
+
+/**
+ * Compare two dotted versions numerically.
+ *
+ * ⚠️ NOT A SEMVER LIBRARY AND NOT STRING COMPARISON. `"0.10.0" < "0.9.0"` is
+ * true as strings, which would strand every machine on 0.9 forever the moment
+ * a tenth minor shipped — the kind of bug that is invisible until the version
+ * numbers happen to reach it. Pre-release suffixes are not supported because
+ * zevet has never published one; a `-rc1` sorts as the release, which is
+ * stated here so it is a known limit rather than a surprise.
+ */
+function compareVersions(a, b) {
+  const pa = String(a || "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b || "").split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+/** The key a manifest uses for this machine. */
+function platformKey(platform, arch) {
+  return `${platform}-${arch}`;
+}
+
+/**
+ * An artifact file name this updater is willing to write and run.
+ *
+ * Same allowlist as client/updater.mjs and for the same reason: `path.join`
+ * treats `../` as an instruction. This one is stricter — it also insists on an
+ * extension it knows how to hand to the operating system, because unlike the
+ * client updater the file here is EXECUTED.
+ */
+function safeArtifactName(name) {
+  return (
+    typeof name === "string" &&
+    name.length > 0 &&
+    name.length <= 128 &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) &&
+    !name.includes("..") &&
+    /\.(exe|dmg)$/i.test(name)
+  );
+}
+
+/**
+ * Where an artifact named in the manifest may be fetched from.
+ *
+ * ⚠️ THE MANIFEST DOES NOT GET TO CHOOSE A HOST. It names a FILE, and the file
+ * is resolved beside the manifest itself. A feed that answers with
+ * `{"file": "https://elsewhere.example/x.exe"}` is rejected rather than
+ * followed, so compromising the feed's CONTENT is not enough to redirect the
+ * download somewhere else — an attacker needs the feed's origin too, at which
+ * point they could serve the binary directly and this check is not the last
+ * line anyway. It is here because it costs four lines.
+ */
+function artifactUrl(feedUrl, file) {
+  if (!safeArtifactName(file)) return null;
+  let base;
+  try {
+    base = new URL(feedUrl);
+  } catch {
+    return null;
+  }
+  const url = new URL(file, base);
+  if (url.origin !== base.origin) return null;
+  // Same directory, not merely the same host: a relative name cannot climb,
+  // but this also rejects a manifest served from one path describing a file
+  // under another.
+  const dir = base.pathname.slice(0, base.pathname.lastIndexOf("/") + 1);
+  if (url.pathname !== dir + file) return null;
+  return url;
+}
+
+/**
+ * Is this JSON a manifest, and does it describe THIS machine?
+ *
+ * Returns `{ error }` or `{ version, entry }`. Validated as a whole before any
+ * of it is acted on: a manifest with one bad entry is not a manifest to be
+ * partly obeyed.
+ */
+function readManifest(json, key) {
+  if (!json || typeof json !== "object") return { error: "the feed is not an object" };
+  if (typeof json.version !== "string" || !/^\d+(\.\d+){0,3}$/.test(json.version)) {
+    return { error: `the feed has no usable version (${JSON.stringify(json.version)})` };
+  }
+  const platforms = json.platforms;
+  if (!platforms || typeof platforms !== "object") return { error: "the feed lists no platforms" };
+  const entry = platforms[key];
+  if (!entry) return { error: `the feed has no build for ${key}` };
+  if (!safeArtifactName(entry.file)) {
+    return { error: `refusing the file name ${JSON.stringify(entry.file)}` };
+  }
+  if (typeof entry.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(entry.sha256)) {
+    return { error: `${entry.file} has no usable sha256` };
+  }
+  if (!Number.isInteger(entry.bytes) || entry.bytes <= 0 || entry.bytes > MAX_BYTES) {
+    return { error: `${entry.file} has no usable size` };
+  }
+  return {
+    version: json.version,
+    notes: typeof json.notes === "string" ? json.notes.slice(0, 2000) : "",
+    entry: { file: entry.file, sha256: entry.sha256.toLowerCase(), bytes: entry.bytes },
+  };
+}
+
+/**
+ * The updater.
+ *
+ * `fetchImpl` and `dir` are injected so the tests can drive the whole thing
+ * against a real local HTTP server writing into a temp directory — including
+ * the cases that matter, which are a feed that lies.
+ */
+class AppUpdater {
+  constructor(opts) {
+    const o = opts || {};
+    this.currentVersion = String(o.currentVersion || "0.0.0");
+    this.feedUrl = String(o.feedUrl || DEFAULT_FEED);
+    this.key = o.platformKey || platformKey(process.platform, process.arch);
+    this.dir = o.dir;
+    this.fetchImpl = o.fetchImpl || ((...a) => fetch(...a));
+    this.onStatus = typeof o.onStatus === "function" ? o.onStatus : () => {};
+    this.log = typeof o.log === "function" ? o.log : () => {};
+    this.spawnImpl = o.spawnImpl || spawn;
+    this.openImpl = o.openImpl || null; // set by main.js to shell.openPath
+    this.quitImpl = typeof o.quitImpl === "function" ? o.quitImpl : () => {};
+
+    /** Everything the renderer is told, and the only state that leaves here. */
+    this.state = {
+      phase: "idle", // idle | checking | downloading | ready | error | current
+      version: null,
+      notes: "",
+      file: null,
+      percent: 0,
+      error: null,
+      canInstall: false,
+      manual: process.platform === "darwin",
+    };
+    this._timer = null;
+    this._busy = false;
+  }
+
+  status() {
+    return Object.assign({ current: this.currentVersion }, this.state);
+  }
+
+  _set(patch) {
+    Object.assign(this.state, patch);
+    try {
+      this.onStatus(this.status());
+    } catch {
+      // A status listener that throws must not take the updater with it.
+    }
+  }
+
+  /** Begin checking. Safe to call twice; the second call is ignored. */
+  start() {
+    if (this._timer) return;
+    this._timer = setTimeout(() => {
+      this._timer = setInterval(() => this.check(), EVERY_MS);
+      if (this._timer.unref) this._timer.unref();
+      this.check();
+    }, FIRST_CHECK_MS);
+    if (this._timer.unref) this._timer.unref();
+  }
+
+  stop() {
+    if (!this._timer) return;
+    clearTimeout(this._timer);
+    clearInterval(this._timer);
+    this._timer = null;
+  }
+
+  /**
+   * Look for a newer build and, if there is one, fetch it.
+   *
+   * Downloading without being asked is the deliberate half of "auto-update":
+   * by the time the person is told there is a new version, it is already on
+   * the disk and installing is one click with no wait. Running it without
+   * being asked is the half that is NOT done, and the header says why.
+   */
+  async check() {
+    if (this._busy) return this.status();
+    this._busy = true;
+    try {
+      this._set({ phase: "checking", error: null });
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), MANIFEST_TIMEOUT_MS);
+      let json;
+      try {
+        const res = await this.fetchImpl(this.feedUrl, {
+          signal: ac.signal,
+          // See client/updater.mjs: a redirect is never legitimate here, and
+          // following one is how a request ends up somewhere unintended.
+          redirect: "error",
+          headers: { accept: "application/json" },
+        });
+        if (!res.ok) {
+          // A 404 is the ordinary state of a host that has not published a
+          // feed yet. It is not an error worth showing anybody.
+          this._set({ phase: res.status === 404 ? "current" : "error", error: res.status === 404 ? null : `the download host answered ${res.status}` });
+          return this.status();
+        }
+        json = await res.json();
+      } finally {
+        clearTimeout(timer);
+      }
+
+      const m = readManifest(json, this.key);
+      if (m.error) {
+        this.log(`rejecting the update feed: ${m.error}`);
+        this._set({ phase: "error", error: m.error });
+        return this.status();
+      }
+      if (compareVersions(m.version, this.currentVersion) <= 0) {
+        this._set({ phase: "current", version: null, error: null, canInstall: false });
+        return this.status();
+      }
+
+      const url = artifactUrl(this.feedUrl, m.entry.file);
+      if (!url) {
+        this._set({ phase: "error", error: `refusing to fetch ${m.entry.file} from this feed` });
+        return this.status();
+      }
+
+      // Already downloaded and verified on a previous run? Then say ready
+      // without spending 90 MB of somebody's tethered connection again.
+      const dest = path.join(this.dir, m.entry.file);
+      if (this._verified(dest, m.entry)) {
+        this._set({ phase: "ready", version: m.version, notes: m.notes, file: dest, percent: 100, canInstall: true, error: null });
+        return this.status();
+      }
+
+      this._set({ phase: "downloading", version: m.version, notes: m.notes, percent: 0, canInstall: false });
+      await this._download(url, dest, m.entry);
+      this._set({ phase: "ready", file: dest, percent: 100, canInstall: true });
+      this.log(`${this.currentVersion} -> ${m.version} downloaded and verified`);
+      return this.status();
+    } catch (err) {
+      this.log(`update check failed: ${err && err.message}`);
+      this._set({ phase: "error", error: (err && err.message) || "the check failed" });
+      return this.status();
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  /** Is `file` on disk already exactly the artifact the manifest describes? */
+  _verified(file, entry) {
+    try {
+      const st = fs.statSync(file);
+      if (st.size !== entry.bytes) return false;
+      const h = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+      return h === entry.sha256;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Stream the artifact to a temp name, verify it, and only then give it its
+   * real name.
+   *
+   * ⚠️ THE RENAME IS THE POINT. An installer that exists at its final path is
+   * one a later run will happily execute; if the download is interrupted at
+   * 60% and the file is already sitting there under the name the manifest
+   * gave, `_verified` is the only thing standing between a half-downloaded
+   * .exe and being run. Writing to `.part` first means a partial download is
+   * never even a candidate.
+   */
+  async _download(url, dest, entry) {
+    fs.mkdirSync(this.dir, { recursive: true });
+    const part = dest + ".part";
+    try {
+      fs.rmSync(part, { force: true });
+    } catch {
+      // A leftover we cannot remove will be truncated by the write below.
+    }
+
+    const res = await this.fetchImpl(url.href, { redirect: "error" });
+    if (!res.ok) throw new Error(`the download host answered ${res.status} for ${entry.file}`);
+
+    const hash = createHash("sha256");
+    const out = fs.createWriteStream(part);
+    let got = 0;
+    try {
+      for await (const chunk of res.body) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        got += buf.length;
+        if (got > entry.bytes) throw new Error("the download is longer than the manifest says");
+        hash.update(buf);
+        if (!out.write(buf)) {
+          await new Promise((resolve, reject) => {
+            out.once("drain", resolve);
+            out.once("error", reject);
+          });
+        }
+        const pct = Math.floor((got / entry.bytes) * 100);
+        if (pct !== this.state.percent) this._set({ percent: pct });
+      }
+      await new Promise((resolve, reject) => {
+        out.end((err) => (err ? reject(err) : resolve()));
+        out.once("error", reject);
+      });
+    } catch (err) {
+      // ⚠️ CLOSE BEFORE UNLINKING, AND SWALLOW WHAT THE CLOSE THROWS.
+      // `createWriteStream` opens lazily, so aborting mid-stream can leave an
+      // open() still queued; deleting the file first made that open fail with
+      // ENOENT *after* this function had already returned, which node:test
+      // correctly reported as an unhandled exception from a finished test.
+      // Found by the "longer than the manifest" case below, not reasoned about.
+      await closeQuietly(out);
+      try {
+        fs.rmSync(part, { force: true });
+      } catch { /* the next run overwrites it */ }
+      throw err;
+    }
+
+    if (got !== entry.bytes) {
+      fs.rmSync(part, { force: true });
+      throw new Error(`the download is ${got} bytes and the manifest says ${entry.bytes}`);
+    }
+    const digest = hash.digest("hex");
+    if (digest !== entry.sha256) {
+      fs.rmSync(part, { force: true });
+      throw new Error("the download does not match the checksum the feed published");
+    }
+    fs.renameSync(part, dest);
+  }
+
+  /**
+   * Put the downloaded build on. Called from a button, never on a timer.
+   *
+   * Windows quits FIRST and lets the installer relaunch: NSIS cannot replace
+   * files a running process holds open, and an installer that succeeds at
+   * everything except the .exe leaves a broken install. `detached` plus
+   * unref'd stdio is what keeps the child alive across our own exit.
+   */
+  async install() {
+    if (this.state.phase !== "ready" || !this.state.file) {
+      return { ok: false, error: "there is nothing downloaded to install" };
+    }
+    if (!this._exists(this.state.file)) {
+      this._set({ phase: "idle", canInstall: false, file: null });
+      return { ok: false, error: "the downloaded file is gone; it will be fetched again" };
+    }
+
+    if (process.platform === "win32") {
+      try {
+        const child = this.spawnImpl(this.state.file, ["/S"], {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        });
+        if (child && typeof child.unref === "function") child.unref();
+      } catch (err) {
+        return { ok: false, error: `could not start the installer: ${err.message}` };
+      }
+      // A beat, so the installer is running before the app it replaces is not.
+      setTimeout(() => this.quitImpl(), 600);
+      return { ok: true, restarting: true };
+    }
+
+    if (process.platform === "darwin") {
+      // See the header: the image is opened, not applied. Saying `ok: true`
+      // with `manual: true` rather than pretending the update is done.
+      if (this.openImpl) {
+        try {
+          await this.openImpl(this.state.file);
+        } catch (err) {
+          return { ok: false, error: `could not open the disk image: ${err.message}` };
+        }
+      }
+      return { ok: true, manual: true };
+    }
+
+    return { ok: false, error: `${process.platform} builds are not published` };
+  }
+
+  _exists(f) {
+    try {
+      return fs.statSync(f).isFile();
+    } catch {
+      return false;
+    }
+  }
+}
+
+module.exports = {
+  AppUpdater,
+  compareVersions,
+  platformKey,
+  safeArtifactName,
+  artifactUrl,
+  readManifest,
+  DEFAULT_FEED,
+  MAX_BYTES,
+};
