@@ -69,7 +69,23 @@ async function fakeHost({ manifest, files = {}, onRequest = null } = {}) {
     feed: `http://127.0.0.1:${port}/download/zevet-latest.json`,
     origin: `http://127.0.0.1:${port}`,
     seen,
-    close: () => new Promise((r) => server.close(r)),
+    /**
+     * ⚠️ closeAllConnections() FIRST, OR THIS NEVER RESOLVES.
+     *
+     * `fetch` keeps its connection alive, and `server.close()` waits for every
+     * open connection before it calls back — so a suite that finishes its
+     * assertions still holds a socket, the close callback never fires, the
+     * `finally` never returns, and `node --test` waits for an event loop that
+     * will not drain. MEASURED: the whole suite hung for twelve minutes on
+     * both CI runners while passing in six seconds locally, because the local
+     * Node was new enough to hide it. A test rig that hangs on one Node and
+     * not another is worse than one that fails.
+     */
+    close: () =>
+      new Promise((r) => {
+        server.closeAllConnections();
+        server.close(r);
+      }),
   };
 }
 

@@ -199,18 +199,40 @@ class Room {
       this.sync.emit(this.name, { kind: "update", bytes: plain });
     });
 
-    ws.addEventListener("close", (ev) => {
-      this.ws = null;
+    /**
+     * One teardown, whichever event gets here first.
+     *
+     * ⚠️ `close` DOES NOT ALWAYS FOLLOW `error`, AND THIS FILE USED TO ASSUME
+     * IT DID. On a refused upgrade — a wrong token, a 401, a hub that answers
+     * HTTP instead of switching protocols — Node 24's WebSocket fires `error`
+     * and then `close`, so driving the retry from `close` alone worked
+     * everywhere it was tested. On Node 22 it fires `error` and NOTHING ELSE.
+     * Electron 38 embeds Node 22. So in the shipped app, a teammate whose
+     * master secret was wrong sat on "connecting" forever: no error, no retry,
+     * no message — a spinner that meant nothing.
+     *
+     * Found by running the suite under Node 22 rather than the Node the
+     * development machine happens to have, after CI hung for twelve minutes on
+     * the test that asserts exactly this.
+     */
+    let settled = false;
+    const down = (why) => {
+      if (settled) return;
+      settled = true;
+      if (this.ws === ws) this.ws = null;
       this.stopSnapshots();
       if (this.closed) return;
-      // 1013 is the hub saying every room is occupied; retrying instantly would
-      // be the worst thing to do with that answer.
-      this.retry(`socket closed (${ev.code})`);
-    });
+      this.retry(why);
+    };
 
+    // 1013 is the hub saying every room is occupied; retrying instantly would
+    // be the worst thing to do with that answer.
+    ws.addEventListener("close", (ev) => down(`socket closed (${ev.code})`));
     ws.addEventListener("error", () => {
-      // The browser API gives no detail here on purpose; `close` follows and
-      // carries the code, so the retry is driven from there.
+      // The browser API gives no detail here on purpose: an error event on a
+      // WebSocket is deliberately opaque so a page cannot probe the network.
+      // "the connection failed" is all there is, and it is better than silence.
+      down("the connection failed");
     });
   }
 

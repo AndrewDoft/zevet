@@ -330,6 +330,14 @@ function connect(base, token = TOKEN) {
   const open = new Promise((resolve, reject) => {
     ws.addEventListener("open", () => resolve());
     ws.addEventListener("close", () => reject(new Error("closed before it opened")));
+    // ⚠️ AND ON `error`, WHICH IS NOT THE SAME EVENT AND DOES NOT ALWAYS BRING
+    // `close` WITH IT. A refused upgrade fires error-then-close on Node 24 and
+    // error ALONE on Node 22 — so without this line the promise below never
+    // settles, `assert.rejects` waits forever, and the whole suite hangs. It
+    // did: twelve minutes on both CI runners, green in six seconds locally,
+    // because the two were on different Node versions. The product had the
+    // same assumption in desktop/doc-sync.js and the same bug.
+    ws.addEventListener("error", () => reject(new Error("the connection failed")));
   });
   return {
     ws,
