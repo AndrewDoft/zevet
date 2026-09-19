@@ -93,8 +93,14 @@
   </label>
 
   <label>
-    <span class="lbl">Shared token</span>
-    <input id="token" class="mono" type="password" placeholder="the long random string" autocomplete="off" spellcheck="false" />
+    <span class="lbl">Master secret</span>
+    <input id="token" class="mono" type="password" placeholder="the long random string your team shares" autocomplete="off" spellcheck="false" />
+    <!-- It is NOT "the token" any more, and the difference is the whole
+         security model: the hub is given SHA-256("zevet-auth" || this), and the
+         key that encrypts shared editing is HKDF(this). Whoever pastes it here
+         should know it never leaves the machine. The input id stays `token` so
+         the script above it keeps working; renaming it is a separate change. -->
+    <span class="hint">Shared by your team. It is never sent to the hub — the hub only ever gets a hash of it.</span>
   </label>
 
   <label>

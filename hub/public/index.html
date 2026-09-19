@@ -1323,7 +1323,9 @@
 
   function pollStatus() {
     if (!LOCAL || typeof window.zevetLocal.status !== "function") return;
-    window.zevetLocal.status().then(function (r) {
+    // The root is passed so the branch segment describes the workspace the
+    // person is actually looking at, not whichever one was opened first.
+    window.zevetLocal.status(localRoot).then(function (r) {
       if (r && r.ok) { machine = r; renderStrip(); }
     }, function () { /* a status probe that fails simply shows nothing */ });
   }

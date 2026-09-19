@@ -1,8 +1,14 @@
 // zevet desktop — the thing you send your friends.
 //
 // Two windows and one job each. Setup collects the three values nobody can
-// guess (hub, token, name), writes ~/.zevet/config.json and wires a repo. The
-// board is the hub's own page, loaded remotely.
+// guess (hub, the team's master secret, name), writes ~/.zevet/config.json and
+// wires a repo. The board is the hub's own page, loaded remotely.
+//
+// That used to say "token" and it is worth the correction: what the config
+// holds is now the master SECRET, and the hub is only ever shown
+// `SHA-256("zevet-auth\0" || S)` — see client/secret.mjs. Everything in this
+// file that talks to the hub sends the derived token, never the secret, and
+// `zevet:config` refuses to hand either back to a renderer.
 //
 // SECURITY POSTURE. Both windows get a preload, and neither gets Node.
 //
@@ -21,6 +27,15 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu } = require("electron");
 const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
+const repoStats = require("./repo-stats.js");
+const statusSources = require("./status-sources.js");
+const { FileWatch } = require("./file-watch.js");
+// doc-sync.js is NOT required at the top. It resolves and loads the crypto
+// modules at construction time, and on a checkout where those are missing that
+// is a throw — at the top of this file that throw happens before any window
+// exists and the app simply never starts, with the message going to a console
+// nobody is looking at. Required lazily in ensureDocSync() instead, where the
+// failure becomes an error string a person can read in the editor.
 const { execFile } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -57,10 +72,98 @@ let boardWindow = null;
 let setupWindow = null;
 let watcher = null;
 
+/**
+ * `client/secret.mjs`, which is the ONE place that decides what credential a
+ * machine has.
+ *
+ * ⚠️ NEVER FROM `~/.zevet/client`, and this is the same rule doc-sync.js states
+ * at greater length: that directory is the hub's update channel, so a hub that
+ * could put a `secret.mjs` there could make `deriveAuthToken` return anything
+ * it liked — including the master secret itself, spelled as a token. The
+ * resolution order below deliberately does not include it and must not grow one.
+ *
+ * ⚠️ THIS DUPLICATES doc-sync.js's `cryptoModulePaths`, knowingly. That module
+ * keeps its loader private and belongs to another author; importing from it
+ * would mean widening its exports. The two orders must stay identical — if one
+ * of them ever resolves a different copy of secret.mjs than the other, the
+ * board and the editor will authenticate as different teams and the symptom
+ * will be a 401 nobody can explain. Flagged rather than solved.
+ *
+ * Node 22 (what Electron 38 embeds) can `require()` an ES module with no
+ * top-level await; secret.mjs has none, deliberately, and doc-sync.js already
+ * relies on exactly this.
+ */
+let secretModule;
+function loadSecretModule() {
+  if (secretModule !== undefined) return secretModule;
+  const candidates = [];
+  if (process.resourcesPath) candidates.push(path.join(process.resourcesPath, "client", "secret.mjs"));
+  candidates.push(path.join(__dirname, "..", "client", "secret.mjs"));
+  secretModule = null;
+  for (const p of candidates) {
+    try {
+      secretModule = require(p);
+      break;
+    } catch {
+      // Try the next; the failure is reported by callers as an auth error, so
+      // it reaches a person rather than a console nobody has open.
+    }
+  }
+  return secretModule;
+}
+
+/**
+ * The credential this machine presents to the hub, for a config as saved.
+ *
+ * A config with a `secret` derives `SHA-256("zevet-auth\0" || S)`; a config with
+ * only a `token` — an install from before the master secret existed — presents
+ * it verbatim and says `legacy`. That branch is not dead weight: there are
+ * installs in the field with exactly that shape, and dropping them would take
+ * the board away from everyone the moment they updated, before the hub's own
+ * env had been cut over. See the header of client/secret.mjs for why the two
+ * cannot both be right against one hub, and that the fallback buys an ordering
+ * rather than a coexistence.
+ *
+ * ⚠️ `env: {}` — THE ENVIRONMENT IS IGNORED ON PURPOSE, even though secret.mjs
+ * lets it win for the hook and the doctor. Those are command-line tools a
+ * person runs in a shell they control. This is a GUI app: on Windows it is
+ * launched from a Start Menu shortcut with no shell at all, so a `ZEVET_SECRET`
+ * that happened to be set for one launch and not the next would make the app
+ * authenticate as a different team depending on how it was started. Worse,
+ * doc-sync.js also passes `env: {}`, so honouring it here would let the board
+ * and the editor disagree about who this machine is. Same rule, same reason.
+ */
+function authFor(cfg) {
+  const secret = loadSecretModule();
+  if (!secret) {
+    return {
+      token: "",
+      secret: "",
+      legacy: false,
+      error: "this install is missing client/secret.mjs, so it cannot prove who it is — reinstall zevet",
+    };
+  }
+  return secret.resolveAuth({ env: {}, file: { secret: cfg.secret, token: cfg.token } });
+}
+
+/**
+ * The saved config, or null.
+ *
+ * ⚠️ EITHER CREDENTIAL COUNTS. This used to demand a `token`, which was right
+ * until the setup scripts started writing `{hub, secret, actor}` and stopped
+ * writing a token at all — at which point this said "not configured" about a
+ * perfectly good install and sent the user back through setup, forever, with
+ * setup then writing the same config it had just rejected. The validity
+ * question here is only "is there a hub and SOMETHING to authenticate with";
+ * which one it is, and whether it is well-formed, is `authFor`'s to answer.
+ */
 function readConfig() {
   try {
     const cfg = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
-    if (cfg && typeof cfg.hub === "string" && typeof cfg.token === "string" && cfg.hub && cfg.token) return cfg;
+    if (!cfg || typeof cfg.hub !== "string" || !cfg.hub) return null;
+    const hasSecret = typeof cfg.secret === "string" && cfg.secret.length > 0;
+    const hasToken = typeof cfg.token === "string" && cfg.token.length > 0;
+    if (hasSecret || hasToken) return cfg;
   } catch {
     // No config yet, or unreadable — treated the same: run setup.
   }
@@ -137,8 +240,23 @@ function openBoard(cfg) {
     }
   });
 
-  const url = `${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(cfg.token)}`;
-  boardWindow.loadURL(url);
+  // THE DERIVED TOKEN, never the master secret. The board URL ends up in the
+  // renderer's own `location`, which is the hub's page — putting `cfg.secret`
+  // here would hand the document key to the one party the encryption exists to
+  // keep out, and would do it in a string that also lands in proxy logs.
+  //
+  // A master secret that is not hex, or an install with no secret.mjs to derive
+  // with, is named rather than pointed at the hub and left to 401: an
+  // authentication failure the user cannot act on looks exactly like a hub that
+  // is down, and the two have nothing in common. Not an early return — the
+  // window's own handlers below, `closed` above all, still have to be wired up
+  // or the app is left holding a window it thinks is open.
+  const auth = authFor(cfg);
+  if (auth.error) {
+    boardWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(credentialPage(auth.error)));
+  } else {
+    boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}`);
+  }
 
   boardWindow.webContents.on("did-fail-load", (_e, code, desc) => {
     if (code === -3) return; // aborted by a normal navigation
@@ -154,8 +272,29 @@ function openBoard(cfg) {
     return { action: "deny" };
   });
 
+  // A RELOAD IS A NEW RENDERER, so it gets a new set of these. Pressing the
+  // reload key, or the hub redeploying under a page that is already open,
+  // destroys the Y.Docs and the listeners that were driving all of this while
+  // leaving the window — and therefore every socket and every OS watch handle —
+  // alive in this process. Without this the rooms joined by the previous page
+  // stay joined forever, their updates are relayed to a renderer that never
+  // asked for them, and a person who reloads ten times is holding ten times
+  // the watchers.
+  //
+  // `did-start-loading` rather than `did-navigate`: it runs BEFORE the new
+  // document's scripts do, so there is no window in which the fresh page's
+  // `join` could be torn down by the teardown of the page it replaced. It also
+  // fires for the very first load, where there is nothing to release and this
+  // is a no-op.
+  boardWindow.webContents.on("did-start-loading", () => releaseBoardResources());
+
   boardWindow.on("closed", () => {
     boardWindow = null;
+    // Everything the board owned goes with the board. A DocSync left behind
+    // holds an open socket per room and keeps sealing and relaying updates for
+    // a window that no longer exists; a FileWatch left behind holds an OS watch
+    // handle per directory.
+    releaseBoardResources();
   });
 
   startCollisionWatch(cfg);
@@ -172,6 +311,30 @@ function unreachablePage(hub, why) {
   <p>Tried <code>${hub.replace(/[<&]/g, "")}</code> and got: ${String(why).replace(/[<&]/g, "")}</p>
   <p>The hub may be off, or this machine may not be able to see it. Nothing is wrong with your install —
   zevet will connect as soon as the hub answers. Use <b>zevet &rsaquo; Change hub…</b> if the address changed.</p></div>`;
+}
+
+/**
+ * The page shown when this machine cannot prove who it is.
+ *
+ * Separate from `unreachablePage` on purpose: that one says "the hub may be
+ * off, nothing is wrong with your install", which is a comforting and, here,
+ * false thing to tell somebody whose config holds a mistyped secret. The
+ * remedies are opposite — wait versus re-run setup — so the pages are too.
+ *
+ * `why` is secret.mjs's own wording ("master secret must be hex", and so on),
+ * which names the fault without ever containing the value.
+ */
+function credentialPage(why) {
+  return `<!doctype html><meta charset="utf-8"><style>
+    body{background:${PAPER};color:#2c2f44;font:300 15px/1.65 -apple-system,Segoe UI,sans-serif;
+         margin:0;display:grid;place-items:center;height:100vh;padding:32px}
+    div{max-width:52ch}h1{font-size:22px;font-weight:200;margin:0 0 10px;letter-spacing:.01em}
+    p{color:#5f6274;margin:0 0 12px}code{font-family:ui-monospace,monospace;font-size:12px;
+      background:#fff8;border:1px solid #cfccc6;padding:2px 6px}
+  </style><div><h1>This machine can't sign in.</h1>
+  <p>${String(why).replace(/[<&]/g, "")}</p>
+  <p>The hub is fine as far as zevet knows — this is about the secret saved on this
+  machine. Open <b>zevet &rsaquo; Change hub…</b> and paste the team's secret again.</p></div>`;
 }
 
 function openSetup(existing) {
@@ -213,6 +376,12 @@ function openSetup(existing) {
  */
 async function startCollisionWatch(cfg) {
   stopCollisionWatch();
+  // The same derived token the board window is loaded with. A machine whose
+  // credential cannot be resolved has nothing to present, and retrying an SSE
+  // stream forever against a 401 is a loop that achieves nothing — the board
+  // window is already showing the reason.
+  const auth = authFor(cfg);
+  if (auth.error || !auth.token) return;
   const controller = new AbortController();
   watcher = controller;
   const base = cfg.hub.replace(/\/+$/, "");
@@ -221,7 +390,7 @@ async function startCollisionWatch(cfg) {
 
   while (!controller.signal.aborted) {
     try {
-      const res = await fetch(`${base}/events?token=${encodeURIComponent(cfg.token)}`, {
+      const res = await fetch(`${base}/events?token=${encodeURIComponent(auth.token)}`, {
         signal: controller.signal,
         headers: { accept: "text/event-stream" },
       });
@@ -340,13 +509,75 @@ function installHooks(repo) {
 
 // ---- IPC, from the setup window only -------------------------------------
 
-ipcMain.handle("zevet:config", () => readConfig());
+/**
+ * The saved settings, WITH THE CREDENTIALS TAKEN OUT.
+ *
+ * ⚠️ THIS IS A SECURITY BOUNDARY AND NOT A TIDYING-UP. It used to return the
+ * parsed config object whole. `preload.js` exposes this call as
+ * `window.zevet.config()` on EVERY window, and the board window loads a REMOTE
+ * origin — the hub's own page, with this preload attached (see openBoard). So
+ * the hub could serve one line of JavaScript, call `window.zevet.config()`, and
+ * read the team's master secret out of its own page.
+ *
+ * That is not one leaked credential, it is the whole design: the document key
+ * is derived from the master secret, and the hub is deliberately given only
+ * `SHA-256("zevet-auth" || secret)` so that it can relay traffic it cannot
+ * read. Hand it the secret and every document on the team is readable by the
+ * one party the encryption exists to keep out. desktop/doc-sync.js keeps the
+ * key and the socket in this process for exactly this reason; returning the
+ * secret through a different call would have made that effort pointless.
+ *
+ * So: `hub` and `actor` cross, because they are not credentials and the board
+ * needs `actor` to label a remote cursor with a person's name. `secret` and
+ * `token` never cross, in any form — not truncated, not hashed, not "just the
+ * first four characters for the UI". The only questions a renderer may ask
+ * about them are whether one is configured and whether it is the legacy kind,
+ * and both are answered here as booleans.
+ *
+ * SETUP DOES NOT NEED THEM BACK EITHER. desktop/setup.html reads `c.hub` and
+ * `c.actor` from this call and nothing else; it only ever WRITES a credential.
+ * That was checked, not assumed.
+ */
+ipcMain.handle("zevet:config", () => {
+  const cfg = readConfig();
+  if (!cfg) return null;
+  const hasSecret = typeof cfg.secret === "string" && cfg.secret.length > 0;
+  return {
+    hub: cfg.hub,
+    actor: cfg.actor || "",
+    hasSecret,
+    // A machine set up before the master secret existed: a raw shared token and
+    // nothing to derive a document key from. The editor cannot work there and
+    // says so; see doc:join.
+    legacy: !hasSecret,
+  };
+});
 
+/**
+ * Does this hub accept this credential?
+ *
+ * ⚠️ WHAT THE SETUP WINDOW'S FIELD NOW HOLDS IS THE TEAM'S MASTER SECRET, not
+ * the hub's token. The two are different values — the hub holds
+ * `SHA-256("zevet-auth\0" || S)` and never S — so what is TYPED is derived
+ * before it is sent, and what is SENT is never what was typed. A setup window
+ * that posted the field verbatim would authenticate against a hub that had not
+ * been cut over and then save a config the editor cannot use.
+ *
+ * A malformed secret is reported with secret.mjs's own words rather than being
+ * sent as an empty token and coming back as "the hub rejected that token" —
+ * which would be true, useless, and point at the wrong end of the problem.
+ */
 ipcMain.handle("zevet:test", async (_e, { hub, token }) => {
+  const auth = authFor({ secret: String(token || "") });
+  if (auth.error) return { ok: false, why: `That secret is not usable: ${auth.error}` };
+  // An empty field resolves cleanly to an empty token — `resolveAuth` has
+  // nothing to complain about — and would go to the hub as a 401 reported as
+  // "it rejected that token", which is true and points at the wrong end.
+  if (!auth.token) return { ok: false, why: "There is no secret to check yet." };
   try {
     const base = String(hub).replace(/\/+$/, "");
     const res = await fetch(`${base}/dist/manifest.json`, {
-      headers: { "x-zevet-token": String(token) },
+      headers: { "x-zevet-token": auth.token },
       signal: AbortSignal.timeout(8000),
     });
     if (res.status === 401) return { ok: false, why: "The hub is there, but it rejected that token." };
@@ -358,9 +589,59 @@ ipcMain.handle("zevet:test", async (_e, { hub, token }) => {
   }
 });
 
+/**
+ * Write ~/.zevet/config.json.
+ *
+ * ⚠️ A MASTER SECRET IS SAVED AS `secret`, NOT AS `token`, and the difference is
+ * the whole scheme: the document key is derived from `secret` and the hub is
+ * only ever shown the derived auth token. A config that stored the typed value
+ * under `token` would look identical to a legacy install, so `resolveAuth`
+ * would present it to the hub verbatim AND the editor would refuse to run for
+ * want of a secret — one mistake producing both failures at once.
+ *
+ * ⚠️ THE LEGACY BRANCH IS DELIBERATE AND IS NOT A GUESS ABOUT THE VALUE. A raw
+ * token generated the way the README says (`openssl rand -hex 24`) is 48 hex
+ * characters, which is *exactly* what a master secret looks like — the two are
+ * textually indistinguishable and no amount of sniffing will separate them. So
+ * nothing here tries: anything that parses as a master secret is saved as one,
+ * because that is what the current setup scripts hand out. The legacy spelling
+ * is preserved only for a value that CANNOT be a master secret (not hex, or too
+ * short) on a machine that already had a raw token — the install that is
+ * re-running setup to change its hub, not to change its credential.
+ *
+ * The consequence, said plainly: a legacy user who re-runs setup and pastes
+ * their old hex token gets it saved as a secret, and the derived token will not
+ * match a hub that has not been cut over. `zevet:test` runs first and fails
+ * with a 401 before this is ever reached, so they find out at the check button
+ * rather than at a blank board — but they are not TOLD which of the two it was,
+ * because nothing here can know.
+ */
 ipcMain.handle("zevet:save", (_e, cfg) => {
-  writeConfig({ hub: String(cfg.hub).replace(/\/+$/, ""), token: String(cfg.token), actor: String(cfg.actor) });
-  return true;
+  const hub = String(cfg.hub).replace(/\/+$/, "");
+  const actor = String(cfg.actor);
+  // `token` is what setup.html still calls the field; what it holds is now the
+  // master secret. The field name is not worth a coordinated rename across a
+  // file another author is holding.
+  const typed = String(cfg.token || "");
+
+  const auth = authFor({ secret: typed });
+  if (!auth.error && auth.secret) {
+    writeConfig({ hub, secret: auth.secret, actor });
+    return true;
+  }
+
+  const existing = readConfig();
+  if (existing && typeof existing.token === "string" && existing.token) {
+    writeConfig({ hub, token: typed || existing.token, actor });
+    return true;
+  }
+
+  // Neither a usable secret nor a machine with a legacy token to keep. Writing
+  // it anyway would produce a config that cannot authenticate and an editor
+  // that cannot start, and `readConfig` would call it valid — the worst of the
+  // available outcomes. Refused instead; `zevet:test` has already told the user
+  // why in the same words.
+  return false;
 });
 
 ipcMain.handle("zevet:pickRepo", async () => {
@@ -474,6 +755,352 @@ ipcMain.handle("local:write", (_e, { root, relPath, text, opts }) => {
   });
 });
 
+/**
+ * ONE LineCounter for the life of the app, and that is the entire point of it.
+ *
+ * It caches a count against (size, mtimeMs), so a tree that is re-statted every
+ * few seconds reads each file once and then only when it actually changes.
+ * Constructing one per call would keep the API and throw the cache away —
+ * thousands of file reads a second on the main process while an agent works,
+ * which is the freeze this module was written to avoid. Said explicitly
+ * because "new LineCounter()" inside the handler looks tidier and is the bug.
+ *
+ * It is never cleared. The cache is keyed by absolute path and bounded in
+ * practice by how many files a person opens; a workspace that is closed leaves
+ * its entries behind, at roughly 50 bytes each. `forget(root)` exists for when
+ * that stops being true and nothing calls it yet.
+ */
+const lineCounter = new repoStats.LineCounter();
+
+/**
+ * How many files one `local:stats` call will count.
+ *
+ * 2000 is half of local-fs.js's DEFAULT_MAX_ENTRIES (4000), which is the most
+ * a tree can hold, so a renderer asking about its whole visible tree is inside
+ * the cap unless that tree is at its own limit. The number matters because
+ * counting is SYNCHRONOUS on the main process: every path is an lstat and, on
+ * a cache miss, a read of up to 512 KiB. A renderer that could ask about 50k
+ * paths could freeze the window — including its own close button — for
+ * seconds, and a renderer is the one input this process treats as hostile.
+ *
+ * Over the cap the call still answers, for the first 2000, rather than
+ * refusing: a tree with no badges at all is a worse answer than a tree with
+ * most of them. `truncated` says so rather than leaving the renderer to infer
+ * it from missing keys.
+ */
+const MAX_STAT_PATHS = 2000;
+
+/* ==========================================================================
+ * THE STATUS STRIP
+ *
+ * One call, on a timer from the board, for the things that have no event to
+ * subscribe to: the vault graph, the code index, the branch, hook health, and
+ * what zevet's own agents have spent.
+ *
+ * ⚠️ NOTHING HERE IS ANTHROPIC'S RATE LIMIT. `burn` is zevet's own accounting
+ * of agents IT launched on THIS machine since the app opened. The real 5h/7d
+ * windows reach a status line because Claude Code hands them to it; a headless
+ * agent's stream-json does not carry them. desktop/status-sources.js says this
+ * twice and the renderer labels it "spent". Do not relabel it.
+ * ======================================================================== */
+
+/** Read once at startup. The paths come out of the user's own statusline.py so
+ *  that zevet and that status line cannot end up describing different vaults —
+ *  see discoverStatusPaths. A person who moves their vault restarts the app. */
+const STATUS_PATHS = statusSources.discoverStatusPaths(os.homedir(), process.env);
+
+const burn = new statusSources.BurnWindows();
+
+function noteBurn(payload, sessionKey) {
+  const u = statusSources.usageFrom(payload);
+  const cost = statusSources.costFrom(payload);
+  if (!u && cost == null) return;
+  burn.add({
+    tokens: u ? u.context : 0,
+    cost: cost == null ? undefined : cost,
+    // Keyed per console, because total_cost_usd is a RUNNING SESSION TOTAL and
+    // replaces rather than accumulates. Without a key, two consoles overwrite
+    // each other's figure and the cheaper one wins.
+    sessionId: String(sessionKey || "-"),
+  });
+}
+
+/**
+ * `root` is optional and is only used for the branch segment. It goes through
+ * `knownRoot` like every other path this process accepts from a renderer: a
+ * status readout is not a reason to relax the one rule that stops a renderer
+ * naming `C:\` and having git walk the disk.
+ */
+ipcMain.handle("local:status", async (_e, arg) => {
+  const root = arg && typeof arg.root === "string" ? arg.root : null;
+  const dir = root ? knownRoot(root) : null;
+
+  // Probed and read in parallel: the port probe can take its full 250ms and
+  // there is no reason for the git call to wait behind it.
+  const [cindex, repo] = await Promise.all([
+    statusSources.probePort(STATUS_PATHS.cindexPort),
+    dir ? repoStats.branchState(dir) : Promise.resolve(null),
+  ]);
+
+  const failedAgo = statusSources.hookFailure(STATUS_PATHS.errorLog);
+
+  return {
+    ok: true,
+    cindex,
+    repo,
+    graph: statusSources.vaultHealth(STATUS_PATHS.vaultHealth),
+    // Seconds, formatted by the renderer -- the main process has no business
+    // deciding whether "2h" or "2 hours ago" reads better in a 10px strip.
+    hook: { failedAgo },
+    burn: burn.read(),
+  };
+});
+
+ipcMain.handle("local:stats", async (_e, { root, relPaths }) => {
+  // knownRoot FIRST, exactly as every handler above does it, and for the same
+  // reason: without it `C:\` is a valid root and the counter walks the disk.
+  const dir = knownRoot(root);
+  if (!dir) return { ok: false, lines: {}, diff: null, error: "not an opened workspace" };
+
+  const asked = Array.isArray(relPaths) ? relPaths.filter((p) => typeof p === "string") : [];
+  const list = asked.slice(0, MAX_STAT_PATHS);
+
+  // `countAll` returns a null-prototype object, which is what repo-stats.js
+  // built it to hand over IPC — a path literally named `__proto__` is then an
+  // ordinary key rather than a prototype write.
+  const lines = lineCounter.countAll(dir, list);
+
+  // A Map does NOT survive Electron's structured clone as anything a renderer
+  // can use: it arrives as an empty-looking object with no entries, which
+  // reads as "this repo has no changes" — a wrong answer that looks like a
+  // right one. Converted here, once, rather than in the renderer.
+  //
+  // `ok:false` from diffStats means git said nothing useful (not a repo, no
+  // git installed, a timeout) and is passed on as `diff: null`. That is a
+  // different thing from an EMPTY diff, which means a clean tree and is worth
+  // drawing; collapsing the two would make "no git" look like "no changes".
+  const { byPath, ok } = await repoStats.diffStats(dir);
+  const diff = ok ? Object.fromEntries(byPath) : null;
+
+  return { ok: true, lines, diff, truncated: asked.length > list.length, counted: list.length };
+});
+
+// ---- watching the disk for what an agent did ------------------------------
+
+/**
+ * One watcher set for the app, torn down with the board window.
+ *
+ * The change is pushed on `local:fileChanged` rather than polled, because the
+ * event that matters — an agent rewriting a file that is open in the editor —
+ * has to reach the CRDT before the next keystroke publishes a stale document
+ * over the top of it.
+ */
+const fileWatch = new FileWatch({
+  onChange: (evt) => toBoard("local:fileChanged", evt),
+});
+
+ipcMain.handle("local:watch", (_e, { root, relPath }) => {
+  const dir = knownRoot(root);
+  if (!dir) return { ok: false, error: "not an opened workspace" };
+  // The resolved root is passed on, not the renderer's spelling, so the
+  // echoed `root` in every change event is the one the allowlist approved.
+  return fileWatch.watch(dir, String(relPath || ""));
+});
+
+ipcMain.handle("local:unwatch", (_e, { root, relPath }) => {
+  const dir = knownRoot(root);
+  // An unwatch for a root that is no longer known is not an error: the
+  // workspace list can change under a renderer that is closing a tab, and
+  // there is nothing to protect — unwatch only ever removes.
+  if (!dir) return { ok: true };
+  return fileWatch.unwatch(dir, String(relPath || ""));
+});
+
+// ---- the shared document ---------------------------------------------------
+
+/**
+ * One DocSync for the board window, built on the first join and destroyed with
+ * the window.
+ *
+ * ⚠️ WHAT MUST NOT CROSS THE BRIDGE, because the whole design rests on it: the
+ * master secret, the derived auth token, the document key, and this object
+ * itself. The renderer gets plaintext Yjs updates in and out and nothing else.
+ * There is deliberately no "give me the config" call that answers with a
+ * credential — `zevet:config` above is redacted for the same reason — because
+ * the board window loads the HUB'S OWN PAGE, so anything readable from that
+ * renderer is readable by the hub, and the hub is precisely who the encryption
+ * is keeping out. See the header of doc-sync.js for the full argument.
+ */
+let docSync = null;
+
+/**
+ * Give back everything a board renderer was holding.
+ *
+ * Called from TWO places, and the second is the one that is easy to miss: the
+ * window closing, and the window RELOADING. A reload destroys the Y.Docs and
+ * the listeners that were driving all of this while leaving the window — and so
+ * every socket and every OS watch handle — alive in this process. See where it
+ * is wired up in openBoard() for why `did-start-loading` is the hook.
+ *
+ * Deliberately safe to call when there is nothing to release: the first load of
+ * the first window calls it before anything exists.
+ */
+function releaseBoardResources() {
+  if (docSync) {
+    docSync.destroy();
+    docSync = null;
+  }
+  fileWatch.closeAll();
+}
+
+/**
+ * Lazily build it, or say why not.
+ *
+ * ⚠️ THE DISTINCTION THE RENDERER NEEDS, spelled out because the two failures
+ * have nothing in common and the remedies are opposite:
+ *
+ *   • `join` resolving `{ok:false}` ALWAYS means a broken or legacy INSTALL.
+ *     Re-run setup. It never means the hub is unreachable — nothing in this
+ *     path touches the network. It is also permanent until the config changes,
+ *     so a retry button is the wrong UI for it.
+ *
+ *   • THE HUB BEING DOWN never fails `join`. `join` succeeds, the socket
+ *     retries with backoff behind it, and the renderer hears about it only
+ *     through `onStatus` — `connecting`, `retrying`, `open`. That one IS worth
+ *     a retry and IS worth waiting out, because it fixes itself.
+ *
+ * `code` is carried alongside `error` so this does not have to be inferred
+ * from prose: `setup-required` (re-run setup) or `unavailable` (this build or
+ * this install cannot sync at all — a missing crypto module, a runtime with no
+ * WebSocket; reinstalling is the remedy, and neither is the user's fault).
+ * The human-readable `error` is doc-sync.js's own wording, which is written to
+ * be shown.
+ */
+function ensureDocSync() {
+  if (docSync) return { sync: docSync };
+
+  const cfg = readConfig();
+  if (!cfg) {
+    return { error: "this machine is not set up yet — run setup to enable the editor", code: "setup-required" };
+  }
+  try {
+    // Required here rather than at the top of the file: see the note by the
+    // other requires. A checkout missing the crypto modules must still start.
+    const { DocSync } = require("./doc-sync.js");
+    docSync = new DocSync({
+      hub: cfg.hub,
+      // The secret goes IN and never comes back out. DocSync derives the auth
+      // token and the document key from it inside this process.
+      secret: cfg.secret,
+      onEvent: (room, payload) => toBoard("doc:message", docMessage(room, payload)),
+      onStatus: (room, state, detail) => toBoard("doc:status", { room, state, detail }),
+    });
+    return { sync: docSync };
+  } catch (err) {
+    // A THROW IS TURNED INTO A VALUE. An `ipcMain.handle` that throws rejects
+    // the renderer's promise with a mangled "Error invoking remote method"
+    // wrapper, which loses doc-sync.js's carefully written message — and those
+    // messages are the entire remedy the user has.
+    //
+    // Not cached as a sticky failure: re-running setup writes a new config and
+    // the next join should pick it up without a restart of the app.
+    // CLASSIFIED BY MESSAGE, which is not something to be pleased about.
+    // doc-sync.js throws plain Errors with no code on them and belongs to
+    // another author, so matching its wording is the only way to tell "your
+    // credential needs re-running setup" from "this build cannot sync at all"
+    // without widening its API. The two messages it can raise about a
+    // credential both name the master secret or the legacy token; a missing
+    // crypto module or a runtime without WebSocket names neither.
+    //
+    // ⚠️ IF THAT WORDING CHANGES, this silently starts telling people to
+    // reinstall when they should re-run setup. It is a string match and it is
+    // as fragile as it looks. Deliberately ORDERED to fail towards
+    // "unavailable", which at least does not send somebody to re-enter a
+    // secret that was never the problem.
+    const credentialProblem = /master secret|legacy token/i.test(err.message);
+    return { error: err.message, code: credentialProblem ? "setup-required" : "unavailable" };
+  }
+}
+
+/**
+ * The shape that crosses to the renderer, with the bytes made safe to ship.
+ *
+ * ⚠️ THE COPY IS NOT PARANOIA, AND THIS WAS MEASURED RATHER THAN ASSUMED.
+ * `doc-crypto.open()` returns a Node `Buffer`, and a small Buffer is a VIEW
+ * over Node's shared 8 KiB allocation pool. Electron's structured clone
+ * serialises the whole backing store behind the view: a throwaway Electron
+ * 38.1.2 app sending a 3-byte pooled Buffer produced, in the receiving world, a
+ * 3-byte view whose `.buffer.byteLength` was 8192. That is roughly 8 KiB of
+ * whatever else Node had in its pool — other rooms' decrypted frames among
+ * them — shipped on every update to a renderer running the HUB'S page.
+ *
+ * `new Uint8Array(view)` copies the elements into a fresh exact-length buffer
+ * with nothing behind it; the same probe showed `.buffer.byteLength` of 3 after
+ * this line. It also settles the type question at the source: what leaves here
+ * is a plain `Uint8Array` — the probe confirmed a `Buffer` arrives on the far
+ * side as a Uint8Array with `Buffer.isBuffer` false — so the renderer cannot
+ * depend on Buffer methods that will not exist there.
+ */
+function docMessage(room, payload) {
+  const out = { room, kind: payload.kind };
+  if (payload.bytes) out.bytes = new Uint8Array(payload.bytes);
+  return out;
+}
+
+ipcMain.handle("doc:join", (_e, room) => {
+  const got = ensureDocSync();
+  if (got.error) return { ok: false, error: got.error, code: got.code };
+  try {
+    got.sync.join(String(room || ""));
+    return { ok: true };
+  } catch (err) {
+    // DocSync.join validates the room name and throws; a renderer asking for a
+    // 300-character room is a bug in the renderer, not a reason to reject.
+    return { ok: false, error: err.message, code: "bad-room" };
+  }
+});
+
+ipcMain.handle("doc:send", (_e, { room, bytes, opts }) => {
+  if (!docSync) return { ok: false, error: "not joined", code: "not-joined" };
+  const u8 = toBytes(bytes);
+  if (!u8) return { ok: false, error: "update must be bytes" };
+  try {
+    // `opts` is FILTERED, not forwarded, on the same rule as local:write: a
+    // fresh object with the one field this bridge promises, so nothing a
+    // renderer invents can reach DocSync.
+    docSync.send(String(room || ""), u8, { snapshot: Boolean(opts && opts.snapshot) });
+    return { ok: true };
+  } catch (err) {
+    // "not joined: <room>" lands here, which is a real thing a renderer can
+    // hit by racing a leave against an in-flight update.
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle("doc:leave", (_e, room) => {
+  if (docSync) docSync.leave(String(room || ""));
+  // Always ok. Leaving a room that was never joined is what a closing tab does
+  // and there is nothing to report about it.
+  return { ok: true };
+});
+
+/**
+ * Whatever the renderer sent, as a Uint8Array, or null if it sent nonsense.
+ *
+ * A renderer `Uint8Array` sent through `invoke` was OBSERVED to arrive here as
+ * a plain `Uint8Array` (Electron 38.1.2, Windows 11, a throwaway probe app that
+ * is not in the gate — this repo has no Electron harness). The other two
+ * branches are written from the structured-clone contract rather than from
+ * anything seen, and are kept because the alternative — assuming — fails as an
+ * empty update that silently syncs nothing and reports no error.
+ */
+function toBytes(value) {
+  if (value instanceof Uint8Array) return value;
+  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return null;
+}
+
 // ---- starting an agent -----------------------------------------------------
 
 /**
@@ -551,7 +1178,15 @@ ipcMain.handle("local:startAgent", (_e, { agent, cwd, opts }) => {
     cwd: dir,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
-    onEvent: (evt) => toBoard("local:agentEvent", { id: handle.id, ...evt }),
+    onEvent: (evt) => {
+      // The status strip's rolling windows are fed HERE, in the main process,
+      // and not in the renderer. The renderer shows the live figures off the
+      // same events, but it forgets everything on reload and the agents it
+      // started keep running -- so the only place a week's spend can actually
+      // accumulate is this side of the bridge.
+      if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
+      toBoard("local:agentEvent", { id: handle.id, ...evt });
+    },
   });
   if (!started.ok) return { ok: false, error: started.error };
 

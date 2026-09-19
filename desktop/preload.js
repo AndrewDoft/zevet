@@ -1,11 +1,57 @@
-// The only bridge between a renderer and this machine, and it is deliberately
-// tiny: five named calls, no `require`, no `ipcRenderer` handle, nothing that
-// takes a channel name from the page. The setup window is local HTML we ship;
-// the board window has no preload at all, because it loads a remote origin.
+// The only bridge between a renderer and this machine: named calls, no
+// `require`, no `ipcRenderer` handle, nothing that takes a channel name from
+// the page.
+//
+// This comment used to end "the board window has no preload at all, because it
+// loads a remote origin". That has not been true since the workspace bridge was
+// added, and main.js rewrote its own version of the same sentence rather than
+// leave it to rot — a comment claiming a protection the code stopped providing
+// is worse than no comment. What holds now is that BOTH windows get this
+// preload, the board window does load a remote origin (the hub's own page), and
+// every capability below is named, narrow and re-checked in the main process.
+// `openBoard()` in main.js argues why that is acceptable at all.
+//
+// ⚠️ WHAT IS NOT HERE, AND MUST NOT BE. There is no call that returns the
+// master secret, the derived auth token or the document key, and no handle to
+// the DocSync instance. The board renderer runs code the HUB served, so
+// anything readable from it is readable by the hub — and the hub is exactly who
+// the document encryption keeps out. `window.zevet.config()` is redacted in the
+// main process for the same reason (see `zevet:config` there). Adding a
+// "give me the config" call that answers with a credential would quietly undo
+// all of it.
 const { contextBridge, ipcRenderer } = require("electron");
 
+/**
+ * Subscribe to a main-process push, and hand back the way to stop.
+ *
+ * ⚠️ RETURNING THE UNSUBSCRIBE IS NOT A COURTESY. `ipcRenderer` lives in this
+ * preload's world, which SURVIVES nothing — but a renderer that registers a
+ * listener on every component mount and never removes one accumulates them for
+ * as long as the page lives, and every document update is then delivered N
+ * times to N stale closures holding N dead Y.Docs. Node also starts printing
+ * MaxListenersExceededWarning at eleven, which is the point at which this is
+ * discovered by accident.
+ *
+ * A full page RELOAD is the one case that cleans up by itself: the old world is
+ * destroyed and its listeners with it. Every other case — a tab closing, a
+ * component unmounting, a room being left — is the renderer's to call.
+ */
+function subscribe(channel, fn) {
+  const handler = (_e, payload) => fn(payload);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+}
+
 contextBridge.exposeInMainWorld("zevet", {
-  /** The saved settings, or null on a first run. */
+  /**
+   * The saved settings, REDACTED, or null on a first run.
+   *
+   * `{ hub, actor, hasSecret, legacy }` — never the secret and never the token.
+   * `actor` is here because the board needs it to label a remote cursor with a
+   * person's name rather than a client number, and a display name is not a
+   * credential. See `zevet:config` in main.js for what this call used to return
+   * and why it stopped.
+   */
   config: () => ipcRenderer.invoke("zevet:config"),
   /** Ask the hub whether this URL and token actually work, before saving them. */
   test: (hub, token) => ipcRenderer.invoke("zevet:test", { hub, token }),
@@ -62,6 +108,49 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * way it came. main.js keeps only those two fields; nothing else crosses.
    */
   write: (root, relPath, text, opts) => ipcRenderer.invoke("local:write", { root, relPath, text, opts }),
+  /**
+   * Line counts and git diff stats for a list of paths under one root.
+   *
+   * `{ ok, lines: {rel: number|null}, diff: {rel: {added, removed, status}} | null }`.
+   * `lines[rel]` is null for a file that was not counted — too big, binary or
+   * unreadable — which is a different thing from zero. `diff` is null when git
+   * said nothing useful at all (not a repo, no git, a timeout); an EMPTY diff
+   * object means a clean tree, and the two must not be drawn the same way.
+   *
+   * Capped in the main process at 2000 paths per call, with `truncated` saying
+   * so. Counting is synchronous there, so an uncapped call from here could
+   * freeze the window.
+   */
+  /**
+   * The status strip's machine-side figures. `root` is optional and only
+   * affects the branch segment; it is re-checked against the opened
+   * workspaces in the main process, as every path on this bridge is.
+   */
+  status: (root) => ipcRenderer.invoke("local:status", { root }),
+  stats: (root, relPaths) => ipcRenderer.invoke("local:stats", { root, relPaths }),
+  /**
+   * Tell me when something else changes this file on disk.
+   *
+   * THE SOMETHING ELSE IS THE POINT: Claude Code and Codex are editing these
+   * files while the editor has them open. Without this the next keystroke
+   * publishes the stale text over the agent's work and nothing anywhere reports
+   * it. Idempotent — watching an already-watched file is a no-op, not a second
+   * stream of events.
+   */
+  watch: (root, relPath) => ipcRenderer.invoke("local:watch", { root, relPath }),
+  unwatch: (root, relPath) => ipcRenderer.invoke("local:unwatch", { root, relPath }),
+  /**
+   * `fn({ root, relPath, text, bytes, bom, eol })`; returns an unsubscribe.
+   *
+   * `bom` and `eol` are carried so they can be handed straight back to `write`:
+   * a file that arrived with a BOM and CRLF has to be saved that way or the
+   * next commit is a whole-file diff blamed on whoever pressed save.
+   *
+   * A DELETED file produces no event. There is no text to carry and sending an
+   * empty string would tell the editor to publish an empty document — the exact
+   * clobber this exists to prevent. See `fire()` in desktop/file-watch.js.
+   */
+  onFileChanged: (fn) => subscribe("local:fileChanged", fn),
   /** Which agents are installed on this machine. */
   agents: () => ipcRenderer.invoke("local:agents"),
   /** Start an agent in a folder. Returns { ok, id }. */
@@ -74,4 +163,123 @@ contextBridge.exposeInMainWorld("zevetLocal", {
     ipcRenderer.on("local:agentEvent", handler);
     return () => ipcRenderer.removeListener("local:agentEvent", handler);
   },
+});
+
+/**
+ * Whatever arrived, as a real `Uint8Array` of exactly the right length.
+ *
+ * ⚠️ WHY THIS EXISTS RATHER THAN A CAST. `bytes` starts life in the main
+ * process as a Node `Buffer` (that is what `doc-crypto.open()` returns) and
+ * crosses two boundaries to get here: Electron's IPC structured clone, and then
+ * contextBridge's own clone into the renderer's world. main.js already copies
+ * it into a plain `Uint8Array` before the first of those — a `Buffer` is a view
+ * over Node's shared 8 KiB pool, and cloning the view drags the whole pool
+ * along. This is the second guard, on the second boundary, and it is here
+ * because the contract this bridge publishes says `Uint8Array` and a renderer
+ * calling `Y.applyUpdate` with anything else fails at a depth nobody will
+ * enjoy.
+ *
+ * WHAT WAS ACTUALLY MEASURED, on Electron 38.1.2 / Windows 11, by running a
+ * throwaway app that sent a real pooled `Buffer` from main and printed what
+ * arrived at each hop:
+ *
+ *   • main → preload: a `Buffer` arrives as a PLAIN `Uint8Array`. Not a
+ *     Buffer — `Buffer.isBuffer` is false and `constructor.name` is
+ *     "Uint8Array" — so nothing here may assume Buffer methods exist.
+ *   • preload → renderer, through contextBridge: a `Uint8Array` arrives as a
+ *     `Uint8Array` for which `instanceof Uint8Array` is TRUE in the renderer's
+ *     own realm, with the right values and an exact-length backing buffer.
+ *   • renderer → main, via `invoke`: also a plain `Uint8Array`.
+ *
+ * So on this platform the FIRST branch is the one that fires and the rest are
+ * insurance. That probe was a scratch app and is NOT in the gate (this repo has
+ * no Electron harness; the gate asserts against this file's SOURCE, which is
+ * the precedent test/desktop-packaging.test.mjs set), and it has NOT been run
+ * on macOS or Linux. The normalisation stays unconditional for that reason: it
+ * costs nothing when the type is already right.
+ */
+function toUint8(value) {
+  if (value instanceof Uint8Array) {
+    // A VIEW OVER A BIGGER BUFFER IS COPIED, for the reason measured in the
+    // probe above: the clone carries the whole backing store, not the window
+    // onto it, so a 3-byte view over Node's 8 KiB pool put 8192 bytes on the
+    // wire. The same hazard exists going the other way — a Yjs encoder that
+    // hands back a subarray of a larger scratch buffer would ship the scratch
+    // buffer. When the view already owns its buffer exactly this is a pointer
+    // comparison and nothing is copied.
+    return value.byteLength === value.buffer.byteLength ? value : new Uint8Array(value);
+  }
+  // A Buffer is a Uint8Array subclass, so it never reaches here; a Uint8Array
+  // from ANOTHER JavaScript realm is not `instanceof` this one's, and that is
+  // precisely what a cross-world clone could hand over.
+  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  // An array-like `{0:…, 1:…, length:n}` is what a structured clone that lost
+  // the type would look like. `Uint8Array.from` reads it correctly; a plain
+  // `new Uint8Array(obj)` would silently produce a zero-length array, which
+  // would sync nothing and report no error at all.
+  if (value && typeof value.length === "number") return Uint8Array.from(value);
+  return new Uint8Array(0);
+}
+
+/**
+ * The shared document, exposed to the BOARD window.
+ *
+ * The split is deliberate and is described at length in desktop/doc-sync.js:
+ * the renderer owns the Y.Doc, CodeMirror and awareness and sees only
+ * PLAINTEXT; the main process owns the key and the socket and is the only
+ * place ciphertext exists. Nothing on this object can be used to recover the
+ * key — `send` takes bytes and gives back a boolean, `onMessage` hands out
+ * bytes, and there is no accessor for anything in between.
+ *
+ * ⚠️ HOW TO TELL THE TWO FAILURES APART, because they have opposite remedies:
+ *
+ *   `join` resolving `{ok:false}` is ALWAYS a broken or legacy INSTALL — this
+ *   machine has no master secret, or one that is not usable. Nothing in that
+ *   path touches the network, so it is never about the hub. It will not fix
+ *   itself and a retry button is the wrong answer; re-running setup is the
+ *   right one. `code` says `setup-required`, or `unavailable` for a build that
+ *   cannot sync at all (a missing crypto module), and `error` is a sentence
+ *   written to be shown to a person.
+ *
+ *   THE HUB BEING DOWN never fails `join`. The join succeeds, the socket
+ *   retries behind it with backoff, and the only place it shows up is
+ *   `onStatus` — `connecting`, `retrying`, `open`, and `undecipherable` for a
+ *   frame from a teammate on a different secret. That one does fix itself and
+ *   is worth waiting out.
+ */
+contextBridge.exposeInMainWorld("zevetDoc", {
+  available: true,
+  /** Join a room and start receiving it. `{ ok, error?, code? }`. */
+  join: (room) => ipcRenderer.invoke("doc:join", room),
+  /**
+   * Send one plaintext Yjs update. `opts.snapshot` marks it as a full state
+   * that the hub may replace the room's whole log with — which is what keeps
+   * a long-lived room from being trimmed out from under a late joiner.
+   */
+  send: (room, u8, opts) => ipcRenderer.invoke("doc:send", { room, bytes: toUint8(u8), opts }),
+  /** Leave. Always `{ ok: true }`; leaving a room never joined is what a
+   *  closing tab does and is not worth an error. */
+  leave: (room) => ipcRenderer.invoke("doc:leave", room),
+  /**
+   * `fn({ room, kind, bytes? })`; returns an unsubscribe.
+   *
+   *   `ready`         the socket is open and joined — send your full state now,
+   *                   which is what seeds an empty room and what gets offline
+   *                   edits to everyone else.
+   *   `update`        `bytes` is a plaintext Yjs update from a teammate.
+   *   `snapshot-due`  send your whole document with `{snapshot:true}`.
+   *
+   * ⚠️ `ready` FIRES ON EVERY RECONNECT, not once. After a hub restart the
+   * renderer is asked for its state again, and that is the mechanism by which
+   * the room refills rather than a duplicate to be filtered out.
+   */
+  onMessage: (fn) =>
+    subscribe("doc:message", (payload) =>
+      fn(payload && payload.bytes ? { ...payload, bytes: toUint8(payload.bytes) } : payload),
+    ),
+  /** `fn({ room, state, detail })`; returns an unsubscribe. The ONLY place a
+   *  connection problem is reported — an editor that silently stops syncing is
+   *  this project's worst failure, so the status is a first-class output. */
+  onStatus: (fn) => subscribe("doc:status", fn),
 });

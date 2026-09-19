@@ -128,3 +128,68 @@ skipped rather than guessed at.
 
 **Reversibility.** High. `uninstall.mjs` strips the trust block, and the whole feature is one
 managed block plus one call.
+
+---
+
+## D-005 — zevet becomes a multiplayer IDE, and the hub is not trusted with the code
+
+**2026-09-18**
+
+**Decision.** zevet gains a collaborative editor. The board's file pane becomes CodeMirror 6
+bound to a Yjs document; edits are relayed between machines by the hub over a WebSocket; the
+relayed bytes are encrypted with a key the hub is never given.
+
+This **reverses** what `README.md` has said since the beginning — "it deliberately does not do
+real-time shared editing — that is a solved problem and not worth rebuilding", followed by a
+recommendation to use Zed. That paragraph was not wrong when it was written. It is being
+overruled by Andrew (2026-09-18): *"if Zevet is not a multiplayer IDE, then it needs to become
+one"*, and the product page at usemasora.com/zevet now says "Multiplayer IDE" above the
+download links.
+
+**Why it came up.** The old position composed two tools: Zed for the shared buffer, zevet for
+the agents. That works, and it asks a team to run two things and hold the relationship between
+them in their heads. The thing zevet uniquely knows — which file whose agent is editing, right
+now — is most useful in the buffer where the editing is happening, not in a panel beside it.
+
+**Alternatives.**
+
+1. *Keep recommending Zed.* Free, mature, cross-platform, and still a perfectly good answer for
+   the shared buffer alone. Rejected because it cannot show an agent's edit arriving in the file
+   you are reading, which is the only thing zevet has that Zed does not.
+2. *Relay plaintext.* Much simpler: no key derivation, no migration, no `doc-crypto.mjs`. It
+   would have made the line on the product page — *the board sees which file was touched, never
+   what is in it* — false on the day the editor shipped, and the one deployed hub is a box in
+   Google Cloud that would then hold everybody's source. Rejected on 2026-09-18 with the page
+   already published.
+3. *Peer-to-peer over WebRTC, hub as signalling only.* The strongest privacy story: the code
+   never reaches the hub at all. Rejected for now on cost, not on merit — it needs STUN and, on
+   real networks, a TURN relay, which is another service to run and pay for, and it makes
+   offline and late-joiner sync materially harder. Worth revisiting.
+4. *A dependency for the WebSocket (`ws`).* Rejected to keep `hub/server.mjs` at zero
+   dependencies; the hub deploys by `git pull && docker restart` with no install step, and its
+   own header calls that policy out. RFC 6455 server-side is ~250 lines and is now written and
+   tested against split buffers, interleaved control frames and all three length encodings.
+
+**The shape of the secret, and what it costs.** Teammates share one master secret `S`. The hub
+is given `SHA-256("zevet-auth" || S)`; the document key is `HKDF(S)`. The hub can check the
+token it holds and can do nothing else with it. The cost is a coordinated cutover — set the
+hub's `ZEVET_TOKEN` to the derived value, restart, re-run setup on every machine — and there is
+deliberately **no window in which the hub accepts both**, because a hub that also accepted `S`
+would by definition be holding it.
+
+**What this does NOT protect against, stated because an oversold security property is worse than
+an absent one.** The board window loads its HTML *from the hub*. A hub that has been taken over
+does not need the key; it ships JavaScript into the window that already has one. The encryption
+defends against a hub that is honest but curious, against whoever can read its memory or disk,
+and against anyone who ends up with its logs. The real fix is to serve the editor from the
+desktop app's own files rather than from the hub, and **it has not been made**.
+
+**Reversibility.** Medium, and asymmetric. The editor is additive — the board degrades to the
+read-only viewer it was if `zevetDoc` or the bundle is absent, and that path is still exercised
+by every plain browser tab. The auth migration is the part that does not reverse cleanly: once
+the hub's env holds a derived token, every legacy install is locked out until it re-runs setup.
+
+**Cost.** A committed 834 KB bundle in a repo that was proudly dependency-free, and the first
+build step it has ever had. `hub/public/editor.js` is rebuilt by `npm run build` in `editor/`
+and must be rebuilt and re-committed whenever that source changes — there is no CI check that it
+is in step, which is a real gap and the most likely way this rots.

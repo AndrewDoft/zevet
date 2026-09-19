@@ -302,7 +302,91 @@ class BurnWindows {
   }
 }
 
+/* ========================================================================
+ * Finding the two things on this machine
+ * ===================================================================== */
+
+/**
+ * Where the vault's health file and the hook error log live.
+ *
+ * ⚠️ THE PATHS ARE TAKEN FROM statusline.py ITSELF, not guessed and not
+ * hardcoded. Both are personal to a machine — Andrew's vault is at
+ * C:\dev\knowledge and nobody else's will be — so baking either path into the
+ * product would be shipping one person's filesystem to everybody. Asking the
+ * user to configure it twice, once for their status line and once for zevet, is
+ * how the two come to disagree about which vault they are describing.
+ *
+ * So: an environment variable wins, and failing that this reads the assignment
+ * out of ~/.claude/statusline.py. That file already names both paths, it is the
+ * source of truth for the readout being copied, and a machine with no status
+ * line simply has no vault segment — which is correct, not a gap.
+ *
+ * Read once at startup and not watched: a person who moves their vault can
+ * restart the app.
+ *
+ * ⚠️ NOT VERIFIED beyond this machine's own statusline.py. The regexes below
+ * match `VAULT_HEALTH = r"..."` and `ERRLOG = os.path.join(HOME, ...)` as that
+ * file spells them today. A reformat there silently returns null here, which
+ * shows nothing rather than showing something wrong.
+ */
+function discoverStatusPaths(home, env) {
+  const e = env || process.env;
+  const out = { vaultHealth: null, errorLog: null, cindexPort: Number(e.ZEVET_CINDEX_PORT) || 8080 };
+
+  if (e.ZEVET_VAULT_HEALTH) out.vaultHealth = e.ZEVET_VAULT_HEALTH;
+  if (e.ZEVET_HOOK_ERRORLOG) out.errorLog = e.ZEVET_HOOK_ERRORLOG;
+  if (out.vaultHealth && out.errorLog) return out;
+
+  let src = "";
+  try {
+    src = fs.readFileSync(require("node:path").join(home, ".claude", "statusline.py"), "utf8");
+  } catch {
+    return out;   // no status line on this machine; nothing to copy
+  }
+
+  if (!out.vaultHealth) {
+    // `VAULT_HEALTH = r"C:\dev\knowledge\.vault\health.json"` — a raw string,
+    // so backslashes are literal and must not be unescaped here.
+    const m = /^\s*VAULT_HEALTH\s*=\s*r?["']([^"']+)["']/m.exec(src);
+    if (m) out.vaultHealth = m[1];
+  }
+  if (!out.errorLog) {
+    // `ERRLOG = os.path.join(HOME, ".claude", "hooks", "errors.log")`
+    const m = /^\s*ERRLOG\s*=\s*os\.path\.join\(\s*HOME\s*,\s*(.+?)\)/m.exec(src);
+    if (m) {
+      const parts = [...m[1].matchAll(/["']([^"']+)["']/g)].map((x) => x[1]);
+      if (parts.length) out.errorLog = require("node:path").join(home, ...parts);
+    }
+  }
+  return out;
+}
+
+/**
+ * How long ago a hook last failed, in seconds, or null.
+ *
+ * A hook that throws exits 0 and writes to stderr, which nothing displays — so
+ * a broken hook silently does nothing, indefinitely. One stat turns that into
+ * something visible. Only RECENT failures count: an old log is history, not a
+ * problem, and a permanent red mark is one you stop seeing.
+ */
+const HOOK_FAIL_WINDOW_S = 6 * 3600;
+
+function hookFailure(errorLogPath, now) {
+  if (!errorLogPath) return null;
+  try {
+    const st = fs.statSync(errorLogPath);
+    const ageS = ((typeof now === "number" ? now : Date.now()) - st.mtimeMs) / 1000;
+    if (ageS < 0 || ageS > HOOK_FAIL_WINDOW_S) return null;
+    return Math.floor(ageS);
+  } catch {
+    return null;   // no log is the healthy case
+  }
+}
+
 module.exports = {
+  discoverStatusPaths,
+  hookFailure,
+  HOOK_FAIL_WINDOW_S,
   vaultHealth,
   ageInDays,
   probePort,
