@@ -40,6 +40,33 @@ Build through `npm run dist:mac`. Its wrapper preserves electron-builder's CLI o
 
 The beta bundle has an ad hoc integrity seal. Apple Developer ID signing and notarization still require publisher credentials. The existing configured signing path remains available. Mac updates open the installer; replacing the app is still manual.
 
+### Website download, September 19
+
+`https://usemasora.com/download/Zevet.dmg` now serves the branded wrapper as a
+download named `Zevet.dmg`. The page stays open and gives one installation step.
+The immutable server file is `zevet-0.2.1-macos-arm64-branded-v2.dmg`:
+157,380,993 bytes; SHA256
+`1ef1e7f7086df0ea7b599e849ec261e48b5526c6a351ab603704fcb3fff2b56d`.
+All 318 entries and file modes in its app match the official 0.2.1 app. Only the
+disk-image presentation changed; this does not release the branch's later app
+code under an old version. Original versioned downloads and the update feed are
+unchanged. Windows uses `/download/Zevet-Setup.exe` with its original bytes.
+
+The full live response matched the tested image. Native Finder, renamed-image
+portability, the repaired build path, Mac smoke, and the 813-pass/4-skip test gate
+passed. The website click stayed on the page and showed the instruction; an
+automated browser-saved file was not independently verified.
+
+Michael's Apple Developer membership was confirmed active through July 5, 2027.
+The account had no signing certificates, and this Mac had no Developer ID signing
+identity. Certificate issuance is awaiting his approval. Notarization then needs
+separate authentication, saved securely in Keychain; never put credentials in
+this repository or chat. For `--prepackaged` builds, sign and notarize the app
+first: the pinned builder skips that work when given an existing app.
+
+Server rollback files: `/srv/masora/Caddyfile.before-zevet-branded-v2-20260919T185500Z`
+and `/srv/masora/compose.before-zevet-download-page-20260919.yml`.
+
 The previous update-button hotfix is backed up at `/srv/masora/zevet-ui-before-0e329bd.html`. The later Masora design deployment is backed up at `/srv/masora/zevet-before-masora-design`, with before/after hashes for the eight changed UI/font files. The hub restarted to load the font allowlist; authentication and stored account data were unchanged.
 
 Michael's GitHub authorization succeeded, but the live hub is unclaimed and reserved for Andrew. Andrew must sign in once, then add `mshvid1101` in Settings → Account. The local app is ready; it does not bypass this access rule.
