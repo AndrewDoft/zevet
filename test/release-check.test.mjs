@@ -35,6 +35,11 @@ describe("release-check", () => {
     assert.match(checkVersions(root), /0\.2\.5.*0\.2\.4/);
   });
 
+  test("a four-part version is refused before CI sees it", async (t) => {
+    const root = layOut(t, { version: "0.2.5.1", desktop: "0.2.5.1" });
+    assert.match(checkVersions(root), /MAJOR\.MINOR\.PATCH/);
+  });
+
   test("hub/doctor drift is named", async (t) => {
     const root = layOut(t);
     const fs = await import("node:fs");

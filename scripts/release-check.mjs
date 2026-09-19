@@ -26,6 +26,9 @@ export function checkVersions(root = ROOT) {
   const main = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
   const desktop = JSON.parse(readFileSync(path.join(root, "desktop", "package.json"), "utf8")).version;
   if (main !== desktop) return `package.json says ${main} but desktop/package.json says ${desktop}`;
+  // electron-builder rejects anything but MAJOR.MINOR.PATCH — 0.2.5.1 died in
+  // CI with `Invalid version`, after the tag was already pushed.
+  if (!/^\d+\.\d+\.\d+$/.test(main)) return `${main} is not MAJOR.MINOR.PATCH; electron-builder will refuse it`;
   return null;
 }
 
