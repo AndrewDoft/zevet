@@ -52,9 +52,9 @@
     --syntax-function: #715287;
 
     --rail: 258px;
-    --tree: 286px;
-    --streams: 340px;
-    --talk: 300px;
+    --tree: 300px;
+    --streams: 400px;
+    --talk: 350px;
     --font-sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
@@ -86,6 +86,11 @@
   }
 
   * { box-sizing: border-box; }
+  /* No visible scrollbars anywhere: panes, sheets, consoles and the viewer
+     scroll by wheel, touch and keyboard exactly as before — only the chrome
+     goes. (The one previous exception, the status strip, is subsumed.) */
+  * { scrollbar-width: none; -ms-overflow-style: none; }
+  *::-webkit-scrollbar { display: none; }
   html, body { height: 100%; margin: 0; }
 
   body {
@@ -211,6 +216,40 @@
     padding: 8px 0 2px; font-size: 12.5px; color: var(--cerulean);
   }
   .ws-note { font-size: 11px; color: var(--subtle); padding-top: 6px; }
+  .ws-item[data-live="true"] { color: var(--ink); font-weight: 500; }
+  .livedot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--who); margin-left: 6px; vertical-align: 1px;
+  }
+
+  /* Agent marks: vendor paths as currentColor glyphs, person-hued. */
+  .mark { display: inline-flex; width: 14px; height: 14px; margin-top: 3px; flex: none; }
+  .mark .fmark { width: 14px; height: 14px; }
+  .stream-head .mark { margin-top: 2px; }
+
+  /* Roster dropdowns: one expanded card per person, mission first. */
+  .person-wrap { border-left: 2px solid transparent; }
+  .person-detail { padding: 2px 16px 10px 36px; font-size: 12px; }
+  .person-detail .mission {
+    color: var(--ink); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; margin-bottom: 4px;
+  }
+
+  /* Follow control + resizable panes. */
+  .pane-title.row { justify-content: space-between; }
+  .follow {
+    font: inherit; font-size: 11px; color: var(--muted);
+    background: transparent; border: 0; cursor: pointer;
+  }
+  .follow:hover { color: var(--ink); }
+  .split {
+    position: fixed; top: 0; bottom: 0; width: 9px; margin-left: -4px;
+    cursor: col-resize; z-index: 60; touch-action: none;
+  }
+  .split:hover::after, .split[data-on="true"]::after {
+    content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 1px;
+    background: var(--cerulean);
+  }
 
   /* ---- file tree ------------------------------------------------------ */
   .tree { padding: 2px 0 20px; }
@@ -256,10 +295,8 @@
      The conversation is the widest thing on screen because in this mode
      reading what the agent said is the work. The editor stays — a vibe coder
      still lands in a file eventually, and taking it away would mean switching
-     views to read one function. The file TREE goes, because browsing a repo is
-     exactly the activity this mode is not for; what replaces it is the changed
-     -file list in the teammates column, which is the only part of a tree
-     somebody driving an agent actually wants.
+     views to read one function. The file tree stays too: it is the only way
+     to reach the files the conversation is about.
 
      `display: none` on the tree is deliberate rather than a narrower width: a
      vestigial 80px of file list would be worse than none. Switching back
@@ -270,10 +307,8 @@
     border-right: 1px solid var(--line);
   }
   body[data-view="agent"] .chatcol { display: flex; }
-  /* The tree's BODY goes, not its column: the column is where the changed-file
-     list lives. `#treeBody` is still rendered into and still holds its
-     selection, so switching back is instant. */
-  body[data-view="agent"] #treeBody { display: none; }
+  /* The tree stays in both views now that the changed-file list is gone:
+     hiding it in agent view would leave no way to reach a file. */
   /* ⚠️ THESE TRACKS ARE MATCHED TO DOM ORDER, WHICH IS treecol, chatcol,
      detail. There is no `grid-area` here, so the second track is whichever
      element comes second in the markup. Written the other way round once and
@@ -298,8 +333,7 @@
      elsewhere on screen. Teammates go first: the People rail already says who
      is doing what. The editor goes second: a vibe coder can switch to ide view
      to read a file, and losing it is survivable in a way that losing the
-     conversation or the changed list is not. Neither of those two is ever
-     dropped, at any width. */
+     conversation is not. The conversation is never dropped, at any width. */
   @media (max-width: 1500px) {
     body[data-view="agent"] .streams { display: none; }
     body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr; }
@@ -374,29 +408,11 @@
   }
   .chat-empty h2 { font-size: 17px; font-weight: 400; color: var(--ink); margin-bottom: 9px; }
 
-  /* ---- what the agents changed -------------------------------------------
-     Agent view's answer to the file tree. Not a tree: a flat list of the files
-     that are different from HEAD right now, newest churn first, which is the
-     only slice of a repo somebody driving an agent looks at. Clicking one
-     opens it in the editor, exactly as a tree row does. */
-  .changed { display: flex; flex-direction: column; }
-  /* ⚠️ `display: flex` BEATS the UA stylesheet's `[hidden] { display: none }`,
-     which is a specificity fact, not a bug in the browser. Without this line
-     the changed list is visible in ide view underneath the tree. */
-  .changed[hidden] { display: none; }
-  .changed-row {
-    display: grid; grid-template-columns: 1fr auto; gap: 10px;
-    align-items: baseline; width: 100%; text-align: left;
-    padding: 6px 16px; font-size: 12.5px;
-    border-left: 2px solid transparent;
-  }
-  .changed-row:hover { background: var(--fill); }
-  .changed-row[data-sel="true"] { border-left-color: var(--cerulean); background: var(--fill); }
-  .changed-row .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-  .changed-none { padding: 16px; color: var(--subtle); font-size: 12.5px; }
+  /* (The changed-file list lived here and is gone: one way to reach a file,
+     kept in the tree. Its churn sort now only exists as tree-badge order.) */
 
   /* ---- the rail's footer: theme, and a way into settings ------------------
-     Above the Workspaces header, where Andrew asked for it. */
+      Above the Repos header, where Andrew asked for it. */
   .railfoot {
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
     padding: 10px 16px; border-top: 1px solid var(--line);
@@ -885,20 +901,23 @@
       </button>
       <button type="button" class="settings-link" id="settingsLink">Settings</button>
     </div>
-    <div class="pane-title" style="border-top:1px solid var(--line)">Workspaces</div>
+    <div class="pane-title" style="border-top:1px solid var(--line)">Repos</div>
     <div class="ws" id="workspaces"></div>
   </aside>
 
   <div class="middle">
     <div class="treecol">
-      <div class="pane-title" id="filesTitle">Files</div>
+      <div class="pane-title row"><span id="filesTitle">Files</span>
+        <select id="followSel" class="follow" aria-label="Follow agent activity">
+          <option value="mine">Follow mine</option>
+          <option value="all">Follow all</option>
+          <option value="off">Follow off</option>
+        </select>
+      </div>
+      <!-- The tree stays in agent view too: with the changed-file list gone,
+           browsing the touched corner of the repo is back to being the tree's
+           job in both modes. -->
       <div class="pane-body" id="treeBody"><div class="tree" id="tree"></div></div>
-      <!-- Agent view puts the changed-file list in the tree's SLOT, because it
-           is the tree's replacement: same column, same width, same click
-           behaviour. It lived in the teammates column for one build, which
-           also meant it disappeared with that column on a narrow window --
-           taking the only way to reach a file with it. -->
-      <div class="pane-body changed" id="changed" hidden></div>
     </div>
     <!-- Agent view's main column. Empty and `display: none` in ide view; the
          consoles are MOVED here rather than duplicated, so there is only ever
@@ -1244,6 +1263,7 @@
     var r = roster.find(function (x) { return x.actor === e.actor; });
     if (r) { r.lastTs = e.ts; r.lastEvent = e; }
     if (!selectedRepo) selectedRepo = e.repo || null;
+    followEvent(e);
     render();
   }
 
@@ -1261,6 +1281,69 @@
       else { hit.lastTs = Math.max(hit.lastTs, e.ts); if (e.branch) hit.branch = e.branch; }
     });
     return seen.sort(function (a, b) { return b.lastTs - a.lastTs; });
+  }
+
+  /** Actors currently live in a repo: one dot each, no dedup across repos. */
+  function liveDots(repoName, host) {
+    if (!repoName) return;
+    var n = 0;
+    roster.forEach(function (r) {
+      if (!r.lastEvent || r.lastEvent.repo !== repoName) return;
+      n++;
+      var d = el("span", "livedot");
+      d.style.setProperty("--who", hueOf(r.actor));
+      d.title = r.actor;
+      host.appendChild(d);
+    });
+    host.dataset.live = String(n > 0);
+  }
+
+  /** Follow mode: whose file touches move your selection. Mine (default),
+   *  everyone, or nothing — persisted, because re-choosing it every reload
+   *  would train everybody to leave it where it is. */
+  var followMode = (function () {
+    try {
+      var v = localStorage.getItem("zevet.follow.v1");
+      if (v === "all" || v === "off") return v;
+    } catch {
+      // Private mode etc: default behaviour, no persistence.
+    }
+    return "mine";
+  })();
+
+  function setFollowMode(mode) {
+    followMode = mode;
+    try {
+      localStorage.setItem("zevet.follow.v1", mode);
+    } catch {
+      // See above.
+    }
+    render();
+  }
+
+  /**
+   * Let an event move the selection. Called from pushEvent before render, so
+   * no extra render is needed. Remote actors never steal the open file unless
+   * follow-all is on; even then the editor only opens when the event's repo
+   * is the locally open root — otherwise the tree highlights and the file
+   * waits for a click. Opening the wrong checkout would be worse than not
+   * following.
+   */
+  function followEvent(e) {
+    if (followMode === "off") return;
+    if (!e || e.kind !== "tool" || !e.target || !e.repo) return;
+    var myActor = window.__zevetCfg && window.__zevetCfg.actor;
+    if (followMode === "mine" && (!myActor || e.actor !== myActor)) return;
+    if (selectedRepo !== e.repo) selectedRepo = e.repo;
+    if (selectedPath === e.target) return;
+    var canOpen = LOCAL && localRoot &&
+      localRoot.split("\\").join("/").split("/").pop() === e.repo;
+    if (canOpen) {
+      // The open completes asynchronously in mountEditor; this remembers what
+      // to seat the sprite on and scroll to when it lands.
+      pendingAgentLine = { repo: e.repo, target: e.target };
+      toggleSelection(e.target);
+    } else selectedPath = e.target;
   }
 
   /**
@@ -1346,11 +1429,13 @@
     host.textContent = "";
     roster.forEach(function (r) {
       var idle = isIdle(r, now);
+      var wrap = el("div", "person-wrap");
       var b = el("button", "person");
       b.style.setProperty("--who", hueOf(r.actor));
       b.dataset.idle = String(idle);
       b.dataset.sel = String(selectedActor === r.actor);
-      b.appendChild(el("span", "bead"));
+      var lastAgent = r.lastEvent && r.lastEvent.agent;
+      b.appendChild(agentBadge(lastAgent));
       var col = el("span");
       col.appendChild(tx(el("span", "nm"), r.actor));
       var sub = el("span", "sub");
@@ -1364,11 +1449,21 @@
       }
       col.appendChild(sub);
       b.appendChild(col);
-      b.addEventListener("click", function () {
-        selectedActor = selectedActor === r.actor ? null : r.actor;
+      var open = expandedActors().indexOf(r.actor) >= 0;
+      b.setAttribute("aria-expanded", String(open));
+      b.addEventListener("click", function (ev) {
+        // Shift-click still filters; a plain click expands in place.
+        if (ev.shiftKey) {
+          selectedActor = selectedActor === r.actor ? null : r.actor;
+          render();
+          return;
+        }
+        setExpanded(r.actor, !open);
         render();
       });
-      host.appendChild(b);
+      wrap.appendChild(b);
+      if (open) wrap.appendChild(personDetail(r, now));
+      host.appendChild(wrap);
     });
     if (!roster.length) {
       var p = el("div");
@@ -1376,6 +1471,90 @@
       tx(p, "nobody yet");
       host.appendChild(p);
     }
+  }
+
+  /** Actors with an expanded activity card, persisted across reloads. */
+  function expandedActors() {
+    try {
+      var v = JSON.parse(localStorage.getItem("zevet.expanded.v1") || "[]");
+      return Array.isArray(v) ? v.filter(function (x) { return typeof x === "string"; }) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function setExpanded(actor, on) {
+    try {
+      var list = expandedActors().filter(function (x) { return x !== actor; });
+      if (on) list.push(actor);
+      localStorage.setItem("zevet.expanded.v1", JSON.stringify(list));
+    } catch {
+      // Private mode etc: expansion just does not persist.
+    }
+  }
+
+  /**
+   * One person's current turn, shared by the roster dropdown and the slim
+   * stream card so the two cannot disagree about what "current" means:
+   * everything since their most recent prompt.
+   */
+  function turnOf(r) {
+    var mine = scoped().filter(function (e) { return e.actor === r.actor; });
+    var startIdx = 0;
+    for (var i = mine.length - 1; i >= 0; i--) {
+      if (mine[i].kind === "prompt") { startIdx = i; break; }
+    }
+    var turn = mine.slice(startIdx);
+    var prompt = turn[0] && turn[0].kind === "prompt" ? turn[0] : null;
+    var tools = turn.filter(function (e) { return e.kind === "tool"; });
+    return { prompt: prompt, tools: tools, ended: turn.some(function (e) { return e.kind === "turn_end"; }) };
+  }
+
+  /** Mission line: the prompt, terminal-title short. */
+  function missionOf(r) {
+    var t = turnOf(r);
+    if (!t.prompt || !t.prompt.detail) return "";
+    return String(t.prompt.detail).slice(0, 80);
+  }
+
+  /** Current command: the latest tool and what it is about. */
+  function currentOf(r) {
+    var t = turnOf(r);
+    var e = t.tools[t.tools.length - 1];
+    if (!e) return t.ended ? "turn finished" : "";
+    return (e.tool || "tool") + (e.target || e.detail ? "  " + (e.target || e.detail) : "");
+  }
+
+  /** The expanded activity card under a roster row: mission, current, steps. */
+  function personDetail(r, now) {
+    var t = turnOf(r);
+    var box = el("div", "person-detail");
+    box.style.setProperty("--who", hueOf(r.actor));
+    var mission = missionOf(r);
+    if (mission) {
+      var m = el("div", "mission");
+      tx(m, mission);
+      box.appendChild(m);
+    }
+    var cur = currentOf(r);
+    if (cur) {
+      var c = el("div", "step");
+      c.appendChild(tx(el("span", "t"), "now"));
+      var v = el("span", "v mono");
+      tx(v, cur);
+      c.appendChild(v);
+      box.appendChild(c);
+    }
+    t.tools.slice(-7).slice(0, -1).forEach(function (e) {
+      var row = el("div", "step");
+      row.appendChild(tx(el("span", "t"), e.tool || "tool"));
+      var vv = el("span", "v mono");
+      tx(vv, e.target || e.detail || "");
+      row.appendChild(vv);
+      box.appendChild(row);
+    });
+    if (!mission && !cur) tx(box, "idle " + ago(now - r.lastTs));
+    return box;
   }
 
   /** The folder a teammate is working in — the thing you want at a glance. */
@@ -1567,6 +1746,7 @@
         var b = el("button", "ws-item");
         b.dataset.sel = String(localRoot === w.dir);
         b.appendChild(tx(el("span"), w.name));
+        liveDots(w.repo || w.name, b);
         b.appendChild(document.createElement("br"));
         b.appendChild(tx(el("span", "branch"), w.repo ? "git repo" : w.dir));
         b.addEventListener("click", function () {
@@ -1597,6 +1777,7 @@
       var b = el("button", "ws-item");
       b.dataset.sel = String(selectedRepo === w.repo);
       b.appendChild(tx(el("span"), w.repo));
+      liveDots(w.repo, b);
       if (w.branch) {
         b.appendChild(document.createElement("br"));
         b.appendChild(tx(el("span", "branch"), w.branch));
@@ -1619,6 +1800,42 @@
     '<svg class="ficon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2">' +
     '<path d="M9 1.5H4.5A1.5 1.5 0 0 0 3 3v10a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 13 13V5.5L9 1.5Z"/>' +
     '<path d="M9 1.5V5a.5.5 0 0 0 .5.5H13"/></svg>';
+
+  /**
+   * Which agent somebody is running, as a mark instead of a dot.
+   *
+   * Vendor paths, inlined: Claude's starburst, OpenAI's blossom (Codex), the
+   * OpenRouter mark (opencode runs OpenRouter models). Inlined rather than
+   * fetched so a hub-served page phones nobody home, and currentColor so each
+   * keeps its person's hue. Used nominatively — to say which tool is running —
+   * never as decoration; the rider figures in agent-sprites.js stay original
+   * art on purpose. Unknown agents fall back to the bead.
+   */
+  var AGENT_MARKS = {
+    "claude-code": '<svg class="fmark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>',
+    "codex": '<svg class="fmark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>',
+    "opencode": '<svg class="fmark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.778 1.844v1.919q-.569-.026-1.138-.032-.708-.008-1.415.037c-1.93.126-4.023.728-6.149 2.237-2.911 2.066-2.731 1.95-4.14 2.75-.396.223-1.342.574-2.185.798-.841.225-1.753.333-1.751.333v4.229s.768.108 1.61.333c.842.224 1.789.575 2.185.799 1.41.798 1.228.683 4.14 2.75 2.126 1.509 4.22 2.11 6.148 2.236.88.058 1.716.041 2.555.005v1.918l7.222-4.168-7.222-4.17v2.176c-.86.038-1.611.065-2.278.021-1.364-.09-2.417-.357-3.979-1.465-2.244-1.593-2.866-2.027-3.68-2.508.889-.518 1.449-.906 3.822-2.59 1.56-1.109 2.614-1.377 3.978-1.466.667-.044 1.418-.017 2.278.02v2.176L24 6.014Z"/></svg>',
+  };
+
+  /**
+   * The mark for an agent id, or null. innerHTML is safe here for the reason
+   * it is unsafe everywhere else on this page: the strings above are constants
+   * baked into this file, and no model output, path or prompt ever passes
+   * through this function — callers hand it e.agent and nothing else.
+   */
+  function agentMark(agent) {
+    var d = AGENT_MARKS[agent] || null;
+    if (!d) return null;
+    var s = document.createElement("span");
+    s.className = "mark";
+    s.innerHTML = d;
+    return s;
+  }
+
+  /** Logo-or-bead: the mark when the agent is known, the bead otherwise. */
+  function agentBadge(agent) {
+    return agentMark(agent) || el("span", "bead");
+  }
 
   function renderTree(now) {
     var host = $("tree");
@@ -2510,7 +2727,12 @@
   var machine = null;          // the answer from zevetLocal.status(), or null
   var STATUS_EVERY_MS = 4000;
 
-  /** The usage on one stream-json line, or null. See the warning above. */
+  /** The usage on one stream-json line, or null. See the warning above.
+   *
+   *  This feeds the live strip (latest snapshot shown as-is) — NOT the rolling
+   *  totals, which live in BurnWindows and count only per-session increases,
+   *  because Claude lines are cumulative snapshots and summing them read one
+   *  turn as 934k. If the shape of context changes here, check that file too. */
   function usageOf(payload) {
     if (!payload || typeof payload !== "object") return null;
     var u = (payload.message && payload.message.usage) || payload.usage || null;
@@ -2959,7 +3181,83 @@
       sc.addEventListener("scroll", onScroll, { passive: true });
       e.unsub.push(function () { sc.removeEventListener("scroll", onScroll); });
     }
+    refreshAgentLine(e, false);
+    if (pendingAgentLine && localRoot && e.relPath === pendingAgentLine.target) {
+      var rootName = String(localRoot).split("\\").join("/").split("/").pop();
+      if (pendingAgentLine.repo === rootName) {
+        pendingAgentLine = null;
+        refreshAgentLine(e, true);
+      }
+    }
     drawRiders(e);
+  }
+
+  /**
+   * Where an agent last wrote in the open file, as a rider beside the hunk.
+   *
+   * The event stream carries files but no line numbers, and the hub never
+   * sees contents — so the line comes from measuring locally: `git diff`
+   * hunks for the open file, attributed to whoever ran the last tool on it.
+   * That attribution is recency, not identity: two agents alternating in one
+   * file can mislabel a hunk, and the rider says whose turn it most likely
+   * was, nothing stronger. Files nobody here has on disk get tree dots, never
+   * a rider, for the same reason the old code refused line 1.
+   */
+  var pendingAgentLine = null;
+
+  function newestHunk(hunks) {
+    var best = null;
+    (hunks || []).forEach(function (h) {
+      if (h && typeof h.start === "number" && (!best || h.start > best.start)) best = h;
+    });
+    return best;
+  }
+
+  function followAllows(actor) {
+    if (followMode === "off") return false;
+    if (followMode === "all") return true;
+    var myActor = window.__zevetCfg && window.__zevetCfg.actor;
+    return Boolean(myActor && actor === myActor);
+  }
+
+  function lastToolFor(repoName, relPath) {
+    for (var i = events.length - 1; i >= 0; i--) {
+      var e = events[i];
+      if (e.kind === "tool" && e.repo === repoName && e.target === relPath) return e;
+    }
+    return null;
+  }
+
+  function refreshAgentLine(e, allowScroll) {
+    e.agentLine = null;
+    if (!LOCAL || !localRoot || !e.relPath) { drawRiders(e); return; }
+    if (followMode === "off") { drawRiders(e); return; }
+    if (typeof window.zevetLocal.diffHunks !== "function") { drawRiders(e); return; }
+    var rootName = String(localRoot).split("\\").join("/").split("/").pop();
+    var last = lastToolFor(rootName, e.relPath);
+    if (!last) { drawRiders(e); return; }
+    window.zevetLocal.diffHunks(localRoot, e.relPath).then(function (r) {
+      if (ed !== e) return;
+      var h = r && r.ok && newestHunk(r.hunks);
+      if (!h) { drawRiders(e); return; }
+      e.agentLine = { actor: last.actor, tool: last.tool, line: h.start };
+      drawRiders(e);
+      if (allowScroll && followAllows(last.actor)) scrollToLine(e, h.start);
+    }, function () { if (ed === e) drawRiders(e); });
+  }
+
+  /** Scroll the editor so a 1-based line lands near the top. Pure geometry on
+   *  CodeMirror blocks; anything unknown is a no-op, never a jump. */
+  function scrollToLine(e, line) {
+    try {
+      if (!e.view || !e.view.state || !e.view.state.doc) return;
+      var count = e.view.state.doc.lines;
+      var n = Math.max(1, Math.min(count, Math.round(line) || 1));
+      var block = e.view.lineBlockAt(e.view.state.doc.line(n).from);
+      e.view.scrollDOM.scrollTop = Math.max(0, block.top - 120);
+    } catch {
+      // A document mid-update: stay where we are.
+    }
   }
 
   /** `hueOf` returns `var(--who-N)`; an awareness payload has to carry a real
@@ -3152,7 +3450,7 @@
     e.lastWritten = payload.text;
     e.setText(payload.text);
     refreshStats(false);
-    drawRiders(e);
+    refreshAgentLine(e, true);
   }
 
   function watchFile(e) {
@@ -3177,23 +3475,23 @@
    * y-codemirror.next draws the remote carets from, so the figure and the caret
    * cannot drift apart.
    *
-   * WARNING: THERE IS DELIBERATELY NO FIGURE FOR AN AGENT SEEN ONLY OVER THE
-   * BOARD'S EVENT STREAM. Those events carry a file but NO LINE NUMBER -- the
-   * hook sends `{kind, tool, target, detail}` and nothing positional. Putting a
-   * figure at line 1 because line 1 is all we know would be inventing a fact
-   * and drawing it 40 lines from the truth. Teaching the hook to report a line
-   * is the way to fix this, and it has not been done.
+   * Plus one figure for an agent seen over the event stream — but ONLY at a
+   * locally measured `git diff` hunk (see refreshAgentLine), never at an
+   * invented line. The hook sends `{kind, tool, target, detail}` and nothing
+   * positional, and the hub never sees contents, so a rider with no local
+   * measurement would be a fabrication drawn N lines from the truth. Files
+   * nobody here has on disk get tree dots instead.
    */
   function drawRiders(e) {
     if (ed !== e || !e.view) return;
     var layer = $("riders");
     if (!layer) return;
     layer.textContent = "";
-    if (!e.awareness) return;
-
-    var localId = e.awareness.clientID;
     var scrolled = e.view.scrollDOM.scrollTop;
-    var docLen = e.view.state.doc.length;
+
+    if (e.awareness) {
+      var localId = e.awareness.clientID;
+      var docLen = e.view.state.doc.length;
 
     e.awareness.getStates().forEach(function (state, clientId) {
       if (clientId === localId) return;
@@ -3227,6 +3525,29 @@
       rider.appendChild(tx(el("span", "who"), user.name || ""));
       layer.appendChild(rider);
     });
+    }
+    drawAgentRider(e, layer, scrolled);
+  }
+
+  /** The locally measured agent hunk (see refreshAgentLine): same figure,
+   *  different source. Drawn only when a hunk was actually measured. */
+  function drawAgentRider(e, layer, scrolled) {
+    var a = e.agentLine;
+    if (!a || typeof a.line !== "number" || !e.view || !e.view.state || !e.view.state.doc) return;
+    var n = Math.max(1, Math.min(e.view.state.doc.lines, Math.round(a.line)));
+    var block;
+    try {
+      block = e.view.lineBlockAt(e.view.state.doc.line(n).from);
+    } catch (err) {
+      return;
+    }
+    var rider = el("div", "rider");
+    rider.style.color = hueOf(a.actor);
+    rider.style.setProperty("--zevet-sprite-eye", "var(--paper)");
+    rider.style.transform = "translateY(" + Math.round(block.top - scrolled) + "px)";
+    rider.innerHTML = window.zevetSprites.spriteFor({ tool: a.tool, width: 35, height: 16 });
+    rider.appendChild(tx(el("span", "who"), a.actor || ""));
+    layer.appendChild(rider);
   }
 
   /**
@@ -3664,9 +3985,9 @@
   /**
    * Click a file row: open it, or close it if it was already the open one.
    *
-   * Factored out of the tree because the changed-file list in agent view is a
-   * second way to reach the same file and must behave identically. Two copies
-   * of this would be two places for the editor/viewer fallback to drift.
+   * One function for every reach-the-file path — tree clicks and follow-mode
+   * both come through here — so the editor/viewer fallback cannot drift
+   * between two copies.
    */
   function toggleSelection(path) {
     selectedPath = selectedPath === path ? null : path;
@@ -3680,84 +4001,6 @@
       localFile = null;
       closeEditor();
     }
-  }
-
-  /**
-   * The changed-file list: agent view's replacement for the tree.
-   *
-   * Built from the same `stats.diff` the tree badges use, so there is no
-   * second source of truth and no second IPC call. Sorted by churn rather than
-   * by name: the file an agent has rewritten 200 lines of is the one worth
-   * looking at, and alphabetical order would bury it under a config file it
-   * touched one character of.
-   *
-   * `diff === null` means git could not be asked (not a repo, no git, a
-   * timeout) and is a DIFFERENT thing from an empty diff, which means a clean
-   * tree. They get different sentences; collapsing them would make "no git"
-   * read as "your agent did nothing".
-   */
-  function renderChanged() {
-    var host = $("changed");
-    if (!host) return;
-    var on = viewMode === "agent";
-    host.hidden = !on;
-    // The column keeps ONE heading, the tree's, relabelled. A second title
-    // inside the list would put two uppercase headers in a 286px column.
-    // Only written when this view owns the column: renderTree sets the same
-    // element, with the repo name appended, and runs first.
-    if (on) tx($("filesTitle"), "Changed");
-    if (!on) { host.textContent = ""; return; }
-    host.textContent = "";
-
-    if (!LOCAL || !localRoot) {
-      var noWs = el("div", "changed-none");
-      tx(noWs, LOCAL ? "no workspace open" : "open zevet on your machine to see this");
-      host.appendChild(noWs);
-      return;
-    }
-    if (!stats.diff || stats.root !== localRoot) {
-      var unknown = el("div", "changed-none");
-      tx(unknown, stats.diff === null && stats.root === localRoot
-        ? "git could not be read here"
-        : "counting…");
-      host.appendChild(unknown);
-      return;
-    }
-
-    var rows = Object.keys(stats.diff).map(function (p) {
-      var d = stats.diff[p];
-      return { path: p, d: d, churn: (d.added || 0) + (d.removed || 0) };
-    });
-    // Untracked files have no counts at all, so churn sorting would drop them
-    // to the bottom; a brand-new file is usually the most interesting thing in
-    // the list. They sort as if large, and say "new" instead of a number.
-    rows.sort(function (a, b) {
-      var an = a.d.status === "untracked" ? Infinity : a.churn;
-      var bn = b.d.status === "untracked" ? Infinity : b.churn;
-      if (an !== bn) return bn - an;
-      return a.path < b.path ? -1 : 1;
-    });
-
-    if (!rows.length) {
-      var clean = el("div", "changed-none");
-      tx(clean, "nothing changed since the last commit");
-      host.appendChild(clean);
-      return;
-    }
-
-    rows.slice(0, 60).forEach(function (r) {
-      var b = el("button", "changed-row");
-      b.dataset.sel = String(selectedPath === r.path);
-      b.title = r.path;
-      // `direction: rtl` on .p keeps the FILENAME visible when the path is too
-      // long, ellipsing the directories instead. A left-ellipsed path is the
-      // one you can still identify.
-      b.appendChild(tx(el("span", "p"), r.path));
-      var badge = statBadge(r.path);
-      b.appendChild(badge || el("span"));
-      b.addEventListener("click", function () { toggleSelection(r.path); render(); });
-      host.appendChild(b);
-    });
   }
 
   /**
@@ -3964,7 +4207,7 @@
       var box = el("div", "chat-empty");
       box.appendChild(tx(el("h2"), "Nothing running yet."));
       box.appendChild(tx(el("p"), LOCAL
-        ? "Start an agent in the selected workspace."
+        ? "Start an agent in the selected repo."
         : "Use the desktop app to start an agent."));
       chat.appendChild(box);
     }
@@ -3974,64 +4217,36 @@
     shown.forEach(function (r) {
       var mine = scoped().filter(function (e) { return e.actor === r.actor; });
       if (!mine.length) return;
-
-      // Everything since this person's most recent prompt is the current turn.
-      var startIdx = 0;
-      for (var i = mine.length - 1; i >= 0; i--) {
-        if (mine[i].kind === "prompt") { startIdx = i; break; }
-      }
-      var turn = mine.slice(startIdx);
-      var prompt = turn[0] && turn[0].kind === "prompt" ? turn[0] : null;
-      var steps = turn.filter(function (e) { return e.kind === "tool"; }).slice(-7);
-      var ended = turn.some(function (e) { return e.kind === "turn_end"; });
       var idle = isIdle(r, now);
 
+      // Slim by design: mission plus current command. The full turn lives in
+      // the roster dropdown (personDetail) — one place for detail, reached by
+      // expanding the person, so the rail never tries to fit every step.
       var card = el("div", "stream");
       card.style.setProperty("--who", hueOf(r.actor));
+      card.dataset.idle = String(idle);
 
       var head = el("div", "stream-head");
-      head.appendChild(el("span", "bead"));
+      head.appendChild(agentBadge(r.lastEvent && r.lastEvent.agent));
       head.appendChild(tx(el("span", "nm"), r.actor));
-      var agentTag = el("span", "agent");
-      tx(agentTag, (r.lastEvent && r.lastEvent.agent) || "");
-      head.appendChild(agentTag);
       card.appendChild(head);
 
-      if (prompt && prompt.detail) {
+      var mission = missionOf(r);
+      if (mission) {
         var bub = el("div", "bubble prompt");
-        tx(bub, prompt.detail);
+        tx(bub, mission);
         card.appendChild(bub);
       }
 
-      steps.forEach(function (e) {
+      var cur = currentOf(r);
+      if (cur) {
         var row = el("div", "step");
-        row.appendChild(tx(el("span", "t"), e.tool || "tool"));
+        row.appendChild(tx(el("span", "t"), idle ? "idle" : "now"));
         var v = el("span", "v mono");
-        tx(v, e.target || e.detail || "");
+        tx(v, cur);
         row.appendChild(v);
         card.appendChild(row);
-      });
-
-      var foot = el("div", "step");
-      foot.appendChild(tx(el("span", "t"), hhmm(r.lastTs)));
-      var state = el("span", "v");
-      if (idle) {
-        state.className = "v idle-note";
-        tx(state, "idle " + ago(now - r.lastTs));
-      } else if (ended) {
-        tx(state, "turn finished");
-      } else {
-        var w = el("b");
-        tx(w, "working");
-        state.appendChild(w);
-        var dots = el("span", "typing");
-        dots.appendChild(el("i"));
-        dots.appendChild(el("i"));
-        dots.appendChild(el("i"));
-        state.appendChild(dots);
       }
-      foot.appendChild(state);
-      card.appendChild(foot);
 
       host.appendChild(card);
     });
@@ -4039,11 +4254,127 @@
     if (!host.childNodes.length) {
       var p = el("div");
       p.style.cssText = "padding:16px;color:var(--subtle);font-size:12.5px";
-      tx(p, roster.length ? "nothing in this workspace yet" : "no agents yet");
+      tx(p, roster.length ? "nothing in this repo yet" : "no agents yet");
       host.appendChild(p);
     }
 
     if (agentView && chat && stick) chat.scrollTop = chat.scrollHeight;
+  }
+
+  /**
+   * Resizable panes that stay resized.
+   *
+   * The grids size columns from CSS vars with DOM-order tracks and view- and
+   * breakpoint-specific overrides — inserting splitter columns into the grids
+   * would mean re-matching every one of those rules. So the handles are
+   * overlays parked on the three main boundaries (rail|middle, tree|detail,
+   * middle|streams): dragging one sets its var live, releasing persists the
+   * set to localStorage, and boot restores it before paint. Narrow-viewport
+   * rules still win, because they hide columns the vars cannot show.
+   */
+  var PANE_LIMITS = { rail: [180, 420], tree: [200, 560], streams: [260, 640] };
+  var paneWidths = (function () {
+    var d = { rail: 258, tree: 300, streams: 400 };
+    try {
+      var s = JSON.parse(localStorage.getItem("zevet.panes.v1") || "{}");
+      ["rail", "tree", "streams"].forEach(function (k) {
+        if (typeof s[k] === "number") d[k] = clampPaneWidth(s[k], PANE_LIMITS[k][0], PANE_LIMITS[k][1]);
+      });
+    } catch {
+      // Private mode etc: defaults, no persistence.
+    }
+    return d;
+  })();
+
+  function clampPaneWidth(v, min, max) {
+    v = Number(v);
+    if (!isFinite(v)) return min;
+    return Math.max(min, Math.min(max, Math.round(v)));
+  }
+
+  function applyPaneWidths() {
+    var root = document.documentElement;
+    root.style.setProperty("--rail", paneWidths.rail + "px");
+    root.style.setProperty("--tree", paneWidths.tree + "px");
+    root.style.setProperty("--streams", paneWidths.streams + "px");
+  }
+
+  function storePaneWidths() {
+    try {
+      localStorage.setItem("zevet.panes.v1", JSON.stringify(paneWidths));
+    } catch {
+      // See above.
+    }
+  }
+
+  var splits = [];
+  function buildSplits() {
+    if (splits.length || typeof document === "undefined") return;
+    [["rail", "rail"], ["tree", "tree"], ["streams", "streams"]].forEach(function (pair) {
+      var d = document.createElement("div");
+      d.className = "split";
+      d.dataset.pane = pair[0];
+      d.setAttribute("aria-hidden", "true");
+      document.body.appendChild(d);
+      splits.push(d);
+      d.addEventListener("pointerdown", function (ev) {
+        ev.preventDefault();
+        d.dataset.on = "true";
+        function move(me) {
+          var lim = PANE_LIMITS[pair[0]];
+          paneWidths[pair[0]] = clampPaneWidth(paneEdgeWidth(pair[0], me.clientX), lim[0], lim[1]);
+          applyPaneWidths();
+          positionSplits();
+        }
+        function up() {
+          d.dataset.on = "";
+          storePaneWidths();
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+        }
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      });
+    });
+    positionSplits();
+  }
+
+  function railWidth() {
+    var r = document.querySelector(".shell > .rail");
+    return r ? r.getBoundingClientRect().width : paneWidths.rail;
+  }
+
+  /** Pixels the named pane currently spans, from a pointer x. Pure geometry:
+   *  rail and tree grow rightward from their left edge; streams grows
+   *  leftward from the shell's right edge. */
+  function paneEdgeWidth(pane, clientX) {
+    var shell = document.querySelector(".shell");
+    var box = shell ? shell.getBoundingClientRect() : { left: 0, right: window.innerWidth };
+    if (pane === "streams") return box.right - clientX;
+    var left = box.left;
+    if (pane === "tree") left += railWidth();
+    return clientX - left;
+  }
+
+  function positionSplits() {
+    if (!splits.length) return;
+    var shell = document.querySelector(".shell");
+    if (!shell) return;
+    var box = shell.getBoundingClientRect();
+    var edges = {
+      rail: box.left + railWidth(),
+      tree: box.left + railWidth() + treeWidth(),
+      streams: box.right - paneWidths.streams,
+    };
+    splits.forEach(function (d) {
+      d.style.left = Math.round(edges[d.dataset.pane] || 0) + "px";
+      d.style.display = box.width ? "" : "none";
+    });
+  }
+
+  function treeWidth() {
+    var t = document.querySelector(".middle > .treecol");
+    return t ? t.getBoundingClientRect().width : paneWidths.tree;
   }
 
   function renderScope() {
@@ -4109,8 +4440,8 @@
     renderCollisions(now);
     renderScope();
     if (!renderBlank()) { renderTree(now); renderDetail(now); }
-    renderChanged();
     renderStreams(now);
+    positionSplits();
   }
 
   function setConn(state, label) {
@@ -4153,7 +4484,10 @@
   // Appearance first, before anything paints, so there is no flash of the
   // wrong theme on a machine set to dark.
   applyTheme();
+  applyPaneWidths();
   applyView();
+  buildSplits();
+  window.addEventListener("resize", positionSplits);
 
   var themerEl = $("themer");
   if (themerEl) {
@@ -4163,6 +4497,11 @@
   }
   var settingsEl = $("settingsLink");
   if (settingsEl) settingsEl.addEventListener("click", openSettings);
+  var followSel = $("followSel");
+  if (followSel) {
+    followSel.value = followMode;
+    followSel.addEventListener("change", function () { setFollowMode(followSel.value); });
+  }
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && sheetOpen) closeSettings();
   });

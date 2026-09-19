@@ -231,8 +231,8 @@ describe("rolling spend", () => {
   test("tokens inside the window count and older ones do not", () => {
     const b = new S.BurnWindows();
     const t = NOW;
-    b.add({ tokens: 1000 }, t - 8 * 3600000);   // 8h ago: inside 7d, outside 5h
-    b.add({ tokens: 500 }, t - 3600000);        // 1h ago: inside both
+    b.add({ tokens: 1000, cumulative: false }, t - 8 * 3600000);   // 8h ago: inside 7d, outside 5h
+    b.add({ tokens: 500, cumulative: false }, t - 3600000);        // 1h ago: inside both
     const r = b.read(t);
     assert.equal(r["5h"].tokens, 500);
     assert.equal(r["7d"].tokens, 1500);
@@ -240,8 +240,8 @@ describe("rolling spend", () => {
 
   test("samples older than the longest window are dropped, not kept forever", () => {
     const b = new S.BurnWindows();
-    b.add({ tokens: 1 }, NOW - 30 * 24 * 3600000);
-    b.add({ tokens: 2 }, NOW);
+    b.add({ tokens: 1, cumulative: false }, NOW - 30 * 24 * 3600000);
+    b.add({ tokens: 2, cumulative: false }, NOW);
     assert.equal(b.samples.length, 1);
     assert.equal(b.read(NOW)["7d"].tokens, 2);
   });
@@ -254,6 +254,38 @@ describe("rolling spend", () => {
     b.add({ tokens: 10, cost: 0.25, sessionId: "a" }, NOW);
     b.add({ tokens: 10, cost: 0.05, sessionId: "b" }, NOW);
     assert.equal(Number(b.read(NOW).cost.toFixed(2)), 0.30);
+  });
+
+  test("cumulative usage lines count only their increase, not their total", () => {
+    // The 934k bug: every Claude line carries the session's running context,
+    // and summing raw lines multiplied one turn by its message count.
+    const b = new S.BurnWindows();
+    b.add({ tokens: 40000, sessionId: "a" }, NOW);
+    b.add({ tokens: 43000, sessionId: "a" }, NOW);
+    b.add({ tokens: 45000, sessionId: "a" }, NOW);
+    assert.equal(b.read(NOW)["5h"].tokens, 45000);
+    // A new session starts its own high-water mark from zero.
+    b.add({ tokens: 5000, sessionId: "b" }, NOW);
+    assert.equal(b.read(NOW)["5h"].tokens, 50000);
+    // Compaction (context drops) adds nothing until it climbs past the mark.
+    b.add({ tokens: 20000, sessionId: "a" }, NOW);
+    assert.equal(b.read(NOW)["5h"].tokens, 50000);
+    b.add({ tokens: 50000, sessionId: "a" }, NOW);
+    assert.equal(b.read(NOW)["5h"].tokens, 55000);
+  });
+
+  test("per-step deltas add as-is and never touch the high-water mark", () => {
+    const b = new S.BurnWindows();
+    b.add({ tokens: 8000, sessionId: "a", cumulative: false }, NOW);
+    b.add({ tokens: 400, sessionId: "a", cumulative: false }, NOW);
+    assert.equal(b.read(NOW)["5h"].tokens, 8400);
+  });
+
+  test("usageFrom marks opencode lines as deltas and claude lines as cumulative", () => {
+    const step = S.usageFrom({ type: "step_finish", part: { tokens: { input: 100, output: 5 } } });
+    assert.equal(step.cumulative, false);
+    const msg = S.usageFrom({ type: "assistant", message: { usage: { input_tokens: 100 } } });
+    assert.equal(msg.cumulative, true);
   });
 
   test("per-step costs SUM per session instead of replacing", () => {

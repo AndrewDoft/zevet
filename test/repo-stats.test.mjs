@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { diffStats, branchState, LineCounter, countLines, renamedTo } = require(
+const { diffStats, branchState, diffHunks, parseHunks, LineCounter, countLines, renamedTo } = require(
   path.join(ROOT, "desktop", "repo-stats.js"),
 );
 
@@ -253,6 +253,45 @@ describe("diff stats", { skip: HAVE_GIT ? false : "git is not installed" }, () =
   test("no root at all fails to empty", async () => {
     assert.equal((await diffStats(null)).ok, false);
     assert.equal((await diffStats("")).ok, false);
+  });
+});
+
+describe("diff hunks", { skip: HAVE_GIT ? false : "git is not installed" }, () => {
+  test("added-line ranges come back 1-based on the new side", async () => {
+    const { repo, g } = makeRepo("hunks");
+    writeFileSync(path.join(repo, "a.txt"), "one\ntwo\nthree\nfour\nfive\nsix\n");
+    g("add", "-A");
+    g("commit", "-qm", "first");
+    writeFileSync(path.join(repo, "a.txt"), "one\nTWO\nthree\nfour\nfive\nsix\nseven\n");
+    const { hunks, ok } = await diffHunks(repo, "a.txt");
+    assert.equal(ok, true);
+    assert.deepEqual(hunks, [
+      { start: 2, count: 1 },
+      { start: 7, count: 1 },
+    ]);
+  });
+
+  test("a clean file reports ok with no hunks", async () => {
+    const { repo, g } = makeRepo("hunks-clean");
+    writeFileSync(path.join(repo, "a.txt"), "one\n");
+    g("add", "-A");
+    g("commit", "-qm", "first");
+    assert.deepEqual(await diffHunks(repo, "a.txt"), { ok: true, hunks: [] });
+  });
+
+  test("path escape and nonsense fail to empty", async () => {
+    const { repo } = makeRepo("hunks-escape");
+    assert.equal((await diffHunks(repo, "../x")).ok, false);
+    assert.equal((await diffHunks(null, "a.txt")).ok, false);
+  });
+
+  test("parseHunks skips garbage and caps at twenty", () => {
+    assert.deepEqual(parseHunks("@@ -1,3 +4,5 @@\nnope\n@@ -x +y @@\n@@ -0,0 +1 @@\n"), [
+      { start: 4, count: 5 },
+      { start: 1, count: 1 },
+    ]);
+    const many = Array.from({ length: 30 }, (_, i) => `@@ -${i} +${i} @@`).join("\n");
+    assert.equal(parseHunks(many).length, 20);
   });
 });
 

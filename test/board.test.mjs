@@ -64,8 +64,10 @@ describe("the board page", () => {
   const ids = [
     // The renderer looks each of these up by id. Renaming one in the markup is
     // a silent failure: `$()` returns null and the pane simply never fills.
+    // ("changed" was here until the changed-file list was removed in favour
+    // of the tree; the absence is the contract now, not an oversight.)
     "people", "workspaces", "tree", "detail", "detailTitle", "collisions",
-    "streams", "chat", "changed", "strip", "themer", "settingsLink",
+    "streams", "chat", "strip", "themer", "settingsLink",
     "streamsTitle",
   ];
   for (const id of ids) {
@@ -88,10 +90,11 @@ describe("the board page", () => {
     assert.equal(calls.length, 2, "expected one definition and one call site");
   });
 
-  test("the changed-file list and the tree open files the same way", () => {
+  test("the tree and follow-mode open files the same way", () => {
     // Both rows call toggleSelection rather than each doing their own
-    // openEditor/openLocalFile dance, which is what they did before and is how
-    // the two paths drifted.
+    // openEditor/openLocalFile dance, which is how paths drift. (The second
+    // caller used to be the changed-file list; it is followEvent now that
+    // the list is gone.)
     const calls = html.match(/toggleSelection\(/g) || [];
     assert.ok(calls.length >= 3, "expected one definition and two call sites");
   });

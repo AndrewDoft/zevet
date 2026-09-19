@@ -1028,6 +1028,10 @@ function noteBurn(payload, sessionKey) {
   if (!u && cost == null) return;
   burn.add({
     tokens: u ? u.context : 0,
+    // Cumulative snapshots (Claude) count only their increase over the
+    // session high-water mark inside BurnWindows; per-step deltas (opencode)
+    // add as-is. See usageFrom().
+    cumulative: u ? u.cumulative !== false : true,
     cost: cost == null ? undefined : cost,
     // opencode reports cost per step, not a running total — summed per console.
     accumulateCost: statusSources.costAccumulates(payload),
@@ -1293,6 +1297,17 @@ ipcMain.handle("local:stats", async (_e, { root, relPaths }) => {
   const diff = ok ? Object.fromEntries(byPath) : null;
 
   return { ok: true, lines, diff, truncated: asked.length > list.length, counted: list.length };
+});
+
+/** Added-line hunks for one file, so the board can seat an agent's sprite on
+ *  the lines it just wrote. knownRoot first, like every sibling handler. */
+ipcMain.handle("local:diffHunks", async (_e, { root, relPath }) => {
+  const dir = knownRoot(root);
+  if (!dir) return { ok: false, hunks: [], error: "not an opened workspace" };
+  if (typeof relPath !== "string" || !relPath || relPath.includes("..")) {
+    return { ok: false, hunks: [], error: "not a file in this workspace" };
+  }
+  return repoStats.diffHunks(dir, relPath);
 });
 
 // ---- watching the disk for what an agent did ------------------------------

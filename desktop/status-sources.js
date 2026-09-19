@@ -209,6 +209,17 @@ function usageFrom(payload) {
     input,
     cacheRead,
     cacheWrite,
+    // Whether this line is a cumulative session snapshot or a per-step delta.
+    // Claude stream-json usage is cumulative: every assistant message carries
+    // the session's running total, so summing lines multiplies the bill (a
+    // 20-message turn at ~45k context reads as ~900k "spent"). opencode
+    // part.tokens are already per-step deltas. BurnWindows adds max(0, ctx -
+    // last) for cumulative lines and the value as-is for deltas.
+    cumulative: !(
+      payload.part &&
+      payload.part.tokens &&
+      typeof payload.part.tokens === "object"
+    ),
     // The share of this call's input that was served from cache. Normally high
     // and boring; when it DROPS the prefix was invalidated and this turn is
     // being paid for at full rate, which is the only time it is worth a glance.
@@ -286,17 +297,38 @@ class BurnWindows {
     /** Costs are running totals per session, so the last one seen for a session
      *  is what that session has cost; summing them would multiply it. */
     this.costBySession = new Map();
+    /** High-water context per session, for cumulative usage lines (below). */
+    this.contextBySession = new Map();
   }
 
   /** One turn's usage. `sessionId` may be null; it only affects cost.
    *
    *  `sample.accumulateCost` sums into the session entry instead of replacing
    *  it — for per-step costs (opencode), where replacing would keep only the
-   *  last step. Running totals (Claude Code) still replace. */
+   *  last step. Running totals (Claude Code) still replace.
+   *
+   *  Tokens arrive two ways and must not be mixed up. Cumulative snapshots
+   *  (Claude: every line carries the session total, so only the increase over
+   *  this session's high-water mark counts — summing raw lines turned one
+   *  turn into 934k) versus per-step deltas (opencode `part.tokens`), which
+   *  add as-is. `sample.cumulative === false` marks a delta; anything else is
+   *  treated as cumulative, because overcounting fails 20x loud and
+   *  undercounting one line is a rounding error. */
   add(sample, now) {
     const t = typeof now === "number" ? now : Date.now();
     const tokens = Number(sample && sample.tokens) || 0;
-    if (tokens > 0) this.samples.push({ t, tokens });
+    if (tokens > 0) {
+      if (sample && sample.cumulative === false) {
+        this.samples.push({ t, tokens });
+      } else {
+        const key = sample && sample.sessionId ? String(sample.sessionId) : "-";
+        const last = this.contextBySession.get(key) || 0;
+        if (tokens > last) {
+          this.samples.push({ t, tokens: tokens - last });
+          this.contextBySession.set(key, tokens);
+        }
+      }
+    }
     if (sample && typeof sample.cost === "number" && Number.isFinite(sample.cost)) {
       const key = sample.sessionId || "-";
       if (sample.accumulateCost) {

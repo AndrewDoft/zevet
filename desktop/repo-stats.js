@@ -123,10 +123,41 @@ async function diffStats(rootDir) {
 }
 
 /**
- * `dir/{old => new}/file.ts` and `old.ts => new.ts` are both git's rename
- * spellings. The tree has a row for the file that exists NOW, so both resolve
- * to the right-hand side.
+ * Added-line ranges for one file, so the board can put the agent's sprite on
+ * the lines it just wrote instead of at an invented position.
+ *
+ * `git diff -U0 -- <path>` against HEAD (or the empty tree when there is no
+ * HEAD yet), parsed for `@@ -a[,b] +c[,d] @@` headers. Returns
+ * `{ ok, hunks: [{start, count}] }` with 1-based NEW-side lines, newest hunk
+ * last, capped at 20 — enough for a rider and a scroll target, not a blame
+ * view. Same fail-to-empty contract as diffStats: `ok:false` means git said
+ * nothing useful; `ok:true` with no hunks means clean.
  */
+async function diffHunks(rootDir, relPath) {
+  const empty = { ok: false, hunks: [] };
+  if (!rootDir || typeof rootDir !== "string") return empty;
+  if (!relPath || typeof relPath !== "string" || relPath.includes("..")) return empty;
+  const head = await git(rootDir, ["rev-parse", "--verify", "HEAD"]);
+  const base = head && head.trim() ? "HEAD" : EMPTY_TREE;
+  const out = await git(rootDir, ["diff", "-U0", "--no-color", base, "--", relPath]);
+  if (out === null) return empty;
+  return { ok: true, hunks: parseHunks(out) };
+}
+
+/** Hunk headers off unified-diff output. Pure, so the board's reasoning about
+ *  "newest" is testable without a repo. Bad lines are skipped, not fatal. */
+function parseHunks(text) {
+  const hunks = [];
+  for (const line of String(text || "").split("\n")) {
+    const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (!m) continue;
+    hunks.push({ start: Number(m[1]), count: m[2] === undefined ? 1 : Number(m[2]) });
+    if (hunks.length >= 20) break;
+  }
+  return hunks;
+}
+/** `dir/{old => new}/file.ts` and `old.ts => new.ts` are both git's rename
+ *  spellings. Rows show the file that exists NOW, so both resolve right. */
 function renamedTo(rel) {
   const brace = rel.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
   if (brace) {
@@ -299,5 +330,5 @@ async function branchState(rootDir) {
 }
 
 module.exports = {
-  diffStats, branchState, LineCounter, countLines, renamedTo, EMPTY_TREE, MAX_COUNT_BYTES,
+  diffStats, branchState, diffHunks, parseHunks, LineCounter, countLines, renamedTo, EMPTY_TREE, MAX_COUNT_BYTES,
 };

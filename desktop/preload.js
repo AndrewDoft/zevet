@@ -126,6 +126,9 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * way it came. main.js keeps only those two fields; nothing else crosses.
    */
   write: (root, relPath, text, opts) => ipcRenderer.invoke("local:write", { root, relPath, text, opts }),
+  /** Added-line hunks for one file: `{ ok, hunks: [{start, count}] }`. Read-only
+   *  git metadata about a picked folder — narrower than tree/read/write above. */
+  diffHunks: (root, relPath) => ipcRenderer.invoke("local:diffHunks", { root, relPath }),
   /**
    * Line counts and git diff stats for a list of paths under one root.
    *

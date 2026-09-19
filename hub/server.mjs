@@ -757,6 +757,11 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       return json(res, 400, { error: `unreadable body: ${err.message}` });
     }
+    // `null` is valid JSON and `null.actor` throws, outside any try, inside an
+    // async handler — one authenticated request ended the hub process.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return json(res, 400, { error: "expected a JSON object" });
+    }
     const evt = {
       id: randomUUID(),
       ts: Date.now(),
