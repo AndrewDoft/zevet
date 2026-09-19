@@ -33,10 +33,18 @@ is exactly as available as the product.
 
 ### Where it runs
 
-The hub is live at **https://157-245-87-197.sslip.io**, on the DigitalOcean
-droplet, behind the Caddy that already fronts usemasora.com. Real Let's Encrypt
-certificate, no DNS record needed: `sslip.io` resolves any dotted-quad hostname
-to that address, which is how a box with no spare domain gets HTTPS.
+The hub is live at **https://34-74-69-129.sslip.io**, on the Google Compute
+Engine instance `masora-app`, behind the Caddy that fronts usemasora.com. Real
+Let's Encrypt certificate, no DNS record needed: `sslip.io` resolves any
+dotted-quad hostname to that address, which is how a box with no spare domain
+gets HTTPS.
+
+It moved there on 2026-09-19. It used to run on a DigitalOcean droplet at
+`157-245-87-197.sslip.io`, which is where usemasora.com used to be served from
+too; the site moved to Google Cloud and the hub was the last thing left behind.
+The token did not change, so an existing install needs only the new address —
+`~/.zevet/config.json`, or re-run setup. The old address no longer serves the
+hub.
 
     /srv/zevet                     the checkout
     /srv/zevet/.env                ZEVET_TOKEN, 0600
@@ -65,13 +73,13 @@ The board is at `<hub>/?token=<ZEVET_TOKEN>`.
 Send them **one command and one secret**. On macOS:
 
 ```bash
-curl -fsSL https://157-245-87-197.sslip.io/setup.sh -o setup.sh && bash setup.sh
+curl -fsSL https://34-74-69-129.sslip.io/setup.sh -o setup.sh && bash setup.sh
 ```
 
 On Windows:
 
 ```powershell
-irm https://157-245-87-197.sslip.io/setup.ps1 -OutFile setup.ps1; powershell -ExecutionPolicy Bypass -File .\setup.ps1
+irm https://34-74-69-129.sslip.io/setup.ps1 -OutFile setup.ps1; powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
 It asks for the hub URL (that one), the shared token (send it separately, not in
