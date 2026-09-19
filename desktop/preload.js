@@ -27,9 +27,10 @@ contextBridge.exposeInMainWorld("zevet", {
  * so a real file tree and real file contents can only come from here.
  *
  * Deliberately narrow: list a tree under a folder the user picked, read one
- * text file, start/stop an agent. No arbitrary path, no `require`, no shell.
- * The main process re-checks every path against the chosen root anyway — a
- * renderer is never trusted, and this bridge is a convenience, not the guard.
+ * text file, write one text file back, start/stop an agent. No arbitrary path,
+ * no `require`, no shell. The main process re-checks every path against the
+ * chosen root anyway — a renderer is never trusted, and this bridge is a
+ * convenience, not the guard.
  */
 contextBridge.exposeInMainWorld("zevetLocal", {
   available: true,
@@ -41,6 +42,26 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   tree: (root) => ipcRenderer.invoke("local:tree", root),
   /** One text file, by path relative to its root. */
   read: (root, relPath) => ipcRenderer.invoke("local:read", { root, relPath }),
+  /**
+   * One text file back, by path relative to its root.
+   *
+   * SAID PLAINLY, because it changes what this bridge is: the board window
+   * loads a REMOTE origin — the hub's own page — with this preload attached.
+   * openBoard() in main.js sets out why that is considered acceptable (the hub
+   * already ships the hook that runs on every teammate's machine, so it is
+   * trusted with code execution already, and a narrow bridge makes a capability
+   * it effectively had explicit and bounded instead of implicit).
+   *
+   * That reasoning was written about READING files. This adds writing them, and
+   * the stakes of the same decision are now higher: a hostile hub page could
+   * not merely see your source, it could change it, inside a folder you picked.
+   * The decision stands and is not being reopened here. It is written down so
+   * that whoever does reopen it is looking at the real stake.
+   *
+   * `opts` is `{ bom, eol }` as `read` reported them, so a file goes back the
+   * way it came. main.js keeps only those two fields; nothing else crosses.
+   */
+  write: (root, relPath, text, opts) => ipcRenderer.invoke("local:write", { root, relPath, text, opts }),
   /** Which agents are installed on this machine. */
   agents: () => ipcRenderer.invoke("local:agents"),
   /** Start an agent in a folder. Returns { ok, id }. */

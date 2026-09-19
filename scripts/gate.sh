@@ -12,7 +12,16 @@ echo "== zevet gate =="
 node --version
 
 # tee, not a pipe, so the status below belongs to node and not to a reader.
-node --test "test/**/*.test.mjs" 2>&1 | tee /tmp/zevet-gate.log
+# editor/test is a SECOND glob, not part of the first: the editor lives outside
+# test/ because it has its own package.json and its own (build-time only)
+# node_modules, and `test/**` does not reach it. Without this second pattern the
+# committed bundle at hub/public/editor.js would be the one thing in the
+# repository that nothing checks — and it is the one thing that cannot be
+# checked by reading a diff, because it is 800 KiB of minified output.
+#
+# The editor tests need NO npm install: they read the committed bundle and
+# import editor/src/language.js, which imports nothing. A fresh clone runs them.
+node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs" 2>&1 | tee /tmp/zevet-gate.log
 status=${PIPESTATUS[0]}
 
 echo

@@ -1,0 +1,4 @@
+# The only node_modules in this repository. It is a build-time tree: nothing in
+# it ships, and nothing at runtime resolves from it. The artefact that ships is
+# ../hub/public/editor.js, which IS committed — see README.md for why.
+node_modules/

@@ -13,9 +13,11 @@
 // What holds now: no window has nodeIntegration, contextIsolation is on
 // everywhere, and the bridge exposes named calls rather than `require`. The
 // board's bridge can list a tree under a folder the USER picked with a native
-// dialog and read one text file from it — nothing else, and never a path the
-// main process has not re-checked against that root. See openBoard() for why
-// the board is allowed a bridge at all despite loading a remote origin.
+// dialog, read one text file from it and write one text file back to it —
+// nothing else, and never a path the main process has not re-checked against
+// that root. See openBoard() for why the board is allowed a bridge at all
+// despite loading a remote origin, and local:write below for why a WRITE over
+// that same bridge is a bigger thing to hand out than a read.
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu } = require("electron");
 const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
@@ -438,6 +440,38 @@ ipcMain.handle("local:read", (_e, { root, relPath }) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   return localFs.readTextFile(dir, String(relPath || ""), {});
+});
+
+/**
+ * The write half, and the first time this app changes a file on somebody's
+ * disk on a renderer's say-so.
+ *
+ * `knownRoot` FIRST, exactly as local:tree and local:read do it, and for a
+ * sharper reason: without it a compromised page names `C:\` as the root and
+ * every containment check in local-fs.js then passes, because everything is
+ * inside `C:\`. The allowlist is what makes "inside the workspace" mean
+ * anything at all, and it is a folder the user chose from a native dialog.
+ *
+ * `opts` is FILTERED and not forwarded. A renderer may say how it wants its
+ * newlines and its BOM spelled, because that is fidelity to a file it already
+ * opened. It may not pass `maxBytes` (it would set its own size limit) and it
+ * may not pass `exclude` (it would shorten its own skip list, and a shorter
+ * skip list is a path into `.git/hooks`). Building a fresh object rather than
+ * spreading theirs is the whole guard: anything not named here cannot arrive.
+ *
+ * The board window that calls this loads a REMOTE origin. openBoard() argues
+ * why it gets a bridge at all; that argument is unchanged and is not revisited
+ * here, but it was made about reading, and this is a write.
+ */
+ipcMain.handle("local:write", (_e, { root, relPath, text, opts }) => {
+  const dir = knownRoot(root);
+  if (!dir) return { ok: false, error: "not an opened workspace" };
+  if (typeof text !== "string") return { ok: false, error: "nothing to write" };
+  const given = opts && typeof opts === "object" ? opts : {};
+  return localFs.writeTextFile(dir, String(relPath || ""), text, {
+    bom: typeof given.bom === "boolean" ? given.bom : undefined,
+    eol: given.eol === "crlf" || given.eol === "lf" ? given.eol : undefined,
+  });
 });
 
 // ---- starting an agent -----------------------------------------------------

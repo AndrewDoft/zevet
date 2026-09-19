@@ -11,6 +11,6 @@
     "hub": "node hub/server.mjs",
     "install-hooks": "node client/install.mjs",
     "doctor": "node client/doctor.mjs",
-    "test": "node --test \"test/**/*.test.mjs\""
+    "test": "node --test \"test/**/*.test.mjs\" \"editor/test/**/*.test.mjs\""
   }
 }

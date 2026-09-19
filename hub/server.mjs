@@ -4,7 +4,10 @@
 // Windows and macOS alike, and "npm install failed on my machine" is exactly
 // the class of problem this tool exists to make visible rather than to cause.
 // Server-Sent Events carry the live feed: the dashboard only ever listens, so
-// a full duplex socket would buy nothing and cost a dependency.
+// a full duplex socket would buy nothing and cost a dependency. Editors sharing
+// a document are the other case — that traffic really is duplex, so there is a
+// WebSocket at /ws, written out by hand at the bottom of this file rather than
+// installed. The same rule bought the same way twice.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { randomUUID, timingSafeEqual, createHash } from "node:crypto";
@@ -369,7 +372,16 @@ const server = createServer(async (req, res) => {
 
 
   if (url.pathname === "/healthz") {
-    return json(res, 200, { ok: true, events: events.length, listeners: listeners.size });
+    // `events` and `listeners` are load-bearing for anything already watching
+    // this endpoint; the two ws counters are added beside them, never in place
+    // of them.
+    return json(res, 200, {
+      ok: true,
+      events: events.length,
+      listeners: listeners.size,
+      rooms: rooms.size,
+      wsListeners: wsClients.size,
+    });
   }
 
   if (url.pathname === "/ingest" && req.method === "POST") {
@@ -537,6 +549,589 @@ const server = createServer(async (req, res) => {
   json(res, 404, { error: "no such route" });
 });
 
+// ---- the sync transport: RFC 6455, by hand ---------------------------------
+//
+// WHY THIS IS A FEW HUNDRED LINES INSTEAD OF `npm i ws`.
+// The header of this file is not decoration. The hub deploys by `git pull &&
+// docker restart` — there is no install step to fail, and no lockfile that can
+// resolve differently on the machine that matters. `ws` is a good library; it
+// is also a supply chain, a version to track, and a thing that can be missing
+// at the wrong moment on somebody else's laptop. This repo already hand-rolls a
+// syntax highlighter for the same reason. What follows is only the subset a
+// relay needs: no extensions, no compression, no client role, no subprotocols.
+//
+// THE HUB DOES NOT LOOK INSIDE. Every payload relayed here is an opaque blob.
+// It will carry CRDT updates and may be encrypted end to end, so anything the
+// hub decided on the basis of a payload's contents would be a decision it is
+// not entitled to make and would stop working the day the clients encrypt. The
+// only bytes this code parses are its own framing and the tiny JSON join
+// message — never a relayed payload.
+const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+const EMPTY = Buffer.alloc(0);
+
+/** One message, fragments included. A client that exceeds it is closed 1009. */
+export const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
+// The two caps below are overridable the same way MAX_EVENTS is, and for the
+// same reason: a cap nobody can reach in a test is a cap nobody has tested.
+// Filling 512 rooms or 4 MiB of log over a real socket to prove the eviction
+// works would be a slow test that mostly measures localhost.
+/** What one room may keep. Oldest entries are dropped past it. */
+export const ROOM_LOG_MAX_BYTES = Number(process.env.ZEVET_ROOM_LOG_MAX_BYTES || 4 * 1024 * 1024);
+/** How many rooms exist at once — live ones and merely remembered ones. */
+export const MAX_ROOMS = Number(process.env.ZEVET_MAX_ROOMS || 512);
+/** Room names are opaque to the hub; length is the only thing it judges. */
+export const MAX_ROOM_NAME = 256;
+// A socket that has stopped draining buffers in THIS process, exactly like the
+// SSE listener case above, and gets the same treatment rather than the same
+// excuse. Replaying a full room log legitimately queues ROOM_LOG_MAX_BYTES at
+// once, so this has to sit above that or a normal join would cut itself off.
+const WS_MAX_BUFFERED_BYTES = 2 * ROOM_LOG_MAX_BYTES;
+const WS_PING_MS = 30 * 1000;
+
+const OP_CONTINUATION = 0x0;
+const OP_TEXT = 0x1;
+const OP_BINARY = 0x2;
+const OP_CLOSE = 0x8;
+const OP_PING = 0x9;
+const OP_PONG = 0xa;
+
+// The close codes this hub sends, from RFC 6455 §7.4.1.
+const CLOSE_PROTOCOL = 1002; // the peer broke framing
+const CLOSE_POLICY = 1008; // the framing was fine, the message was not
+const CLOSE_TOO_BIG = 1009;
+const CLOSE_TRY_LATER = 1013;
+
+/**
+ * Parse whatever whole frames are at the front of `buffer`.
+ *
+ * Returns `{ frames, rest, error }`. `rest` is the bytes that are not yet a
+ * whole frame; the caller keeps them and prepends them to the next chunk. THAT
+ * IS THE ENTIRE POINT OF THIS FUNCTION. TCP has no idea what a frame is: one
+ * `data` event can carry half a frame, or three frames and a bit, and a decoder
+ * that assumes otherwise works perfectly on localhost and corrupts everything
+ * over a real network. test/hub-ws.test.mjs feeds it split buffers for exactly
+ * this reason.
+ *
+ * `error` is `{ code, reason }` and means the peer broke the protocol: the
+ * caller must close and stop reading. Frames decoded before the error are still
+ * returned, for a test or a log to look at — the connection handler throws them
+ * away, because a peer that has lost framing is not saying anything worth
+ * acting on.
+ *
+ * Pure: no sockets, no retained state.
+ */
+export function decodeFrames(buffer) {
+  const frames = [];
+  let off = 0;
+
+  for (;;) {
+    if (buffer.length - off < 2) break;
+    const b0 = buffer[off];
+    const b1 = buffer[off + 1];
+    const fin = (b0 & 0x80) !== 0;
+    const opcode = b0 & 0x0f;
+    const control = (opcode & 0x08) !== 0;
+    const masked = (b1 & 0x80) !== 0;
+    let len = b1 & 0x7f;
+    let cursor = off + 2;
+
+    // No extension was negotiated, so a set RSV bit means the peer is speaking
+    // something this hub never agreed to. Guessing is how a decoder ends up
+    // handing compressed bytes to a room as if they were a payload.
+    if ((b0 & 0x70) !== 0) {
+      return { frames, rest: EMPTY, error: { code: CLOSE_PROTOCOL, reason: "reserved bit set" } };
+    }
+    if (!control && opcode !== OP_CONTINUATION && opcode !== OP_TEXT && opcode !== OP_BINARY) {
+      return { frames, rest: EMPTY, error: { code: CLOSE_PROTOCOL, reason: "unknown opcode" } };
+    }
+    if (control && opcode !== OP_CLOSE && opcode !== OP_PING && opcode !== OP_PONG) {
+      return { frames, rest: EMPTY, error: { code: CLOSE_PROTOCOL, reason: "unknown control opcode" } };
+    }
+    if (control && (len > 125 || !fin)) {
+      return { frames, rest: EMPTY, error: { code: CLOSE_PROTOCOL, reason: "control frame must be short and final" } };
+    }
+    // Checked here, before the length bytes are even needed: a client MUST mask
+    // (§5.3), and the bit is known from the second byte. Rejecting this early
+    // means a truncated unmasked frame is refused rather than waited on.
+    if (!masked) {
+      return { frames, rest: EMPTY, error: { code: CLOSE_PROTOCOL, reason: "client frames must be masked" } };
+    }
+
+    if (len === 126) {
+      if (buffer.length - cursor < 2) break;
+      len = buffer.readUInt16BE(cursor);
+      cursor += 2;
+    } else if (len === 127) {
+      if (buffer.length - cursor < 8) break;
+      const wide = buffer.readBigUInt64BE(cursor);
+      cursor += 8;
+      // Refused on the HEADER, not after buffering the payload. A 64-bit length
+      // is the cheapest denial of service there is: eight bytes on the wire ask
+      // this process to hold however many gigabytes the sender feels like
+      // naming, and a decoder that waits for them has already lost.
+      if (wide > BigInt(MAX_MESSAGE_BYTES)) {
+        return { frames, rest: EMPTY, error: { code: CLOSE_TOO_BIG, reason: "frame over the size cap" } };
+      }
+      len = Number(wide);
+    }
+    if (len > MAX_MESSAGE_BYTES) {
+      return { frames, rest: EMPTY, error: { code: CLOSE_TOO_BIG, reason: "frame over the size cap" } };
+    }
+
+    if (buffer.length - cursor < 4) break;
+    const key = buffer.subarray(cursor, cursor + 4);
+    cursor += 4;
+    if (buffer.length - cursor < len) break;
+
+    const payload = Buffer.allocUnsafe(len);
+    for (let i = 0; i < len; i++) payload[i] = buffer[cursor + i] ^ key[i & 3];
+    cursor += len;
+
+    frames.push({ fin, opcode, payload });
+    off = cursor;
+  }
+
+  return { frames, rest: buffer.subarray(off), error: null };
+}
+
+/**
+ * One server-to-client frame. Never masked, never fragmented.
+ *
+ * §5.1 is explicit that a server MUST NOT mask. Fragmenting outbound would be
+ * legal but pointless here — a relayed blob is however big it is, and splitting
+ * it only gives the peer more chances to reassemble it wrong.
+ */
+export function encodeFrame(opcode, payload = EMPTY) {
+  const body = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload), "utf8");
+  const len = body.length;
+  let header;
+  if (len < 126) {
+    header = Buffer.allocUnsafe(2);
+    header[1] = len;
+  } else if (len < 65536) {
+    header = Buffer.allocUnsafe(4);
+    header[1] = 126;
+    header.writeUInt16BE(len, 2);
+  } else {
+    header = Buffer.allocUnsafe(10);
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+  header[0] = 0x80 | (opcode & 0x0f);
+  return Buffer.concat([header, body]);
+}
+
+/**
+ * Fragments in, messages out.
+ *
+ * A closure, because the reassembly state belongs to one socket and to nothing
+ * else. Each frame produces exactly one verdict:
+ *   { kind: "control", opcode, payload }  — ping/pong/close, answer it now
+ *   { kind: "partial" }                   — held, waiting for the rest
+ *   { kind: "message", opcode, payload }  — a whole message
+ *   { kind: "error", code, reason }       — close the connection
+ *
+ * A control frame may legally sit BETWEEN two fragments of a message (§5.4) and
+ * must not disturb the message being assembled. That is what the first branch
+ * returns early for, and what the suite interleaves a ping to prove.
+ */
+export function createAssembler(max = MAX_MESSAGE_BYTES) {
+  let opcode = 0;
+  let chunks = [];
+  let size = 0;
+
+  return function push(frame) {
+    if ((frame.opcode & 0x08) !== 0) {
+      return { kind: "control", opcode: frame.opcode, payload: frame.payload };
+    }
+
+    if (frame.opcode === OP_CONTINUATION) {
+      if (chunks.length === 0) {
+        return { kind: "error", code: CLOSE_PROTOCOL, reason: "continuation with nothing to continue" };
+      }
+    } else {
+      if (chunks.length > 0) {
+        return { kind: "error", code: CLOSE_PROTOCOL, reason: "a new message began mid-message" };
+      }
+      opcode = frame.opcode;
+    }
+
+    size += frame.payload.length;
+    if (size > max) {
+      chunks = [];
+      size = 0;
+      return { kind: "error", code: CLOSE_TOO_BIG, reason: "message over the size cap" };
+    }
+    chunks.push(frame.payload);
+    if (!frame.fin) return { kind: "partial" };
+
+    const payload = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks);
+    chunks = [];
+    size = 0;
+    return { kind: "message", opcode, payload };
+  };
+}
+
+/**
+ * Rooms. In memory, like the `events` ring buffer above, and gone on restart.
+ *
+ * A hub restart loses every room and every log. Said here rather than
+ * discovered later: the log is a convenience for a client that joins late, not
+ * a database. A client that cannot rebuild the document from its own copy after
+ * a hub restart was already broken; this is not the thing that broke it.
+ *
+ * name -> { log: Buffer[], bytes, sockets: Set<conn>, used: epoch ms }
+ */
+const rooms = new Map();
+/** Every live upgraded socket, joined or not. Reported by /healthz. */
+const wsClients = new Set();
+
+/** Write one frame, and cut loose a socket that has stopped draining. */
+function wsSend(conn, opcode, payload) {
+  const socket = conn.socket;
+  if (socket.destroyed || socket.writableEnded) return false;
+  socket.write(encodeFrame(opcode, payload));
+  if (socket.writableLength > WS_MAX_BUFFERED_BYTES) {
+    console.error("zevet: dropping a ws client that stopped draining");
+    socket.destroy();
+    return false;
+  }
+  return true;
+}
+
+function wsClose(conn, code, reason = "") {
+  // §5.5: a control frame payload is at most 125 bytes, two of which are the code.
+  const text = Buffer.from(reason, "utf8").subarray(0, 123);
+  const body = Buffer.allocUnsafe(2 + text.length);
+  body.writeUInt16BE(code, 0);
+  text.copy(body, 2);
+  if (conn.socket.destroyed) return;
+  conn.socket.write(encodeFrame(OP_CLOSE, body));
+  conn.socket.end();
+  // §7.1.1 says the server may close the underlying connection once it has sent
+  // a close frame, and a peer that answers nothing would otherwise hold a
+  // half-closed socket here for as long as it liked. unref'd, so this cannot be
+  // the thing keeping the process alive.
+  setTimeout(() => conn.socket.destroy(), 10_000).unref();
+}
+
+function forgetConn(conn) {
+  wsClients.delete(conn);
+  const room = rooms.get(conn.room);
+  if (!room) return;
+  room.sockets.delete(conn);
+  // Empty AND with nothing to say: nobody can want it back. A room that still
+  // holds a log is kept, because whoever closed the lid is going to open it
+  // again — that is what the log is for.
+  if (room.sockets.size === 0 && room.log.length === 0) rooms.delete(conn.room);
+}
+
+/** Forget the least recently used room nobody is sitting in. False if there is none. */
+function evictIdleRoom() {
+  let victimName = null;
+  let victimUsed = Infinity;
+  for (const [name, room] of rooms) {
+    if (room.sockets.size > 0) continue;
+    if (room.used < victimUsed) {
+      victimName = name;
+      victimUsed = room.used;
+    }
+  }
+  if (victimName === null) return false;
+  rooms.delete(victimName);
+  return true;
+}
+
+function joinRoom(conn, name) {
+  let room = rooms.get(name);
+  if (!room) {
+    if (rooms.size >= MAX_ROOMS && !evictIdleRoom()) {
+      // Every room is occupied and the cap is reached. Refusing is the honest
+      // answer: evicting a room people are sitting in would silently
+      // desynchronise them, which is a worse failure than a failed join
+      // because nobody would see it happen.
+      wsClose(conn, CLOSE_TRY_LATER, "the hub is holding as many rooms as it will");
+      return false;
+    }
+    room = { log: [], bytes: 0, sockets: new Set(), used: Date.now() };
+    rooms.set(name, room);
+  }
+  room.used = Date.now();
+  conn.room = name;
+  conn.joined = true;
+
+  // REPLAY, THEN SUBSCRIBE, WITH NOTHING IN BETWEEN.
+  //
+  // The ordering hazard is real, and is why this is one straight line with no
+  // await in it. Subscribe first and a live update can be written between two
+  // replayed entries. Put an await between the loop and the subscribe and an
+  // update arriving in that gap goes to nobody and is lost. Because
+  // `socket.write` only queues, and this function yields to the event loop at
+  // no point, every replayed entry is queued before any live frame can be, and
+  // a slow socket simply drains them in that same order.
+  for (const blob of room.log) wsSend(conn, OP_BINARY, blob);
+  room.sockets.add(conn);
+  return true;
+}
+
+/**
+ * A blob from one client to everyone else in the room, and into the log.
+ *
+ * THE LOG IS LOSSY BY DESIGN, AND THAT IS ONLY SAFE BECAUSE OF SNAPSHOTS.
+ * Dropping the oldest entries of an update log would, on its own, leave a late
+ * joiner permanently missing history it can never ask for again. What makes it
+ * safe is the client's half of the contract: periodically send
+ * {"type":"snapshot"} followed by one blob holding the whole state, which
+ * replaces the log outright. If clients stop doing that, a late joiner to a
+ * room past the cap gets an incomplete history — this cap and that client
+ * behaviour are one design, not two.
+ */
+function relay(conn, blob) {
+  const room = rooms.get(conn.room);
+  if (!room) return;
+  room.used = Date.now();
+
+  if (conn.pendingSnapshot) {
+    conn.pendingSnapshot = false;
+    room.log = [blob];
+    room.bytes = blob.length;
+  } else {
+    room.log.push(blob);
+    room.bytes += blob.length;
+    // `> 1` so a single blob larger than the cap survives: it is the newest and
+    // most complete thing the room has, and dropping it to satisfy an
+    // accounting rule would leave the room with nothing at all.
+    while (room.bytes > ROOM_LOG_MAX_BYTES && room.log.length > 1) {
+      room.bytes -= room.log.shift().length;
+    }
+  }
+
+  // A snapshot is relayed like any other blob rather than being swallowed. The
+  // hub cannot know whether a peer needs it, and guessing would be the hub
+  // interpreting a payload — the one thing it is not allowed to do.
+  //
+  // Never back to the sender: it has the update already, and echoing one is how
+  // a client that trusts the hub applies its own edit twice.
+  for (const other of room.sockets) {
+    if (other !== conn) wsSend(other, OP_BINARY, blob);
+  }
+}
+
+/**
+ * The only JSON this transport speaks. Two messages, both tiny.
+ *
+ * Returns false when the connection has been closed and the caller must stop.
+ *
+ * There is deliberately no "joined" acknowledgement: a client reads its replay
+ * as ordinary binary frames. NOT VERIFIED against a real client — none exists
+ * in this repo yet, so the join/snapshot shape is asserted only by the suite,
+ * and the first real editor may well want an ack saying where the replay ends.
+ */
+function handleControlMessage(conn, payload) {
+  let msg;
+  try {
+    msg = JSON.parse(payload.toString("utf8"));
+  } catch {
+    wsClose(conn, CLOSE_POLICY, "text frames must be JSON");
+    return false;
+  }
+  if (!msg || typeof msg !== "object") {
+    wsClose(conn, CLOSE_POLICY, "expected a JSON object");
+    return false;
+  }
+
+  if (msg.type === "join") {
+    if (conn.joined) {
+      // One socket, one room. Moving rooms is a new socket — cheap, and it
+      // keeps the replay-then-subscribe path above free of a second case
+      // where a half-replayed socket is already in a set somewhere.
+      wsClose(conn, CLOSE_POLICY, "already joined");
+      return false;
+    }
+    const room = msg.room;
+    // Opaque on purpose: a room name is the clients' business, and the hub does
+    // not parse, namespace or normalise it. Length is bounded because memory is.
+    if (typeof room !== "string" || room.length === 0 || room.length > MAX_ROOM_NAME) {
+      wsClose(conn, CLOSE_POLICY, "join needs a room name of 1..256 characters");
+      return false;
+    }
+    return joinRoom(conn, room);
+  }
+
+  if (msg.type === "snapshot") {
+    if (!conn.joined) {
+      wsClose(conn, CLOSE_POLICY, "join before sending a snapshot");
+      return false;
+    }
+    conn.pendingSnapshot = true;
+    return true;
+  }
+
+  wsClose(conn, CLOSE_POLICY, "unknown message type");
+  return false;
+}
+
+/** Everything after a successful handshake: one socket's whole life. */
+function attachWebSocket(socket, head) {
+  const conn = { socket, room: null, joined: false, pendingSnapshot: false, sawTraffic: true };
+  wsClients.add(conn);
+  const assemble = createAssembler();
+  let buffered = head && head.length ? Buffer.from(head) : EMPTY;
+  let closing = false;
+
+  // Liveness. A laptop that sleeps, or a NAT that forgets the mapping, leaves a
+  // socket that is open to this process and dead to everyone else; without this
+  // it sits in a room forever and its peers keep paying to write to it. Two
+  // silent intervals, not one, so a client with nothing to say is not killed
+  // for it — it only has to answer a ping.
+  const ping = setInterval(() => {
+    if (!conn.sawTraffic) {
+      socket.destroy();
+      return;
+    }
+    conn.sawTraffic = false;
+    wsSend(conn, OP_PING, EMPTY);
+  }, WS_PING_MS);
+  ping.unref();
+
+  socket.on("data", (chunk) => {
+    if (closing) return;
+    buffered = buffered.length ? Buffer.concat([buffered, chunk]) : chunk;
+    const { frames, rest, error } = decodeFrames(buffered);
+    buffered = rest;
+    if (error) {
+      closing = true;
+      wsClose(conn, error.code, error.reason);
+      return;
+    }
+
+    for (const frame of frames) {
+      conn.sawTraffic = true;
+      const out = assemble(frame);
+
+      if (out.kind === "partial") continue;
+
+      if (out.kind === "error") {
+        closing = true;
+        wsClose(conn, out.code, out.reason);
+        return;
+      }
+
+      if (out.kind === "control") {
+        if (out.opcode === OP_PING) {
+          wsSend(conn, OP_PONG, out.payload);
+          continue;
+        }
+        if (out.opcode === OP_PONG) continue;
+        // §5.5.1: echo the close and stop. The peer's own status code goes back
+        // as it arrived; inventing one here would hide what it told us.
+        closing = true;
+        if (!socket.destroyed) {
+          socket.write(encodeFrame(OP_CLOSE, out.payload.subarray(0, 125)));
+          socket.end();
+        }
+        return;
+      }
+
+      if (out.opcode === OP_TEXT) {
+        if (!handleControlMessage(conn, out.payload)) {
+          closing = true;
+          return;
+        }
+        continue;
+      }
+
+      // Binary: opaque, and only once the socket is in a room.
+      if (!conn.joined) {
+        closing = true;
+        wsClose(conn, CLOSE_POLICY, "join before sending data");
+        return;
+      }
+      relay(conn, out.payload);
+    }
+  });
+
+  const shut = () => {
+    clearInterval(ping);
+    forgetConn(conn);
+  };
+  socket.on("close", shut);
+  socket.on("error", () => {
+    shut();
+    socket.destroy();
+  });
+}
+
+const UPGRADE_STATUS = { 400: "Bad Request", 401: "Unauthorized", 429: "Too Many Requests" };
+
+/** Refuse before the handshake, in the one language a socket mid-upgrade has. */
+function denyUpgrade(socket, code, message) {
+  const body = JSON.stringify({ error: message });
+  const response =
+    `HTTP/1.1 ${code} ${UPGRADE_STATUS[code] || "Bad Request"}\r\n` +
+    "content-type: application/json\r\n" +
+    `content-length: ${Buffer.byteLength(body)}\r\n` +
+    "connection: close\r\n\r\n" +
+    body;
+  // end() and destroy only once it is flushed. `write()` then `destroy()` looks
+  // the same on localhost and is not: destroy discards anything still queued, so
+  // over a slow link the client gets a reset instead of the 401 telling it why.
+  socket.end(response, () => socket.destroy());
+}
+
+server.on("upgrade", (req, socket, head) => {
+  // A peer that resets during the handshake emits 'error' on a socket with no
+  // listener, which in Node is an uncaught exception and a dead hub for
+  // everyone. The http server's own error handling does not cover this socket
+  // once it has been handed over.
+  socket.on("error", () => socket.destroy());
+
+  let url;
+  try {
+    url = new URL(req.url, "http://localhost");
+  } catch {
+    return denyUpgrade(socket, 400, "unreadable request line");
+  }
+  if (url.pathname !== "/ws") return denyUpgrade(socket, 400, "no websocket here");
+
+  // The SAME token check, the SAME failure counter and the SAME limit as every
+  // HTTP route — reused rather than reimplemented, because a second copy of an
+  // auth check is a second place for it to drift. `refuse()` itself cannot be
+  // called here: it answers through a ServerResponse and an upgrade has none.
+  // Note what is deliberately NOT done, matching `refuse()`: the limit is
+  // consulted only on the failure path, so a teammate holding the right token
+  // is never locked out by somebody else's brute force.
+  if (!tokenFrom(req, url)) {
+    authFailed(req, url);
+    return denyUpgrade(socket, rateLimited(req) ? 429 : 401, "bad token");
+  }
+
+  const key = req.headers["sec-websocket-key"];
+  if (
+    String(req.headers.upgrade || "").toLowerCase() !== "websocket" ||
+    typeof key !== "string" ||
+    req.headers["sec-websocket-version"] !== "13"
+  ) {
+    return denyUpgrade(socket, 400, "not a version 13 websocket handshake");
+  }
+
+  const accept = createHash("sha1")
+    .update(key + WS_GUID)
+    .digest("base64");
+  socket.write(
+    "HTTP/1.1 101 Switching Protocols\r\n" +
+      "upgrade: websocket\r\n" +
+      "connection: Upgrade\r\n" +
+      `sec-websocket-accept: ${accept}\r\n\r\n`,
+  );
+  socket.setNoDelay(true);
+  // `head` is whatever arrived glued to the handshake. A client that sends
+  // frames before it has seen the 101 is within its rights, and those bytes are
+  // already off the wire — dropping them loses a message for no reason.
+  attachWebSocket(socket, head);
+});
+
 // Without this, restarting while the old hub still holds the port prints an
 // unhandled EADDRINUSE stack trace instead of the plain message every other
 // failure in this file bothers to give.
@@ -550,11 +1145,21 @@ server.on("error", (err) => {
   process.exit(1);
 });
 
-server.listen(PORT, () => {
-  // Report the port the OS actually gave us, not the one we asked for. With
-  // PORT=0 those differ, and printing the request rather than the result is
-  // how a process ends up unreachable at the address it just announced.
-  const actual = server.address().port;
-  console.log(`zevet hub listening on http://127.0.0.1:${actual}`);
-  console.log(`open the board:  http://127.0.0.1:${actual}/?token=<ZEVET_TOKEN>`);
-});
+// The frame codec above is pure, and the suite unit-tests it directly against
+// hand-built buffers rather than only through a socket — which means this file
+// has to be importable. An import that seized a port would break `node --test`,
+// so the suite sets ZEVET_NO_LISTEN=1. The check is opt-OUT rather than the
+// tidier "am I the entry module?" on purpose: the deployed hub is started in
+// ways this file cannot enumerate (docker CMD, npm script, a supervisor), and a
+// mis-detected entry point would mean a hub that starts, logs nothing and
+// listens to nobody. Getting this wrong must not be able to break production.
+if (process.env.ZEVET_NO_LISTEN !== "1") {
+  server.listen(PORT, () => {
+    // Report the port the OS actually gave us, not the one we asked for. With
+    // PORT=0 those differ, and printing the request rather than the result is
+    // how a process ends up unreachable at the address it just announced.
+    const actual = server.address().port;
+    console.log(`zevet hub listening on http://127.0.0.1:${actual}`);
+    console.log(`open the board:  http://127.0.0.1:${actual}/?token=<ZEVET_TOKEN>`);
+  });
+}

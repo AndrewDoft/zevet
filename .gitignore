@@ -12,3 +12,15 @@ desktop/build/icon.png
 # including this one. They carry absolute paths from one machine.
 .claude/settings.json
 *.bak.*
+
+# The editor bundle's build tree. `editor/` is the only place in this repository
+# with dependencies, and none of them ship: `npm run build` in editor/ turns
+# them into hub/public/editor.js, and THAT is what is committed and served.
+#
+# Note what is deliberately NOT ignored: hub/public/editor.js and
+# hub/public/editor.js.map. The hub has no build step — it deploys by
+# `git pull && docker restart` and serves hub/public verbatim — so a bundle
+# that is not in git is a bundle that does not exist in production. The map is
+# committed too, because an 800 KiB minified stack trace pasted from a
+# teammate's console is otherwise unreadable.
+editor/node_modules/

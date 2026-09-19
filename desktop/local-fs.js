@@ -8,8 +8,18 @@
 // treated as hostile even when it is our own: a compromised or spoofed hub can
 // script the page, and the page can ask for a path.
 //
-// So this file has exactly one security-critical job, `readTextFile`'s
-// containment check, and the rest is bookkeeping around it.
+// So this file HAD exactly one security-critical job, `readTextFile`'s
+// containment check. It now has TWO: `writeTextFile` is the second, and it is
+// the more dangerous one. A read that escapes the workspace leaks a file; a
+// write that escapes the workspace IS the machine — an in-workspace symlink to
+// ~/.ssh/authorized_keys, a line appended to a shell profile, a rewritten
+// .git/hooks/pre-commit that runs on the next commit. The write path therefore
+// repeats every check the read path makes and adds four more (no symlink at
+// the target, no inventing directories, nothing inside `.git` or the other
+// skipped names, and the bytes land by rename or not at all).
+//
+// This comment said "exactly one" for as long as that was true, which is the
+// only reason it is worth reading. If a third job ever appears here, say three.
 //
 // CommonJS on purpose: the Electron main process is CommonJS, `main.js` is
 // CommonJS, and this is `require`d from there. No dependencies — the desktop
@@ -19,6 +29,11 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+// Only for the temp-file suffix in `writeTextFile`. `node:crypto` is a builtin,
+// so the "no dependencies" rule above is intact; `Math.random` would also have
+// been fine for uniqueness, but a collision here would overwrite somebody's
+// file and the cost of never having to think about that again is one require.
+const crypto = require("node:crypto");
 
 /**
  * Directories that are never worth showing and are expensive to walk.
@@ -315,10 +330,16 @@ function insideRoot(root, relPath) {
  * refusal returns one fixed string rather than the path it rejected: echoing
  * an attacker's path into the UI is how a refusal becomes an oracle.
  *
+ * `bom` and `eol` are ADDED fields, not replacements: `text`, `truncated` and
+ * `bytes` mean exactly what they always did, because `desktop/main.js`'s
+ * `local:read` and the viewer in `hub/public/index.html` read those three and
+ * nothing else. They exist so `writeTextFile` can put a file back the way it
+ * found it — see `dominantEol` and the BOM note at the bottom of this function.
+ *
  * @param {string} rootDir the workspace root
  * @param {string} relPath forward-slashed path relative to that root
  * @param {{maxBytes?:number}} [opts]
- * @returns {{ok:true,text:string,truncated:boolean,bytes:number}|{ok:false,error:string}}
+ * @returns {{ok:true,text:string,truncated:boolean,bytes:number,bom:boolean,eol:"crlf"|"lf"}|{ok:false,error:string}}
  */
 function readTextFile(rootDir, relPath, opts = {}) {
   const options = opts || {};
@@ -396,9 +417,275 @@ function readTextFile(rootDir, relPath, opts = {}) {
   // everything, and breaks the first line of anything that parses — JSON,
   // shebangs, a diff. Windows editors still write it. `bytes` deliberately
   // keeps counting it: it is the size of the file on disk, not of the string.
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  //
+  // Stripping it is right for a reader and WRONG for a round-trip: read, edit,
+  // write back without it and the file silently changed in a way git will
+  // blame on whoever saved it. So the fact is reported rather than thrown
+  // away, and `writeTextFile` takes it back as an option.
+  const bom = text.charCodeAt(0) === 0xfeff;
+  if (bom) text = text.slice(1);
 
-  return { ok: true, text, truncated, bytes };
+  return { ok: true, text, truncated, bytes, bom, eol: dominantEol(text) };
+}
+
+/**
+ * Which line ending this text mostly uses: `"crlf"` or `"lf"`.
+ *
+ * COUNTED, not sniffed from the first newline. A file touched on a Windows box
+ * and a mac genuinely holds both, and the majority spelling is the one whose
+ * restoration produces the smallest diff — which is the entire point of
+ * carrying this around.
+ *
+ * A file with NO newlines at all has no answer, and this reports `"lf"`. That
+ * is a DEFAULT, not an observation, and it is said out loud because a caller
+ * writing the first line into a one-line file on Windows is getting a guess.
+ * The alternative, reporting `null` and making every caller handle it, buys a
+ * distinction nobody can act on: with no existing newline there is no original
+ * to be faithful to.
+ *
+ * Lone CR (pre-OS X Mac) is not counted and not restored. It is 25 years dead
+ * and pretending to handle it would be the bigger lie.
+ */
+function dominantEol(text) {
+  let crlf = 0;
+  let lf = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) !== 10) continue;
+    if (i > 0 && text.charCodeAt(i - 1) === 13) crlf++;
+    else lf++;
+  }
+  return crlf > lf ? "crlf" : "lf";
+}
+
+/**
+ * Writes one text file inside the workspace. Atomically, or not at all.
+ *
+ * THE SECOND FUNCTION THAT MATTERS, and the worse one to get wrong. A read
+ * that escapes leaks a file. A write that escapes owns the machine: the
+ * classic shape is an ordinary-looking symlink in the repo pointing at
+ * ~/.ssh/authorized_keys, and the classic second shape is .git/hooks/pre-commit,
+ * which the user's next commit executes without anybody choosing to run it.
+ *
+ * So the containment is `readTextFile`'s, deliberately step for step, plus the
+ * four things a write needs and a read does not:
+ *
+ *  1. `insideRoot`, unchanged: anything that SPELLS absolute on any platform
+ *     (`/x`, `\x`, `C:x`, `\\server\share`) is refused before `path.resolve`
+ *     ever sees it, then `..` is collapsed and containment re-checked.
+ *  2. `realpathSync` containment, but on the PARENT directory rather than the
+ *     target — the target legitimately may not exist yet, and `realpathSync`
+ *     on a path that is not there is an ENOENT, not a verdict. Resolving the
+ *     parent and re-joining the basename is what keeps a symlinked directory
+ *     inside the workspace (`ws/link -> /etc`) from being a write escape: the
+ *     lexical check passes it and only the resolved parent catches it.
+ *  3. lstat of the target, refusing a symlink AT it. An ordinary write follows
+ *     a link and lands wherever it points; a link whose target is inside the
+ *     workspace today can be repointed outside it between the check and the
+ *     write. Refusing every symlink is one rule and matches `listTree`, which
+ *     does not show them either — so the editor never offers to save one.
+ *  4. A parent that does not already exist is refused rather than created.
+ *     There is no `mkdir -p` here on purpose: an editor saves a file into a
+ *     folder somebody already made, and "create every directory named in an
+ *     untrusted string" is a capability with no use case attached to it.
+ *
+ * And the names in `DEFAULT_SKIP` are refused at EVERY level of the path, not
+ * just the last. `.git` is the reason — nothing typed into an editor pane has
+ * business rewriting a hook, an index or a ref — and `node_modules` and the
+ * build outputs follow because the tree does not show them, so any path
+ * reaching them came from somewhere other than a user clicking a file. Matched
+ * case-insensitively on Windows, which is stricter than `listTree`'s exact
+ * match (that one only has to be right about what to DISPLAY): `.GIT\config`
+ * is `.git\config` to NTFS, and a guard a change of case walks around is not a
+ * guard.
+ *
+ * `opts.maxBytes` and `opts.exclude` are for callers in the main process. The
+ * IPC handler does NOT forward them from the renderer — see `local:write` in
+ * main.js — because a renderer that could set its own limit or shorten its own
+ * skip list would be reviewing its own guard.
+ *
+ * @param {string} rootDir the workspace root
+ * @param {string} relPath forward-slashed path relative to that root
+ * @param {string} text the new contents
+ * @param {{maxBytes?:number,exclude?:string[],bom?:boolean,eol?:"crlf"|"lf"}} [opts]
+ *   `bom` and `eol` are what `readTextFile` reported when the file was opened;
+ *   passing them back restores the file's own spelling. Leaving either out
+ *   writes the string exactly as handed over.
+ * @returns {{ok:true,bytes:number,bom:boolean,eol:"crlf"|"lf",created:boolean}|{ok:false,error:string}}
+ */
+function writeTextFile(rootDir, relPath, text, opts = {}) {
+  const options = opts || {};
+  const maxBytes = positiveInt(options.maxBytes, DEFAULT_MAX_BYTES);
+  // Not a string is a caller bug rather than an attack, but it arrives over
+  // the same IPC as everything else, so it is refused in the same shape.
+  if (typeof text !== "string") return { ok: false, error: "nothing to write" };
+
+  const rooted = realRoot(rootDir);
+  if (!rooted.ok) return rooted;
+  const root = rooted.root;
+
+  // Layers 1 and 2, identical to the read path.
+  const abs = insideRoot(root, relPath);
+  if (!abs) return { ok: false, error: "outside the workspace" };
+  // `"."` and `"sub/.."` resolve to the root itself, which `within` accepts
+  // because it IS contained — it is simply not a file.
+  if (foldCase(abs) === foldCase(root)) return { ok: false, error: "that is a folder" };
+
+  const skip = skipSet(options);
+  const folded = new Set([...skip].map(foldCase));
+  const segments = path.relative(root, abs).split(/[\\/]+/).filter((seg) => seg.length > 0);
+  if (segments.some((seg) => folded.has(foldCase(seg)))) {
+    return { ok: false, error: "not a file this app will write" };
+  }
+
+  // BOM and line endings are settled before anything touches the disk, because
+  // `maxBytes` has to be measured against the bytes that will actually land --
+  // a CRLF restore on a large file adds one byte per line, and a limit checked
+  // against the string instead of the buffer is a limit that can be stepped
+  // over by a few thousand bytes.
+  let body = text;
+  if (options.eol === "crlf" || options.eol === "lf") {
+    const unified = body.replace(/\r\n/g, "\n");
+    body = options.eol === "crlf" ? unified.replace(/\n/g, "\r\n") : unified;
+  }
+  if (typeof options.bom === "boolean") {
+    const bare = body.charCodeAt(0) === 0xfeff ? body.slice(1) : body;
+    body = options.bom ? `\uFEFF${bare}` : bare;
+  }
+  const buf = Buffer.from(body, "utf8");
+  if (buf.length > maxBytes) {
+    return { ok: false, error: `too big \u2014 ${buf.length} bytes, limit ${maxBytes}` };
+  }
+
+  const parent = path.dirname(abs);
+  const base = path.basename(abs);
+
+  // Layer 3, moved to the parent. This ENOENT is also the "no mkdir -p" rule:
+  // a parent that is not there is a refusal, not a thing to go and create.
+  let realParent;
+  try {
+    realParent = fs.realpathSync(parent);
+  } catch (err) {
+    if (err.code === "ENOENT" || err.code === "ENOTDIR") {
+      return { ok: false, error: "no such folder to write into" };
+    }
+    if (err.code === "EACCES" || err.code === "EPERM") return { ok: false, error: "not allowed to write there" };
+    return { ok: false, error: `cannot open that folder: ${err.code || err.message}` };
+  }
+  if (!within(root, realParent)) return { ok: false, error: "outside the workspace" };
+
+  try {
+    if (!fs.statSync(realParent).isDirectory()) return { ok: false, error: "no such folder to write into" };
+  } catch (err) {
+    return { ok: false, error: `cannot open that folder: ${err.code || err.message}` };
+  }
+
+  // Rebuilt from the RESOLVED parent, so every call after this point — the
+  // lstat, the temp file, the rename — is aimed at the directory that was
+  // actually checked and not at the spelling that was handed in.
+  const target = path.join(realParent, base);
+
+  let existing = null;
+  try {
+    // lstat, never stat: the whole question is whether the NAME is a link, and
+    // `stat` answers about the thing on the far end of it.
+    existing = fs.lstatSync(target);
+  } catch (err) {
+    if (err.code !== "ENOENT" && err.code !== "ENOTDIR") {
+      if (err.code === "EACCES" || err.code === "EPERM") {
+        return { ok: false, error: "not allowed to write that file" };
+      }
+      return { ok: false, error: `cannot open that file: ${err.code || err.message}` };
+    }
+  }
+  if (existing) {
+    if (existing.isSymbolicLink()) return { ok: false, error: "that is a symlink" };
+    if (existing.isDirectory()) return { ok: false, error: "that is a folder" };
+    if (!existing.isFile()) return { ok: false, error: "not a regular file" };
+  }
+
+  // Preserved, not re-derived: an executable script that comes back 0644 after
+  // one save is a broken repo, and nobody will connect it to having edited a
+  // file. Windows has no POSIX mode to speak of, so this is close to a no-op
+  // there beyond the read-only bit — which is the part that would be lost.
+  const mode = existing ? existing.mode & 0o777 : undefined;
+
+  // Same directory, always. A temp file in the OS temp dir would make this a
+  // cross-device move, and a rename across devices is not atomic — it is not
+  // even permitted (EXDEV). Same directory means one rename, which NTFS and
+  // APFS both make atomic, so a reader sees either the whole old file or the
+  // whole new one. Writing in place instead would mean a crash mid-write
+  // leaves somebody's source truncated, which for an app whose promise is that
+  // your code stays put is the one failure that would be unforgivable.
+  //
+  // The temp file is briefly visible to a tree walk. Accepted: it exists for
+  // microseconds, and `listTree` is a snapshot of a moving disk anyway.
+  const tmp = path.join(realParent, `${base}.zevet-${crypto.randomBytes(6).toString("hex")}.tmp`);
+
+  let fd;
+  try {
+    // "wx" — fail if it somehow exists rather than clobber it. With 96 bits of
+    // entropy that is unreachable; it is here so that if it ever does happen it
+    // happens as an error and not as a lost file.
+    fd = fs.openSync(tmp, "wx", mode === undefined ? 0o666 : mode);
+    fs.writeSync(fd, buf, 0, buf.length, 0);
+    // The bytes reach the disk BEFORE the rename publishes the name. Without
+    // this, a power loss can leave the rename durable and the contents not --
+    // an empty file where the source was, which is the exact outcome the
+    // rename was chosen to prevent.
+    //
+    // NOT VERIFIED, and not verifiable from a test suite: this is the
+    // documented contract of fsync, not something observed here. The directory
+    // entry itself is NOT fsynced (that needs an fd on the directory, which
+    // Windows does not hand out), so a crash in the microsecond after the
+    // rename can still lose the rename on some filesystems. The old file
+    // survives intact in that case, which is the acceptable half of the risk.
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    // openSync's mode is filtered by the process umask, so an 0o755 original
+    // can come back 0o755 & ~umask. The chmod is what actually preserves it.
+    // Best-effort: on Windows this can fail for reasons that have nothing to
+    // do with whether the write succeeded.
+    if (mode !== undefined) {
+      try {
+        fs.chmodSync(tmp, mode);
+      } catch {
+        /* the contents matter more than the bits */
+      }
+    }
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* already on the way down */
+      }
+    }
+    // A temp file must never outlive a failed write. Leaving `.zevet-*.tmp`
+    // droppings in somebody's source tree after a full disk or a locked file
+    // is a small thing that reads as a broken program.
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* it may never have been created */
+    }
+    if (err.code === "EACCES" || err.code === "EPERM") return { ok: false, error: "not allowed to write that file" };
+    if (err.code === "EBUSY") return { ok: false, error: "that file is open in another program" };
+    if (err.code === "ENOSPC") return { ok: false, error: "no space left on the disk" };
+    return { ok: false, error: `cannot write that file: ${err.code || err.message}` };
+  }
+
+  return {
+    // What LANDED, not what was asked for. If the caller passed `bom` and
+    // `eol` this is the confirmation; if it passed neither, this is the report
+    // of what its own string happened to contain.
+    ok: true,
+    bytes: buf.length,
+    bom: buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf,
+    eol: dominantEol(body),
+    created: existing === null,
+  };
 }
 
 /**
@@ -433,6 +720,7 @@ function isProbablyRepo(dir) {
 module.exports = {
   listTree,
   readTextFile,
+  writeTextFile,
   isProbablyRepo,
   // Exported so the UI can show the same numbers it is being limited by, and
   // so the tests assert against the real defaults instead of copies of them.
