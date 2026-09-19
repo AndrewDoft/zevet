@@ -38,7 +38,7 @@ The disk image opens as **Zevet**, with Masora's paper-and-ink styling, a Retina
 
 Build through `npm run dist:mac`. Its wrapper preserves electron-builder's CLI options and creates a native Finder background bookmark using Swift on the mounted staging image, before compression, signing, or checksums. The older Python-generated bookmark looked valid but did not resolve on current macOS, leaving a blank background. Mac builds therefore require the Xcode command-line tools already provided on the CI runner. The smoke test checks the final image's contents, Finder layout, both background resolutions, and actual bookmark resolution after mounting at a temporary location. Finder was also checked with the finished image.
 
-The beta bundle has an ad hoc integrity seal. Apple Developer ID signing and notarization still require publisher credentials. The existing configured signing path remains available. Mac updates open the installer; replacing the app is still manual.
+Unconfigured development and CI bundles have an ad-hoc integrity seal. The local Developer ID signing setup is described below; it does not configure CI signing. Mac updates open the installer; replacing the app is still manual.
 
 ### Website download, September 19
 
