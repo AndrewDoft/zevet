@@ -35,3 +35,7 @@ editor/node_modules/
 # hub/var/ first, and a stray accounts.json -- with a master secret in it --
 # turned up staged for commit.
 /var/
+
+# Per-repo agent wiring and release artifacts: local state, never committed.
+.opencode/plugins/zevet.js
+zevet-*.tar.gz

@@ -421,7 +421,20 @@ async function checkRelease(settings, hubUp) {
     return;
   }
   try {
-    const res = await get(`${settings.hub}/dist/manifest.json`, { "x-zevet-token": settings.token });
+    // NOT get(): that helper drains the body for logging hygiene, and there
+    // would be nothing left for .json() below. This call reads the answer.
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(`${settings.hub}/dist/manifest.json`, {
+        headers: { "x-zevet-token": settings.token },
+        signal: ac.signal,
+        redirect: "error",
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) {
       report(false, "release", `the hub answered ${res.status} on /dist/manifest.json`);
       return;
