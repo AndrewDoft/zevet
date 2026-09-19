@@ -1,6 +1,9 @@
 # zevet
 
-Watch your team's AI coding agents work, live, in one place.
+A multiplayer IDE for teams whose agents are doing the typing.
+
+Watch your team's AI coding agents work, live, in one place — and edit the files
+they are working in, together, while they do it.
 
 Three people, three machines, three Claude Code agents. `zevet` shows you who is
 prompting what, which files each agent is touching, and — the part that actually
@@ -268,35 +271,86 @@ waits on it, so an update cannot sit in front of anybody's turn.
 
 ---
 
-## Shared editing: use Zed
+## Shared editing
 
-`zevet` shows you what everyone's agents are doing. It deliberately does not do
-real-time shared editing — that is a solved problem and not worth rebuilding.
+The board is an editor. Open a workspace, click a file, and you get CodeMirror
+bound to a shared document: your teammates' cursors are in it, and so are your
+agent's edits as they land on disk.
 
-**Use [Zed](https://zed.dev).** Multiplayer is included on the free Personal
-tier, Windows has been stable since 1.0, and it is actively developed. Zed's own
-warning is worth repeating: *"Sharing a project gives collaborators access to
+**This reverses what this file used to say.** It recommended [Zed](https://zed.dev)
+for the shared buffer and said zevet "deliberately does not do real-time shared
+editing — that is a solved problem and not worth rebuilding". Composing the two
+does work, and it asks a team to run two things and hold the relationship
+between them in their heads. The thing zevet uniquely knows — which file whose
+agent is editing, right now — is most useful *in* the buffer, not in a panel
+beside it. See `DECISIONS.md` D-005 for what else was considered, including
+peer-to-peer over WebRTC, which was rejected on cost rather than on merit.
+
+Zed remains a fine editor and its own warning is still worth repeating for
+anyone using its multiplayer: *"Sharing a project gives collaborators access to
 your local file system within that project. Only collaborate with people you
-trust."*
+trust."* The same caution applies here.
+
+### The hub relays what it cannot read
+
+File contents now cross the hub, and the hub is not trusted with them.
+
+Teammates share one master secret `S`. The hub is given
+`SHA-256("zevet-auth" || S)`; the key that encrypts document traffic is
+`HKDF(S)`, which the hub therefore cannot derive. Each update is AES-256-GCM
+with the room name — `<repo>:<path>` — as additional data, so a relay cannot
+take an update for one file and replay it into another file's room.
+
+**What this does not defend against, said plainly.** The board loads its page
+*from* the hub. A hub that has been taken over does not need the key; it serves
+JavaScript into the window that already has one. This protects against a hub
+that is honest but curious, against whoever can read its memory or its disk, and
+against anyone who ends up with its logs. Serving the editor from the desktop
+app's own files is the real fix and **has not been done**.
+
+The hub also still sees who is editing which file in which repo, and roughly how
+much. That is the board's whole job.
+
+### What it does not do yet
+
+- **Two machines have never edited one file.** Every path here has been
+  exercised against a simulated peer in one browser. Nobody has run it on two
+  computers.
+- **No presence for an agent's line.** A teammate's cursor is exact, because it
+  comes from the document's own awareness. An agent's is not shown at all: the
+  hook reports which file a tool touched and carries no line number, and a
+  figure drawn at line 1 because line 1 is all we know would be a fabrication.
+- **A file over 512 KiB opens read-only** and is never shared. Sharing half a
+  file and writing it back would delete the rest of it on every machine.
+- **Two people opening the same empty room at once** is handled but not
+  perfectly — see `SEED_CLIENT_ID` in `hub/public/index.html` for what happens
+  and what is still wrong about it.
 
 **Why not VS Code Live Share:** it still works and it is free and cross-platform,
 but Microsoft's docs now say *"Visual Studio Live Share is in maintenance mode,
 with no additional features planned."*
 
-The two layers compose: Zed for the shared buffer, zevet for the agents.
-
 ---
 
 ## What it deliberately does not do
 
-No worktree orchestration, no cross-machine approval routing, no syncing anyone's
-uncommitted work onto anyone else's checkout. That machinery exists so agents on
-different machines can edit one repo simultaneously without colliding. Three
-people who can talk to each other get most of it from a branch convention and a
-board that shows the collision coming.
+No worktree orchestration and no cross-machine approval routing. That machinery
+exists so agents on different machines can edit one repo simultaneously without
+colliding. Three people who can talk to each other get most of it from a branch
+convention and a board that shows the collision coming.
 
 It is also the machinery that is hardest to get right, and the reason the tool
 this replaces was unusable.
+
+**This list used to include "no syncing anyone's uncommitted work onto anyone
+else's checkout", and that is no longer true.** A file open in the shared editor
+is written to every participant's disk as it changes — that is what makes it a
+shared editor rather than a shared view. The scope is narrow and worth being
+precise about: it is the files people have deliberately OPENED, and nothing
+else. zevet does not sync a branch, does not touch git, and does not move a file
+nobody has open. But if you and a teammate both have `src/db.ts` open, your
+working copy of that file will change under you, which is the point and is also
+a thing to know before you open one.
 
 ---
 
