@@ -74,4 +74,34 @@ describe("event persistence", () => {
       await hub.stop();
     }
   });
+
+  test("old details age out of the served board when a TTL is set", async (t) => {
+    // Structure is the board's long memory; prompt bodies are not. With a TTL
+    // the words go blank and the who/tool/file stays.
+    const file = eventLog(t);
+    const hub = await startHub({ ZEVET_EVENTS: file, ZEVET_DETAIL_TTL_MS: "1" });
+    try {
+      await post(hub.base, { kind: "prompt", actor: "t", repo: "r", detail: "do the secret thing" });
+      await new Promise((r) => setTimeout(r, 10));
+      const s = await state(hub.base, TOKEN);
+      assert.equal(s.body.events.length, 1);
+      assert.equal(s.body.events[0].detail, "", "old detail is still served");
+      assert.equal(s.body.events[0].actor, "t", "structure was trimmed with the words");
+    } finally {
+      await hub.stop();
+    }
+  });
+
+  test("without a TTL everything is kept", async (t) => {
+    const file = eventLog(t);
+    const hub = await startHub({ ZEVET_EVENTS: file });
+    try {
+      await post(hub.base, { kind: "prompt", actor: "t", repo: "r", detail: "do the secret thing" });
+      await new Promise((r) => setTimeout(r, 10));
+      const s = await state(hub.base, TOKEN);
+      assert.equal(s.body.events[0].detail, "do the secret thing");
+    } finally {
+      await hub.stop();
+    }
+  });
 });

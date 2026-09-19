@@ -10,7 +10,7 @@
 // installed. The same rule bought the same way twice.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,6 +80,11 @@ if (ENV_TOKEN && DERIVED && ENV_TOKEN !== DERIVED && process.env.ZEVET_SECRET) {
 
 const TOKEN = ENV_TOKEN || DERIVED;
 const MAX_EVENTS = Number(process.env.ZEVET_MAX_EVENTS || 2000);
+// Prompt bodies and shell commands older than this are served blank and
+// compacted out of the log at boot (see snapshot() and the replay below). 0
+// keeps everything — the default, because history is the feature and
+// retention is the operator's call, not ours to make silently.
+const DETAIL_TTL_MS = Number(process.env.ZEVET_DETAIL_TTL_MS || 0);
 // Two agents touching one file inside this window is worth a warning. Ten
 // minutes is a guess we can move; it is deliberately longer than a turn.
 const COLLISION_WINDOW_MS = Number(process.env.ZEVET_COLLISION_WINDOW_MS || 10 * 60 * 1000);
@@ -229,6 +234,28 @@ try {
         if (evt && typeof evt === "object") events.push(evt);
       } catch {
         // One corrupt line is not a corrupt log. Skip it and keep the rest.
+      }
+    }
+    // Retention compaction: details older than the TTL are blanked in place,
+    // so the archive keeps the structure (who/tool/file/repo) and forgets the
+    // words. Best effort; a failure here costs nothing at runtime.
+    if (DETAIL_TTL_MS > 0) {
+      try {
+        const now = Date.now();
+        const compacted = lines.map((line) => {
+          try {
+            const evt = JSON.parse(line);
+            if (evt && typeof evt === "object" && now - evt.ts > DETAIL_TTL_MS) {
+              return JSON.stringify({ ...evt, detail: "" });
+            }
+          } catch {
+            // Keep the line as-is; the replay above already skipped it.
+          }
+          return line;
+        });
+        writeFileSync(EVENTS_FILE, `${compacted.join("\n")}\n`);
+      } catch {
+        // The uncompacted log still replays fine above.
       }
     }
   }
@@ -424,11 +451,19 @@ function record(evt) {
 /** Presence, collisions and recent files, derived fresh — nothing cached to drift. */
 function snapshot() {
   const now = Date.now();
+  // Prompt bodies and shell commands age out of the served board after
+  // ZEVET_DETAIL_TTL_MS (0, the default, keeps everything). Structure —
+  // who, what tool, what file, what repo — is the board's long memory and is
+  // never trimmed; `detail` is the sensitive half and the only thing with a
+  // TTL. The log file is compacted the same way at boot (see above), so this
+  // is retention, not a view filter.
+  const show = (e) =>
+    DETAIL_TTL_MS > 0 && now - e.ts > DETAIL_TTL_MS ? { ...e, detail: "" } : e;
   const actors = new Map();
   for (const e of events) {
     const a = actors.get(e.actor) || { actor: e.actor, hue: null, lastTs: 0, lastEvent: null, turns: 0, tools: 0 };
     a.lastTs = Math.max(a.lastTs, e.ts);
-    if (!a.lastEvent || e.ts >= a.lastEvent.ts) a.lastEvent = e;
+    if (!a.lastEvent || e.ts >= a.lastEvent.ts) a.lastEvent = show(e);
     if (e.kind === "prompt") a.turns += 1;
     if (e.kind === "tool") a.tools += 1;
     actors.set(e.actor, a);
@@ -488,7 +523,7 @@ function snapshot() {
   }
   collisions.sort((x, y) => y.lastTs - x.lastTs);
 
-  return { now, roster, collisions, events: events.slice(-300), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
+  return { now, roster, collisions, events: events.slice(-300).map(show), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
 }
 
 /**
