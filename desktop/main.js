@@ -71,6 +71,44 @@ const CLIENT_DIR = path.join(HOME, "client");
 // The eggshell the board is painted on. Used as the window background so there
 // is no white — or, as it was until now, near-black — flash before first paint.
 const PAPER = "#eae7e2";
+const INK = "#2c2f44";
+/** The dark ground, and it must match `:root[data-theme="dark"] --paper` in
+ *  hub/public/index.html. Two copies of one colour is a thing to dislike, but
+ *  the alternative is the main process fetching a stylesheet from the hub to
+ *  learn what to paint a window, which is worse. The renderer sends its real
+ *  computed values on every theme change (see `ui:chrome`), so these two are
+ *  only the pre-paint guess. */
+const PAPER_DARK = "#17262e";
+
+/**
+ * The window chrome, per theme.
+ *
+ * ⚠️ WHY THE TITLE BAR IS OURS NOW. Andrew's complaint: *"the outline of the
+ * app is in the blue of my machine and is always visible, even on full
+ * screen"*. That is Windows painting the caption and the window border in the
+ * system accent colour, and a web page cannot touch either.
+ *
+ * `titleBarStyle: "hidden"` with a `titleBarOverlay` hands the caption area to
+ * us while KEEPING the native minimise/maximise/close buttons — the middle
+ * ground between living with the accent bar and `frame: false`, which would
+ * mean drawing and maintaining three window buttons and their hover states on
+ * every platform.
+ *
+ * ⚠️ WHAT THIS STILL DOES NOT FIX, and it should not be claimed: the 1px
+ * window BORDER on Windows 11. That is `DWMWA_BORDER_COLOR`, set by the
+ * desktop window manager, and Electron exposes no API for it. If it is still
+ * the machine's accent blue after this, that is why, and the only remaining
+ * lever is `frame: false`. NOT VERIFIED either way — the border cannot be seen
+ * in a page screenshot, which is the only kind taken here.
+ */
+function chromeFor(theme) {
+  const dark = theme === "dark";
+  return {
+    color: dark ? PAPER_DARK : PAPER,
+    symbolColor: dark ? "#eae7e2" : INK,
+    height: 46,
+  };
+}
 
 let boardWindow = null;
 let setupWindow = null;
@@ -207,7 +245,13 @@ function openBoard(cfg) {
     backgroundColor: PAPER, // no white flash before the page paints
     title: "zevet",
     ...iconOption,
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    // macOS gets hiddenInset, which it has always had: the traffic lights stay
+    // where a Mac user expects them and the board's own title bar absorbs the
+    // inset. Windows and Linux get a hidden bar plus an overlay we colour.
+    titleBarStyle: "hidden",
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" }
+      : { titleBarOverlay: chromeFor("light") }),
     autoHideMenuBar: true,
     webPreferences: {
       // THE BOARD NOW GETS A PRELOAD, and that is a real decision rather than
@@ -904,6 +948,45 @@ async function ensureEmbedder() {
 
 /** The capability answer, the model's state, and what this root's index holds.
  *  Cheap enough to poll: assess() is a few syscalls and the rest is in memory. */
+/**
+ * The renderer telling the main process what colour it just painted itself.
+ *
+ * The page owns the palette -- it is defined once in `:root` and the renderer
+ * reads its own computed values back rather than repeating hexes -- but the
+ * window frame is the main process's to set. So the theme change travels one
+ * way: the page decides, and this follows.
+ *
+ * Deliberately not the reverse. Asking the main process for the system theme
+ * and pushing it into the page would make the app's appearance depend on an OS
+ * setting the person did not touch, and the toggle they did touch would lose.
+ */
+ipcMain.handle("ui:chrome", (_e, arg) => {
+  const theme = arg && arg.theme === "dark" ? "dark" : "light";
+  const w = boardWindow;
+  if (!w || w.isDestroyed()) return { ok: false };
+  const paper = typeof arg.paper === "string" && /^#[0-9a-f]{3,8}$/i.test(arg.paper.trim())
+    ? arg.paper.trim()
+    : chromeFor(theme).color;
+  // ⚠️ VALIDATED, NOT TRUSTED. This value comes from a page served by the hub,
+  // and it is handed to a native API. A hex colour is the only shape accepted;
+  // anything else falls back to our own constant rather than being passed on.
+  try {
+    w.setBackgroundColor(paper);
+    if (typeof w.setTitleBarOverlay === "function" && process.platform !== "darwin") {
+      const ink = typeof arg.ink === "string" && /^#[0-9a-f]{3,8}$/i.test(arg.ink.trim())
+        ? arg.ink.trim()
+        : chromeFor(theme).symbolColor;
+      w.setTitleBarOverlay({ color: paper, symbolColor: ink, height: 46 });
+    }
+  } catch {
+    // setTitleBarOverlay throws on a window that was not created with an
+    // overlay -- a macOS window, or one from before this existed. Nothing to
+    // do and nothing worth telling the user.
+    return { ok: false };
+  }
+  return { ok: true };
+});
+
 ipcMain.handle("local:indexStatus", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;

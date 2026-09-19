@@ -131,6 +131,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * gate turned down, and `indexEnable` is the ONLY thing that fetches the
    * model -- nothing here starts a download on its own.
    */
+  /** Tell the native window what colour the page just became. */
+  chrome: (spec) => ipcRenderer.invoke("ui:chrome", spec),
   indexStatus: (root) => ipcRenderer.invoke("local:indexStatus", { root }),
   indexEnable: (root) => ipcRenderer.invoke("local:indexEnable", { root }),
   indexSearch: (root, query, opts) =>

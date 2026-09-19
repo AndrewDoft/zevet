@@ -33,7 +33,9 @@ import {
   indentOnInput,
   syntaxHighlighting,
   defaultHighlightStyle,
+  HighlightStyle,
 } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import {
   autocompletion,
@@ -123,15 +125,45 @@ const transparentTheme = EditorView.theme({
 });
 
 /**
- * The extensions every editor gets, collaborative or not.
+ * ⚠️ A DARK HIGHLIGHT STYLE, BECAUSE THE DEFAULT ONE IS UNREADABLE ON A DARK
+ * GROUND. This is not a preference: `defaultHighlightStyle` renders keywords in
+ * #708 and numbers in #164, which against #17262e are very nearly the
+ * background. A screenshot of the board in dark mode showed a file whose first
+ * and fourth lines could not be read at all.
  *
- * `syntaxHighlighting(defaultHighlightStyle)` is included on purpose and is the
- * one place this file does pick colours. Without it the lang packs parse the
- * document and then render it in a single flat colour, which makes shipping
- * seven language packs pointless. defaultHighlightStyle is tuned for a light
- * background; if the board is dark, the styling task should pass its own
- * HighlightStyle instead — this line is the thing to replace, and it is here
- * rather than buried so it can be found.
+ * The hues are the light style's, lifted toward the eggshell rather than
+ * replaced, so the two themes are recognisably the same editor. Nothing here is
+ * sampled from a popular dark theme; there is no dependency for it and adding
+ * one to colour eight token types would be the larger change.
+ */
+const darkHighlightStyle = HighlightStyle.define([
+  { tag: tags.keyword, color: "#c09adf" },
+  { tag: [tags.name, tags.deleted, tags.character, tags.propertyName, tags.macroName], color: "#8fc7e8" },
+  { tag: [tags.function(tags.variableName), tags.labelName], color: "#9ad0ef" },
+  { tag: [tags.color, tags.constant(tags.name), tags.standard(tags.name)], color: "#e0b464" },
+  { tag: [tags.definition(tags.name), tags.separator], color: "#d7d4ce" },
+  { tag: [tags.typeName, tags.className, tags.number, tags.changed, tags.annotation, tags.modifier, tags.self, tags.namespace], color: "#7fc9a8" },
+  { tag: [tags.operator, tags.operatorKeyword, tags.url, tags.escape, tags.regexp, tags.link, tags.special(tags.string)], color: "#e0a36a" },
+  { tag: [tags.meta, tags.comment], color: "#6d7c86", fontStyle: "italic" },
+  { tag: tags.strong, fontWeight: "bold" },
+  { tag: tags.emphasis, fontStyle: "italic" },
+  { tag: tags.strikethrough, textDecoration: "line-through" },
+  { tag: tags.link, color: "#8fc7e8", textDecoration: "underline" },
+  { tag: tags.heading, fontWeight: "bold", color: "#8fc7e8" },
+  { tag: [tags.atom, tags.bool, tags.special(tags.variableName)], color: "#e0b464" },
+  { tag: [tags.processingInstruction, tags.string, tags.inserted], color: "#c3d98a" },
+  { tag: tags.invalid, color: "#d98a72" },
+]);
+
+/** The two styles, in a Compartment so a running editor can be switched without
+ *  being rebuilt — rebuilding one loses the cursor, the selection, the scroll
+ *  position and the undo history, which is a lot to spend on a theme toggle. */
+function highlightFor(dark) {
+  return syntaxHighlighting(dark ? darkHighlightStyle : defaultHighlightStyle, { fallback: true });
+}
+
+/**
+ * The extensions every editor gets, collaborative or not.
  *
  * `drawSelection` is not decoration: y-codemirror.next renders remote cursors
  * as layer widgets alongside the local selection layer, and without
@@ -147,7 +179,8 @@ function baseExtensions() {
     dropCursor(),
     EditorState.allowMultipleSelections.of(true),
     indentOnInput(),
-    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    // Highlighting is NOT here any more; it lives in its own compartment in
+    // createEditor so the theme can change under a live editor.
     bracketMatching(),
     closeBrackets(),
     autocompletion(),
@@ -180,6 +213,9 @@ export function createEditor({
   awareness = null,
   language = null,
   readOnly = false,
+  /** Dark ground? Only affects which HighlightStyle is used; the rest of the
+   *  colours are the page's, inherited through `transparentTheme`. */
+  dark = false,
   onChange = null,
 } = {}) {
   if (!parent) throw new Error("createEditor: `parent` is required");
@@ -193,6 +229,12 @@ export function createEditor({
   const languageCompartment = new Compartment();
   const build = language ? LANGUAGE_EXTENSIONS[language] : null;
   extensions.push(languageCompartment.of(build ? build() : []));
+
+  // Highlighting, in its own compartment so `setDark` can swap it under a live
+  // editor. Rebuilding the view to change a theme would throw away the cursor,
+  // the selection, the scroll position and the undo history.
+  const highlightCompartment = new Compartment();
+  extensions.push(highlightCompartment.of(highlightFor(dark)));
 
   // An unknown language name is a caller bug, but it is not worth throwing over
   // — a plain buffer is a fine outcome and a thrown error loses the user's
@@ -273,6 +315,11 @@ export function createEditor({
      */
     destroy() {
       view.destroy();
+    },
+
+    /** Swap the highlight style. Cheap, and keeps everything else intact. */
+    setDark(next) {
+      view.dispatch({ effects: highlightCompartment.reconfigure(highlightFor(Boolean(next))) });
     },
 
     getText() {

@@ -26,6 +26,45 @@
     font-display: swap;
   }
 
+  /* ---- dark mode ---------------------------------------------------------
+     Andrew asked for it to "just invert our eggshell and cerulean", with
+     whatever else is needed kept minimal, so that is literally what this is:
+     the ground becomes a deep cerulean-ink and the type becomes the eggshell.
+     Nine token values and nothing else -- no second stylesheet, no per-rule
+     overrides, no `.dark` classes sprinkled through the file. Every rule in
+     this page already draws from these tokens, which is the whole reason that
+     discipline was worth keeping.
+
+     ⚠️ THE ACCENT HAS TO MOVE, and this is the one place a pure inversion is
+     wrong. #2f6f8f was picked to hold small text against eggshell; against a
+     dark ground the same blue is barely separable from it. So --cerulean
+     brightens and --cerulean-soft becomes a dark tint rather than a pale one.
+     The identity hues get the same treatment for the same reason -- they were
+     chosen "mid-dark and muted" precisely BECAUSE the board was light.
+
+     `color-scheme` is set on both, so native scrollbars, form controls and the
+     caret follow without being styled one at a time. */
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --paper: #17262e;
+    --ink: #eae7e2;
+    --muted: #a7b3ba;
+    --faint: #6d7c86;
+    --line: #2b3d47;
+    --fill: #21323c;
+
+    --cerulean: #7cb6d4;
+    --cerulean-soft: #23414f;
+    --alert: #d98a72;
+
+    --who-0: #7cb6d4;
+    --who-1: #d09a72;
+    --who-2: #8fbf87;
+    --who-3: #b79dd0;
+    --who-4: #d9b06a;
+  }
+
   :root {
     color-scheme: light;
 
@@ -54,7 +93,10 @@
     --who-3: #7a5a92;
     --who-4: #a8743a;
 
-    --rail: 224px;
+    /* Wider, because the rail now carries the status block as well as people
+       and workspaces -- and because the space came free when the title bar
+       went. */
+    --rail: 258px;
     --tree: 286px;
     --streams: 340px;
 
@@ -74,13 +116,12 @@
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     display: grid;
-    /* Three rows: the title bar, the status strip, and the shell taking the
-       rest. ⚠️ THE COUNT MATTERS. This was `auto 1fr` for two children, and
-       adding the strip as a third silently gave the STRIP the 1fr row and left
-       the shell on an implicit auto one -- a 400px void above the panes and a
-       board pushed off the bottom of the window. Adding a fourth child means
-       adding a fourth row here. */
-    grid-template-rows: auto auto 1fr;
+    /* ONE ROW. The title bar and the status strip both used to live up here;
+       the bar is gone (its wordmark, scope and presence chips all said things
+       the left rail already says) and the strip moved into the rail. The row
+       count and the child count must stay equal -- getting that wrong once put
+       a 400px void above the panes, because the wrong child got the 1fr. */
+    grid-template-rows: 1fr;
     overflow: hidden;
   }
   .mono { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
@@ -88,12 +129,25 @@
   :focus-visible { outline: 2px solid var(--cerulean); outline-offset: 2px; }
 
   /* ---- title bar ---------------------------------------------------- */
-  .titlebar {
-    display: flex; align-items: center; gap: 18px;
-    padding: 0 18px; height: 46px;
-    border-bottom: 1px solid var(--line);
-    background: var(--paper);
+  /* ⚠️ THE COLUMN HEADERS ARE THE WINDOW'S DRAG HANDLE.
+     The native caption is hidden so the OS accent bar is gone, which also means
+     there is nothing to grab the window by. Removing the title bar took the
+     last obvious candidate with it, so the job falls to the one strip of
+     non-interactive chrome that runs across the top of every column: the pane
+     titles. They are text nobody clicks, they are already at the top of the
+     window, and a person dragging an app by its header is not surprised.
+     Rejected: a thin invisible drag strip across the top. It is a 6px target
+     that people miss, and an app you cannot reliably move is worse than one
+     with a visible bar. */
+  .pane-title { -webkit-app-region: drag; }
+  .pane-title button, .pane-title a, .pane-title input, .pane-title select {
+    -webkit-app-region: no-drag;
   }
+  /* The window controls float over the top-right of the page, so the rightmost
+     column's header has to get out from under them. `env(titlebar-area-width)`
+     is published by the overlay and falls back to the full width in a browser
+     tab, where the whole idea does not apply and this resolves to zero. */
+  .streams > .pane-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
   .wordmark { font-weight: 200; font-size: 19px; letter-spacing: 0.16em; text-transform: lowercase; }
   .scope { color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
   .spacer { flex: 1 1 auto; }
@@ -178,8 +232,8 @@
   .node {
     display: flex; align-items: center; gap: 9px;
     width: 100%; text-align: left;
-    padding: 3px 16px 3px 0;
-    font-size: 13px;
+    padding: 4px 16px 4px 0;
+    font-size: 13.5px;
   }
   .node[data-sel="true"] { background: var(--cerulean-soft); }
   .node:hover { background: #fff7; }
@@ -199,19 +253,223 @@
 
   .empty-tree { padding: 30px 18px; color: var(--muted); font-size: 13px; max-width: 46ch; }
 
+  /* ---- agent view --------------------------------------------------------
+     The same board, rearranged for driving agents instead of typing. The file
+     tree and the editor step aside and the agent column becomes the middle of
+     the screen.
+
+     ⚠️ IT IS A LAYOUT, NOT A SECOND APP. Every pane below is the same element
+     with the same state and the same sockets; only the grid changes. A second
+     view that forked the data would be two boards to keep in step, and they
+     would drift within a week.
+
+     `display: none` on the tree column is deliberate rather than a narrower
+     width: in this mode the file list is not the point, and a vestigial 80px
+     of it would be worse than none. Switching back restores it with its
+     selection intact, because nothing about it was torn down. */
+  body[data-view="agent"] .middle { grid-template-columns: 1fr; }
+  body[data-view="agent"] .treecol { display: none; }
+  body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr minmax(420px, 1.1fr); }
+  body[data-view="agent"] .stream { border-bottom: 1px solid var(--line); }
+  /* The conversation gets room to breathe: bigger type for what an agent
+     actually says, since reading it is now the main activity. */
+  body[data-view="agent"] .streams .pane-body { font-size: 13px; }
+
+  /* ---- the rail's footer: theme, and a way into settings ------------------
+     Above the Workspaces header, where Andrew asked for it. */
+  .railfoot {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 16px; border-top: 1px solid var(--line);
+  }
+  /* ---- the sky toggle ----------------------------------------------------
+     Andrew's, supplied as a styled-components React component. Ported to plain
+     CSS because the component was a <div> wrapper around a style block and a
+     checkbox — there was no React in it beyond the wrapper, and adding React
+     and styled-components to this page to render one switch would be the
+     larger change by a wide margin.
+
+     Two deliberate departures from the original:
+
+       • --toggle-size is 13px, not 30px. The original is 168px wide, which in
+         a 224px rail is a control that dominates the pane it sits in. The
+         whole thing is sized off that one value, which is the nice property
+         of how it was written.
+       • The daytime sky is --cerulean rather than #3D7EAE. They are close
+         cousins, and using the token means the switch is painted in the same
+         blue as everything else rather than in a blue that merely resembles it.
+
+     Everything else — the clouds, the stars, the sun sliding into a cratered
+     moon, the easing — is as supplied. It is by far the most decorative thing
+     on this page and that is the point of it. */
+  .themer {
+    --toggle-size: 13px;
+    --container-width: 5.625em;
+    --container-height: 2.5em;
+    --container-radius: 6.25em;
+    --container-light-bg: var(--cerulean);
+    --container-night-bg: #1D1F2C;
+    --circle-container-diameter: 3.375em;
+    --sun-moon-diameter: 2.125em;
+    --sun-bg: #ECCA2F;
+    --moon-bg: #C4C9D1;
+    --spot-color: #959DB1;
+    --circle-container-offset: calc((var(--circle-container-diameter) - var(--container-height)) / 2 * -1);
+    --stars-color: #fff;
+    --clouds-color: #F3FDFF;
+    --back-clouds-color: #AACADF;
+    --transition: 0.5s cubic-bezier(0, -0.02, 0.4, 1.25);
+    --circle-transition: 0.3s cubic-bezier(0, -0.02, 0.35, 1.17);
+
+    display: inline-flex; align-items: center; gap: 9px; cursor: pointer;
+    background: none; border: 0; padding: 0;
+  }
+  .themer, .themer *, .themer *::before, .themer *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  .themer .lbl {
+    font-family: var(--font-sans); font-size: 10.5px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--faint);
+  }
+  .sky {
+    font-size: var(--toggle-size);
+    width: var(--container-width); height: var(--container-height);
+    background-color: var(--container-light-bg);
+    border-radius: var(--container-radius);
+    overflow: hidden; position: relative; flex: none;
+    box-shadow: 0em -0.062em 0.062em rgba(0,0,0,0.25), 0em 0.062em 0.125em rgba(255,255,255,0.94);
+    transition: var(--transition);
+  }
+  .sky::before {
+    content: ""; position: absolute; z-index: 1; inset: 0;
+    box-shadow: 0em 0.05em 0.187em rgba(0,0,0,0.25) inset, 0em 0.05em 0.187em rgba(0,0,0,0.25) inset;
+    border-radius: var(--container-radius);
+  }
+  .sky-circle {
+    width: var(--circle-container-diameter); height: var(--circle-container-diameter);
+    background-color: rgba(255,255,255,0.1);
+    position: absolute; left: var(--circle-container-offset); top: var(--circle-container-offset);
+    border-radius: var(--container-radius);
+    box-shadow: inset 0 0 0 3.375em rgba(255,255,255,0.1), inset 0 0 0 3.375em rgba(255,255,255,0.1),
+                0 0 0 0.625em rgba(255,255,255,0.1), 0 0 0 1.25em rgba(255,255,255,0.1);
+    display: flex; transition: var(--circle-transition); pointer-events: none;
+  }
+  .sky-sunmoon {
+    position: relative; z-index: 2;
+    width: var(--sun-moon-diameter); height: var(--sun-moon-diameter);
+    margin: auto; border-radius: var(--container-radius);
+    background-color: var(--sun-bg);
+    box-shadow: 0.062em 0.062em 0.062em 0em rgba(254,255,239,0.61) inset, 0em -0.062em 0.062em 0em #a1872a inset;
+    filter: drop-shadow(0.062em 0.125em 0.125em rgba(0,0,0,0.25)) drop-shadow(0em 0.062em 0.125em rgba(0,0,0,0.25));
+    overflow: hidden; transition: var(--transition);
+  }
+  .sky-moon {
+    transform: translateX(100%); width: 100%; height: 100%;
+    background-color: var(--moon-bg); border-radius: inherit;
+    box-shadow: 0.062em 0.062em 0.062em 0em rgba(254,255,239,0.61) inset, 0em -0.062em 0.062em 0em #969696 inset;
+    transition: var(--transition); position: relative;
+  }
+  .sky-spot {
+    position: absolute; top: 0.75em; left: 0.312em; width: 0.75em; height: 0.75em;
+    border-radius: var(--container-radius); background-color: var(--spot-color);
+    box-shadow: 0em 0.0312em 0.062em rgba(0,0,0,0.25) inset;
+  }
+  .sky-spot:nth-of-type(2) { width: 0.375em; height: 0.375em; top: 0.937em; left: 1.375em; }
+  .sky-spot:nth-last-of-type(3) { width: 0.25em; height: 0.25em; top: 0.312em; left: 0.812em; }
+  .sky-clouds {
+    width: 1.25em; height: 1.25em; background-color: var(--clouds-color);
+    border-radius: var(--container-radius);
+    position: absolute; bottom: -0.625em; left: 0.312em;
+    box-shadow: 0.937em 0.312em var(--clouds-color), -0.312em -0.312em var(--back-clouds-color),
+                1.437em 0.375em var(--clouds-color), 0.5em -0.125em var(--back-clouds-color),
+                2.187em 0 var(--clouds-color), 1.25em -0.062em var(--back-clouds-color),
+                2.937em 0.312em var(--clouds-color), 2em -0.312em var(--back-clouds-color),
+                3.625em -0.062em var(--clouds-color), 2.625em 0em var(--back-clouds-color),
+                4.5em -0.312em var(--clouds-color), 3.375em -0.437em var(--back-clouds-color),
+                4.625em -1.75em 0 0.437em var(--clouds-color), 4em -0.625em var(--back-clouds-color),
+                4.125em -2.125em 0 0.437em var(--back-clouds-color);
+    transition: var(--transition);
+  }
+  .sky-stars {
+    position: absolute; color: var(--stars-color); top: -100%; left: 0.312em;
+    width: 2.75em; height: auto; transition: var(--transition);
+  }
+  .themer[aria-pressed="true"] .sky { background-color: var(--container-night-bg); }
+  .themer[aria-pressed="true"] .sky-circle {
+    left: calc(100% - var(--circle-container-offset) - var(--circle-container-diameter));
+  }
+  .themer[aria-pressed="true"] .sky-moon { transform: translate(0); }
+  .themer[aria-pressed="true"] .sky-clouds { bottom: -4.062em; }
+  .themer[aria-pressed="true"] .sky-stars { top: 50%; transform: translateY(-50%); }
+  .themer:focus-visible { outline: 2px solid var(--cerulean); outline-offset: 3px; border-radius: 100px; }
+  /* Somebody who has asked not to be moved gets the state change without the
+     sun sliding across the sky. */
+  @media (prefers-reduced-motion: reduce) {
+    .themer * { transition: none !important; }
+  }
+  .settings-link {
+    font-size: 11.5px; color: var(--muted); letter-spacing: 0.02em;
+    transition: color 200ms;
+  }
+  .settings-link:hover { color: var(--ink); }
+
+  /* ---- settings ----------------------------------------------------------
+     A sheet over the board rather than a route, because the board has no
+     router and adding one for a panel of six rows would be the larger change. */
+  .sheet-back {
+    position: fixed; inset: 0; z-index: 40;
+    background: color-mix(in srgb, var(--ink) 34%, transparent);
+  }
+  .sheet {
+    position: fixed; z-index: 41; top: 0; right: 0; bottom: 0; width: min(520px, 92vw);
+    background: var(--paper); border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; overflow-y: auto;
+    box-shadow: -18px 0 40px -30px var(--ink);
+  }
+  .sheet-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 18px 22px 14px; border-bottom: 1px solid var(--line);
+  }
+  .sheet-head h2 { margin: 0; font-size: 15px; font-weight: 300; letter-spacing: 0.02em; }
+  .sheet-close { font-size: 12px; color: var(--muted); }
+  .sheet-close:hover { color: var(--ink); }
+  .sset { padding: 16px 22px; border-bottom: 1px solid var(--line); }
+  .sset h3 {
+    margin: 0 0 10px; font-size: 10.5px; font-weight: 400;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint);
+  }
+  .srow { display: flex; gap: 14px; align-items: baseline; padding: 3px 0; font-size: 12.5px; }
+  .srow .k { color: var(--muted); flex: 0 0 140px; }
+  .srow .v { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+  .srow .v.mono { font-family: var(--font-mono); font-size: 11.5px; }
+  .snote { font-size: 11.5px; color: var(--muted); line-height: 1.65; margin-top: 8px; max-width: 52ch; }
+  .sbtn {
+    font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 2px;
+    border: 1px solid var(--line); background: var(--fill); color: var(--ink);
+    transition: border-color 200ms;
+  }
+  .sbtn:hover:not(:disabled) { border-color: var(--cerulean); }
+  .sbtn:disabled { color: var(--faint); cursor: default; }
+  .sbar { height: 3px; background: var(--fill); margin-top: 10px; overflow: hidden; }
+  .sbar span { display: block; height: 100%; background: var(--cerulean); transition: width 200ms; }
+
   /* ---- the status strip -------------------------------------------------
      Andrew's own Claude Code status line, brought inside zevet. Segments
      separated by a dim pipe, monospace numerals, nothing that reflows when a
      number changes width -- it updates constantly and a strip that jitters is
      a strip you learn to ignore. */
+  /* In the rail, not across the top. Andrew: "it belongs unified there."
+     A 260px column cannot hold eight segments on one line, so they stack --
+     which turns out to read better anyway: each fact gets its own row and the
+     eye can scan down them instead of along. The pipes are hidden rather than
+     removed from the DOM, so the same renderStrip() serves both shapes. */
   .strip {
-    display: flex; align-items: center; gap: 0;
-    flex: none; overflow-x: auto; scrollbar-width: none;
-    padding: 5px 16px; border-bottom: 1px solid var(--line);
-    font-family: var(--font-mono); font-size: 10.5px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+    flex: none; padding: 12px 16px 12px;
+    border-top: 1px solid var(--line);
+    font-family: var(--font-mono); font-size: 11px;
     color: var(--muted); white-space: nowrap;
     font-variant-numeric: tabular-nums;
+    overflow: hidden;
   }
+  .strip .sep { display: none; }
   .strip::-webkit-scrollbar { display: none; }
   /* Nothing to say, no bar. In a plain browser tab there is no agent stream and
      no machine to probe, so the strip is empty -- and an empty 10px bar with a
@@ -220,7 +478,7 @@
      of the body grid too, which leaves three declared rows with two children:
      the shell then lands on an auto row instead of the 1fr one and stops
      halfway down the window. Zero height keeps the slot and shows nothing. */
-  .strip:empty { height: 0; padding: 0; border-bottom: 0; }
+  .strip:empty { height: 0; padding: 0; border-top: 0; }
   .strip .seg { display: inline-flex; align-items: baseline; gap: 5px; }
   .strip .sep { color: var(--line); padding: 0 10px; }
   .strip .k { color: var(--faint); }
@@ -273,7 +531,9 @@
 
   .ed-host { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   .cm-editor { height: 100%; }
-  .cm-editor .cm-scroller { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; }
+  /* Bigger, with the room the title bar gave back. The editor is the thing
+     you look at longest, so it gets the increase first. */
+  .cm-editor .cm-scroller { font-family: var(--font-mono); font-size: 13.5px; line-height: 1.6; }
   .cm-editor.cm-focused { outline: none; }
   .cm-gutters { background: transparent; border-right: 1px solid var(--line); color: var(--faint); }
   .cm-activeLine { background: #ffffff55; }
@@ -366,10 +626,36 @@
   .newagent { display: flex; flex-direction: column; gap: 9px; padding: 4px 16px 16px; }
   .launch-controls { display: flex; gap: 8px; }
   .launch-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  /* ⚠️ `appearance: none` IS THE POINT OF THIS RULE. Without it a <select> is
+     drawn by the operating system: Segoe UI on Windows, a grey gradient, a
+     blue focus ring and a chevron nobody chose -- three of which contradict
+     the one-family, one-colour rule the rest of this page is built on, and
+     none of which follow the theme. The chevron is drawn back as an inline SVG
+     with `currentColor` so it takes --muted in both modes; a background-image
+     with a hardcoded fill would be invisible in one of them. */
   .launch-select, .launch-model {
-    font: inherit; font-size: 12px; padding: 5px 8px;
-    border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+    font: inherit; font-size: 12px; font-weight: 300; letter-spacing: 0.01em;
+    padding: 6px 9px; border-radius: 2px;
+    border: 1px solid var(--line); background: var(--fill); color: var(--ink);
+    appearance: none; -webkit-appearance: none;
+    transition: border-color 200ms, background-color 200ms;
   }
+  .launch-select:hover, .launch-model:hover { border-color: var(--muted); }
+  .launch-select:focus-visible, .launch-model:focus-visible {
+    outline: 2px solid var(--cerulean); outline-offset: 1px; border-color: var(--cerulean);
+  }
+  .launch-model::placeholder { color: var(--faint); }
+  .launch-select {
+    padding-right: 26px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='currentColor' stroke-width='1.2'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 9px center;
+    background-size: 9px 6px;
+  }
+  /* The popup list itself is the OS's and cannot be styled; giving the OPTIONS
+     the theme's colours is the most that can be done, and on Windows it is
+     honoured. */
+  .launch-select option { background: var(--paper); color: var(--ink); }
   .launch-select { flex: 0 0 auto; }
   .launch-model { flex: 1 1 auto; min-width: 0; }
   .launch-warn { font-size: 11.5px; color: var(--alert); }
@@ -500,7 +786,12 @@
 </style>
 </head>
 <body>
-<div class="titlebar">
+<!-- The title bar is gone (Andrew, 2026-09-18): the wordmark, the repo
+     scope and the presence chips all repeated what the left rail already
+     shows, and the connection state moved into the status block down there
+     with everything else. What it cost is the window's drag handle, which the
+     pane titles now provide -- see the CSS. -->
+<div class="titlebar" hidden>
   <span class="wordmark">zevet</span>
   <span class="scope" id="scope"></span>
   <span class="spacer"></span>
@@ -508,12 +799,28 @@
   <span class="conn" id="conn" data-state="init"><span class="dot"></span><span id="connText">connecting</span></span>
 </div>
 
-<div class="strip" id="strip"></div>
-
 <div class="shell">
   <aside class="pane rail">
     <div class="pane-title">People</div>
     <div class="pane-body" id="people"></div>
+    <div class="strip" id="strip"></div>
+    <div class="railfoot">
+      <button type="button" class="themer" id="themer" aria-pressed="false" title="Light or dark">
+        <span class="sky">
+          <span class="sky-clouds"></span>
+          <span class="sky-stars"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 55" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M135.831 3.00688C135.055 3.85027 134.111 4.29946 133 4.35447C134.111 4.40947 135.055 4.85867 135.831 5.71123C136.607 6.55462 136.996 7.56303 136.996 8.72727C136.996 7.95722 137.172 7.25134 137.525 6.59129C137.886 5.93124 138.372 5.39954 138.98 5.00535C139.598 4.60199 140.268 4.39114 141 4.35447C139.88 4.2903 138.936 3.85027 138.16 3.00688C137.384 2.16348 136.996 1.16425 136.996 0C136.996 1.16425 136.607 2.16348 135.831 3.00688ZM31 23.3545C32.1114 23.2995 33.0551 22.8503 33.8313 22.0069C34.6075 21.1635 34.9956 20.1642 34.9956 19C34.9956 20.1642 35.3837 21.1635 36.1599 22.0069C36.9361 22.8503 37.8798 23.2903 39 23.3545C38.2679 23.3911 37.5976 23.602 36.9802 24.0053C36.3716 24.3995 35.8864 24.9312 35.5248 25.5913C35.172 26.2513 34.9956 26.9572 34.9956 27.7273C34.9956 26.563 34.6075 25.5546 33.8313 24.7112C33.0551 23.8587 32.1114 23.4095 31 23.3545ZM0 36.3545C1.11136 36.2995 2.05513 35.8503 2.83131 35.0069C3.6075 34.1635 3.99559 33.1642 3.99559 32C3.99559 33.1642 4.38368 34.1635 5.15987 35.0069C5.93605 35.8503 6.87982 36.2903 8 36.3545C7.26792 36.3911 6.59757 36.602 5.98015 37.0053C5.37155 37.3995 4.88644 37.9312 4.52481 38.5913C4.172 39.2513 3.99559 39.9572 3.99559 40.7273C3.99559 39.563 3.6075 38.5546 2.83131 37.7112C2.05513 36.8587 1.11136 36.4095 0 36.3545ZM56.8313 24.0069C56.0551 24.8503 55.1114 25.2995 54 25.3545C55.1114 25.4095 56.0551 25.8587 56.8313 26.7112C57.6075 27.5546 57.9956 28.563 57.9956 29.7273C57.9956 28.9572 58.172 28.2513 58.5248 27.5913C58.8864 26.9312 59.3716 26.3995 59.9802 26.0053C60.5976 25.602 61.2679 25.3911 62 25.3545C60.8798 25.2903 59.9361 24.8503 59.1599 24.0069C58.3837 23.1635 57.9956 22.1642 57.9956 21C57.9956 22.1642 57.6075 23.1635 56.8313 24.0069ZM81 25.3545C82.1114 25.2995 83.0551 24.8503 83.8313 24.0069C84.6075 23.1635 84.9956 22.1642 84.9956 21C84.9956 22.1642 85.3837 23.1635 86.1599 24.0069C86.9361 24.8503 87.8798 25.2903 89 25.3545C88.2679 25.3911 87.5976 25.602 86.9802 26.0053C86.3716 26.3995 85.8864 26.9312 85.5248 27.5913C85.172 28.2513 84.9956 28.9572 84.9956 29.7273C84.9956 28.563 84.6075 27.5546 83.8313 26.7112C83.0551 25.8587 82.1114 25.4095 81 25.3545ZM136 36.3545C137.111 36.2995 138.055 35.8503 138.831 35.0069C139.607 34.1635 139.996 33.1642 139.996 32C139.996 33.1642 140.384 34.1635 141.16 35.0069C141.936 35.8503 142.88 36.2903 144 36.3545C143.268 36.3911 142.598 36.602 141.98 37.0053C141.372 37.3995 140.886 37.9312 140.525 38.5913C140.172 39.2513 139.996 39.9572 139.996 40.7273C139.996 39.563 139.607 38.5546 138.831 37.7112C138.055 36.8587 137.111 36.4095 136 36.3545ZM101.831 49.0069C101.055 49.8503 100.111 50.2995 99 50.3545C100.111 50.4095 101.055 50.8587 101.831 51.7112C102.607 52.5546 102.996 53.563 102.996 54.7273C102.996 53.9572 103.172 53.2513 103.525 52.5913C103.886 51.9312 104.372 51.3995 104.98 51.0053C105.598 50.602 106.268 50.3911 107 50.3545C105.88 50.2903 104.936 49.8503 104.16 49.0069C103.384 48.1635 102.996 47.1642 102.996 46C102.996 47.1642 102.607 48.1635 101.831 49.0069Z" fill="currentColor"/></svg></span>
+          <span class="sky-circle">
+            <span class="sky-sunmoon">
+              <span class="sky-moon">
+                <span class="sky-spot"></span><span class="sky-spot"></span><span class="sky-spot"></span>
+              </span>
+            </span>
+          </span>
+        </span>
+        <span class="lbl" id="themeLabel">Light</span>
+      </button>
+      <button type="button" class="settings-link" id="settingsLink">Settings</button>
+    </div>
     <div class="pane-title" style="border-top:1px solid var(--line)">Workspaces</div>
     <div class="ws" id="workspaces"></div>
   </aside>
@@ -619,7 +926,13 @@
 
   if (LOCAL && window.zevet && typeof window.zevet.config === "function") {
     window.zevet.config().then(function (c) {
-      if (c && c.actor) { myActor = c.actor; render(); }
+      if (!c) return;
+      // Kept for the Settings panel. It is the REDACTED config -- hub, actor,
+      // hasSecret, legacy -- and never the secret itself; see the handler in
+      // desktop/main.js for why the board is not trusted with that.
+      window.__zevetCfg = c;
+      window.__zevetHub = c.hub;
+      if (c.actor) { myActor = c.actor; render(); }
     }, function () { /* no config: the cursor flag says "me" and nothing breaks */ });
   }
 
@@ -1261,6 +1574,375 @@
   }
 
   /* ======================================================================
+   * APPEARANCE AND SETTINGS
+   * ====================================================================== */
+
+  /**
+   * Theme and view mode live in localStorage, not in config.json.
+   *
+   * They are per-VIEWER preferences, not machine configuration: two people
+   * looking at the same hub from two machines should not have to agree about
+   * dark mode, and nothing about them needs to survive a reinstall. That also
+   * keeps them out of the file the hub's page can ask the main process for.
+   *
+   * ⚠️ EVERY ACCESS IS WRAPPED. localStorage throws outright in a private
+   * window and when site data is blocked, and this runs before the board draws
+   * anything -- an uncaught throw here is a blank app, not a missing
+   * preference.
+   */
+  function pref(key, fallback) {
+    try {
+      var v = window.localStorage.getItem("zevet." + key);
+      return v == null ? fallback : v;
+    } catch (err) {
+      return fallback;
+    }
+  }
+  function setPref(key, value) {
+    try {
+      window.localStorage.setItem("zevet." + key, value);
+    } catch (err) {
+      // Nothing to do: the preference applies for this session and is forgotten.
+    }
+  }
+
+  var theme = pref("theme", "light") === "dark" ? "dark" : "light";
+  var viewMode = pref("view", "ide") === "agent" ? "agent" : "ide";
+
+  /**
+   * Applying the theme is three things, and the third is the one that is easy
+   * to forget: the NATIVE WINDOW has to follow. Andrew's complaint was that the
+   * app's outline is his machine's accent blue and stays visible in full
+   * screen; the page cannot paint that, so the main process is told and sets
+   * the title bar overlay and the window background itself.
+   */
+  function applyTheme() {
+    document.documentElement.setAttribute("data-theme", theme);
+    var t = $("themer");
+    if (t) t.setAttribute("aria-pressed", String(theme === "dark"));
+    var l = $("themeLabel");
+    if (l) tx(l, theme === "dark" ? "Dark" : "Light");
+    if (LOCAL && typeof window.zevetLocal.chrome === "function") {
+      // Read back from the stylesheet rather than repeating the hex here. One
+      // definition of the palette, in :root, is the entire reason the theme is
+      // nine token values and not a second stylesheet.
+      var css = getComputedStyle(document.documentElement);
+      window.zevetLocal.chrome({
+        theme: theme,
+        paper: (css.getPropertyValue("--paper") || "").trim(),
+        ink: (css.getPropertyValue("--ink") || "").trim(),
+        cerulean: (css.getPropertyValue("--cerulean") || "").trim(),
+        line: (css.getPropertyValue("--line") || "").trim(),
+      });
+    }
+  }
+
+  function applyView() {
+    document.body.setAttribute("data-view", viewMode);
+    // The editor measures itself on mount; a layout change under it leaves the
+    // scroller the wrong height until something else forces a measure.
+    if (ed && ed.view && ed.view.requestMeasure) {
+      setTimeout(function () { try { ed.view.requestMeasure(); } catch (err) { /* torn down */ } }, 60);
+    }
+  }
+
+  function setTheme(next) {
+    theme = next === "dark" ? "dark" : "light";
+    setPref("theme", theme);
+    applyTheme();
+    // CodeMirror's highlight style is not a CSS variable -- it is compiled into
+    // the editor's own stylesheet -- so the open editor has to be told. It
+    // swaps a compartment rather than rebuilding, keeping the cursor, the
+    // selection, the scroll position and the undo history.
+    if (ed && ed.setDark) ed.setDark(theme === "dark");
+    // The riders' eye holes are painted in the surface colour behind them, and
+    // that colour just changed.
+    if (ed) drawRiders(ed);
+  }
+
+  function setView(next) {
+    viewMode = next === "agent" ? "agent" : "ide";
+    setPref("view", viewMode);
+    applyView();
+    render();
+  }
+
+  /* ---- the settings sheet ---------------------------------------------- */
+
+  var sheetOpen = false;
+  var indexState = null;      // the last answer from indexStatus()
+  var indexProgressText = "";
+  var indexBarPct = 0;
+
+  function openSettings() {
+    sheetOpen = true;
+    refreshIndexStatus();
+    renderSheet();
+  }
+  function closeSettings() {
+    sheetOpen = false;
+    renderSheet();
+  }
+
+  function refreshIndexStatus() {
+    if (!LOCAL || typeof window.zevetLocal.indexStatus !== "function") return;
+    window.zevetLocal.indexStatus(localRoot).then(function (r) {
+      if (r && r.ok) { indexState = r; if (sheetOpen) renderSheet(); }
+    }, function () { /* the section simply says it cannot tell */ });
+  }
+
+  function srow(k, v, mono) {
+    var row = el("div", "srow");
+    row.appendChild(tx(el("span", "k"), k));
+    var val = el("span", mono ? "v mono" : "v");
+    if (typeof v === "string" || typeof v === "number") tx(val, String(v));
+    else if (v) val.appendChild(v);
+    row.appendChild(val);
+    return row;
+  }
+
+  function section(title) {
+    var box = el("div", "sset");
+    box.appendChild(tx(el("h3"), title));
+    return box;
+  }
+
+  function renderSheet() {
+    var existing = $("sheet");
+    var back = $("sheetBack");
+    if (existing) existing.remove();
+    if (back) back.remove();
+    if (!sheetOpen) return;
+
+    var b = el("div", "sheet-back");
+    b.id = "sheetBack";
+    b.addEventListener("click", closeSettings);
+    document.body.appendChild(b);
+
+    var sheet = el("div", "sheet");
+    sheet.id = "sheet";
+    sheet.setAttribute("role", "dialog");
+    sheet.setAttribute("aria-label", "Settings");
+
+    var head = el("div", "sheet-head");
+    head.appendChild(tx(el("h2"), "Settings"));
+    var close = el("button", "sheet-close");
+    close.type = "button";
+    tx(close, "Close");
+    close.addEventListener("click", closeSettings);
+    head.appendChild(close);
+    sheet.appendChild(head);
+
+    /* ---- appearance --------------------------------------------------- */
+    var look = section("Appearance");
+    var themeBtn = el("button", "sbtn");
+    themeBtn.type = "button";
+    tx(themeBtn, theme === "dark" ? "Switch to light" : "Switch to dark");
+    themeBtn.addEventListener("click", function () {
+      setTheme(theme === "dark" ? "light" : "dark");
+      renderSheet();
+    });
+    look.appendChild(srow("Theme", themeBtn));
+    sheet.appendChild(look);
+
+    /* ---- view mode ------------------------------------------------------
+     * Two ways to use the same board. IDE is what zevet has always been: a
+     * tree, an editor, and the agents beside them. Agent view is for driving
+     * the agents and reading what they say, with the editor out of the way.
+     *
+     * A MODE, not a separate app: both draw from the same state and the same
+     * sockets, and switching is one attribute on <body>. A second layout that
+     * forked the data would be two boards to keep in step.
+     */
+    var view = section("View");
+    var modes = [
+      ["ide", "IDE", "The file tree, the editor and everyone's cursors. What zevet has been."],
+      ["agent", "Agent", "The conversation front and centre; the editor tucked away. For driving agents rather than typing."],
+    ];
+    modes.forEach(function (m) {
+      var btn = el("button", "sbtn");
+      btn.type = "button";
+      btn.style.marginRight = "8px";
+      btn.disabled = viewMode === m[0];
+      tx(btn, m[1] + (viewMode === m[0] ? " · on" : ""));
+      btn.addEventListener("click", function () { setView(m[0]); renderSheet(); });
+      var row = el("div", "srow");
+      row.appendChild(btn);
+      var note = el("span", "v");
+      note.style.color = "var(--muted)";
+      note.style.fontSize = "11.5px";
+      tx(note, m[2]);
+      row.appendChild(note);
+      view.appendChild(row);
+    });
+    sheet.appendChild(view);
+
+    /* ---- what it can open ----------------------------------------------
+     * ⚠️ THE HONEST HEADING IS "FOLDERS", NOT "GITHUB REPOS".
+     *
+     * Andrew asked for "a way to edit the github repos it can access (default
+     * should be all, but that might mean we need to build in github oauth)".
+     * zevet does not talk to GitHub at all -- not once, anywhere in the
+     * codebase. What it can read is folders on THIS machine that were picked
+     * with the native file dialog, and that list is the whole access model:
+     * `knownRoot()` in main.js refuses every path that is not on it.
+     *
+     * So this section edits the real thing rather than a GitHub-shaped
+     * illusion over it. "Default should be all" is answered honestly too: the
+     * default is nothing until you pick a folder, because an app that could
+     * read every repo on the disk the moment it started would be a worse
+     * default than one that asks.
+     */
+    var repos = section("Folders it can open");
+    if (!LOCAL) {
+      var noLocal = el("p", "snote");
+      tx(noLocal, "This is a browser tab, so there is no filesystem to open. Use the desktop app.");
+      repos.appendChild(noLocal);
+    } else {
+      if (!localWorkspaces.length) {
+        var none = el("p", "snote");
+        tx(none, "None yet. Nothing on this machine is readable by zevet until you add a folder here.");
+        repos.appendChild(none);
+      }
+      localWorkspaces.forEach(function (w) {
+        var row = el("div", "srow");
+        var k = el("span", "k");
+        tx(k, w.name + (w.repo ? "" : "  (not a git repo)"));
+        row.appendChild(k);
+        var v = el("span", "v mono");
+        tx(v, w.dir);
+        row.appendChild(v);
+        repos.appendChild(row);
+      });
+      var add = el("button", "sbtn");
+      add.type = "button";
+      tx(add, "Add a folder…");
+      add.style.marginTop = "10px";
+      add.addEventListener("click", function () {
+        window.zevetLocal.addWorkspace().then(function () {
+          refreshLocalWorkspaces().then(renderSheet);
+        });
+      });
+      repos.appendChild(add);
+
+      var note = el("p", "snote");
+      note.appendChild(tx(el("b"), "On GitHub: "));
+      note.appendChild(document.createTextNode(
+        "zevet never contacts GitHub. It reads folders on this machine, and this list is the whole " +
+        "access rule — the main process refuses any path that is not under one of them. Signing in to " +
+        "GitHub would only be needed to BROWSE or CLONE repos you have not already got locally, which is a " +
+        "separate feature and is not built.",
+      ));
+      repos.appendChild(note);
+    }
+    sheet.appendChild(repos);
+
+    /* ---- the code index ------------------------------------------------ */
+    sheet.appendChild(indexSection());
+
+    /* ---- connection ---------------------------------------------------- */
+    var conn = section("Connection");
+    conn.appendChild(srow("Hub", (window.__zevetHub || location.origin), true));
+    conn.appendChild(srow("You", myActor || "unknown"));
+    conn.appendChild(srow("Credential", credentialLabel()));
+    sheet.appendChild(conn);
+
+    document.body.appendChild(sheet);
+  }
+
+  function credentialLabel() {
+    if (!window.__zevetCfg) return "unknown";
+    if (window.__zevetCfg.legacy) return "legacy token — re-run setup to enable shared editing";
+    return window.__zevetCfg.hasSecret ? "master secret" : "none configured";
+  }
+
+  function indexSection() {
+    var box = section("Code index");
+    if (!LOCAL || typeof window.zevetLocal.indexStatus !== "function") {
+      var na = el("p", "snote");
+      tx(na, "Not available in this build.");
+      box.appendChild(na);
+      return box;
+    }
+    if (!indexState) {
+      var loading = el("p", "snote");
+      tx(loading, "Checking this machine…");
+      box.appendChild(loading);
+      return box;
+    }
+
+    var m = indexState.measured || {};
+    box.appendChild(srow("This machine", m.totalMemMB
+      ? Math.round(m.totalMemMB / 1024) + " GB RAM · " + m.cores + " cores · " +
+        Math.round((m.freeDiskMB || 0) / 1024) + " GB free"
+      : "could not be measured"));
+
+    if (!indexState.capable) {
+      box.appendChild(srow("Status", "not enabled on this machine"));
+      var why = el("p", "snote");
+      // The reasons are the capability module's own words, chosen to be
+      // actionable. Summarising them here would lose that.
+      tx(why, indexState.reasons.join("  ·  "));
+      box.appendChild(why);
+      var stillFine = el("p", "snote");
+      tx(stillFine, "Everything else in zevet works exactly as it does anywhere else. The index is the only thing this affects.");
+      box.appendChild(stillFine);
+      return box;
+    }
+
+    var stats = indexState.stats;
+    box.appendChild(srow("Model", indexState.model.present
+      ? "downloaded (" + Math.round(indexState.model.bytes / 1048576) + " MB)"
+      : "not downloaded yet (about 86 MB)"));
+    box.appendChild(srow("Index", stats
+      ? stats.files + " files · " + stats.chunks + " chunks"
+      : "not built for this folder"));
+
+    var btn = el("button", "sbtn");
+    btn.type = "button";
+    btn.style.marginTop = "10px";
+    btn.disabled = !localRoot || indexState.building;
+    tx(btn, indexState.building ? "Building…" : (stats ? "Refresh the index" : "Build the index"));
+    btn.addEventListener("click", function () {
+      indexProgressText = "starting…";
+      indexBarPct = 0;
+      renderSheet();
+      window.zevetLocal.indexEnable(localRoot).then(function (r) {
+        indexProgressText = r && r.ok
+          ? "done — " + r.indexed + " indexed, " + r.skipped + " skipped"
+          : "failed: " + ((r && r.error) || "unknown");
+        refreshIndexStatus();
+        renderSheet();
+      });
+    });
+    box.appendChild(btn);
+
+    if (!localRoot) {
+      var pick = el("p", "snote");
+      tx(pick, "Open a folder first — the index is built per folder.");
+      box.appendChild(pick);
+    }
+
+    if (indexProgressText) {
+      var p = el("p", "snote");
+      tx(p, indexProgressText);
+      box.appendChild(p);
+    }
+    if (indexBarPct > 0 && indexBarPct < 100) {
+      var bar = el("div", "sbar");
+      var fill = el("span");
+      fill.style.width = indexBarPct + "%";
+      bar.appendChild(fill);
+      box.appendChild(bar);
+    }
+
+    var cost = el("p", "snote");
+    tx(cost, "Building reads every file in the folder once and keeps a vector store under your home directory. Nothing leaves the machine — the model runs here.");
+    box.appendChild(cost);
+    return box;
+  }
+
+  /* ======================================================================
    * THE STATUS STRIP
    *
    * Andrew asked for "all of the elements in my statusline, but built into the
@@ -1437,6 +2119,15 @@
     var cost = burn && typeof burn.cost === "number" && burn.cost > 0 ? burn.cost : live.cost;
     if (typeof cost === "number" && cost > 0) {
       segs.push(seg([span("dim", "$" + cost.toFixed(2))]));
+    }
+
+    // The hub connection. It used to be a dot in the title bar; that bar is
+    // gone and this is the only place it is still said, so it leads.
+    var cs = $("conn") && $("conn").dataset.state;
+    if (cs) {
+      segs.push(seg([
+        span(cs === "live" ? "ok" : cs === "down" ? "bad" : "warn", cs === "live" ? "live" : cs),
+      ]));
     }
 
     if (machine && typeof machine.cindex === "boolean") {
@@ -1689,6 +2380,7 @@
       awareness: shareable ? e.awareness : null,
       text: shareable ? "" : (e.text || ""),
       language: E.languageForPath(e.relPath),
+      dark: theme === "dark",
       readOnly: !CAN_WRITE || Boolean(e.truncated),
       onChange: function () { onLocalEdit(e); },
     });
@@ -1696,6 +2388,7 @@
     e.getText = handle.getText;
     e.setText = handle.setText;
     e.destroyView = handle.destroy;
+    e.setDark = handle.setDark;
 
     // Solo: the disk text went straight in, because there is no room whose
     // contents might already be the authoritative ones.
@@ -2530,6 +3223,39 @@
     lastFull = serverNow();
     _render();
   };
+
+  // Appearance first, before anything paints, so there is no flash of the
+  // wrong theme on a machine set to dark.
+  applyTheme();
+  applyView();
+
+  var themerEl = $("themer");
+  if (themerEl) {
+    themerEl.addEventListener("click", function () {
+      setTheme(theme === "dark" ? "light" : "dark");
+    });
+  }
+  var settingsEl = $("settingsLink");
+  if (settingsEl) settingsEl.addEventListener("click", openSettings);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && sheetOpen) closeSettings();
+  });
+
+  if (LOCAL && typeof window.zevetLocal.onIndexEvent === "function") {
+    window.zevetLocal.onIndexEvent(function (p) {
+      if (!p) return;
+      if (p.kind === "model" && p.total) {
+        indexBarPct = Math.round((p.loaded / p.total) * 100);
+        indexProgressText = "downloading the model \u2014 " + indexBarPct + "%";
+      } else if (p.kind === "index") {
+        indexProgressText = "indexing \u2014 " + (p.indexed || 0) + " files";
+        indexBarPct = 0;
+      } else if (p.kind === "done") {
+        indexBarPct = 100;
+      }
+      if (sheetOpen) renderSheet();
+    });
+  }
 
   render();
   renderStrip();
