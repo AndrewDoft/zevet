@@ -25,6 +25,7 @@ import { ROOT } from "./helpers.mjs";
 
 const require = createRequire(import.meta.url);
 const CONFIG = path.join(ROOT, "desktop", "electron-builder.config.js");
+const FLAGS = path.join(ROOT, "desktop", "signing.js");
 const PKG = require(path.join(ROOT, "desktop", "package.json"));
 
 const MAC_ENV = {
@@ -57,22 +58,32 @@ function load(env) {
   }
   Object.assign(process.env, env);
   delete require.cache[require.resolve(CONFIG)];
+  delete require.cache[require.resolve(FLAGS)];
   try {
-    return require(CONFIG);
+    const config = require(CONFIG);
+    const { macSigning, winSigning } = require(FLAGS);
+    // ⚠️ THE FLAGS COME FROM signing.js, NOT OFF THE CONFIG. They used to be
+    // exported as `config.__signing`, and electron-builder's schema validation
+    // is CLOSED -- that one extra key failed every build on both runners with
+    // "configuration has an unknown property '__signing'". The test asserted it
+    // was there, so the test agreed with the bug. Nothing but a real build
+    // found it.
+    return { config, signing: { mac: macSigning(), win: winSigning() } };
   } finally {
     for (const k of keys) {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];
     }
     delete require.cache[require.resolve(CONFIG)];
+    delete require.cache[require.resolve(FLAGS)];
   }
 }
 
 describe("with no signing secrets — today, and every fork", () => {
-  const c = load({});
+  const { config: c, signing } = load({});
 
   test("signing is off on both platforms", () => {
-    assert.deepEqual(c.__signing, { mac: false, win: false });
+    assert.deepEqual(signing, { mac: false, win: false });
   });
 
   test("the mac build does not ask for a hardened runtime or notarisation", () => {
@@ -86,6 +97,20 @@ describe("with no signing secrets — today, and every fork", () => {
 
   test("the windows build has no azure block", () => {
     assert.equal(c.win.azureSignOptions, undefined);
+  });
+
+  test("the config introduces NO top-level key of its own", () => {
+    /* ⚠️ THE ONE THAT WOULD HAVE CAUGHT IT. electron-builder validates the
+     * exported object against a CLOSED schema: a single unrecognised top-level
+     * property is a hard failure, not a warning, and it fails the build before
+     * anything is packaged -- unsigned builds included. This file added
+     * `__signing` for the tests to read and broke v0.2.1 on both runners.
+     *
+     * Asserted as "the same keys package.json's build had" rather than against
+     * a copied list of electron-builder's valid options, because that list is
+     * theirs and would rot. This config only ever spreads the base and
+     * overrides `mac` and `win`; if it grows a key, that key is new. */
+    assert.deepEqual(Object.keys(c).sort(), Object.keys(PKG.build).sort());
   });
 
   test("everything else is exactly what package.json says", () => {
@@ -106,10 +131,10 @@ describe("with no signing secrets — today, and every fork", () => {
 });
 
 describe("with every mac secret set", () => {
-  const c = load(MAC_ENV);
+  const { config: c, signing } = load(MAC_ENV);
 
   test("signing and notarisation both turn on", () => {
-    assert.equal(c.__signing.mac, true);
+    assert.equal(signing.mac, true);
     assert.equal(c.mac.hardenedRuntime, true, "notarisation is refused without it");
     assert.deepEqual(c.mac.notarize, { teamId: "TEAM123456" });
     assert.equal(c.mac.gatekeeperAssess, true);
@@ -128,29 +153,29 @@ describe("with mac secrets only PARTLY set", () => {
     // un-notarised app is still refused by Gatekeeper on any machine that
     // downloaded it -- so it looks like the certificate did not work, and
     // nothing in the build says otherwise.
-    const c = load({ CSC_LINK: "p12", CSC_KEY_PASSWORD: "x" });
-    assert.equal(c.__signing.mac, false);
+    const { config: c, signing } = load({ CSC_LINK: "p12", CSC_KEY_PASSWORD: "x" });
+    assert.equal(signing.mac, false);
     assert.equal(c.mac.hardenedRuntime, undefined);
   });
 
   test("an empty secret counts as absent, not as present", () => {
     // A GitHub secret that does not exist expands to "". Every one of these
     // variables is passed on every build, so "" is the NORMAL value.
-    const c = load({ ...MAC_ENV, APPLE_TEAM_ID: "" });
-    assert.equal(c.__signing.mac, false);
+    const { signing } = load({ ...MAC_ENV, APPLE_TEAM_ID: "" });
+    assert.equal(signing.mac, false);
   });
 
   test("whitespace is not a credential either", () => {
-    const c = load({ ...MAC_ENV, APPLE_ID: "   " });
-    assert.equal(c.__signing.mac, false);
+    const { signing } = load({ ...MAC_ENV, APPLE_ID: "   " });
+    assert.equal(signing.mac, false);
   });
 });
 
 describe("with every windows secret set", () => {
-  const c = load(WIN_ENV);
+  const { config: c, signing } = load(WIN_ENV);
 
   test("azure trusted signing turns on with all four fields", () => {
-    assert.equal(c.__signing.win, true);
+    assert.equal(signing.win, true);
     assert.deepEqual(c.win.azureSignOptions, {
       publisherName: "Masora Inc",
       endpoint: "https://eus.codesigning.azure.net",
@@ -160,7 +185,7 @@ describe("with every windows secret set", () => {
   });
 
   test("the mac half is untouched by the windows half", () => {
-    assert.equal(c.__signing.mac, false);
+    assert.equal(signing.mac, false);
     assert.equal(c.mac.identity, null);
   });
 });

@@ -50,40 +50,16 @@
 
 const base = require("./package.json").build;
 
-/** Set, non-empty, and not the literal placeholder a half-finished secret
- *  leaves behind. An empty GitHub secret expands to an empty string, so
- *  `process.env.X !== undefined` would be true for a secret that does not
- *  exist — which is exactly how a build ends up half-signed. */
-const has = (...names) => names.every((n) => typeof process.env[n] === "string" && process.env[n].trim() !== "");
+/* ⚠️ THE EXPORTED OBJECT MUST CONTAIN NOTHING BUT electron-builder'S OWN KEYS.
+ * Its schema validation is closed: one unrecognised top-level property is a
+ * hard build failure, not a warning. An earlier version of this file exported
+ * a `__signing` summary for the tests to read and broke EVERY build, signed or
+ * not, with "configuration has an unknown property '__signing'". The flags live
+ * in ./signing.js and are imported by the tests from there. */
+const { macSigning, winSigning } = require("./signing.js");
 
-/* ── macOS ───────────────────────────────────────────────────────────────────
- *
- * `CSC_LINK` is the Developer ID Application certificate as a base64 .p12, and
- * `CSC_KEY_PASSWORD` its password; electron-builder reads both by name without
- * being told. Notarisation needs an Apple ID, an APP-SPECIFIC PASSWORD (not the
- * account password) and the team id.
- *
- * ⚠️ ALL FIVE OR NONE. A certificate without notarisation produces an app that
- * is signed and STILL refused by Gatekeeper on a machine that downloaded it,
- * which is the worst outcome available: it looks like signing did not work, and
- * the build gives no clue why. */
-const MAC_SIGNING = has("CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID");
-
-/* ── Windows ─────────────────────────────────────────────────────────────────
- *
- * Azure Trusted Signing. The three AZURE_* credentials are the service
- * principal; the other three name which account and certificate profile to sign
- * with. `publisherName` MUST match the certificate's subject exactly or NSIS
- * rejects its own signature at install time. */
-const WIN_SIGNING = has(
-  "AZURE_TENANT_ID",
-  "AZURE_CLIENT_ID",
-  "AZURE_CLIENT_SECRET",
-  "AZURE_CODE_SIGNING_ENDPOINT",
-  "AZURE_CODE_SIGNING_ACCOUNT",
-  "AZURE_CERT_PROFILE",
-  "AZURE_PUBLISHER_NAME",
-);
+const MAC_SIGNING = macSigning();
+const WIN_SIGNING = winSigning();
 
 module.exports = {
   ...base,
@@ -122,8 +98,4 @@ module.exports = {
         }
       : {}),
   },
-
-  /** Exported for the tests and for anyone reading a build log that says
-   *  "signing is skipped" and wanting to know whether that was on purpose. */
-  __signing: { mac: MAC_SIGNING, win: WIN_SIGNING },
 };
