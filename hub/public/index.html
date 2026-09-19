@@ -74,7 +74,13 @@
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     display: grid;
-    grid-template-rows: auto 1fr;
+    /* Three rows: the title bar, the status strip, and the shell taking the
+       rest. ⚠️ THE COUNT MATTERS. This was `auto 1fr` for two children, and
+       adding the strip as a third silently gave the STRIP the 1fr row and left
+       the shell on an implicit auto one -- a 400px void above the panes and a
+       board pushed off the bottom of the window. Adding a fourth child means
+       adding a fourth row here. */
+    grid-template-rows: auto auto 1fr;
     overflow: hidden;
   }
   .mono { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
@@ -192,6 +198,41 @@
   .node[data-collide="true"] .name { color: var(--alert); }
 
   .empty-tree { padding: 30px 18px; color: var(--muted); font-size: 13px; max-width: 46ch; }
+
+  /* ---- the status strip -------------------------------------------------
+     Andrew's own Claude Code status line, brought inside zevet. Segments
+     separated by a dim pipe, monospace numerals, nothing that reflows when a
+     number changes width -- it updates constantly and a strip that jitters is
+     a strip you learn to ignore. */
+  .strip {
+    display: flex; align-items: center; gap: 0;
+    flex: none; overflow-x: auto; scrollbar-width: none;
+    padding: 5px 16px; border-bottom: 1px solid var(--line);
+    font-family: var(--font-mono); font-size: 10.5px;
+    color: var(--muted); white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .strip::-webkit-scrollbar { display: none; }
+  /* Nothing to say, no bar. In a plain browser tab there is no agent stream and
+     no machine to probe, so the strip is empty -- and an empty 10px bar with a
+     rule under it reads as a rendering fault rather than as an absence.
+     ⚠️ COLLAPSED, NOT `display: none`. Removing it from the layout takes it out
+     of the body grid too, which leaves three declared rows with two children:
+     the shell then lands on an auto row instead of the 1fr one and stops
+     halfway down the window. Zero height keeps the slot and shows nothing. */
+  .strip:empty { height: 0; padding: 0; border-bottom: 0; }
+  .strip .seg { display: inline-flex; align-items: baseline; gap: 5px; }
+  .strip .sep { color: var(--line); padding: 0 10px; }
+  .strip .k { color: var(--faint); }
+  .strip .v { color: var(--ink); }
+  .strip .ok { color: #4f7a4a; }
+  .strip .warn { color: var(--who-4); }
+  .strip .bad { color: var(--alert); }
+  .strip .dim { color: var(--faint); }
+  /* The bar is drawn with block characters rather than a div, so it sits on the
+     same baseline as the number beside it and needs no vertical alignment
+     fiddling at 10px. */
+  .strip .bar { letter-spacing: -0.5px; }
 
   /* ---- tree badges: how long a file is, and what git thinks changed -----
      Pushed to the right with margin-left:auto so the names stay a clean
@@ -454,6 +495,8 @@
   <span class="presence" id="presence"></span>
   <span class="conn" id="conn" data-state="init"><span class="dot"></span><span id="connText">connecting</span></span>
 </div>
+
+<div class="strip" id="strip"></div>
 
 <div class="shell">
   <aside class="pane rail">
@@ -990,6 +1033,14 @@
 
   if (LOCAL) {
     window.zevetLocal.onAgentEvent(function (evt) {
+      // ⚠️ THE STRIP READS THE USAGE BEFORE THE CONSOLE LOOKUP, and the order
+      // matters. Below this, an event for a console the board is not tracking
+      // is dropped -- which is right for the console panel and wrong for the
+      // strip. Reload the board and `myConsoles` is empty while the agents it
+      // started are still running and still sending; the panel cannot show
+      // those, but the tokens they are spending are still being spent.
+      if (evt.type === "agent") noteAgentPayload(evt.payload);
+
       var c = consoleById(evt.id);
       if (!c) return;
       if (evt.type === "exit") {
@@ -999,6 +1050,7 @@
         pushConsoleLine(c, "err", evt.text || "");
       } else if (evt.type === "agent") {
         // Claude's stream-json. Show the parts a person reads, not the envelope.
+        // (The usage on this same line was already read, above.)
         var p = evt.payload || {};
         if (p.type === "assistant" && p.message && Array.isArray(p.message.content)) {
           p.message.content.forEach(function (part) {
@@ -1194,6 +1246,218 @@
       });
     }
     walk(built.root, 0, "");
+  }
+
+  /* ======================================================================
+   * THE STATUS STRIP
+   *
+   * Andrew asked for "all of the elements in my statusline, but built into the
+   * zevet UI" (2026-09-18). The original is ~/.claude/statusline.py. Its nine
+   * segments land here in three groups:
+   *
+   *   FROM THE AGENT STREAM, live, with no polling: model, context tokens,
+   *   cache hit rate, cost. zevet already receives every stream-json line from
+   *   the agents it launches -- `onAgentEvent` hands them over as
+   *   {type:"agent", payload} -- and until now threw the usage away.
+   *
+   *   FROM THE MACHINE, on a timer: the vault graph, the code index probe, the
+   *   repo's branch and ahead/behind, and zevet's own hook health. Those come
+   *   over `zevetLocal.status()`.
+   *
+   *   NOT AT ALL: the 5h and 7d rate-limit windows. They reach statusline.py
+   *   because Claude Code hands them to the status line command in its payload;
+   *   a headless agent's stream-json does not carry them, and there is nowhere
+   *   else to get them. What is shown instead is "spent", zevet's own count of
+   *   what the agents IT started have used. ⚠️ THAT IS NOT THE RATE LIMIT and
+   *   must never be labelled as one -- see desktop/status-sources.js, which
+   *   says the same thing twice because it matters.
+   *
+   * ⚠️ THE USAGE RULES ARE DUPLICATED, deliberately and in exactly two places:
+   * here, for live display, and in desktop/status-sources.js, for the rolling
+   * windows the main process keeps. They must agree. If you change what counts
+   * as "context" in one, change it in the other -- and the rule is INPUT PLUS
+   * BOTH CACHE FIELDS AND NOT OUTPUT, because this turn's output is already
+   * inside next turn's input and adding it double-counts. statusline.py carries
+   * a comment about having made that mistake; this is the second and third
+   * place it could be made again.
+   * ====================================================================== */
+
+  var live = { model: null, context: 0, cacheHit: null, cost: null };
+  var machine = null;          // the answer from zevetLocal.status(), or null
+  var STATUS_EVERY_MS = 4000;
+
+  /** The usage on one stream-json line, or null. See the warning above. */
+  function usageOf(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    var u = (payload.message && payload.message.usage) || payload.usage || null;
+    if (!u || typeof u !== "object") return null;
+    var n = function (v) { return typeof v === "number" && isFinite(v) ? v : 0; };
+    var read = n(u.cache_read_input_tokens);
+    var context = n(u.input_tokens) + read + n(u.cache_creation_input_tokens);
+    if (!context && !n(u.output_tokens)) return null;
+    return {
+      context: context,
+      // Null, not zero, when there was no input at all: "no data" and "nothing
+      // was cached" are opposite readings, and one of them means this turn is
+      // being paid for at full rate.
+      cacheHit: context > 0 ? (read / context) * 100 : null,
+      model: (payload.message && payload.message.model) || payload.model || null,
+    };
+  }
+
+  /** Fold one agent event into the live figures. Called from onAgentEvent. */
+  function noteAgentPayload(payload) {
+    if (!payload) return;
+    if (payload.type === "system" && typeof payload.model === "string") live.model = payload.model;
+    var u = usageOf(payload);
+    if (u) {
+      live.context = u.context;
+      if (u.cacheHit != null) live.cacheHit = u.cacheHit;
+      if (u.model) live.model = u.model;
+    }
+    // total_cost_usd is a RUNNING SESSION TOTAL, reported on the result line.
+    // It replaces; summing it multiplies the bill by the number of turns.
+    if (typeof payload.total_cost_usd === "number") live.cost = payload.total_cost_usd;
+    renderStrip();
+  }
+
+  function pollStatus() {
+    if (!LOCAL || typeof window.zevetLocal.status !== "function") return;
+    window.zevetLocal.status().then(function (r) {
+      if (r && r.ok) { machine = r; renderStrip(); }
+    }, function () { /* a status probe that fails simply shows nothing */ });
+  }
+
+  /** Eight steps of block, the same device statusline.py uses. */
+  var BLOCKS = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588";
+  function bar(pct, width) {
+    var w = width || 8;
+    var filled = Math.max(0, Math.min(w, Math.round((pct / 100) * w)));
+    var out = "";
+    for (var i = 0; i < w; i++) out += i < filled ? BLOCKS[BLOCKS.length - 1] : BLOCKS[0];
+    return out;
+  }
+
+  /** Tokens, at a width that does not make the strip jump. Past a million the
+   *  thousands stop carrying information and start costing three characters:
+   *  "3.9M" says the same thing as "3870k" and says it in a column that does
+   *  not widen as the number grows. */
+  function tokens(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+    return (n / 1000).toFixed(0) + "k";
+  }
+
+  /** Colour on ABSOLUTE size, not on a share of the window: cost scales with
+   *  the tokens carried per turn, not with how much of a 1M window is left.
+   *  Thresholds are statusline.py's, in thousands. */
+  function tint(v, warn, bad) {
+    return v >= bad ? "bad" : v >= warn ? "warn" : "ok";
+  }
+
+  function seg(parts) {
+    var n = el("span", "seg");
+    parts.forEach(function (p) {
+      if (p == null) return;
+      n.appendChild(typeof p === "string" ? tx(el("span"), p) : p);
+    });
+    return n;
+  }
+  function span(cls, text) { return tx(el("span", cls), text); }
+
+  function renderStrip() {
+    var host = $("strip");
+    if (!host) return;
+    var segs = [];
+
+    if (live.model) segs.push(seg([span("dim", live.model)]));
+
+    // repo:branch @sha ^ahead vbehind
+    var repo = machine && machine.repo;
+    if (repo && repo.branch) {
+      var r = [span("v", repo.branch)];
+      if (repo.sha) r.push(span("dim", "@" + repo.sha));
+      // Nulls mean "no upstream" or "upstream gone" and are shown as nothing at
+      // all. Zeros mean in step and are worth showing, quietly.
+      if (repo.ahead) r.push(span("warn", "\u2191" + repo.ahead));
+      if (repo.behind) r.push(span("warn", "\u2193" + repo.behind));
+      segs.push(seg(r));
+    }
+
+    if (live.context) {
+      var k = live.context / 1000;
+      var c = tint(k, 180, 300);
+      segs.push(seg([
+        span("k", "ctx"),
+        span(c, tokens(live.context)),
+        // statusline.py fills the bar at `tokens / 3000`, i.e. full at 300k.
+        // `k` is ALREADY in thousands, so the divisor here is 3 and not 3000 --
+        // and not 30, which is what it was and which drew 197k as one block out
+        // of eight.
+        span("bar " + c, bar(Math.min(100, k / 3))),
+      ]));
+    }
+
+    if (live.cacheHit != null) {
+      // Inverted: high is cheap. A DROP is the interesting event.
+      var h = live.cacheHit;
+      segs.push(seg([span("k", "cache"), span(h < 50 ? "bad" : h < 85 ? "warn" : "ok", h.toFixed(0) + "%")]));
+    }
+
+    // Spent, NOT the rate limit. The label says "spent" for that reason.
+    var burn = machine && machine.burn;
+    if (burn) {
+      var b = [span("k", "spent")];
+      ["5h", "7d"].forEach(function (w) {
+        if (burn[w] && burn[w].tokens) {
+          b.push(span("dim", w));
+          b.push(span("v", tokens(burn[w].tokens)));
+        }
+      });
+      if (b.length > 1) segs.push(seg(b));
+    }
+
+    // The rolling total across every agent zevet has launched, when the main
+    // process is keeping one; the current session's own figure otherwise. The
+    // rolling one is the more useful of the two and the only one that survives
+    // a console being closed.
+    var cost = burn && typeof burn.cost === "number" && burn.cost > 0 ? burn.cost : live.cost;
+    if (typeof cost === "number" && cost > 0) {
+      segs.push(seg([span("dim", "$" + cost.toFixed(2))]));
+    }
+
+    if (machine && typeof machine.cindex === "boolean") {
+      segs.push(seg([span("k", "cindex"), span(machine.cindex ? "ok" : "warn", machine.cindex ? "on" : "off")]));
+    }
+
+    var g = machine && machine.graph;
+    if (g && g.state !== "missing") {
+      // The same precedence the original uses: errors, then open reports, then
+      // staleness, then sync. Two readouts of one system that disagree about
+      // which problem matters most are worse than one readout.
+      var cls = g.state === "errors" ? "bad" : g.state === "ok" ? "ok" : "warn";
+      var gs = [span("k", "graph")];
+      if (g.state === "ok") {
+        gs.push(span("ok", String(g.count == null ? "" : g.count)));
+        if (g.head) gs.push(span("dim", g.head + (g.detail ? " " + g.detail : "")));
+      } else {
+        gs.push(span(cls, (g.count == null ? "" : g.count + " ") + g.detail));
+      }
+      segs.push(seg(gs));
+    }
+
+    var hook = machine && machine.hook;
+    if (hook && hook.failedAgo != null) {
+      // A hook that throws exits 0 and writes to stderr, which nothing displays,
+      // so a broken hook silently does nothing indefinitely. Only recent
+      // failures are shown: an old log is history, not a problem.
+      segs.push(seg([span("bad", "hook fail"), span("dim", hook.failedAgo)]));
+    }
+
+    host.textContent = "";
+    segs.forEach(function (n, i) {
+      if (i) host.appendChild(span("sep", "|"));
+      host.appendChild(n);
+    });
   }
 
   /* ======================================================================
@@ -2154,9 +2418,23 @@
   };
 
   render();
+  renderStrip();
   refreshLocalWorkspaces();
   refreshLocalAgents();
   connect();
+
+  // The strip's machine-side figures — the graph, the code index, the branch,
+  // hook health — are polled rather than pushed, because none of them has an
+  // event to subscribe to. Its agent-side figures are NOT polled: they arrive
+  // on the stream and repaint immediately, which is why `ctx` moves the instant
+  // a turn lands rather than up to four seconds later.
+  //
+  // The timer is not unref'd and does not need clearing: it lives as long as
+  // the window does, and the window closing takes it.
+  if (LOCAL && typeof window.zevetLocal.status === "function") {
+    pollStatus();
+    setInterval(pollStatus, STATUS_EVERY_MS);
+  }
 })();
 </script>
 </body>
