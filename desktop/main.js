@@ -817,6 +817,44 @@ ipcMain.handle("zevet:githubCancel", () => {
   return true;
 });
 
+/* ── Sign out of GitHub, from Settings ─────────────────────────────────────
+ *
+ * The counterpart to the three calls above, for a machine that signed in
+ * during setup and wants out without re-running it. Ends the hub session
+ * first (so a stolen config stops working promptly, not at the idle TTL),
+ * then drops `session` — and only `session` — from the local config. The
+ * secret, hub and actor stay: this machine goes back to team-key exactement
+ * as it was before signing in, which is what makes the operation safe to
+ * offer with one click and no confirmation. Reconnecting is the same click
+ * in reverse.
+ */
+ipcMain.handle("zevet:githubLogout", async () => {
+  const cfg = readConfig() || {};
+  const session = typeof cfg.session === "string" ? cfg.session : "";
+  if (!session) return { ok: true, loggedOut: false };
+  const hub = String(cfg.hub || "").replace(/\/+$/, "");
+  let loggedOut = false;
+  if (hub) {
+    try {
+      const res = await fetch(`${hub}/auth/logout`, {
+        method: "POST",
+        headers: { "x-zevet-token": session },
+        signal: AbortSignal.timeout(8000),
+      });
+      loggedOut = res.ok;
+    } catch {
+      // The hub is unreachable or an older build without the route. The local
+      // session is still dropped below: a credential this machine will not
+      // present again is as good as revoked from this side, and keeping it
+      // would leave the user signed in after asking out.
+    }
+  }
+  const rest = { ...cfg };
+  delete rest.session;
+  writeConfig(rest);
+  return { ok: true, loggedOut };
+});
+
 ipcMain.handle("zevet:pickRepo", async () => {
   const picked = await dialog.showOpenDialog(setupWindow, {
     title: "Choose a project folder",

@@ -254,6 +254,20 @@ export class Accounts {
     return { ok: true, removed: before !== this.state.allowed.length };
   }
 
+  /**
+   * End one session — somebody signing THEMSELVES out. No owner check, on
+   * purpose: leaving must never require permission, and it removes nothing
+   * but this session. Ownership, the allowlist and everyone else's sessions
+   * are untouched, so an owner who disconnects stays the owner and can sign
+   * straight back in. Returns whether there was a session to end.
+   */
+  logout(token) {
+    if (typeof token !== "string" || !this.state.sessions[token]) return { ok: true, loggedOut: false };
+    delete this.state.sessions[token];
+    this.#save();
+    return { ok: true, loggedOut: true };
+  }
+
   #sweep() {
     const now = this.now();
     for (const [tok, s] of Object.entries(this.state.sessions)) {

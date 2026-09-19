@@ -21,6 +21,7 @@
 // shared token does NOT make its holder the owner.
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { startHub, TOKEN, ROOT, tempDir } from "./helpers.mjs";
@@ -315,6 +316,72 @@ describe("the hub's gate, without GitHub", () => {
       body: JSON.stringify({ login: "mallory" }),
     });
     assert.equal(res.status, 401);
+  });
+});
+
+describe("signing yourself out", () => {
+  // A seeded account store: one owner with one live session. Seeding the file
+  // directly is the only way to get a session without GitHub, and the route
+  // under test is exactly what ends it.
+  const SESSION = "a".repeat(64);
+  let hub;
+  let dir;
+  before(async () => {
+    dir = tempDir("zevet-logout-");
+    const file = path.join(dir.dir, "accounts.json");
+    writeFileSync(file, JSON.stringify({
+      version: 1,
+      secret: "b".repeat(48),
+      owner: { login: "andrewdoft", display: "AndrewDoft", id: "1001", added: new Date().toISOString() },
+      allowed: [],
+      sessions: { [SESSION]: { login: "andrewdoft", id: "1001", at: Date.now() } },
+    }));
+    hub = await startHub({
+      ZEVET_ACCOUNTS: file,
+      // 64 hex chars, like a real derived token: tokenOk gates on the shared
+      // token's width before falling through to the session lookup, so the
+      // suite's short test token would reject every session at the gate.
+      ZEVET_TOKEN: "t".repeat(64),
+    });
+  });
+  after(async () => {
+    await hub?.stop();
+    dir?.cleanup();
+  });
+
+  test("logout ends the caller's session and nothing else", async () => {
+    const out = await fetch(`${hub.base}/auth/logout`, {
+      method: "POST",
+      headers: { "x-zevet-token": SESSION },
+    });
+    assert.equal(out.status, 200);
+    assert.deepEqual(await out.json(), { ok: true, loggedOut: true });
+    // The session is dead now; the owner record is not.
+    assert.equal((await fetch(`${hub.base}/auth/whoami`, { headers: { "x-zevet-token": SESSION } })).status, 401);
+    // And ending it again is a 401, not a second logout: the credential is
+    // gone, so there is nothing to authenticate — idempotency lives one layer
+    // down, in accounts.logout(), where a dead token is { loggedOut: false }.
+    const again = await fetch(`${hub.base}/auth/logout`, {
+      method: "POST",
+      headers: { "x-zevet-token": SESSION },
+    });
+    assert.equal(again.status, 401);
+  });
+
+  test("a shared token logs out nothing", async () => {
+    // The hub's own shared token (64 chars, like production): a valid
+    // credential that is not a session, so there is nothing to end — 200 with
+    // loggedOut:false, not an error.
+    const res = await fetch(`${hub.base}/auth/logout`, {
+      method: "POST",
+      headers: { "x-zevet-token": "t".repeat(64) },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, loggedOut: false });
+  });
+
+  test("no credential cannot log out", async () => {
+    assert.equal((await fetch(`${hub.base}/auth/logout`, { method: "POST" })).status, 401);
   });
 });
 

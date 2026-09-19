@@ -199,6 +199,21 @@ describe("sessions", () => {
     // support incident.
     assert.ok(new Accounts({ file }).session(token));
   });
+
+  test("logging out ends one session and nothing else", (t) => {
+    const a = store(t);
+    const mine = a.signIn(alice).token;
+    const theirs = a.signIn(bob).token;
+    assert.deepEqual(a.logout(mine), { ok: true, loggedOut: true });
+    assert.equal(a.session(mine), null, "my session survived my logout");
+    assert.ok(a.session(theirs), "somebody else's session died with mine");
+    assert.equal(a.owner, "andrewdoft", "ownership moved");
+    // Unknown and malformed tokens are a no-op, not an error: logout is
+    // idempotent, and a double-click must not be able to fail.
+    assert.deepEqual(a.logout(mine), { ok: true, loggedOut: false });
+    assert.deepEqual(a.logout("f".repeat(64)), { ok: true, loggedOut: false });
+    assert.deepEqual(a.logout("short"), { ok: true, loggedOut: false });
+  });
 });
 
 describe("the file", () => {

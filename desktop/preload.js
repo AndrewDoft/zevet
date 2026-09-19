@@ -73,6 +73,8 @@ contextBridge.exposeInMainWorld("zevet", {
   githubStart: (hub) => ipcRenderer.invoke("zevet:githubStart", { hub }),
   githubWait: () => ipcRenderer.invoke("zevet:githubWait"),
   githubCancel: () => ipcRenderer.invoke("zevet:githubCancel"),
+  /** End this machine's GitHub session, hub-side and locally. */
+  githubLogout: () => ipcRenderer.invoke("zevet:githubLogout"),
   /** Native folder picker; resolves to a path or null. */
   pickRepo: () => ipcRenderer.invoke("zevet:pickRepo"),
   /** Install the hooks into that repo. */

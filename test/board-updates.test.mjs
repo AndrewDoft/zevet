@@ -291,3 +291,32 @@ test("cancel stops the wait and restores the button without starting a second fl
   assert.equal(cancels, 1);
   assert.ok(button(box, "Connect GitHub"));
 });
+
+test("disconnect signs the machine out and reports it", async () => {
+  let logouts = 0;
+  const done = [];
+  const ui = connectUi({
+    githubLogout: async () => { logouts++; return { ok: true, loggedOut: true }; },
+  });
+  const row = ui.githubDisconnectRow((ok) => done.push(ok));
+  await button(row, "Disconnect GitHub").click();
+  await flush();
+  assert.equal(logouts, 1);
+  assert.match(row.textContent, /Signed out/);
+  assert.deepEqual(done, [true]);
+});
+
+test("a failed disconnect keeps a working retry", async () => {
+  let tries = 0;
+  const ui = connectUi({
+    githubLogout: async () => (++tries === 1 ? { ok: false, error: "Hub is unreachable." } : { ok: true, loggedOut: true }),
+  });
+  const row = ui.githubDisconnectRow(() => {});
+  await button(row, "Disconnect GitHub").click();
+  await flush();
+  assert.match(row.textContent, /Hub is unreachable/);
+  await button(row, "Retry").click();
+  await flush();
+  assert.match(row.textContent, /Signed out/);
+  assert.equal(tries, 2);
+});

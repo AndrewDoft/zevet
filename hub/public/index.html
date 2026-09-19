@@ -2174,6 +2174,61 @@
     return box;
   }
 
+  /**
+   * Re-read everything signing in or out changes: who the hub sees (the
+   * cookie may be new) and what the machine holds (the session is written
+   * main-side). Without the second half the credential label lies until a
+   * reload.
+   */
+  function refreshAccount() {
+    refreshWhoami();
+    if (window.zevet && typeof window.zevet.config === "function") {
+      window.zevet.config().then(function (c) {
+        if (c) window.__zevetCfg = c;
+        if (sheetOpen) renderSheet();
+      }, function () { if (sheetOpen) renderSheet(); });
+    }
+  }
+
+  /**
+   * Leave GitHub from Settings. One click, no confirmation: disconnecting
+   * removes this machine's session here and on the hub and nothing else, and
+   * reconnecting is the Connect button in reverse. Ownership is untouched —
+   * an owner who disconnects stays the owner.
+   */
+  function githubDisconnectRow(onDone) {
+    var row = el("div", "srow");
+    var btn = el("button", "sbtn");
+    btn.type = "button";
+    tx(btn, "Disconnect GitHub");
+    var msg = el("span", "v");
+    row.appendChild(btn);
+    row.appendChild(msg);
+    btn.addEventListener("click", function () {
+      btn.disabled = true;
+      tx(btn, "Disconnecting…");
+      msg.textContent = "";
+      window.zevet.githubLogout().then(function (r) {
+        if (!r || !r.ok) {
+          btn.disabled = false;
+          tx(btn, "Retry");
+          tx(msg, (r && r.error) || "Could not sign out.");
+          return;
+        }
+        tx(msg, "Signed out.");
+        tx(btn, "Disconnect GitHub");
+        btn.disabled = false;
+        if (typeof onDone === "function") onDone(true);
+      }, function (err) {
+        btn.disabled = false;
+        tx(btn, "Retry");
+        msg.textContent = "";
+        tx(msg, (err && err.message) || "Could not sign out.");
+      });
+    });
+    return row;
+  }
+
   function accountSection() {
     var box = section("Account");
     if (!whoState) {
@@ -2193,21 +2248,29 @@
       // has no bridge and gets the note without the button.
       var canConnect = whoState.githubSignIn && LOCAL && window.zevet &&
         typeof window.zevet.githubStart === "function";
+      var localSession = Boolean(window.__zevetCfg && window.__zevetCfg.session);
       var sh = el("p", "snote");
       tx(sh, "Connected with a team key." + (whoState.githubSignIn
-        ? (canConnect ? "" : " Open the desktop app to sign in with GitHub.")
+        ? (canConnect || localSession ? "" : " Open the desktop app to sign in with GitHub.")
         : " GitHub sign-in is unavailable on this hub."));
       box.appendChild(sh);
-      if (canConnect && !whoState.login) {
-        box.appendChild(githubConnectBox(function () {
-          refreshWhoami();
-          if (window.zevet && typeof window.zevet.config === "function") {
-            window.zevet.config().then(function (c) {
-              if (c) window.__zevetCfg = c;
-              if (sheetOpen) renderSheet();
-            }, function () { if (sheetOpen) renderSheet(); });
-          }
-        }));
+      if (!whoState.login && !localSession) {
+        // Signed in nowhere: offer the way in, but only where the desktop
+        // bridge exists to finish it.
+        if (canConnect) box.appendChild(githubConnectBox(refreshAccount));
+      } else {
+        // Signed in here, on the machine, or both: the Connect option is gone
+        // and Disconnect takes its place. One of the two states below always
+        // names something true; neither is shown twice.
+        if (whoState.login) box.appendChild(srow("Signed in as", "@" + whoState.login));
+        if (localSession && !whoState.login) {
+          var mh = el("p", "snote");
+          tx(mh, "GitHub connected on this machine.");
+          box.appendChild(mh);
+        }
+        if (LOCAL && window.zevet && typeof window.zevet.githubLogout === "function") {
+          box.appendChild(githubDisconnectRow(refreshAccount));
+        }
       }
     }
 

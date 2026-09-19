@@ -687,6 +687,26 @@ const server = createServer(async (req, res) => {
     });
   }
 
+  /* Signing yourself out. NOT owner-gated, unlike allow/revoke below: ending
+   * your own session removes nothing but that session, and requiring the
+   * owner's say-so to leave would make every departure hostage to somebody
+   * else being around. A shared token is not a session, so presenting one
+   * logs out nothing — which is also why this cannot be used to end anybody
+   * else's session: the only session it can name is the caller's own. */
+  if (url.pathname === "/auth/logout" && req.method === "POST") {
+    const tok = tokenFrom(req, url);
+    if (!tok) return refuse(req, res, url);
+    const r = accounts.logout(tok);
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      // Drop the browser cookie too: its session is gone, and a stale cookie
+      // otherwise reads as signed-in until it expires on its own.
+      "set-cookie": "zevet_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+    });
+    return res.end(JSON.stringify({ ok: true, loggedOut: r.loggedOut }));
+  }
+
   /* Adding and removing teammates. OWNER ONLY — a shared token is deliberately
    * not enough, because the shared token is the thing being replaced and
    * anybody holding it could otherwise add themselves permanently. */
