@@ -222,6 +222,37 @@ describe("file-watch: seeing what an agent did on disk", () => {
     assert.equal(seen.length, 0, "a closed tab was still told about a change");
   });
 
+  test("rewriting a file with the SAME contents reports nothing", async () => {
+    // ⚠️ THE GUARD THAT MAKES macOS BEHAVE. `onDirEvent` wakes every
+    // subscription in a directory when the OS gives it no filename, which on
+    // FSEvents is most of the time -- so without this, a neighbouring write
+    // pushed a "changed" event at an editor whose document had not changed,
+    // and the renderer folded it into the shared CRDT. Three tests in this
+    // file failed the first time they ever ran on a Mac, for exactly that.
+    //
+    // It is also right on its own terms: a formatter that rewrites a file to
+    // byte-identical contents has not made an edit, and telling three
+    // teammates that it did is noise on everyone's screen.
+    writeFileSync(path.join(root, "same.txt"), "unchanged\n");
+    fw.watch(root, "same.txt");
+
+    writeFileSync(path.join(root, "same.txt"), "unchanged\n");
+    await sleep(QUIET_MS);
+    assert.equal(seen.length, 0, `an identical rewrite produced ${seen.length} report(s)`);
+
+    // And a REAL change still gets through afterwards -- the subscription is
+    // not wedged by having declined to report.
+    writeFileSync(path.join(root, "same.txt"), "changed\n");
+    assert.ok(await waitFor(() => seen.length >= 1), "a real change was swallowed");
+    assert.equal(seen[seen.length - 1].text, "changed\n");
+
+    // Back to the original text is a change too: this compares to what was
+    // last REPORTED, not to what the file said when the watch began.
+    seen.length = 0;
+    writeFileSync(path.join(root, "same.txt"), "unchanged\n");
+    assert.ok(await waitFor(() => seen.length >= 1), "a revert was not reported");
+  });
+
   test("a burst of ten writes coalesces", async () => {
     // WHAT IS AND IS NOT GUARANTEED. The debounce is trailing: each event
     // restarts a 120ms clock, so any burst whose events are less than 120ms
