@@ -58,6 +58,12 @@
     --cerulean-soft: #23414f;
     --alert: #d98a72;
 
+    /* See the light values: raised means a few per cent lighter here, not a
+       white panel. */
+    --raise-soft: #ffffff08;
+    --raise: #ffffff12;
+    --raise-line: #ffffff0a;
+
     --who-0: #7cb6d4;
     --who-1: #d09a72;
     --who-2: #8fbf87;
@@ -84,6 +90,19 @@
     --cerulean-soft: #d9e4ea;
     --alert: #a8442f;
 
+    /* ⚠️ RAISED SURFACES, AND WHY THEY ARE TOKENS NOW.
+       Hovers, cards and the console well were all a translucent WHITE over
+       eggshell -- `#fff7`, `#fff9`, `#fffb`. That is invisible-by-design in
+       light mode and catastrophic in dark: translucent white over #17262e is a
+       pale grey PANEL, and the console came out as a light box with eggshell
+       text on it that could not be read. Seen in a screenshot of the running
+       app, not reasoned about.
+       Light keeps the exact alphas it had. Dark lifts by a few per cent
+       instead, which is what "slightly raised" means on a dark ground. */
+    --raise-soft: #ffffff70;
+    --raise: #ffffffbb;
+    --raise-line: #ffffff55;
+
     /* Identity, and it has to work on a LIGHT ground: these are mid-dark and
        muted, not the bright hues a dark board can afford. Andrew gets the
        house cerulean. */
@@ -99,6 +118,9 @@
     --rail: 258px;
     --tree: 286px;
     --streams: 340px;
+    /* The teammates column in agent view. Narrower than --streams because it
+       carries a summary rather than a transcript. */
+    --talk: 300px;
 
     --font-sans: "Jost", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -159,7 +181,7 @@
     font-size: 12.5px; color: var(--muted);
     border: 1px solid transparent;
   }
-  .chip[data-active="true"] { color: var(--ink); border-color: var(--line); background: #fff8; }
+  .chip[data-active="true"] { color: var(--ink); border-color: var(--line); background: var(--raise-soft); }
   .chip .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
   .chip[data-active="false"] .bead { opacity: 0.32; }
   .chip[data-dim="true"] { opacity: 0.5; }
@@ -199,8 +221,8 @@
     padding: 9px 16px;
     border-left: 2px solid transparent;
   }
-  .person:hover { background: #fff6; }
-  .person[data-sel="true"] { background: #fff9; border-left-color: var(--who); }
+  .person:hover { background: var(--raise-soft); }
+  .person[data-sel="true"] { background: var(--raise); border-left-color: var(--who); }
   .person .bead { width: 9px; height: 9px; border-radius: 50%; background: var(--who); margin-top: 5px; }
   .person[data-idle="true"] .bead { opacity: 0.3; }
   .person .nm { display: block; font-size: 13.5px; letter-spacing: 0.01em; }
@@ -236,7 +258,7 @@
     font-size: 13.5px;
   }
   .node[data-sel="true"] { background: var(--cerulean-soft); }
-  .node:hover { background: #fff7; }
+  .node:hover { background: var(--raise-soft); }
   .node .label { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 0 1 auto; }
   .node .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .node[data-kind="dir"] .name { color: var(--ink); }
@@ -254,26 +276,160 @@
   .empty-tree { padding: 30px 18px; color: var(--muted); font-size: 13px; max-width: 46ch; }
 
   /* ---- agent view --------------------------------------------------------
-     The same board, rearranged for driving agents instead of typing. The file
-     tree and the editor step aside and the agent column becomes the middle of
-     the screen.
+     The same board, rearranged for driving agents instead of typing.
 
      ⚠️ IT IS A LAYOUT, NOT A SECOND APP. Every pane below is the same element
-     with the same state and the same sockets; only the grid changes. A second
-     view that forked the data would be two boards to keep in step, and they
-     would drift within a week.
+     with the same state and the same sockets; only the grid and the type
+     change. A second view that forked the data would be two boards to keep in
+     step, and they would drift within a week. This is also why the console
+     MOVES between columns rather than being drawn twice: one `#chat` host in
+     agent view, one `#streams` host in ide view, and renderStreams picks.
 
-     `display: none` on the tree column is deliberate rather than a narrower
-     width: in this mode the file list is not the point, and a vestigial 80px
-     of it would be worse than none. Switching back restores it with its
-     selection intact, because nothing about it was torn down. */
-  body[data-view="agent"] .middle { grid-template-columns: 1fr; }
-  body[data-view="agent"] .treecol { display: none; }
-  body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr minmax(420px, 1.1fr); }
-  body[data-view="agent"] .stream { border-bottom: 1px solid var(--line); }
-  /* The conversation gets room to breathe: bigger type for what an agent
-     actually says, since reading it is now the main activity. */
-  body[data-view="agent"] .streams .pane-body { font-size: 13px; }
+     The shape, and why:
+
+       rail | CONVERSATION | editor | teammates
+
+     The conversation is the widest thing on screen because in this mode
+     reading what the agent said is the work. The editor stays — a vibe coder
+     still lands in a file eventually, and taking it away would mean switching
+     views to read one function. The file TREE goes, because browsing a repo is
+     exactly the activity this mode is not for; what replaces it is the changed
+     -file list in the teammates column, which is the only part of a tree
+     somebody driving an agent actually wants.
+
+     `display: none` on the tree is deliberate rather than a narrower width: a
+     vestigial 80px of file list would be worse than none. Switching back
+     restores it with its selection intact, because nothing was torn down. */
+  .chatcol {
+    display: none; flex-direction: column;
+    min-height: 0; min-width: 0;
+    border-right: 1px solid var(--line);
+  }
+  body[data-view="agent"] .chatcol { display: flex; }
+  /* The tree's BODY goes, not its column: the column is where the changed-file
+     list lives. `#treeBody` is still rendered into and still holds its
+     selection, so switching back is instant. */
+  body[data-view="agent"] #treeBody { display: none; }
+  /* ⚠️ THESE TRACKS ARE MATCHED TO DOM ORDER, WHICH IS treecol, chatcol,
+     detail. There is no `grid-area` here, so the second track is whichever
+     element comes second in the markup. Written the other way round once and
+     the conversation — the widest thing this view has — came out 286px wide
+     while the changed-file list got the 1.35fr. Moving an element inside
+     .middle means re-reading this line. */
+  body[data-view="agent"] .middle {
+    grid-template-columns: var(--tree) minmax(0, 1fr);
+  }
+  body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr var(--talk); }
+  /* The chat column is the page's main surface here, so its right edge needs a
+     rule: without one the conversation and the editor run together. */
+  body[data-view="agent"] .chatcol { border-right: 1px solid var(--line); }
+  /* Teammates keep a column, narrow. Dropping them entirely would have been
+     simpler and would have made a multiplayer product single-player in one of
+     its two modes. What they lose here is the per-turn detail, which the
+     People rail already carries as "editing src/". */
+  body[data-view="agent"] .streams .stream { padding: 10px 14px 12px; }
+  body[data-view="agent"] .streams .bubble { font-size: 12px; }
+
+  /* FOUR COLUMNS NEED ROOM, and they are dropped in order of what is repeated
+     elsewhere on screen. Teammates go first: the People rail already says who
+     is doing what. The editor goes second: a vibe coder can switch to ide view
+     to read a file, and losing it is survivable in a way that losing the
+     conversation or the changed list is not. Neither of those two is ever
+     dropped, at any width. */
+  @media (max-width: 1500px) {
+    body[data-view="agent"] .streams { display: none; }
+    body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr; }
+  }
+  /* ⚠️ THE EDITOR IS NOT ALWAYS ON IN THIS VIEW — it appears when a file is
+     picked and gives its width back when the file is closed.
+
+     MEASURED, on a 1240px window: three permanent columns left the
+     conversation 402px wide, which is NARROWER than it is in ide view, i.e.
+     the opposite of the point of this mode. The first fix was a media query
+     that dropped the editor under 1400px, and that was worse: it made clicking
+     a file in the Changed list do nothing at all, silently, on exactly the
+     window size most people have.
+     Tying it to the selection instead means the conversation is full width
+     while you are talking, the editor is there the moment you ask for a file,
+     and no width ever makes a click a no-op. */
+  body[data-view="agent"] .detail { display: none; }
+  body[data-view="agent"][data-picked="true"] .detail { display: flex; }
+  body[data-view="agent"][data-picked="true"] .middle {
+    grid-template-columns: var(--tree) minmax(0, 1.05fr) minmax(0, 1fr);
+  }
+
+  /* ---- the conversation, when it is the main column ----------------------
+     Same console element, different typography. In the rail it is a 340px
+     monospace log, which is the right shape for glancing at. Here it is the
+     thing being read for minutes at a time, so the agent's prose gets the
+     page font at a size meant for reading, and the mono box around it goes:
+     a scrolling bordered well inside a column that is already a scrolling
+     bordered well is one frame too many. */
+  .chatcol .console {
+    background: none; border-left: 0; border-bottom: 0;
+    padding: 6px 26px 18px;
+    max-width: 78ch; margin: 0 auto; width: 100%;
+  }
+  .chatcol .console-out {
+    max-height: none; overflow: visible;
+    background: none; border: 0; padding: 0;
+    font-family: var(--font-sans); font-size: 14.5px; line-height: 1.72;
+  }
+  /* What the agent said: prose, with space between paragraphs. */
+  .chatcol .cline[data-kind="out"] {
+    margin: 0 0 11px; color: var(--ink);
+  }
+  /* What you said: set apart, not indented into a chat bubble. A bubble would
+     imply a messaging app and a per-message identity neither side has here. */
+  .chatcol .cline[data-kind="you"] {
+    margin: 18px 0 13px; padding: 9px 13px;
+    background: var(--cerulean-soft); border-left: 2px solid var(--who);
+    color: var(--ink); font-size: 14px;
+  }
+  /* What it DID: still monospace, still small. These are the lines you skim
+     past when the prose is what you want, and they should read as machinery. */
+  .chatcol .cline[data-kind="tool"],
+  .chatcol .cline[data-kind="meta"],
+  .chatcol .cline[data-kind="err"] {
+    font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55;
+    padding: 1px 0;
+  }
+  .chatcol .console-head { margin-bottom: 14px; }
+  .chatcol .newagent { padding: 10px 26px 18px; max-width: 78ch; margin: 0 auto; }
+  /* The composer sticks to the bottom of the column, where the hands are. */
+  .chatcol .console-form {
+    position: sticky; bottom: 0;
+    margin-top: 14px; padding-top: 10px;
+    background: linear-gradient(to bottom, transparent, var(--paper) 22%);
+  }
+  .chatcol .console-input { font-size: 14px; padding: 11px 13px; }
+
+  .chat-empty {
+    padding: 34px 26px; max-width: 60ch; margin: 0 auto;
+    color: var(--muted); font-size: 14px; line-height: 1.65;
+  }
+  .chat-empty h2 { font-size: 17px; font-weight: 300; color: var(--ink); margin-bottom: 9px; }
+
+  /* ---- what the agents changed -------------------------------------------
+     Agent view's answer to the file tree. Not a tree: a flat list of the files
+     that are different from HEAD right now, newest churn first, which is the
+     only slice of a repo somebody driving an agent looks at. Clicking one
+     opens it in the editor, exactly as a tree row does. */
+  .changed { display: flex; flex-direction: column; }
+  /* ⚠️ `display: flex` BEATS the UA stylesheet's `[hidden] { display: none }`,
+     which is a specificity fact, not a bug in the browser. Without this line
+     the changed list is visible in ide view underneath the tree. */
+  .changed[hidden] { display: none; }
+  .changed-row {
+    display: grid; grid-template-columns: 1fr auto; gap: 10px;
+    align-items: baseline; width: 100%; text-align: left;
+    padding: 6px 16px; font-size: 12.5px;
+    border-left: 2px solid transparent;
+  }
+  .changed-row:hover { background: var(--fill); }
+  .changed-row[data-sel="true"] { border-left-color: var(--cerulean); background: var(--fill); }
+  .changed-row .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .changed-none { padding: 16px; color: var(--faint); font-size: 12.5px; }
 
   /* ---- the rail's footer: theme, and a way into settings ------------------
      Above the Workspaces header, where Andrew asked for it. */
@@ -536,7 +692,7 @@
   .cm-editor .cm-scroller { font-family: var(--font-mono); font-size: 13.5px; line-height: 1.6; }
   .cm-editor.cm-focused { outline: none; }
   .cm-gutters { background: transparent; border-right: 1px solid var(--line); color: var(--faint); }
-  .cm-activeLine { background: #ffffff55; }
+  .cm-activeLine { background: var(--raise-line); }
   .cm-activeLineGutter { background: transparent; color: var(--muted); }
   .cm-selectionBackground, .cm-editor ::selection { background: var(--cerulean-soft); }
   /* y-codemirror.next draws remote carets and a name flag; both take the
@@ -595,7 +751,7 @@
     color: var(--faint); margin-left: auto;
   }
   .bubble {
-    background: #fff9; border: 1px solid var(--line);
+    background: var(--raise); border: 1px solid var(--line);
     border-left: 2px solid var(--who);
     padding: 8px 11px; margin-bottom: 7px;
     font-size: 13px; line-height: 1.55;
@@ -674,7 +830,7 @@
     background: var(--warn, #a8743a); margin-left: 7px; vertical-align: middle;
   }
 
-  .console { border-bottom: 1px solid var(--line); padding: 12px 16px 14px; background: #fff7; }
+  .console { border-bottom: 1px solid var(--line); padding: 12px 16px 14px; background: var(--raise-soft); }
   .console-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; }
   .console-head .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
   .console-head .nm { font-size: 13px; letter-spacing: 0.02em; }
@@ -689,19 +845,33 @@
   .console-out {
     max-height: 300px; overflow-y: auto;
     font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
-    background: #fffb; border: 1px solid var(--line); padding: 8px 10px;
+    background: var(--raise); border: 1px solid var(--line); padding: 8px 10px;
   }
   .cline { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cline b { font-weight: 500; color: var(--ink); }
+  /* Inline code keeps the mono face even where the surrounding line is prose,
+     which is the only reason it is worth marking up at all. */
+  .cline code {
+    font-family: var(--font-mono); font-size: 0.88em;
+    background: var(--raise-soft); border: 1px solid var(--line);
+    border-radius: 2px; padding: 0 4px;
+  }
   .cline[data-kind="you"]   { color: var(--cerulean); }
   .cline[data-kind="tool"]  { color: #9a5b3d; }
   .cline[data-kind="err"]   { color: var(--alert); }
   .cline[data-kind="meta"]  { color: var(--faint); }
   .console-form { margin-top: 8px; }
   .console-input {
-    width: 100%; padding: 7px 10px;
+    display: block; width: 100%; padding: 7px 10px;
     border: 1px solid var(--line); background: var(--paper);
-    font: inherit; font-size: 12.5px; color: var(--ink);
+    font: inherit; font-size: 12.5px; line-height: 1.5; color: var(--ink);
+    /* A textarea, made to behave. `resize: none` because it sizes itself to
+       its content (see fit()), and a drag handle in the corner would fight
+       that. `overflow: auto` matters: `hidden` would swallow the scrollbar
+       once a prompt passes the height ceiling. */
+    resize: none; overflow: auto; min-height: 34px;
   }
+  .console-input::placeholder { color: var(--faint); }
   .console-input:focus { outline: 2px solid var(--cerulean); outline-offset: -1px; border-color: transparent; }
 
   /* ---- collisions ------------------------------------------------------ */
@@ -721,7 +891,7 @@
   .dwho {
     display: inline-flex; align-items: center; gap: 7px;
     padding: 5px 11px; border: 1px solid var(--line); border-radius: 100px;
-    font-size: 12.5px; background: #fff8;
+    font-size: 12.5px; background: var(--raise-soft);
   }
   .dwho .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); }
   .dwho .when { color: var(--faint); font-size: 11.5px; margin-left: 2px; }
@@ -744,7 +914,7 @@
   .viewer.err { color: var(--alert); }
   .viewer .code {
     margin: 0; padding: 12px 14px;
-    background: #fffb; border: 1px solid var(--line);
+    background: var(--raise); border: 1px solid var(--line);
     font-family: var(--font-mono); font-size: 12px; line-height: 1.65;
     color: var(--ink);
     /* Scrolls sideways only. The pane it sits in already scrolls vertically,
@@ -772,7 +942,7 @@
   .blank p { color: var(--muted); margin: 0 0 12px; line-height: 1.65; }
   .blank code {
     font-family: var(--font-mono); font-size: 12px;
-    background: #fff9; border: 1px solid var(--line); padding: 2px 6px;
+    background: var(--raise); border: 1px solid var(--line); padding: 2px 6px;
   }
 
   @media (max-width: 1100px) {
@@ -828,7 +998,20 @@
   <div class="middle">
     <div class="treecol">
       <div class="pane-title" id="filesTitle">Files</div>
-      <div class="pane-body"><div class="tree" id="tree"></div></div>
+      <div class="pane-body" id="treeBody"><div class="tree" id="tree"></div></div>
+      <!-- Agent view puts the changed-file list in the tree's SLOT, because it
+           is the tree's replacement: same column, same width, same click
+           behaviour. It lived in the teammates column for one build, which
+           also meant it disappeared with that column on a narrow window --
+           taking the only way to reach a file with it. -->
+      <div class="pane-body changed" id="changed" hidden></div>
+    </div>
+    <!-- Agent view's main column. Empty and `display: none` in ide view; the
+         consoles are MOVED here rather than duplicated, so there is only ever
+         one of each on the page. See renderStreams. -->
+    <div class="chatcol">
+      <div class="pane-title">Conversation</div>
+      <div class="pane-body" id="chat"></div>
     </div>
     <main class="detail">
       <div id="collisions"></div>
@@ -838,7 +1021,7 @@
   </div>
 
   <aside class="pane streams">
-    <div class="pane-title">Agents</div>
+    <div class="pane-title" id="streamsTitle">Agents</div>
     <div class="pane-body" id="streams"></div>
   </aside>
 </div>
@@ -1019,6 +1202,19 @@
   var launchMode = "auto";
 
   /**
+   * Which console the person is typing into, and what they have typed so far.
+   *
+   * ⚠️ THIS EXISTS BECAUSE render() REBUILDS THE COMPOSER. Every stream event
+   * re-renders the card, which replaces the textarea with a fresh empty one —
+   * so a half-written prompt vanished the moment the agent printed a line, and
+   * the caret went with it. Holding the draft outside the DOM and putting it
+   * back is the cheap fix; the expensive one is not rebuilding the card, which
+   * is a rewrite of the renderer for one field.
+   */
+  var composingIn = null;
+  var composingText = "";
+
+  /**
    * The postures zevet offers, in the order they escalate.
    *
    * The labels are zevet's; the flags behind them are each CLI's own, read off
@@ -1043,6 +1239,42 @@
   function $(id) { return document.getElementById(id); }
   function el(t, c) { var n = document.createElement(t); if (c) n.className = c; return n; }
   function tx(n, s) { n.textContent = s == null ? "" : String(s); return n; }
+
+  /**
+   * The two bits of markdown an agent actually emits, rendered.
+   *
+   * ⚠️ NOT A MARKDOWN PARSER, AND NOT innerHTML. This builds text nodes and
+   * two element types and nothing else, so there is no path from model output
+   * to markup — which matters more here than anywhere else on the page,
+   * because this string is written by a language model that has just read the
+   * contents of a repository. A markdown library would be a dependency whose
+   * whole job is turning untrusted text into HTML, and the correct amount of
+   * that in this file is none.
+   *
+   * Bold and inline code are the whole grammar. Everything else — bullets,
+   * numbered lists, indentation, blank lines — already reads correctly under
+   * `white-space: pre-wrap`, which is what the transcript has. Headings and
+   * links are deliberately left literal: an agent's `##` is rare, and a
+   * clickable link in a transcript is a new question about where it may point.
+   */
+  var INLINE_MD = /(\*\*[^*\n]+\*\*|`[^`\n]+`)/g;
+  function prose(node, text) {
+    var s = text == null ? "" : String(text);
+    var parts = s.split(INLINE_MD);
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i];
+      if (!part) continue;
+      if (part.length > 4 && part.slice(0, 2) === "**" && part.slice(-2) === "**") {
+        node.appendChild(tx(el("b"), part.slice(2, -2)));
+      } else if (part.length > 2 && part[0] === "`" && part[part.length - 1] === "`") {
+        node.appendChild(tx(el("code"), part.slice(1, -1)));
+      } else {
+        node.appendChild(document.createTextNode(part));
+      }
+    }
+    return node;
+  }
+
   function serverNow() { return Date.now() + skewMs; }
 
   function hueOf(actor) {
@@ -1550,19 +1782,7 @@
         row.dataset.sel = String(!isDir && selectedPath === path);
         row.addEventListener("click", function () {
           if (isDir) collapsed[path] = open;
-          else {
-            selectedPath = selectedPath === path ? null : path;
-            if (selectedPath && LOCAL && localRoot) {
-              // The editor supersedes the read-only viewer wherever it can run.
-              // openLocalFile stays for the case it cannot: no editor bundle
-              // (an old hub), or a file the editor declines to open.
-              if (window.zevetEditor) openEditor(selectedPath);
-              else openLocalFile(selectedPath);
-            } else {
-              localFile = null;
-              closeEditor();
-            }
-          }
+          else toggleSelection(path);
           render();
         });
         host.appendChild(row);
@@ -1639,6 +1859,14 @@
 
   function applyView() {
     document.body.setAttribute("data-view", viewMode);
+    var st = $("streamsTitle");
+    // In agent view this column is a summary of other people, not a place you
+    // read a transcript. The heading should say which.
+    if (st) tx(st, viewMode === "agent" ? "Teammates" : "Agents");
+    // The console lives in a different column in each view, so a view change
+    // has to re-render or the transcript stays in the column that is now
+    // hidden — which looked exactly like the agent had died.
+    render();
     // The editor measures itself on mount; a layout change under it leaves the
     // scroller the wrong height until something else forces a measure.
     if (ed && ed.view && ed.view.requestMeasure) {
@@ -3014,6 +3242,9 @@
     stop.addEventListener("click", function () {
       if (c.running && c.id) window.zevetLocal.stopAgent(c.id);
       myConsoles = myConsoles.filter(function (x) { return x !== c; });
+      // The draft belonged to a console that no longer exists; leaving the
+      // pointer behind would restore it into whichever console rendered next.
+      if (composingIn === c) { composingIn = null; composingText = ""; }
       render();
     });
     head.appendChild(stop);
@@ -3029,23 +3260,60 @@
     c.lines.slice(-120).forEach(function (l) {
       var row = el("div", "cline");
       row.dataset.kind = l.kind;
-      tx(row, l.text);
+      // Only what the agent SAID gets the inline formatting. A tool line, an
+      // error and the turn footer are literal by nature: backticks in a file
+      // path or a stack trace are part of the text, not markup.
+      if (l.kind === "out") prose(row, l.text);
+      else tx(row, l.text);
       out.appendChild(row);
     });
     card.appendChild(out);
 
     if (c.running) {
       var form = el("form", "console-form");
-      var input = el("input", "console-input");
-      input.type = "text";
+      // ⚠️ A TEXTAREA, NOT AN INPUT, IN BOTH VIEWS. A single-line input made
+      // every prompt a single line: pasting a stack trace or writing a
+      // paragraph of instructions meant losing the newlines, and the thing you
+      // send an agent is very often multi-line. Enter still sends, because
+      // that is what the one-line field taught; Shift+Enter is the newline.
+      var input = el("textarea", "console-input");
+      input.rows = 1;
       input.placeholder = "Tell it what to do…";
+      input.setAttribute("aria-label", "Message " + c.agent);
       form.appendChild(input);
+      // Sized once at mount, not only on input: an unsized textarea sits at
+      // its min-height with its own content already overflowing it.
+      setTimeout(function () { fit(); }, 0);
+
+      /** Grow with the text, to a ceiling, so a long prompt is readable while
+       *  being written without the composer eating the transcript. */
+      function fit() {
+        input.style.height = "auto";
+        var want = input.scrollHeight;
+        input.style.height = Math.min(want, 220) + "px";
+        // Only scroll once the ceiling is reached. Leaving `overflow: auto` on
+        // at all times drew a scrollbar over an empty one-line field, which on
+        // Windows is a pair of little arrows in the corner of the composer.
+        input.style.overflowY = want > 220 ? "auto" : "hidden";
+      }
+      input.addEventListener("input", fit);
+      input.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+          ev.preventDefault();
+          // requestSubmit, not submit: submit() skips the submit handler on
+          // some engines and would silently do nothing.
+          if (typeof form.requestSubmit === "function") form.requestSubmit();
+          else form.dispatchEvent(new Event("submit", { cancelable: true }));
+        }
+      });
       form.addEventListener("submit", function (ev) {
         ev.preventDefault();
         var text = input.value.trim();
         if (!text || !c.id) return;
         pushConsoleLine(c, "you", text);
         input.value = "";
+        composingText = "";
+        fit();
         window.zevetLocal.sendToAgent(c.id, text).then(function (r) {
           if (r && r.ok === false) pushConsoleLine(c, "err", r.error || "could not send");
           render();
@@ -3053,6 +3321,18 @@
         render();
       });
       card.appendChild(form);
+      // The whole card is rebuilt on every render, so focus has to be put back
+      // or typing stops the moment a stream event lands. `composingIn` is the
+      // console the person was last typing in; anything else would steal focus
+      // from a second console the moment the first one printed a line.
+      if (composingIn === c) {
+        input.value = composingText;
+        fit();
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+      input.addEventListener("focus", function () { composingIn = c; });
+      input.addEventListener("input", function () { composingIn = c; composingText = input.value; });
     }
 
     host.appendChild(card);
@@ -3060,10 +3340,136 @@
     if (o) o.scrollTop = o.scrollHeight;
   }
 
-  function renderStreams(now) {
-    var host = $("streams");
+  /**
+   * Click a file row: open it, or close it if it was already the open one.
+   *
+   * Factored out of the tree because the changed-file list in agent view is a
+   * second way to reach the same file and must behave identically. Two copies
+   * of this would be two places for the editor/viewer fallback to drift.
+   */
+  function toggleSelection(path) {
+    selectedPath = selectedPath === path ? null : path;
+    if (selectedPath && LOCAL && localRoot) {
+      // The editor supersedes the read-only viewer wherever it can run.
+      // openLocalFile stays for the case it cannot: no editor bundle (an old
+      // hub), or a file the editor declines to open.
+      if (window.zevetEditor) openEditor(selectedPath);
+      else openLocalFile(selectedPath);
+    } else {
+      localFile = null;
+      closeEditor();
+    }
+  }
+
+  /**
+   * The changed-file list: agent view's replacement for the tree.
+   *
+   * Built from the same `stats.diff` the tree badges use, so there is no
+   * second source of truth and no second IPC call. Sorted by churn rather than
+   * by name: the file an agent has rewritten 200 lines of is the one worth
+   * looking at, and alphabetical order would bury it under a config file it
+   * touched one character of.
+   *
+   * `diff === null` means git could not be asked (not a repo, no git, a
+   * timeout) and is a DIFFERENT thing from an empty diff, which means a clean
+   * tree. They get different sentences; collapsing them would make "no git"
+   * read as "your agent did nothing".
+   */
+  function renderChanged() {
+    var host = $("changed");
+    if (!host) return;
+    var on = viewMode === "agent";
+    host.hidden = !on;
+    // The column keeps ONE heading, the tree's, relabelled. A second title
+    // inside the list would put two uppercase headers in a 286px column.
+    // Only written when this view owns the column: renderTree sets the same
+    // element, with the repo name appended, and runs first.
+    if (on) tx($("filesTitle"), "Changed");
+    if (!on) { host.textContent = ""; return; }
     host.textContent = "";
-    renderMyConsole(host);
+
+    if (!LOCAL || !localRoot) {
+      var noWs = el("div", "changed-none");
+      tx(noWs, LOCAL ? "no workspace open" : "open zevet on your machine to see this");
+      host.appendChild(noWs);
+      return;
+    }
+    if (!stats.diff || stats.root !== localRoot) {
+      var unknown = el("div", "changed-none");
+      tx(unknown, stats.diff === null && stats.root === localRoot
+        ? "git could not be read here"
+        : "counting…");
+      host.appendChild(unknown);
+      return;
+    }
+
+    var rows = Object.keys(stats.diff).map(function (p) {
+      var d = stats.diff[p];
+      return { path: p, d: d, churn: (d.added || 0) + (d.removed || 0) };
+    });
+    // Untracked files have no counts at all, so churn sorting would drop them
+    // to the bottom; a brand-new file is usually the most interesting thing in
+    // the list. They sort as if large, and say "new" instead of a number.
+    rows.sort(function (a, b) {
+      var an = a.d.status === "untracked" ? Infinity : a.churn;
+      var bn = b.d.status === "untracked" ? Infinity : b.churn;
+      if (an !== bn) return bn - an;
+      return a.path < b.path ? -1 : 1;
+    });
+
+    if (!rows.length) {
+      var clean = el("div", "changed-none");
+      tx(clean, "nothing changed since the last commit");
+      host.appendChild(clean);
+      return;
+    }
+
+    rows.slice(0, 60).forEach(function (r) {
+      var b = el("button", "changed-row");
+      b.dataset.sel = String(selectedPath === r.path);
+      b.title = r.path;
+      // `direction: rtl` on .p keeps the FILENAME visible when the path is too
+      // long, ellipsing the directories instead. A left-ellipsed path is the
+      // one you can still identify.
+      b.appendChild(tx(el("span", "p"), r.path));
+      var badge = statBadge(r.path);
+      b.appendChild(badge || el("span"));
+      b.addEventListener("click", function () { toggleSelection(r.path); render(); });
+      host.appendChild(b);
+    });
+  }
+
+  function renderStreams(now) {
+    // ⚠️ THE CONSOLE MOVES, IT IS NOT DUPLICATED. In agent view the thing you
+    // are driving belongs in the wide middle column; in ide view it belongs in
+    // the rail with the teammates. Rendering into both hosts would give two
+    // live transcripts of one agent and two composers that could disagree.
+    var agentView = viewMode === "agent";
+    var chat = $("chat");
+    var host = $("streams");
+
+    // Stick to the bottom, but only if that is where the person already was.
+    // In agent view the transcript is not in a fixed-height well — the COLUMN
+    // scrolls — so the "scroll to the end" line at the bottom of
+    // renderOneConsole does nothing here and this has to do it. Unconditional
+    // scrolling would yank the page back down every time a line arrived while
+    // somebody was reading what the agent said five minutes ago.
+    var stick = chat && chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60;
+
+    host.textContent = "";
+    if (chat) chat.textContent = "";
+
+    var mineHost = agentView && chat ? chat : host;
+    renderMyConsole(mineHost);
+    if (agentView && chat && !myConsoles.length) {
+      var box = el("div", "chat-empty");
+      box.appendChild(tx(el("h2"), "Nothing running yet."));
+      box.appendChild(tx(el("p"), LOCAL
+        ? "Start an agent above and tell it what you want. It runs on this machine, with your account, in the workspace selected on the left."
+        : "This view drives an agent on your own machine, so it needs the desktop app rather than a browser tab."));
+      chat.appendChild(box);
+    }
+
     var shown = roster.filter(function (r) { return !selectedActor || r.actor === selectedActor; });
 
     shown.forEach(function (r) {
@@ -3137,6 +3543,8 @@
       tx(p, roster.length ? "nothing in this workspace yet" : "no agents yet");
       host.appendChild(p);
     }
+
+    if (agentView && chat && stick) chat.scrollTop = chat.scrollHeight;
   }
 
   function renderScope() {
@@ -3178,12 +3586,18 @@
 
   function render() {
     var now = serverNow();
+    // Agent view uses this to decide whether the editor is on screen at all;
+    // see the stylesheet. Written on every render rather than in
+    // toggleSelection, because the selection is also cleared by switching
+    // workspace, by a file going away, and by closeEditor.
+    document.body.dataset.picked = String(!!selectedPath);
     renderPresence(now);
     renderPeople(now);
     renderWorkspaces();
     renderCollisions(now);
     renderScope();
     if (!renderBlank()) { renderTree(now); renderDetail(now); }
+    renderChanged();
     renderStreams(now);
   }
 
