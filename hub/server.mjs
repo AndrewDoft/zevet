@@ -13,10 +13,71 @@ import { readFile } from "node:fs/promises";
 import { randomUUID, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Accounts, defaultAccountsFile, deriveAuthToken } from "./accounts.mjs";
+import { deviceStart, devicePoll, githubUser } from "./github-auth.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
-const TOKEN = process.env.ZEVET_TOKEN || "";
+
+/* ── Who this hub lets in ────────────────────────────────────────────────────
+ *
+ * Two credentials are accepted, and that is a migration, not a design:
+ *
+ *   • A GITHUB SESSION. Sign in, the hub checks its list, it mints a session.
+ *     This is how everybody should arrive.
+ *   • THE SHARED TOKEN, derived from the master secret. Every install in the
+ *     field today presents this, and the hooks (`client/hook.mjs`) have no
+ *     browser to sign in with and may never get one.
+ *
+ * The second is not deprecated — a headless hook is a real case — but it is no
+ * longer how a PERSON is expected to get in.
+ *
+ * ⚠️ `ZEVET_GITHUB_CLIENT_ID` is the OAuth app's client id, and it is NOT a
+ * secret: device flow has no client secret at all, which is exactly why it is
+ * the flow a desktop app may use (hub/github-auth.mjs). Leaving it unset does
+ * not break the hub; it turns GitHub sign-in off and leaves the shared token as
+ * the only way in. */
+const GITHUB_CLIENT_ID = process.env.ZEVET_GITHUB_CLIENT_ID || "";
+const GITHUB_OWNER = process.env.ZEVET_GITHUB_OWNER || "";
+
+/**
+ * ⚠️ A HUB WITH NO GITHUB APP KEEPS NO STATE ON DISK, exactly as before this
+ * existed. `defaultAccountsFile` is only reached when there is something to
+ * persist — sessions and the shared secret — and a hub that cannot issue
+ * sessions has neither. Without this the test suite, which starts dozens of
+ * hubs with a plain `ZEVET_TOKEN`, would each write an account store into the
+ * tree and then share it with the next run.
+ */
+const ACCOUNTS_FILE = process.env.ZEVET_ACCOUNTS || (GITHUB_CLIENT_ID ? defaultAccountsFile(HERE) : null);
+
+const accounts = new Accounts({ file: ACCOUNTS_FILE, secret: process.env.ZEVET_SECRET || "" });
+
+/**
+ * The shared token — the credential that is NOT a GitHub session.
+ *
+ * ⚠️ `ZEVET_TOKEN` STILL WINS WHEN IT IS SET, and that is not legacy
+ * politeness: it is what every install in the field presents, what every hook
+ * presents, and what the test suite starts a hub with. Deriving over the top of
+ * it would have silently changed the credential of a running deployment.
+ *
+ * What is NOT tolerated is the two disagreeing. Setting `ZEVET_SECRET` and a
+ * `ZEVET_TOKEN` that is not its derivative is the exact shape of the cutover
+ * bug in docs/RELEASING.md — two values, one of them stale, and a plain 401
+ * that said nothing about which. That is now a refusal to start, because a hub
+ * that boots into that state looks perfectly healthy while rejecting the whole
+ * team.
+ */
+const ENV_TOKEN = process.env.ZEVET_TOKEN || "";
+const DERIVED = accounts.secret ? deriveAuthToken(accounts.secret) : "";
+
+if (ENV_TOKEN && DERIVED && ENV_TOKEN !== DERIVED && process.env.ZEVET_SECRET) {
+  console.error("zevet: ZEVET_TOKEN is set, and it is not the token ZEVET_SECRET derives to.");
+  console.error("      Clients derive from the secret, so one of these is stale and every teammate would get a 401.");
+  console.error(`      Either drop ZEVET_TOKEN, or set it to ${DERIVED}`);
+  process.exit(1);
+}
+
+const TOKEN = ENV_TOKEN || DERIVED;
 const MAX_EVENTS = Number(process.env.ZEVET_MAX_EVENTS || 2000);
 // Two agents touching one file inside this window is worth a warning. Ten
 // minutes is a guess we can move; it is deliberately longer than a turn.
@@ -29,10 +90,30 @@ const IDLE_AFTER_MS = 90 * 1000;
  */
 const WRITING_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Update", "Create"]);
 
-if (!TOKEN) {
-  console.error("zevet: refusing to start without ZEVET_TOKEN set.");
-  console.error("      Pick a long random string and give the same one to every teammate.");
+/* This used to refuse to start without ZEVET_TOKEN, and the refusal is kept,
+ * because it is the only thing between an unauthenticated hub and the internet.
+ *
+ * ⚠️ THE CONDITION IS "NOTHING WAS CONFIGURED", NOT "TOKEN IS EMPTY". `Accounts`
+ * mints a master secret when it has none, so TOKEN is now never empty — and a
+ * hub that started on a freshly invented secret would be a hub with a perfectly
+ * good credential that NOBODY ON EARTH KNOWS, listening on a public port,
+ * reporting itself healthy. That is worse than not starting, and it is
+ * indistinguishable from working until the first teammate tries to connect. */
+if (!ENV_TOKEN && !process.env.ZEVET_SECRET && !GITHUB_CLIENT_ID) {
+  console.error("zevet: refusing to start with no way for anyone to authenticate.");
+  console.error("      Set ZEVET_GITHUB_CLIENT_ID for GitHub sign-in, or ZEVET_SECRET (or ZEVET_TOKEN) for the shared credential.");
   process.exit(1);
+}
+
+if (!TOKEN) {
+  console.error("zevet: no credential of any kind could be established. Refusing to start.");
+  process.exit(1);
+}
+
+if (!GITHUB_CLIENT_ID) {
+  console.warn("zevet: ZEVET_GITHUB_CLIENT_ID is not set — GitHub sign-in is off and the shared secret is the only way in.");
+} else if (!accounts.owner) {
+  console.warn("zevet: nobody has claimed this hub yet. The FIRST GitHub sign-in becomes the owner.");
 }
 
 const CLIENT_DIR = path.join(HERE, "..", "client");
@@ -116,13 +197,28 @@ const events = [];
 /** @type {Set<import("node:http").ServerResponse>} */
 const listeners = new Set();
 
+/**
+ * Is this credential good?
+ *
+ * ⚠️ THE SHARED TOKEN IS CHECKED FIRST AND IN CONSTANT TIME; the session lookup
+ * is a plain map hit. That asymmetry is deliberate and not an oversight. The
+ * shared token is ONE long-lived value used by everybody, so a timing oracle
+ * against it is worth mounting. A session is 32 fresh random bytes belonging to
+ * one person, with no structure to learn a byte at a time and a ninety-day
+ * life; comparing it in constant time would protect against an attack that
+ * cannot be run.
+ *
+ * Both are the same length, so the length check that precedes everything does
+ * not distinguish them and cannot be used to tell which kind a hub is holding.
+ */
 function tokenOk(given) {
   if (typeof given !== "string" || given.length !== TOKEN.length) return false;
   try {
-    return timingSafeEqual(Buffer.from(given), Buffer.from(TOKEN));
+    if (timingSafeEqual(Buffer.from(given), Buffer.from(TOKEN))) return true;
   } catch {
-    return false;
+    /* fall through to the session check */
   }
+  return accounts.session(given) !== null;
 }
 
 const COOKIE = "zevet_session";
@@ -403,6 +499,133 @@ async function readBody(req, limit = 256 * 1024) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
 
+
+  /* ── Signing in ────────────────────────────────────────────────────────────
+   *
+   * ⚠️ THE TWO /auth/github ROUTES ARE UNAUTHENTICATED, AND MUST BE.
+   *
+   * They are what somebody with NO credential uses to get one — the same
+   * reasoning that leaves `/setup.ps1` open. What stops them being a way in is
+   * that neither one decides anything: `start` asks GitHub for a code and
+   * hands it back, and `finish` only ever returns a session when GITHUB has
+   * confirmed the person AND accounts.mjs has found them on the list. Nothing
+   * a caller sends is trusted; the answer comes from GitHub.
+   *
+   * They are rate limited by the same counter as a bad token, so hammering
+   * `finish` with guessed device codes is throttled exactly like guessed
+   * tokens. A device code is 40-odd random characters that GitHub expires in
+   * fifteen minutes, so there is nothing here to guess at anyway.
+   */
+  if (url.pathname === "/auth/github/start" && req.method === "POST") {
+    if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "this hub has no GitHub sign-in configured" });
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+
+    const r = await deviceStart({ clientId: GITHUB_CLIENT_ID });
+    if (!r.ok) return json(res, 502, { error: r.error });
+    return json(res, 200, {
+      ok: true,
+      deviceCode: r.deviceCode,
+      userCode: r.userCode,
+      verificationUri: r.verificationUri,
+      verificationUriComplete: r.verificationUriComplete,
+      interval: r.interval,
+      expiresIn: r.expiresIn,
+    });
+  }
+
+  if (url.pathname === "/auth/github/finish" && req.method === "POST") {
+    if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "this hub has no GitHub sign-in configured" });
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+
+    const polled = await devicePoll({ clientId: GITHUB_CLIENT_ID, deviceCode: body && body.deviceCode });
+    if (!polled.ok) return json(res, 400, { error: polled.error });
+    // Still waiting on the browser. A 200 with `pending` rather than a 202 or a
+    // 4xx, because the desktop app polls this every few seconds for up to
+    // fifteen minutes and a non-2xx would light up every error path it has.
+    if (polled.pending) return json(res, 200, { ok: true, pending: true, slowDown: Boolean(polled.slowDown) });
+
+    const who = await githubUser({ accessToken: polled.accessToken });
+    if (!who.ok) return json(res, 502, { error: who.error });
+
+    const may = accounts.mayEnter(who, { requiredOwner: GITHUB_OWNER });
+    if (!may.ok) {
+      // Counted as an auth failure: this is somebody who authenticated to
+      // GitHub successfully and is still not allowed here, which is precisely
+      // the event worth noticing.
+      authFailed(req, url);
+      return json(res, 403, { error: may.error });
+    }
+
+    const sess = accounts.signIn(who);
+    console.log(`zevet: ${sess.owner ? "OWNER " : ""}sign-in by @${sess.login}`);
+
+    /* ⚠️ THIS RESPONSE CARRIES THE MASTER SECRET. It is the only route that
+     * does, it is over TLS, and it is the whole of the tradeoff documented at
+     * the top of accounts.mjs — the hub knows the key and gives it to anyone it
+     * believes. Do not add it to any other response, do not log it, and do not
+     * put it in a query string. */
+    return json(res, 200, {
+      ok: true,
+      token: sess.token,
+      secret: accounts.secret,
+      login: sess.login,
+      owner: sess.owner,
+    });
+  }
+
+  /* Who am I, and who else is allowed? Session-gated like everything else. */
+  if (url.pathname === "/auth/whoami") {
+    const tok = tokenFrom(req, url);
+    if (!tok) return refuse(req, res, url);
+    const sess = accounts.session(tok);
+    return json(res, 200, {
+      ok: true,
+      // A shared-token caller is authenticated but anonymous. Saying so is
+      // better than inventing a name for it, and it is what the settings pane
+      // shows a hook-only machine.
+      login: sess ? sess.login : null,
+      shared: !sess,
+      owner: Boolean(sess && accounts.owner === sess.login),
+      githubSignIn: Boolean(GITHUB_CLIENT_ID),
+      people: accounts.list().map((a) => ({ login: a.display || a.login, owner: a.owner, pending: !a.id })),
+    });
+  }
+
+  /* Adding and removing teammates. OWNER ONLY — a shared token is deliberately
+   * not enough, because the shared token is the thing being replaced and
+   * anybody holding it could otherwise add themselves permanently. */
+  if ((url.pathname === "/auth/allow" || url.pathname === "/auth/revoke") && req.method === "POST") {
+    const tok = tokenFrom(req, url);
+    if (!tok) return refuse(req, res, url);
+    const sess = accounts.session(tok);
+    if (!sess || accounts.owner !== sess.login) {
+      // "only @the owner" was the first wording, and it is what an UNCLAIMED
+      // hub printed -- a sentence that reads like a bug. An unclaimed hub has
+      // nobody who can do this, and saying that is more use than naming a
+      // person who does not exist.
+      return json(res, 403, {
+        error: accounts.owner
+          ? `only @${accounts.owner} can change this list`
+          : "nobody has claimed this hub yet — the first GitHub sign-in becomes its owner",
+      });
+    }
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const r = url.pathname === "/auth/allow" ? accounts.allow(body && body.login) : accounts.revoke(body && body.login);
+    if (!r.ok) return json(res, 400, { error: r.error });
+    return json(res, 200, { ok: true, people: accounts.list().map((a) => ({ login: a.display || a.login, owner: a.owner, pending: !a.id })) });
+  }
 
   if (url.pathname === "/healthz") {
     // `events` and `listeners` are load-bearing for anything already watching

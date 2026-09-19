@@ -84,7 +84,7 @@
 </head>
 <body>
   <h1>Set up zevet</h1>
-  <p class="lede">Three things nobody can guess. Whoever runs the hub has the first two.</p>
+  <p class="lede">The address of your team's hub, and your GitHub account.</p>
 
   <label>
     <span class="lbl">Hub address</span>
@@ -92,25 +92,52 @@
     <span class="hint">The address you were sent. Include https:// or http://</span>
   </label>
 
-  <label>
-    <span class="lbl">Master secret</span>
-    <input id="token" class="mono" type="password" placeholder="the long random string your team shares" autocomplete="off" spellcheck="false" />
-    <!-- It is NOT "the token" any more, and the difference is the whole
-         security model: the hub is given SHA-256("zevet-auth" || this), and the
-         key that encrypts shared editing is HKDF(this). Whoever pastes it here
-         should know it never leaves the machine. The input id stays `token` so
-         the script above it keeps working; renaming it is a separate change. -->
-    <span class="hint">Shared by your team. It is never sent to the hub — the hub only ever gets a hash of it.</span>
-  </label>
+  <!-- ⚠️ THE GITHUB PATH IS THE DEFAULT AND THE SECRET IS FOLDED AWAY BEHIND IT.
+       That ordering is the feature. Andrew, 2026-09-19: "people should be able
+       to use the app without having to enter some long code." A pasted 48-char
+       secret is still ACCEPTED -- hubs without an OAuth app configured, and the
+       installs already in the field, both need it -- but it is no longer the
+       thing a new person is shown first, because what people are shown first is
+       what they do. -->
+  <div class="row">
+    <button id="gh" class="primary">Sign in with GitHub</button>
+  </div>
+
+  <div id="ghStep" class="note" hidden>
+    <b>Your browser should have opened GitHub.</b> If it did not, go to
+    <code id="ghUrl"></code> and enter this code:
+    <div id="ghCode" class="mono" style="font-size:22px;letter-spacing:3px;margin:10px 0 4px"></div>
+    <div id="ghState" class="hint">Waiting for you to approve it on GitHub…</div>
+    <div class="row">
+      <button id="ghCancel">Cancel</button>
+    </div>
+  </div>
+
+  <details id="manual">
+    <summary style="cursor:pointer;font-size:12px;color:var(--dim);margin:14px 0 4px">
+      No GitHub sign-in on this hub? Use a master secret instead
+    </summary>
+    <label>
+      <span class="lbl">Master secret</span>
+      <input id="token" class="mono" type="password" placeholder="the long random string your team shares" autocomplete="off" spellcheck="false" />
+      <!-- It is NOT "the token", and the difference is the whole security
+           model: the hub is given SHA-256("zevet-auth" || this), and the key
+           that encrypts shared editing is HKDF(this). The input id stays
+           `token` so the script below keeps working. -->
+      <span class="hint">Shared by your team. What is sent to the hub is a hash of it, never this.</span>
+    </label>
+    <div class="row">
+      <button id="check">Check the connection</button>
+    </div>
+  </details>
 
   <label>
     <span class="lbl">Your name on the board</span>
     <input id="actor" placeholder="kai" autocomplete="off" spellcheck="false" />
-    <span class="hint">Short and lower case reads best in the lanes.</span>
+    <span class="hint">Short and lower case reads best in the lanes. Your GitHub login is filled in for you.</span>
   </label>
 
   <div class="row">
-    <button id="check">Check the connection</button>
     <button id="finish" class="primary" disabled>Open the board</button>
   </div>
 
@@ -145,6 +172,64 @@
     if (!c) return;
     if (!$("hub").value) $("hub").value = c.hub || "";
     if (!$("actor").value) $("actor").value = c.actor || "";
+  });
+
+  /* ── The GitHub path ───────────────────────────────────────────────────────
+   *
+   * ⚠️ THE CONFIG IS WRITTEN BY THE MAIN PROCESS, NOT HERE. `githubWait`
+   * resolves only after ~/.zevet/config.json has been saved, so this handler
+   * has nothing to save and is never given the secret or the session to save it
+   * with. That is the same redaction rule `config()` follows and it is why the
+   * success branch below only enables a button.
+   */
+  function ghBusy(on) {
+    $("gh").disabled = on;
+    $("ghStep").hidden = !on;
+  }
+
+  $("gh").addEventListener("click", async function () {
+    var hub = $("hub").value.trim();
+    if (!hub) { say("bad", "The hub address is required."); return; }
+    if (!/^https?:\/\//i.test(hub)) { say("bad", "The hub address needs to start with http:// or https://"); return; }
+
+    say("", "Asking GitHub for a code…");
+    ghBusy(true);
+    var started = await window.zevet.githubStart(hub);
+    if (!started.ok) {
+      ghBusy(false);
+      // The hub having no OAuth app is the likeliest failure on a self-hosted
+      // hub, and it is not the user's fault -- point them at the fallback that
+      // is sitting right there rather than leaving them at a dead end.
+      say("bad", started.error + "<br><br>You can still set this machine up with a master secret, below.");
+      $("manual").open = true;
+      return;
+    }
+
+    $("ghCode").textContent = started.userCode;
+    $("ghUrl").textContent = started.url;
+    $("ghState").textContent = "Waiting for you to approve it on GitHub…";
+    say("", "Approve zevet on GitHub and this window will finish by itself.");
+
+    var done = await window.zevet.githubWait();
+    ghBusy(false);
+    if (!done.ok) {
+      if (done.cancelled) { say("", "Sign-in cancelled."); return; }
+      say("bad", done.error);
+      return;
+    }
+
+    verified = true;
+    $("finish").disabled = false;
+    if (!$("actor").value.trim()) $("actor").value = done.login;
+    say("good", "Signed in as <b>" + done.login + "</b>." +
+      (done.owner ? " You are the first one here, so this hub is yours — you can add teammates from Settings." : ""));
+    $("repoStep").hidden = false;
+  });
+
+  $("ghCancel").addEventListener("click", function () {
+    window.zevet.githubCancel();
+    ghBusy(false);
+    say("", "Sign-in cancelled.");
   });
 
   function invalid() {
@@ -190,12 +275,21 @@
     out.textContent = r.ok ? "Wired up. " + repo : "Could not wire that up: " + r.detail;
   });
 
-  $("finish").addEventListener("click", function () {
+  $("finish").addEventListener("click", async function () {
     if (!verified) return;
+    // The name can be edited AFTER the credential was established -- that is
+    // the normal order now, because signing in fills it in and the person then
+    // shortens it. Saving again here is what makes that edit stick; passing an
+    // empty credential is understood by `zevet:save` as "keep what you have".
+    await window.zevet.save($("hub").value.trim(), $("token").value, $("actor").value.trim());
     window.zevet.done();
   });
 
-  ["hub", "token", "actor"].forEach(function (id) {
+  // ⚠️ `actor` IS NOT IN THIS LIST. It is a display name, not a credential:
+  // typing it used to invalidate the connection check, which after GitHub
+  // sign-in meant filling in your own name disabled the button that finishes
+  // setup.
+  ["hub", "token"].forEach(function (id) {
     $(id).addEventListener("input", function () {
       verified = false;
       $("finish").disabled = true;

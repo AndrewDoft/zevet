@@ -1933,6 +1933,7 @@
   function openSettings() {
     sheetOpen = true;
     refreshIndexStatus();
+    refreshWhoami();
     renderSheet();
   }
   function closeSettings() {
@@ -2084,14 +2085,18 @@
       var note = el("p", "snote");
       note.appendChild(tx(el("b"), "On GitHub: "));
       note.appendChild(document.createTextNode(
-        "zevet never contacts GitHub. It reads folders on this machine, and this list is the whole " +
-        "access rule — the main process refuses any path that is not under one of them. Signing in to " +
-        "GitHub would only be needed to BROWSE or CLONE repos you have not already got locally, which is a " +
-        "separate feature and is not built.",
+        "this list is still about FOLDERS, not repositories. Signing in with GitHub proves who you are to " +
+        "the hub — see Account above — and asks for nothing but your username. It grants no access to any " +
+        "repository, and zevet reads only folders on this machine that appear in this list. Browsing or " +
+        "cloning repos you have not already got locally would need a wider permission than sign-in asks " +
+        "for, and that is a separate feature and is not built.",
       ));
       repos.appendChild(note);
     }
     sheet.appendChild(repos);
+
+    /* ---- who is on this hub -------------------------------------------- */
+    sheet.appendChild(accountSection());
 
     /* ---- the code index ------------------------------------------------ */
     sheet.appendChild(indexSection());
@@ -2162,13 +2167,180 @@
   }
 
   function credentialLabel() {
-    if (!window.__zevetCfg) return "unknown";
-    if (window.__zevetCfg.legacy) return "legacy token — re-run setup to enable shared editing";
-    return window.__zevetCfg.hasSecret ? "master secret" : "none configured";
+    var c = window.__zevetCfg;
+    if (!c) return "unknown";
+    if (c.legacy) return "legacy token — re-run setup to enable shared editing";
+    // A GitHub session and the master secret normally sit side by side: the
+    // session is what the hub checks, the secret is what the editor derives its
+    // document key from. Naming only one of them makes the other look missing.
+    if (c.session) return "GitHub sign-in" + (c.hasSecret ? " + team key" : " (no team key — the editor will not open)");
+    return c.hasSecret ? "master secret" : "none configured";
+  }
+
+  /* ======================================================================
+   * ACCOUNT — who is signed in, and who else may sign in
+   *
+   * Everything here comes from the hub's `/auth/whoami`, which the board can
+   * reach with the cookie it already has. Nothing about the account lives in
+   * the desktop bridge, on purpose: the allowlist is the hub's to enforce, and
+   * a renderer that could edit it locally would be editing a copy.
+   *
+   * ⚠️ THE ADD/REMOVE CONTROLS ARE ONLY DRAWN FOR THE OWNER, and that is a
+   * COURTESY, NOT THE CHECK. The hub answers 403 to anybody else whatever this
+   * pane draws — hiding a button is a UI decision and never an authorisation
+   * one. See /auth/allow in hub/server.mjs.
+   * ==================================================================== */
+  var whoState = null;
+  var whoBusy = false;
+
+  function refreshWhoami() {
+    fetch("/auth/whoami", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (r) {
+        if (r && r.ok) { whoState = r; if (sheetOpen) renderSheet(); }
+      }, function () { /* the section says it cannot tell */ });
+  }
+
+  function accountSection() {
+    var box = section("Account");
+    if (!whoState) {
+      var loading = el("p", "snote");
+      tx(loading, "Asking the hub…");
+      box.appendChild(loading);
+      return box;
+    }
+
+    box.appendChild(srow("Signed in as", whoState.login ? "@" + whoState.login : "not signed in"));
+
+    if (whoState.shared) {
+      // A hook-only machine, or an install that predates sign-in. It works; it
+      // is just anonymous, and saying so beats showing a blank name.
+      var sh = el("p", "snote");
+      tx(sh, whoState.githubSignIn
+        ? "This machine is using the shared team secret rather than a GitHub account. That still works. Re-running setup and signing in gives it a name and lets the hub revoke it on its own."
+        : "This machine is using the shared team secret. This hub has no GitHub sign-in configured.");
+      box.appendChild(sh);
+    }
+
+    var people = whoState.people || [];
+    if (people.length) {
+      var list = el("div");
+      list.style.marginTop = "8px";
+      people.forEach(function (p) {
+        var row = el("div", "srow");
+        var k = el("span", "k");
+        tx(k, "@" + p.login + (p.owner ? "  · owner" : p.pending ? "  · invited" : ""));
+        row.appendChild(k);
+        var v = el("span", "v");
+        if (whoState.owner && !p.owner) {
+          var rm = el("button", "sbtn");
+          rm.type = "button";
+          rm.disabled = whoBusy;
+          tx(rm, "Remove");
+          rm.addEventListener("click", function () { changePeople("/auth/revoke", p.login); });
+          v.appendChild(rm);
+        }
+        row.appendChild(v);
+        list.appendChild(row);
+      });
+      box.appendChild(list);
+    }
+
+    if (whoState.owner) {
+      var form = el("form", "row");
+      form.style.marginTop = "10px";
+      var input = el("input", "mono");
+      input.type = "text";
+      input.placeholder = "github username";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      var add = el("button", "sbtn");
+      add.type = "submit";
+      add.disabled = whoBusy;
+      tx(add, "Invite");
+      form.appendChild(input);
+      form.appendChild(add);
+      form.addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        var v = input.value.trim();
+        if (v) changePeople("/auth/allow", v);
+      });
+      box.appendChild(form);
+
+      var howto = el("p", "snote");
+      tx(howto, "They install zevet, enter this hub's address and click Sign in with GitHub. Nothing to paste, and nothing to send them but the address.");
+      box.appendChild(howto);
+    }
+
+    if (whoErr) {
+      var e = el("p", "snote");
+      tx(e, whoErr);
+      box.appendChild(e);
+    }
+    return box;
+  }
+
+  var whoErr = "";
+
+  function changePeople(route, login) {
+    whoBusy = true;
+    whoErr = "";
+    renderSheet();
+    fetch(route, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ login: login }),
+    })
+      .then(function (r) { return r.json().then(function (b) { return { status: r.status, body: b }; }); })
+      .then(function (r) {
+        whoBusy = false;
+        if (r.status === 200 && r.body.people) whoState.people = r.body.people;
+        else whoErr = r.body.error || ("The hub answered " + r.status + ".");
+        renderSheet();
+      }, function (err) {
+        whoBusy = false;
+        whoErr = "Could not reach the hub: " + err.message;
+        renderSheet();
+      });
   }
 
   function indexSection() {
     var box = section("Code index");
+
+    /* ⚠️ THE EXTERNAL INDEX WINS, AND IT IS CHECKED FIRST.
+     *
+     * There are two different things called "the code index" and this section
+     * used to show only one of them. `machine.cindex` is status-sources.js's
+     * liveness probe on a TCP port -- a SEPARATE index process the user runs
+     * themselves, and the thing the status strip reports as "cindex on".
+     * Everything below is zevet's OWN built-in index: a model to download, a
+     * vector store, a button that spends minutes of CPU.
+     *
+     * Andrew, 2026-09-19: "the cindex build in settings shouldn't be available
+     * if the user already has cindex on. it's downloaded on my machine and
+     * zevet reads that and says cindex on, but i still have the download
+     * option in settings." He is right, and the bug is not that the two are
+     * the same -- index-capability.js is emphatic that they are not -- it is
+     * that the UI showed one of them while the strip showed the other, six
+     * inches apart, with no word connecting them. Offering an 86 MB download
+     * to somebody who already has a working index is the app failing to read
+     * its own status bar. */
+    if (machine && machine.cindex === true) {
+      box.appendChild(srow("Status", "already running outside zevet"));
+      var ext = el("p", "snote");
+      tx(ext, "Something is serving a code index on port " +
+        (machine.cindexPort || 8080) + " on this machine, which is what the " +
+        "strip means by “cindex on”. zevet will not download a second " +
+        "model or build a second store over the top of it.");
+      box.appendChild(ext);
+      var stop = el("p", "snote");
+      tx(stop, "Stop that process, or set ZEVET_CINDEX_PORT to a port it is not " +
+        "using, and zevet’s own index reappears here.");
+      box.appendChild(stop);
+      return box;
+    }
+
     if (!LOCAL || typeof window.zevetLocal.indexStatus !== "function") {
       var na = el("p", "snote");
       tx(na, "Not available in this build.");
@@ -2331,7 +2503,15 @@
     // The root is passed so the branch segment describes the workspace the
     // person is actually looking at, not whichever one was opened first.
     window.zevetLocal.status(localRoot).then(function (r) {
-      if (r && r.ok) { machine = r; renderStrip(); }
+      if (!r || !r.ok) return;
+      // `cindex` decides what the Code index section is allowed to offer, so a
+      // flip while the sheet is open has to reach the sheet too -- otherwise
+      // stopping the external index leaves a stale "already running" panel
+      // that only a close-and-reopen clears.
+      var was = machine && machine.cindex;
+      machine = r;
+      renderStrip();
+      if (sheetOpen && was !== r.cindex) renderSheet();
     }, function () { /* a status probe that fails simply shows nothing */ });
   }
 

@@ -13,22 +13,33 @@
 // on the day the editor shipped, and the hub Andrew runs is a box in Google
 // Cloud holding, in that case, everybody's source.
 //
-// So the hub relays ciphertext it cannot read. The whole trick is that the hub
-// is never given the secret the key comes from:
+// The derivation:
 //
 //     teammates share one master secret S
 //
-//     auth token  =  SHA-256("zevet-auth\0" || S)       <- the hub gets THIS
-//     doc key     =  HKDF-SHA-256(S, info "zevet-doc")  <- the hub never sees S
+//     auth token  =  SHA-256("zevet-auth\0" || S)
+//     doc key     =  HKDF-SHA-256(S, info "zevet-doc")
 //
-// The hub can check the token it was given against the token it holds, and can
-// do nothing else with it. Inverting SHA-256 to recover S is the assumption the
-// whole thing rests on, and it is the ordinary one.
+// ⚠️ THE PARAGRAPH THAT USED TO BE HERE SAID "THE HUB NEVER SEES S". THAT
+// STOPPED BEING TRUE ON 2026-09-19, AND THE CLAIM IS DELETED RATHER THAN
+// SOFTENED.
+//
+// GitHub sign-in replaced the pasted secret, and the way a teammate gets S now
+// is that the hub hands it over once GitHub has proved who they are. So the hub
+// holds S, can derive the document key, and can read document traffic. The
+// reasoning, the alternative that was not built, and whose decision it was are
+// all in hub/accounts.mjs. This file is the derivation; it is no longer the
+// security argument.
+//
+// Still true: the traffic is encrypted in transit and in the relay's own event
+// log, so a network observer, and anyone who ends up with the logs, still see
+// ciphertext. Gone: the defence against a hub that is honest but curious.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT THIS DOES NOT PROTECT AGAINST, stated here because a security property
 // that is oversold is worse than one that is absent:
 //
+//   • THE HUB ITSELF. It holds S. See the correction above.
 //   • A MALICIOUS HUB THAT SERVES BAD BOARD JAVASCRIPT. The board window loads
 //     its UI from the hub (`main.js` → `loadURL(cfg.hub)`), so a hub that wants
 //     your plaintext does not need the key — it ships JavaScript into the
@@ -169,17 +180,50 @@ export function deriveDocKey(masterSecret) {
  * `doctor.mjs` is where that error is meant to surface.
  */
 export function resolveAuth({ env = process.env, file = {} } = {}) {
+  /* ── A GitHub session beats everything ─────────────────────────────────────
+   *
+   * Written by desktop/github-signin.js after somebody signs in. It is checked
+   * FIRST, above the master secret, and the reason is revocation: the hub can
+   * delete a session, and the moment it does that machine is out. It cannot
+   * delete a derived token, because the derived token is a pure function of a
+   * secret the machine already has a copy of.
+   *
+   * ⚠️ THAT IS NOT FULL REVOCATION AND MUST NOT BE SOLD AS IT. Anyone who has
+   * signed in once holds S on their disk, and S derives the shared token, which
+   * this same file will happily fall through to. Removing somebody from the
+   * hub's list stops their app and their hooks; it does not stop a person who
+   * kept the value and knows what to do with it. The only real revocation is
+   * rotating S, which re-keys every document and means everybody signs in
+   * again. Said plainly here so nobody discovers it during an incident.
+   *
+   * The secret is still carried alongside, because it is what the EDITOR needs:
+   * the document key is HKDF(S) and no session can stand in for it. */
+  const session = env.ZEVET_SESSION || file.session || "";
+  if (session) {
+    const rawSecret = env.ZEVET_SECRET || file.secret || "";
+    let secret = "";
+    // A session works on its own. A malformed secret beside it costs the editor
+    // and nothing else, so it is dropped rather than turned into a hard error
+    // that would take the board down too.
+    try {
+      if (rawSecret) secret = normaliseMasterSecret(rawSecret);
+    } catch {
+      secret = "";
+    }
+    return { token: session, secret, legacy: false, session: true, error: null };
+  }
+
   const rawSecret = env.ZEVET_SECRET || file.secret || "";
   if (rawSecret) {
     try {
       const secret = normaliseMasterSecret(rawSecret);
-      return { token: deriveAuthToken(secret), secret, legacy: false, error: null };
+      return { token: deriveAuthToken(secret), secret, legacy: false, session: false, error: null };
     } catch (err) {
-      return { token: "", secret: "", legacy: false, error: err.message };
+      return { token: "", secret: "", legacy: false, session: false, error: err.message };
     }
   }
   const token = env.ZEVET_TOKEN || file.token || "";
-  return { token, secret: "", legacy: Boolean(token), error: null };
+  return { token, secret: "", legacy: Boolean(token), session: false, error: null };
 }
 
 /**

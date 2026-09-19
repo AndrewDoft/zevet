@@ -35,6 +35,7 @@ const embedder = require("./embedder.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
 const { AppUpdater } = require("./app-update.js");
+const { GithubSignIn } = require("./github-signin.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -186,7 +187,12 @@ function authFor(cfg) {
       error: "this install is missing client/secret.mjs, so it cannot prove who it is — reinstall zevet",
     };
   }
-  return secret.resolveAuth({ env: {}, file: { secret: cfg.secret, token: cfg.token } });
+  // ⚠️ `session` HAS TO BE PASSED. This is an allowlist of three fields, not
+  // a spread, so a credential added to the config and not added here is simply
+  // never seen -- and the symptom is not an error, it is the app quietly
+  // authenticating with the OLD credential while the settings pane reports the
+  // new one.
+  return secret.resolveAuth({ env: {}, file: { secret: cfg.secret, token: cfg.token, session: cfg.session } });
 }
 
 /**
@@ -206,7 +212,12 @@ function readConfig() {
     if (!cfg || typeof cfg.hub !== "string" || !cfg.hub) return null;
     const hasSecret = typeof cfg.secret === "string" && cfg.secret.length > 0;
     const hasToken = typeof cfg.token === "string" && cfg.token.length > 0;
-    if (hasSecret || hasToken) return cfg;
+    // A GitHub session counts on its own. It normally arrives WITH a secret,
+    // but the two are separate credentials for separate jobs (hub access
+    // versus the document key) and a config carrying only the first is a
+    // working install with no editor -- not an install to send back to setup.
+    const hasSession = typeof cfg.session === "string" && cfg.session.length > 0;
+    if (hasSecret || hasToken || hasSession) return cfg;
   } catch {
     // No config yet, or unreadable — treated the same: run setup.
   }
@@ -595,6 +606,11 @@ ipcMain.handle("zevet:config", () => {
     hub: cfg.hub,
     actor: cfg.actor || "",
     hasSecret,
+    // Who is signed in, for the settings pane to show. A login is a public
+    // name, not a credential -- it is on every commit this person has ever
+    // pushed -- so unlike the secret and the session it is safe to hand back.
+    login: typeof cfg.login === "string" ? cfg.login : "",
+    session: typeof cfg.session === "string" && cfg.session.length > 0,
     // A machine set up before the master secret existed: a raw shared token and
     // nothing to derive a document key from. The editor cannot work there and
     // says so; see doc:join.
@@ -673,13 +689,30 @@ ipcMain.handle("zevet:save", (_e, cfg) => {
   // file another author is holding.
   const typed = String(cfg.token || "");
 
+  const existing = readConfig();
+
+  /* ⚠️ AN EMPTY CREDENTIAL MEANS "KEEP THE ONE I HAVE", NOT "CLEAR IT".
+   *
+   * Since GitHub sign-in, the credential is established BEFORE the name is
+   * typed rather than at the same time, so setup calls this a second time with
+   * the secret field untouched purely to save an edited display name. Treating
+   * that as a request to write an empty config would sign the machine out at
+   * the last click of setting it up. */
+  if (!typed && existing && (existing.session || existing.secret || existing.token)) {
+    writeConfig({ ...existing, hub, actor: actor || existing.actor || "" });
+    return true;
+  }
+
   const auth = authFor({ secret: typed });
   if (!auth.error && auth.secret) {
+    // A pasted secret REPLACES a GitHub session deliberately: somebody typing a
+    // master secret into the fallback field is telling us the session is not
+    // the credential they want to use, and keeping both would leave
+    // `resolveAuth` preferring a session they were trying to get away from.
     writeConfig({ hub, secret: auth.secret, actor });
     return true;
   }
 
-  const existing = readConfig();
   if (existing && typeof existing.token === "string" && existing.token) {
     writeConfig({ hub, token: typed || existing.token, actor });
     return true;
@@ -691,6 +724,77 @@ ipcMain.handle("zevet:save", (_e, cfg) => {
   // available outcomes. Refused instead; `zevet:test` has already told the user
   // why in the same words.
   return false;
+});
+
+/* ── Sign in with GitHub ─────────────────────────────────────────────────────
+ *
+ * Three calls rather than one, because the flow has to paint a code and then
+ * sit for up to a quarter of an hour: `start` returns what to show, `wait`
+ * resolves when GitHub answers, `cancel` gives the window a way out.
+ *
+ * ⚠️ ONE ATTEMPT AT A TIME, ENFORCED. Two overlapping flows would each hold a
+ * device code and each try to write the config, and the loser would overwrite
+ * the winner with a session the hub had already superseded. Starting a second
+ * one cancels the first.
+ */
+let signIn = null;
+
+ipcMain.handle("zevet:githubStart", async (_e, { hub } = {}) => {
+  try {
+    if (signIn) signIn.cancel();
+    signIn = new GithubSignIn({ hub: hub || (readConfig() || {}).hub });
+    const r = await signIn.start();
+    // Opened from the MAIN process, never by the renderer. The board window
+    // loads remote HTML from the hub, and a renderer that could open arbitrary
+    // URLs in the system browser is a hub that can too.
+    shell.openExternal(r.verificationUriComplete).catch(() => {
+      /* No browser, or none that would take it. The code is on screen; that is
+       * the entire reason it is on screen. */
+    });
+    return { ok: true, userCode: r.userCode, url: r.verificationUriComplete, expiresIn: r.expiresIn };
+  } catch (err) {
+    signIn = null;
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle("zevet:githubWait", async () => {
+  if (!signIn) return { ok: false, error: "no sign-in is in progress" };
+  const attempt = signIn;
+  try {
+    const r = await attempt.wait();
+
+    /* ⚠️ THE SECRET IS WRITTEN, THE SESSION IS WRITTEN, AND THE HUB IS KEPT.
+     * `secret` is what the editor derives its document key from and `session`
+     * is what authenticates to the hub — see resolveAuth in client/secret.mjs,
+     * which prefers the session precisely so that revoking somebody has an
+     * effect. Dropping either one produces a half-working install: no secret
+     * means a board with a dead editor, no session means a machine that cannot
+     * be revoked. */
+    const existing = readConfig() || {};
+    const hub = String((attempt.base || existing.hub || "")).replace(/\/+$/, "");
+    writeConfig({
+      hub,
+      secret: r.secret || existing.secret || "",
+      session: r.token,
+      // The GitHub login is a far better actor name than a hostname, and it is
+      // the name teammates will recognise on the board. An actor already chosen
+      // by hand is not overwritten.
+      actor: existing.actor || r.login,
+      login: r.login,
+    });
+    return { ok: true, login: r.login, owner: r.owner };
+  } catch (err) {
+    return { ok: false, error: err.message, cancelled: err.message === "cancelled" };
+  } finally {
+    if (signIn === attempt) signIn = null;
+  }
+});
+
+ipcMain.handle("zevet:githubCancel", () => {
+  if (signIn) signIn.cancel();
+  signIn = null;
+  return true;
 });
 
 ipcMain.handle("zevet:pickRepo", async () => {
@@ -1089,6 +1193,10 @@ ipcMain.handle("local:status", async (_e, arg) => {
   return {
     ok: true,
     cindex,
+    // Carried so the settings sheet can NAME the port it found something on.
+    // "An index is already serving on 8080" is checkable; "an index is already
+    // serving" is a claim the user has no way to confirm or disprove.
+    cindexPort: STATUS_PATHS.cindexPort,
     repo,
     graph: statusSources.vaultHealth(STATUS_PATHS.vaultHealth),
     // Seconds, formatted by the renderer -- the main process has no business

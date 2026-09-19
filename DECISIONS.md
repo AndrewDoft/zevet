@@ -247,3 +247,80 @@ A second instance pointed at the same feed correctly declined to download the fi
 **Reversibility.** High. The feature is inert without a published feed — a 404 is treated as
 "nothing to report", which is also the state of the download host today. Deleting
 `zevet-latest.json` turns it off for every machine at once.
+
+---
+
+## D-007 — GitHub sign-in replaces the shared secret, and the hub is now trusted with the key
+
+**Date.** 2026-09-19.
+
+**Decision.** A person joins a hub by signing in with GitHub. The hub verifies them against
+its own list, mints a session, and **hands them the master secret**, from which the document
+key is derived. The 48-character secret people used to paste is still accepted — hooks are
+headless and the installs in the field present it — but it is no longer how a human arrives.
+
+**This reverses the central property of D-005.** D-005 says, in its own words, that the hub is
+not trusted with the code: the hub held `SHA-256("zevet-auth"||S)` and never `S`, so it could
+relay ciphertext it could not open. That is over. The hub holds `S`. An operator, anyone who
+reads the box's disk or memory, and anyone who ends up with a backup of `/srv/zevet/var/` can
+now decrypt document traffic.
+
+**Why.** Andrew, 2026-09-19: *"idk what this master secret thing means, but people should be
+able to use the app without having to enter some long code."* And, when shown the alternative
+below and having picked it: *"just do whatever is simplest and easiest. no use friction at all.
+something that can be solved by the user just signing into github."*
+
+⚠️ **The note contradicted the button, and the note won.** He selected the device-approval
+design and then wrote the sentence above it. The two cannot both be satisfied — approval means
+waiting for a teammate — and the written requirement was the more specific of the two. This is
+recorded because it is the kind of decision that gets re-litigated later by someone reading
+only the click.
+
+**What was not built, and is still the right answer if this trade ever reads worse.** The
+joiner generates an X25519 keypair; an already-trusted teammate seals `S` to it; the hub relays
+two blobs it cannot open. Nothing is typed by anybody. The cost is one approval click and a
+joiner who waits if nobody is online — which, for a hub with one owner and two teammates, may
+be minutes or may be overnight. It is perhaps a day's work on top of what exists: the session,
+the allowlist and the relay are all already here.
+
+**How much was actually given up.** Less than the reversal sounds, and more than nothing. The
+board's JavaScript is served *by* the hub into a window that already holds the key, so a hub
+that had been **taken over** could always take plaintext — D-005 says so itself. What is lost
+is the defence against a hub that is merely **watched**: honest-but-curious operators, disk
+images, log copies, backups. That was a real property and it is gone.
+
+**Every place that claimed it has been changed, not softened.**
+`client/secret.mjs`'s header, `usemasora.com/zevet`'s third feature (which had already been
+rewritten once for the same reason — a claim outliving the code it described), and this file.
+The landing page's claim is retired rather than reworded, because no wording of "the hub cannot
+read one" is true any more.
+
+**Trust on first use.** An unclaimed hub admits the first GitHub sign-in and makes that person
+the owner. The window is the minutes between deploying a hub and signing into it, and
+`ZEVET_GITHUB_OWNER` closes it for anybody who would rather not have one. Rejected: a hardcoded
+login, which puts one person's name in a release; and a required env var, which locks everyone
+out of a box behind IAP if it is wrong.
+
+**Revocation is partial, and saying so is part of the decision.** Removing somebody kills their
+session immediately, and `resolveAuth` prefers a session precisely so that this bites. It does
+not un-know the master secret they already have on disk, and that secret derives the shared
+token. Real revocation is rotating `S`, which re-keys every document and makes everyone sign in
+again. Nothing in the UI implies otherwise.
+
+**Device flow, not the web flow.** The web flow needs a client secret to exchange the code, and
+a desktop app cannot hold one. Device flow needs no secret at all, which is why GitHub's own
+CLI uses it. The hub proxies it rather than the app calling GitHub directly, so that the client
+id lives in one place, the allowlist is enforced somewhere the user cannot edit, and an app
+that lied about who it was would be lying to a hub that asked GitHub itself.
+
+**Scope requested: `read:user`, and nothing else.** A login and a numeric id. Not `repo` — which
+would be read-write access to every private repository the person can see, requested from
+people who only wanted to sign in. The original ask that started this (*"a way to edit the
+github repos it can access... that might mean we need to build in github oauth"*) was about
+browsing repositories, and that still is not built; the day it is, it is one string and a
+re-authorisation prompt, asked at the moment it is needed rather than years early.
+
+**Reversibility.** High, per install and per hub. Leave `ZEVET_GITHUB_CLIENT_ID` unset and the
+hub has no sign-in and behaves exactly as it did before — `hub/var/` is not even created.
+Pasting a master secret in setup still works and overwrites a session. What is NOT reversible
+is the hub having held `S`: once it has been on that disk, it has been on that disk.

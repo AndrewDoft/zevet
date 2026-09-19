@@ -57,12 +57,33 @@ jobs:
 
       - name: Build
         working-directory: desktop
-        # CSC_IDENTITY_AUTO_DISCOVERY=false stops electron-builder hunting for a
-        # signing identity that is not there and failing the mac job over it.
-        # See the note below about what unsigned means for the people you send
-        # this to.
+        # ⚠️ EVERY SIGNING SECRET IS PASSED AND EVERY ONE OF THEM MAY BE EMPTY.
+        #
+        # A GitHub secret that does not exist expands to an empty string, and
+        # desktop/electron-builder.config.js treats empty as absent — so this
+        # block is a no-op on a repo with no secrets, on every fork, and on
+        # every pull request from one. Adding the secrets is the entire act of
+        # turning signing on; nothing here changes.
+        #
+        # CSC_IDENTITY_AUTO_DISCOVERY is computed rather than pinned to "false".
+        # It was hardcoded, which stopped electron-builder hunting for an
+        # identity that was not there — and would ALSO have stopped it using a
+        # certificate that was, so the first signed build would have quietly
+        # produced an unsigned app.
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_CODE_SIGNING_ENDPOINT: ${{ vars.AZURE_CODE_SIGNING_ENDPOINT }}
+          AZURE_CODE_SIGNING_ACCOUNT: ${{ vars.AZURE_CODE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ vars.AZURE_CERT_PROFILE }}
+          AZURE_PUBLISHER_NAME: ${{ vars.AZURE_PUBLISHER_NAME }}
         # Via the npm script, NOT `npx electron-builder`: the script regenerates
         # the icon first, and calling the binary directly is exactly how the
         # icon went missing from every build without a single failure.
@@ -98,10 +119,24 @@ jobs:
           test -x "$BIN" || { echo "no executable at $BIN"; exit 1; }
           echo "== arch:"; lipo -archs "$BIN" || file "$BIN"
 
-          echo "== signature (expected: adhoc or absent — this build is unsigned):"
+          # ⚠️ ASSERTED WHEN SIGNED, MERELY REPORTED WHEN NOT. An unsigned build
+          # is a known state and failing the job over it would block every build
+          # until a certificate is bought. A build that was SUPPOSED to be
+          # signed and came out unsigned is a real failure, and the only place
+          # it is visible is here.
+          echo "== signature:"
           codesign -dv --verbose=2 "$APP" 2>&1 | sed 's/^/   /' || true
-          echo "== gatekeeper verdict (expected: rejected, unsigned):"
+          echo "== gatekeeper verdict:"
           spctl --assess --type execute --verbose "$APP" 2>&1 | sed 's/^/   /' || true
+          if [ -n "${{ secrets.CSC_LINK }}" ]; then
+            echo "== this build was meant to be signed and notarised — checking"
+            codesign --verify --deep --strict --verbose=2 "$APP" || {
+              echo "SIGNED BUILD FAILED VERIFICATION"; exit 1; }
+            spctl --assess --type execute "$APP" || {
+              echo "GATEKEEPER REFUSED A BUILD THAT WAS SUPPOSED TO PASS"; exit 1; }
+          else
+            echo "== unsigned build (no CSC_LINK secret) — the two lines above are expected to complain"
+          fi
 
           # Copy out: the mounted image is read-only, and Electron writes into
           # its own userData on first run.

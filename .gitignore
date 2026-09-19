@@ -24,3 +24,14 @@ desktop/build/icon.png
 # committed too, because an 800 KiB minified stack trace pasted from a
 # teammate's console is otherwise unreadable.
 editor/node_modules/
+
+# The hub's account store. NEVER commit this and never let it into a
+# release tarball: /srv/zevet is extracted over the top of itself, so a
+# tracked var/accounts.json would overwrite the live sessions and the master
+# secret on every deploy. See hub/accounts.mjs.
+#
+# ⚠️ IT IS THE REPO ROOT, NOT hub/. `defaultAccountsFile` resolves
+# hub/../var, because the tarball's root IS /srv/zevet on the box. This said
+# hub/var/ first, and a stray accounts.json -- with a master secret in it --
+# turned up staged for commit.
+/var/

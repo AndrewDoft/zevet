@@ -57,6 +57,22 @@ contextBridge.exposeInMainWorld("zevet", {
   test: (hub, token) => ipcRenderer.invoke("zevet:test", { hub, token }),
   /** Write ~/.zevet/config.json. */
   save: (hub, token, actor) => ipcRenderer.invoke("zevet:save", { hub, token, actor }),
+  /**
+   * Sign in with GitHub.
+   *
+   * `githubStart` resolves with `{ userCode, url }` as soon as GitHub has
+   * issued a code, and the main process has already opened the browser on it.
+   * `githubWait` then resolves when the person has clicked Authorize — up to
+   * fifteen minutes later — and by the time it does, the config is written.
+   *
+   * ⚠️ NEITHER CALL RETURNS THE SECRET OR THE SESSION, on purpose and for the
+   * same reason `config()` redacts them: the BOARD window loads HTML from the
+   * hub, so anything on this bridge is something a hub that has been taken over
+   * can read out of its own page. The renderer is told a login and a yes.
+   */
+  githubStart: (hub) => ipcRenderer.invoke("zevet:githubStart", { hub }),
+  githubWait: () => ipcRenderer.invoke("zevet:githubWait"),
+  githubCancel: () => ipcRenderer.invoke("zevet:githubCancel"),
   /** Native folder picker; resolves to a path or null. */
   pickRepo: () => ipcRenderer.invoke("zevet:pickRepo"),
   /** Install the hooks into that repo. */
