@@ -260,7 +260,7 @@ describe("the desktop state machine", () => {
   test("a hub with no OAuth app is named as a deployment problem", async () => {
     const f = hubFetch(() => ({ status: 503, body: { error: "this hub has no GitHub sign-in configured" } }));
     const s = new GithubSignIn({ hub: "http://hub", fetchImpl: f });
-    await assert.rejects(() => s.start(), /does not have GitHub sign-in switched on/);
+    await assert.rejects(() => s.start(), /GitHub sign-in is not configured for this hub/);
   });
 });
 
