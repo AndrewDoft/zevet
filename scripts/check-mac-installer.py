@@ -6,7 +6,9 @@ Called by smoke-macos.mjs after mounting the final DMG.
 from pathlib import Path
 import re
 import struct
+import subprocess
 import sys
+import tempfile
 
 root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root / "desktop/node_modules/dmg-builder/vendor"))
@@ -24,6 +26,7 @@ with DSStore.open(str(mount / ".DS_Store"), "r") as store:
     window = store["."]["bwsp"]
     view = store["."]["icvp"]
     locations = [store[name]["Iloc"] for name in [apps[0], "Applications"]]
+    background_bookmark = store["."]["pBBk"].to_bytes()
 
 _, _, width, height = map(int, re.findall(r"\d+", window["WindowBounds"]))
 assert not window["ShowToolbar"] and not window["ShowSidebar"], "Installer opens with distracting Finder navigation"
@@ -57,4 +60,8 @@ while offset:
     sizes.append((dimensions[256], dimensions[257]))
     offset = struct.unpack_from(order + "I", data, offset + 2 + count * 12)[0]
 assert sizes == [(width, height), (width * 2, height * 2)], f"Background does not match the window at both scales: {sizes}"
+with tempfile.TemporaryDirectory(prefix="zevet-dmg-bookmark-check-") as directory:
+    bookmark = Path(directory) / "background.bookmark"
+    bookmark.write_bytes(background_bookmark)
+    subprocess.run(["swift", str(root / "scripts/dmg-bookmark.swift"), "verify", str(backgrounds[0]), str(bookmark)], check=True)
 print("Installer layout: only app + Applications, visible drag targets, readable labels, 1x/2x branded background")

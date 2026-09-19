@@ -8,9 +8,9 @@
   "scripts": {
     "start": "electron .",
     "icon": "node make-icon.mjs",
-    "dist": "node make-icon.mjs && electron-builder -c electron-builder.config.js --publish never",
-    "dist:win": "node make-icon.mjs && electron-builder -c electron-builder.config.js --win --publish never",
-    "dist:mac": "node make-icon.mjs && electron-builder -c electron-builder.config.js --mac --publish never",
+    "dist": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --publish never",
+    "dist:win": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --win --publish never",
+    "dist:mac": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --mac --publish never",
     "smoke:mac": "node ../scripts/smoke-macos.mjs"
   },
   "devDependencies": {

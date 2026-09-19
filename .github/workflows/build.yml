@@ -73,9 +73,9 @@ jobs:
           AZURE_CODE_SIGNING_ACCOUNT: ${{ vars.AZURE_CODE_SIGNING_ACCOUNT }}
           AZURE_CERT_PROFILE: ${{ vars.AZURE_CERT_PROFILE }}
           AZURE_PUBLISHER_NAME: ${{ vars.AZURE_PUBLISHER_NAME }}
-        # Via the npm script, NOT `npx electron-builder`: the script regenerates
-        # the icon first, and calling the binary directly is exactly how the
-        # icon went missing from every build without a single failure.
+        # The npm script generates the app icon and fixes the native Finder
+        # background bookmark before the DMG is finalized. Calling
+        # electron-builder directly bypasses both steps.
         run: npm run ${{ matrix.script }}
 
       # Exercise the final DMG, not just electron-builder's exit status. The
