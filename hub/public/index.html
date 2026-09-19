@@ -456,6 +456,8 @@
     padding: 4px 12px; border: 1px solid var(--cerulean); color: var(--cerulean);
     border-radius: 100px; font-size: 12px;
   }
+  .update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .updaterow .go:disabled { opacity: .6; cursor: default; }
   .updaterow .go:hover { background: var(--cerulean); color: var(--paper); }
   /* A real bar, not a spinner: the length of this download is known, so the
      progress can be honest about how far through it is. */
@@ -2013,8 +2015,8 @@
      */
     var view = section("View");
     var modes = [
-      ["ide", "IDE", "The file tree, the editor and everyone's cursors. What zevet has been."],
-      ["agent", "Agent", "The conversation front and centre; the editor tucked away. For driving agents rather than typing."],
+      ["ide", "IDE", "Files, editor and shared cursors."],
+      ["agent", "Agent", "Agent conversations with a compact editor."],
     ];
     modes.forEach(function (m) {
       var btn = el("button", "sbtn");
@@ -2050,15 +2052,15 @@
      * read every repo on the disk the moment it started would be a worse
      * default than one that asks.
      */
-    var repos = section("Folders it can open");
+    var repos = section("Folders");
     if (!LOCAL) {
       var noLocal = el("p", "snote");
-      tx(noLocal, "This is a browser tab, so there is no filesystem to open. Use the desktop app.");
+      tx(noLocal, "Use the desktop app to open local folders.");
       repos.appendChild(noLocal);
     } else {
       if (!localWorkspaces.length) {
         var none = el("p", "snote");
-        tx(none, "None yet. Nothing on this machine is readable by zevet until you add a folder here.");
+        tx(none, "Add a folder to give zevet access.");
         repos.appendChild(none);
       }
       localWorkspaces.forEach(function (w) {
@@ -2083,14 +2085,7 @@
       repos.appendChild(add);
 
       var note = el("p", "snote");
-      note.appendChild(tx(el("b"), "On GitHub: "));
-      note.appendChild(document.createTextNode(
-        "this list is still about FOLDERS, not repositories. Signing in with GitHub proves who you are to " +
-        "the hub — see Account above — and asks for nothing but your username. It grants no access to any " +
-        "repository, and zevet reads only folders on this machine that appear in this list. Browsing or " +
-        "cloning repos you have not already got locally would need a wider permission than sign-in asks " +
-        "for, and that is a separate feature and is not built.",
-      ));
+      tx(note, "GitHub sign-in identifies your account. Folder access is limited to the list above.");
       repos.appendChild(note);
     }
     sheet.appendChild(repos);
@@ -2122,59 +2117,37 @@
    */
   function versionSection() {
     var box = section("Version");
+    box.id = "versionSection";
     if (!LOCAL || typeof window.zevetLocal.updateStatus !== "function") {
       var na = el("p", "snote");
-      tx(na, "This build has no updater. Downloads are at usemasora.com/zevet.");
+      tx(na, "Get the latest version at usemasora.com/zevet.");
       box.appendChild(na);
       return box;
     }
     var s = updateState || {};
     box.appendChild(srow("Installed", s.current || "unknown"));
+    var status = srow("Status", updateStatusText(s));
+    status.setAttribute("aria-live", "polite");
+    box.appendChild(status);
+    if (s.phase === "downloading") box.appendChild(updateProgress(s, "sbar"));
 
-    var state = "up to date";
-    if (s.phase === "checking") state = "checking…";
-    else if (s.phase === "downloading") state = "downloading " + s.version + " — " + (s.percent || 0) + "%";
-    else if (s.phase === "ready") state = s.version + " is ready to install";
-    else if (s.phase === "error") state = s.error || "the last check failed";
-    box.appendChild(srow("Status", state));
-
-    var btn = el("button", "sbtn");
-    btn.type = "button";
-    tx(btn, "Check now");
-    btn.disabled = s.phase === "checking" || s.phase === "downloading";
-    btn.addEventListener("click", function () {
-      btn.disabled = true;
-      tx(btn, "Checking…");
-      window.zevetLocal.updateCheck().then(function (r) {
-        updateState = r;
-        renderUpdate();
-        if (sheetOpen) renderSheet();
-      }, function () {
-        tx(btn, "Check failed");
-      });
-    });
-    box.appendChild(srow("Updates", btn));
-
-    // ⚠️ SAID OUT LOUD, because the alternative is somebody assuming the
-    // opposite. macOS cannot be updated in place here: the app is unsigned, so
-    // the new build is downloaded and opened and the person drags it across.
-    if (s.manual) {
-      var note = el("p", "snote");
-      tx(note, "On macOS zevet cannot replace itself — it is not code-signed. New versions are downloaded and opened for you to drag into Applications.");
-      box.appendChild(note);
-    }
+    var actions = el("div", "update-actions");
+    if (canInstallUpdate(s)) actions.appendChild(updateInstallButton("sbtn"));
+    if (typeof window.zevetLocal.updateCheck === "function") actions.appendChild(updateCheckButton("sbtn"));
+    box.appendChild(srow("Updates", actions));
+    appendUpdateFeedback(box, "snote");
     return box;
   }
 
   function credentialLabel() {
     var c = window.__zevetCfg;
     if (!c) return "unknown";
-    if (c.legacy) return "legacy token — re-run setup to enable shared editing";
+    if (c.legacy) return "legacy token · run setup for shared editing";
     // A GitHub session and the master secret normally sit side by side: the
     // session is what the hub checks, the secret is what the editor derives its
     // document key from. Naming only one of them makes the other look missing.
-    if (c.session) return "GitHub sign-in" + (c.hasSecret ? " + team key" : " (no team key — the editor will not open)");
-    return c.hasSecret ? "master secret" : "none configured";
+    if (c.session) return "GitHub sign-in" + (c.hasSecret ? " + team key" : " · team key missing");
+    return c.hasSecret ? "team key" : "none configured";
   }
 
   /* ======================================================================
@@ -2205,7 +2178,7 @@
     var box = section("Account");
     if (!whoState) {
       var loading = el("p", "snote");
-      tx(loading, "Asking the hub…");
+      tx(loading, "Loading account…");
       box.appendChild(loading);
       return box;
     }
@@ -2217,8 +2190,8 @@
       // is just anonymous, and saying so beats showing a blank name.
       var sh = el("p", "snote");
       tx(sh, whoState.githubSignIn
-        ? "This machine is using the shared team secret rather than a GitHub account. That still works. Re-running setup and signing in gives it a name and lets the hub revoke it on its own."
-        : "This machine is using the shared team secret. This hub has no GitHub sign-in configured.");
+        ? "Connected with a team key. Run setup to sign in with GitHub."
+        : "Connected with a team key. GitHub sign-in is unavailable on this hub.");
       box.appendChild(sh);
     }
 
@@ -2268,7 +2241,7 @@
       box.appendChild(form);
 
       var howto = el("p", "snote");
-      tx(howto, "They install zevet, enter this hub's address and click Sign in with GitHub. Nothing to paste, and nothing to send them but the address.");
+      tx(howto, "Send them this hub’s address. They can sign in with GitHub after installing zevet.");
       box.appendChild(howto);
     }
 
@@ -2327,17 +2300,10 @@
      * to somebody who already has a working index is the app failing to read
      * its own status bar. */
     if (machine && machine.cindex === true) {
-      box.appendChild(srow("Status", "already running outside zevet"));
+      box.appendChild(srow("Status", "external index running"));
       var ext = el("p", "snote");
-      tx(ext, "Something is serving a code index on port " +
-        (machine.cindexPort || 8080) + " on this machine, which is what the " +
-        "strip means by “cindex on”. zevet will not download a second " +
-        "model or build a second store over the top of it.");
+      tx(ext, "External index on port " + (machine.cindexPort || 8080) + ". Stop it to use zevet’s built-in index.");
       box.appendChild(ext);
-      var stop = el("p", "snote");
-      tx(stop, "Stop that process, or set ZEVET_CINDEX_PORT to a port it is not " +
-        "using, and zevet’s own index reappears here.");
-      box.appendChild(stop);
       return box;
     }
 
@@ -2368,7 +2334,7 @@
       tx(why, indexState.reasons.join("  ·  "));
       box.appendChild(why);
       var stillFine = el("p", "snote");
-      tx(stillFine, "Everything else in zevet works exactly as it does anywhere else. The index is the only thing this affects.");
+      tx(stillFine, "Other features remain available.");
       box.appendChild(stillFine);
       return box;
     }
@@ -2402,7 +2368,7 @@
 
     if (!localRoot) {
       var pick = el("p", "snote");
-      tx(pick, "Open a folder first — the index is built per folder.");
+      tx(pick, "Open a folder to build its index.");
       box.appendChild(pick);
     }
 
@@ -2420,7 +2386,7 @@
     }
 
     var cost = el("p", "snote");
-    tx(cost, "Building reads every file in the folder once and keeps a vector store under your home directory. Nothing leaves the machine — the model runs here.");
+    tx(cost, "The index is built and stored on this machine.");
     box.appendChild(cost);
     return box;
   }
@@ -3106,7 +3072,7 @@
       if (p.root !== e.root || p.relPath !== e.relPath) return;
       onDiskChanged(e, p);
     }));
-    window.zevetLocal.watch(e.root, e.relPath).then(function (r) {
+    window.zevetLocal.watch(e.root, e.relPath, e.lastWritten).then(function (r) {
       if (ed === e && r && r.ok) e.watching = true;
     }, function () { /* no watcher: an agent's edits simply will not appear live */ });
   }
@@ -3316,7 +3282,7 @@
       tx($("detailTitle"), "Nothing selected");
       var hint = el("div", "blank");
       hint.appendChild(tx(el("h2"), "Pick a file."));
-      hint.appendChild(tx(el("p"), "The tree shows the part of the repo the team is actually working in, built from what everyone's agents have touched. Select a file to see who has been in it."));
+      hint.appendChild(tx(el("p"), "Select a file to see recent activity."));
       host.appendChild(hint);
       return;
     }
@@ -3425,7 +3391,7 @@
     var usable = localAgents.filter(function (a) { return a.ok; });
     if (!usable.length) {
       var none = el("div", "newagent-none");
-      tx(none, localAgents.length ? "no agent CLI found on this machine" : "looking for agents…");
+      tx(none, localAgents.length ? "No agents found" : "looking for agents…");
       bar.appendChild(none);
       host.appendChild(bar);
       return;
@@ -3481,7 +3447,7 @@
 
     if (launchMode === "dangerous") {
       var warn = el("div", "launch-warn");
-      tx(warn, "This agent will not ask before running commands or editing files.");
+      tx(warn, "Runs commands and edits files without asking.");
       bar.appendChild(warn);
     }
     host.appendChild(bar);
@@ -3712,55 +3678,172 @@
    * the file came from, or whether it is safe. Everything in `updateState`
    * arrives over IPC from desktop/app-update.js.
    *
-   * Silent in every phase except two. "Checking" and "you are current" are the
-   * normal state of this feature and are not news.
+   * The rail shows downloads, ready installers and failures. Settings shows
+   * every phase and uses the same actions.
    */
   var updateState = null;
+  var updateRevision = 0;
+  var updateChecking = false;
+  var updateInstalling = false;
+  var updateInstallError = "";
+  var updateNotice = "";
+
+  function canInstallUpdate(s) {
+    return s.phase === "ready" && s.canInstall === true &&
+      typeof window.zevetLocal.updateInstall === "function";
+  }
+
+  function updateStatusText(s) {
+    if (updateInstalling) return s.manual ? "Opening installer…" : "Restarting…";
+    if (s.phase === "downloading") return "Downloading " + s.version + " · " + updatePercent(s) + "%";
+    if (s.phase === "ready") return s.version + " ready to install";
+    if (s.phase === "error") return s.error || "Update failed. Try again.";
+    if (updateChecking || s.phase === "checking") return "Checking…";
+    if (s.phase === "current") return "Up to date";
+    return "Not checked yet";
+  }
+
+  function updatePercent(s) {
+    return Math.max(0, Math.min(100, Math.floor(Number(s.percent) || 0)));
+  }
+
+  function updateProgress(s, className) {
+    var bar = el("div", className);
+    bar.setAttribute("role", "progressbar");
+    bar.setAttribute("aria-label", "Update download");
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+    bar.setAttribute("aria-valuenow", String(updatePercent(s)));
+    var fill = el(className === "bar" ? "i" : "span");
+    fill.style.width = updatePercent(s) + "%";
+    bar.appendChild(fill);
+    return bar;
+  }
+
+  function receiveUpdate(s) {
+    if (!s || typeof s !== "object") return;
+    if (!updateState || s.version !== updateState.version || s.phase === "checking") {
+      updateInstallError = "";
+      updateNotice = "";
+    }
+    updateState = s;
+    updateRevision++;
+    refreshUpdateViews();
+  }
+
+  function refreshUpdateViews() {
+    renderUpdate();
+    // Progress must not rebuild Account's form or discard a typed invitation.
+    var version = $("versionSection");
+    if (sheetOpen && version && version.parentNode) {
+      version.parentNode.replaceChild(versionSection(), version);
+    }
+  }
+
+  function updateCheckButton(className) {
+    var btn = el("button", className);
+    btn.type = "button";
+    var s = updateState || {};
+    btn.disabled = updateChecking || updateInstalling || s.phase === "checking" || s.phase === "downloading";
+    tx(btn, updateChecking || s.phase === "checking" ? "Checking…" : "Check now");
+    btn.addEventListener("click", checkForUpdates);
+    return btn;
+  }
+
+  function checkForUpdates() {
+    var s = updateState || {};
+    if (updateChecking || updateInstalling || s.phase === "checking" || s.phase === "downloading") return;
+    updateChecking = true;
+    updateInstallError = "";
+    updateNotice = "";
+    refreshUpdateViews();
+    return Promise.resolve().then(function () {
+      return window.zevetLocal.updateCheck();
+    }).then(function (r) {
+      if (!r || typeof r.phase !== "string") throw new Error("No update status received. Try again.");
+      receiveUpdate(r);
+    }).catch(function (err) {
+      receiveUpdate(Object.assign({}, updateState, {
+        phase: "error", canInstall: false, error: (err && err.message) || "Update check failed. Try again.",
+      }));
+    }).finally(function () {
+      updateChecking = false;
+      refreshUpdateViews();
+    });
+  }
+
+  function updateInstallButton(className) {
+    var btn = el("button", className);
+    btn.type = "button";
+    btn.disabled = updateInstalling || updateChecking;
+    var manual = updateState && updateState.manual;
+    tx(btn, updateInstalling ? (manual ? "Opening…" : "Restarting…") : (manual ? "Open installer" : "Restart to install"));
+    btn.addEventListener("click", installUpdate);
+    return btn;
+  }
+
+  function installUpdate() {
+    if (updateInstalling || updateChecking || !canInstallUpdate(updateState || {})) return;
+    updateInstalling = true;
+    updateInstallError = "";
+    updateNotice = "";
+    refreshUpdateViews();
+    return Promise.resolve().then(function () {
+      return window.zevetLocal.updateInstall();
+    }).then(function (r) {
+      if (!r || !r.ok) throw new Error((r && r.error) || "Installer could not open. Try again.");
+      if (r.manual) {
+        updateInstalling = false;
+        updateNotice = "Installer opened. Quit zevet, replace it in Applications, then reopen.";
+      }
+    }).catch(function (err) {
+      updateInstalling = false;
+      updateInstallError = (err && err.message) || "Installer could not open. Try again.";
+    }).finally(refreshUpdateViews);
+  }
+
+  function appendUpdateFeedback(host, className) {
+    var s = updateState || {};
+    var message = updateInstallError || updateNotice;
+    if (!message || message === s.error) return;
+    var note = tx(el("p", className), message);
+    note.setAttribute("role", updateInstallError ? "alert" : "status");
+    if (updateInstallError) note.style.color = "var(--alert)";
+    host.appendChild(note);
+  }
+
   function renderUpdate() {
     var host = $("updateRow");
     if (!host) return;
-    var s = updateState;
-    var show = s && (s.phase === "downloading" || s.phase === "ready");
+    var s = updateState || {};
+    var show = s.phase === "downloading" || s.phase === "ready" || s.phase === "error";
     host.hidden = !show;
-    if (!show) { host.textContent = ""; return; }
     host.textContent = "";
-
+    if (!show) return;
+    host.appendChild(tx(el("div", "hd"), updateStatusText(s)));
     if (s.phase === "downloading") {
-      host.appendChild(tx(el("div", "hd"), "Getting " + s.version + "…"));
-      var bar = el("div", "bar");
-      var fill = el("i");
-      fill.style.width = Math.max(2, Math.min(100, s.percent || 0)) + "%";
-      bar.appendChild(fill);
-      host.appendChild(bar);
-      return;
+      host.appendChild(updateProgress(s, "bar"));
+    } else if (canInstallUpdate(s)) {
+      if (s.notes) host.appendChild(tx(el("div", "sub"), s.notes));
+      host.appendChild(updateInstallButton("go"));
+    } else if (s.phase === "error" && typeof window.zevetLocal.updateCheck === "function") {
+      host.appendChild(updateCheckButton("go"));
     }
+    appendUpdateFeedback(host, "sub");
+  }
 
-    host.appendChild(tx(el("div", "hd"), "Version " + s.version + " is ready."));
-    if (s.notes) host.appendChild(tx(el("div", "sub"), s.notes));
-    var btn = el("button", "go");
-    // ⚠️ TWO DIFFERENT PROMISES, AND THE BUTTON MUST NOT MAKE THE WRONG ONE.
-    // On Windows this restarts into the new version. On macOS the app is
-    // unsigned, so nothing is replaced: the disk image is opened and the
-    // person drags it across, exactly as they did the first time. A button
-    // that said "Restart" on a Mac would be a lie about what happens next.
-    tx(btn, s.manual ? "Open the installer" : "Restart to install");
-    btn.addEventListener("click", function () {
-      btn.disabled = true;
-      tx(btn, s.manual ? "Opening…" : "Restarting…");
-      window.zevetLocal.updateInstall().then(function (r) {
-        if (r && r.ok === false) {
-          btn.disabled = false;
-          tx(btn, "Try again");
-          var e = el("div", "sub");
-          e.style.color = "var(--alert)";
-          tx(e, r.error || "the installer did not start");
-          host.appendChild(e);
-        } else if (r && r.manual) {
-          tx(btn, "Opened — drag zevet to Applications");
-        }
-      });
+  function startUpdates() {
+    if (!LOCAL) return;
+    var bridge = window.zevetLocal;
+    if (typeof bridge.onUpdate === "function") bridge.onUpdate(receiveUpdate);
+    if (typeof bridge.updateStatus !== "function") return;
+    var revision = updateRevision;
+    Promise.resolve().then(function () { return bridge.updateStatus(); }).then(function (s) {
+      // A delayed initial snapshot must not replace a newer pushed status.
+      if (revision === updateRevision) receiveUpdate(s);
+    }, function (err) {
+      if (revision === updateRevision) receiveUpdate({ phase: "error", error: (err && err.message) || "Update status unavailable." });
     });
-    host.appendChild(btn);
   }
 
   function renderStreams(now) {
@@ -3789,8 +3872,8 @@
       var box = el("div", "chat-empty");
       box.appendChild(tx(el("h2"), "Nothing running yet."));
       box.appendChild(tx(el("p"), LOCAL
-        ? "Start an agent above and tell it what you want. It runs on this machine, with your account, in the workspace selected on the left."
-        : "This view drives an agent on your own machine, so it needs the desktop app rather than a browser tab."));
+        ? "Start an agent in the selected workspace."
+        : "Use the desktop app to start an agent."));
       chat.appendChild(box);
     }
 
@@ -3894,7 +3977,7 @@
     // with nobody working there was genuinely nothing to draw.
     //
     // It is wrong for an IDE. A person who installs zevet, opens a folder and
-    // wants to read a file got "Connected. Nobody is working yet." where the
+    // wants to read a file got "No activity yet" where the
     // file tree should be — the app refusing to show them their own checkout
     // until somebody else did something. Seen on the first launch against the
     // production hub after the 0.2.0 cutover, with a workspace selected and an
@@ -3905,13 +3988,13 @@
     var box = el("div", "blank");
     if (needsToken) {
       box.appendChild(tx(el("h2"), "Not signed in."));
-      box.appendChild(tx(el("p"), "This board needs the shared token. Open the link you were sent, or ask whoever runs the hub for it."));
+      box.appendChild(tx(el("p"), "Open your invitation link or sign in through the desktop app."));
     } else if (conn === "down") {
       box.appendChild(tx(el("h2"), "Can't reach the hub."));
-      box.appendChild(tx(el("p"), "Retrying on its own. If this stays red, the hub is probably off."));
+      box.appendChild(tx(el("p"), "Reconnecting… Check the hub if this continues."));
     } else {
-      box.appendChild(tx(el("h2"), "Connected. Nobody is working yet."));
-      box.appendChild(tx(el("p"), "This is the hub working, not failing. Start an agent in a wired repo and the tree fills in with who is in which folder."));
+      box.appendChild(tx(el("h2"), "No activity yet"));
+      box.appendChild(tx(el("p"), "Open a folder or start an agent in a connected repo."));
       var p = el("p");
       p.appendChild(document.createTextNode("To wire a repo: "));
       p.appendChild(tx(el("code"), "node client/install.mjs <repo>"));
@@ -3995,10 +4078,7 @@
   // Staying current. Both halves are guarded on the function existing: this
   // page is also served to a plain browser tab, and to desktop builds older
   // than the updater, and neither has it.
-  if (LOCAL && typeof window.zevetLocal.onUpdate === "function") {
-    window.zevetLocal.onUpdate(function (s) { updateState = s; renderUpdate(); });
-    window.zevetLocal.updateStatus().then(function (s) { updateState = s; renderUpdate(); }, function () {});
-  }
+  startUpdates();
 
   if (LOCAL && typeof window.zevetLocal.onIndexEvent === "function") {
     window.zevetLocal.onIndexEvent(function (p) {
