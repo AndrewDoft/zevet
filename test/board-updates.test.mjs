@@ -117,7 +117,7 @@ test("a real update check refreshes open Settings through checking, download pro
     updateInstall: async () => { installCalls++; return { ok: true, manual: true }; },
   });
   const updater = new AppUpdater({
-    currentVersion: "0.2.0", platformKey: "darwin-arm64", dir: tmp.dir,
+    currentVersion: "0.2.0", platform: "darwin", platformKey: "darwin-arm64", dir: tmp.dir,
     onStatus: (s) => ui.context.receiveUpdate({ ...s, manual: true }),
     fetchImpl: async (url) => String(url).endsWith(".json")
       ? new Response(JSON.stringify({ version: "0.2.1", platforms: { "darwin-arm64": {

@@ -72,7 +72,7 @@ test("a real macOS login shell enables an npm-style env-node executable", { skip
   writeFileSync(path.join(fixture.dir, ".zshrc"), `export PATH=${JSON.stringify(bin)}:$PATH\nprintf 'profile banner\\n'\n`);
   const agent = path.join(bin, "claude");
   writeFileSync(agent, '#!/usr/bin/env node\nconsole.log("agent started");\n', { mode: 0o755 });
-  const env = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", SHELL: "/bin/zsh", HOME: fixture.dir, ZDOTDIR: fixture.dir };
+  const env = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", SHELL: "/bin/zsh", ZDOTDIR: fixture.dir };
   assert.throws(() => execFileSync(agent, [], { env, stdio: "pipe" }), "Finder PATH should reproduce env: node: No such file or directory");
   await preparePath({ platform: "darwin", env, home: fixture.dir });
   assert.equal(execFileSync(agent, [], { env, encoding: "utf8" }).trim(), "agent started");

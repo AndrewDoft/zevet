@@ -10,7 +10,7 @@ The repaired Apple Silicon app is installed locally in `~/Applications/zevet.app
 
 ## Checks on September 19, 2026
 
-- macOS 26.5.1, arm64: 806 tests passed, 5 skipped, no failures.
+- macOS 26.5.1, arm64: 807 tests passed, 4 skipped, no failures.
 - Built the DMG; strict bundle integrity passed; all 20 native binaries contain arm64. Bundled ONNX and Transformers loaded. The app launched with its normal sandbox.
 - In the actual 0.2.0 app, Settings opened the official 0.2.1 DMG; Finder displayed the app and Applications shortcut.
 - Watcher stress case: 99 of 100 immediate changes missed before the fix; none missed afterward. The editor-read-to-watch gap is also covered.

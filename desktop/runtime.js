@@ -15,7 +15,7 @@ function preparePath({ platform = process.platform, env = process.env, home = os
   execFileImpl = execFile, timeoutMs = 3000 } = {}) {
   if (platform !== "darwin") return Promise.resolve();
   const inherited = env.PATH || "";
-  const fallback = [path.join(home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+  const fallback = [path.posix.join(home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
   const merge = (...lists) => [...new Set(lists.flatMap((s) => s.split(":"))
     // Relative/empty entries would execute a program from the opened repo.
     .filter((s) => path.posix.isAbsolute(s)))].join(":");
@@ -25,7 +25,7 @@ function preparePath({ platform = process.platform, env = process.env, home = os
   if (!loginShell) {
     try { loginShell = os.userInfo().shell; } catch { /* Use the macOS default. */ }
   }
-  if (!loginShell || !path.isAbsolute(loginShell)) loginShell = "/bin/zsh";
+  if (!loginShell || !path.posix.isAbsolute(loginShell)) loginShell = "/bin/zsh";
 
   return new Promise((resolve) => {
     let finished = false;
