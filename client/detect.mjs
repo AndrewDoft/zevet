@@ -76,9 +76,13 @@ const APPDATA = process.env.APPDATA || path.join(HOME, "AppData", "Roaming");
  * The agents zevet knows how to watch.
  *
  * `hooks` says whether zevet can actually instrument it. Claude Code and Codex
- * both have a hook mechanism; opencode is detected and reported so you can see
- * who is running what, but there is no hook contract for it here, and saying
- * so is better than implying coverage that does not exist.
+ * both have a hook mechanism; opencode is wired through a JS plugin that
+ * install-opencode.mjs copies into <repo>/.opencode/plugins/ (opencode
+ * auto-loads project plugins, so the file itself is the opt-in). It is
+ * `unverified` rather than `true` until a live turn has been seen to fire on
+ * the hub — see docs/contracts/opencode-hooks.md. OpenRouter needs no binary:
+ * it is a provider inside opencode, and openrouterReady() in
+ * install-opencode.mjs reports whether its key is present.
  */
 const AGENTS = [
   {
@@ -126,12 +130,21 @@ const AGENTS = [
     id: "opencode",
     label: "OpenCode",
     bin: "opencode",
-    hooks: false,
+    // Installed by client/install-opencode.mjs as <repo>/.opencode/plugins/.
+    // UNVERIFIED 2026-09-19: the plugin is written against opencode's documented
+    // plugin events (tool.execute.before/after, session.idle/created) but no
+    // live turn has been observed on a hub yet. See
+    // docs/contracts/opencode-hooks.md for what would promote this to true.
+    hooks: "unverified",
     extraPaths: () => [path.join(APPDATA, "npm", "opencode"), path.join(HOME, ".opencode", "bin", "opencode")],
     authFiles: () => [
       path.join(HOME, ".local", "share", "opencode", "auth.json"),
       path.join(HOME, ".config", "opencode", "auth.json"),
     ],
+    // The OpenRouter key lives inside the auth.json above (as
+    // `{ "openrouter": { "type": "api", ... } }`), but it is also honoured as
+    // an environment variable, which no auth file can show.
+    envKeys: () => ["OPENROUTER_API_KEY"],
   },
 ];
 
@@ -156,6 +169,10 @@ export function detectAgents() {
     }
 
     const authFile = (a.authFiles() || []).find((f) => isFile(f)) || null;
+    // An env-carried key counts as signed in too: OPENROUTER_API_KEY never
+    // appears in a file, and reporting "no account found" while every call
+    // succeeds would be the doctor disagreeing with reality.
+    const envKey = (a.envKeys ? a.envKeys() : []).find((k) => process.env[k]) || null;
     return {
       id: a.id,
       label: a.label,
@@ -166,7 +183,7 @@ export function detectAgents() {
       // when an account is configured. It is not a liveness check: a stale or
       // expired credential looks the same from here, and claiming otherwise
       // would be asserting something never verified.
-      signedIn: Boolean(authFile),
+      signedIn: Boolean(authFile || envKey),
       authFile,
       hooks: a.hooks,
       /** Can zevet wire it at all? "unverified" still installs. */
@@ -199,6 +216,6 @@ if (process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1])))
   console.log(
     watchable.length
       ? `zevet will watch: ${watchable.map((a) => a.label).join(", ")}`
-      : "zevet has nothing to watch here — install Claude Code or Codex.",
+      : "zevet has nothing to watch here — install Claude Code, Codex or OpenCode.",
   );
 }

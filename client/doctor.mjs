@@ -30,6 +30,7 @@ import path from "node:path";
 import os from "node:os";
 import { detectAgents } from "./detect.mjs";
 import { resolveAuth } from "./secret.mjs";
+import { openrouterReady } from "./install-opencode.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
@@ -54,6 +55,12 @@ const CLIENT_FILES = [
   // nothing would have caught it -- test/client.test.mjs now asserts that this
   // list is closed under the imports of the files in it.
   "codex-trust.mjs",
+  // install-opencode.mjs is imported BY install.mjs and uninstall.mjs, and
+  // opencode-plugin.mjs is the template install-opencode.mjs copies into each
+  // wired repo. A client missing the template installs nothing and says the
+  // template is missing — the closure test enforces both are shipped.
+  "install-opencode.mjs",
+  "opencode-plugin.mjs",
   "uninstall.mjs",
   "doctor.mjs",
   // Imported by hook.mjs, updater.mjs and this file. A client missing it has a
@@ -437,6 +444,12 @@ function checkAgents() {
     else detail = `installed (${a.foundVia}), signed in`;
     if (a.installed && a.hooks === "unverified") detail += "; hooks install but have never been seen to fire";
     if (a.installed && a.id === "codex") detail += codexHookState();
+    if (a.installed && a.id === "opencode") {
+      // Presence only — never a value. The `:free` models cost nothing, but
+      // they still need the account the key represents.
+      const key = openrouterReady();
+      detail += key.ready ? "; openrouter key present" : "; no openrouter key — `/connect` in opencode or OPENROUTER_API_KEY";
+    }
     // [ok] means zevet can watch it. Installed-but-unwatchable is reported as
     // [--] because from the board's point of view it is the same as absent.
     report(Boolean(a.installed && a.wireable), a.label.toLowerCase().replace(/\s+/g, "-"), detail);
@@ -463,7 +476,7 @@ async function main() {
   console.log(
     watchable.length
       ? `  zevet will watch: ${watchable.map((a) => a.label).join(", ")}`
-      : "  zevet has nothing to watch here — install Claude Code or Codex.",
+      : "  zevet has nothing to watch here — install Claude Code, Codex or OpenCode.",
   );
   // What this deliberately does not check, said out loud rather than left to be
   // discovered: everything above can pass while no repo is wired at all.

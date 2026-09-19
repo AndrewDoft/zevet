@@ -87,7 +87,7 @@ irm https://34-74-69-129.sslip.io/setup.ps1 -OutFile setup.ps1; powershell -Exec
 
 It asks for the hub URL (that one), the shared token (send it separately, not in
 the same message as the link) and the name they want on the board. Then it finds
-their agents by itself — there is nothing to tell it about Claude Code or Codex.
+their agents by itself — there is nothing to tell it about Claude Code, Codex or OpenCode.
 
 They run it, answer three prompts, and they're on the board.
 
@@ -360,7 +360,9 @@ a thing to know before you open one.
 hub/server.mjs         the hub: ingest, live feed, board, update channel.
 hub/public/index.html  the board. one file, no build step.
 client/hook.mjs        runs on every prompt and tool call. silent, fails open.
+client/opencode-plugin.mjs  the same, as an opencode plugin (copied per repo, self-contained).
 client/install.mjs     writes/removes the hooks in a repo's .claude/settings.json
+client/install-opencode.mjs wires/removes the plugin in a repo's .opencode/plugins/
 client/updater.mjs     keeps this machine in step with the hub. runs detached.
 dist/setup.ps1         what a Windows teammate runs once.
 dist/setup.sh          what a macOS teammate runs once.

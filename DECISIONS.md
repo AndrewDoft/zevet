@@ -324,3 +324,36 @@ re-authorisation prompt, asked at the moment it is needed rather than years earl
 hub has no sign-in and behaves exactly as it did before — `hub/var/` is not even created.
 Pasting a master secret in setup still works and overwrites a session. What is NOT reversible
 is the hub having held `S`: once it has been on that disk, it has been on that disk.
+
+---
+
+## D-008 — OpenCode is watched through a per-repo plugin, and stays unverified until it fires live
+
+**2026-09-19**
+
+**Decision.** `client/install-opencode.mjs` copies one self-contained plugin
+(`client/opencode-plugin.mjs`, node builtins only) into
+`<repo>/.opencode/plugins/zevet.mjs`, which opencode auto-loads. The per-repo
+file is the opt-in. `detect.mjs` reports `hooks: "unverified"` until a real
+turn is observed on a hub (see `docs/contracts/opencode-hooks.md` §7).
+
+**Why it came up.** The board only showed Claude Code and Codex. OpenRouter
+models run inside opencode sessions, so one opencode plugin covers every
+OpenRouter model with no provider-specific reporting code.
+
+**Alternatives.**
+
+1. *A global plugin in `~/.config/opencode/plugins/`.* One install would cover
+   every repo — and publish every unrelated project to a shared hub. The D-001
+   failure in a new box. Rejected.
+2. *Shell hooks in opencode.json.* Does not exist as a surface; opencode's
+   only hook mechanism is plugins. There is nothing to write a command into.
+3. *Driving opencode from the desktop console too.* Deferred, not rejected:
+   `opencode run` takes the prompt as argv and zevet never puts prompts on
+   argv, and its stdin behaviour is unmeasured. Watching and driving are
+   separable; this change ships watching.
+
+**Reversibility.** High. Delete the plugin file per repo (`install.mjs
+--remove` does it; `uninstall.mjs` does it everywhere) and opencode is
+unwatched. Nothing is written outside the wired repo — no global config, no
+trust records.

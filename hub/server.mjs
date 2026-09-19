@@ -129,6 +129,11 @@ const CLIENT_FILES = [
   // nothing would have caught it -- test/client.test.mjs now asserts that this
   // list is closed under the imports of the files in it.
   "codex-trust.mjs",
+  // install-opencode.mjs is imported BY install.mjs and uninstall.mjs, and
+  // opencode-plugin.mjs is the template it copies into each wired repo's
+  // .opencode/plugins/. Both must ship or a teammate's installer writes nothing.
+  "install-opencode.mjs",
+  "opencode-plugin.mjs",
   "uninstall.mjs",
   "doctor.mjs",
   // secret.mjs is imported BY hook.mjs, updater.mjs and doctor.mjs. It has to

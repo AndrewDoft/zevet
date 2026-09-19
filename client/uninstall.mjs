@@ -15,8 +15,9 @@
 //      stop; handing them a red exit code and a half-removed install helps
 //      nobody. Every repo is attempted whatever the one before it did, and what
 //      could not be removed is printed with the command to finish it by hand.
-//   2. NEVER DELETE SOMEBODY ELSE'S CONFIG. A repo's .claude/settings.json and
-//      .codex/config.toml belong to the repo, not to us. Our hook entries come
+//   2. NEVER DELETE SOMEBODY ELSE'S CONFIG. A repo's .claude/settings.json,
+//      .codex/config.toml and .opencode/plugins/zevet.mjs belong to the repo,
+//      not to us. Our hook entries come out; everything else in those files is
 //      out; everything else in those files is left byte-for-byte alone, and a
 //      file with nothing of ours in it is not rewritten at all — not even
 //      reformatted.
@@ -33,6 +34,7 @@ import path from "node:path";
 import os from "node:os";
 import { installCodex, codexConfigPathFor, codexGlobalConfigPath, stripBlock, BLOCK_START } from "./install-codex.mjs";
 import { stripTrustBlock, TRUST_START } from "./codex-trust.mjs";
+import { removeOpencode } from "./install-opencode.mjs";
 
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
 const WORKSPACES = path.join(HOME, "workspaces.json");
@@ -248,6 +250,7 @@ function main() {
     for (const [label, result] of [
       ["Claude Code", removeClaude(repo)],
       ["Codex", removeCodex(repo)],
+      ["OpenCode", removeOpencode(repo)],
     ]) {
       // "absent" is the ordinary case for the agent somebody does not use, and
       // a line about it on every repo would bury the lines that matter.

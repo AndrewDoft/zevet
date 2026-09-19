@@ -2,7 +2,7 @@
 //
 //   node client/install.mjs <repo-path>
 //   node client/install.mjs <repo-path> --remove
-//   node client/install.mjs <repo-path> --agents=claude-code,codex
+//   node client/install.mjs <repo-path> --agents=claude-code,codex,opencode
 //
 // Nobody should have to tell zevet which agent they use: it looks, and wires
 // what it finds. Existing config is preserved; ours is stripped and rewritten
@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectAgents } from "./detect.mjs";
 import { installCodex, grantCodexHookTrust } from "./install-codex.mjs";
+import { installOpencode, openrouterReady } from "./install-opencode.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.resolve(HERE, "hook.mjs");
@@ -177,7 +178,7 @@ if (targets.length === 0) {
     const state = a.installed ? "installed" : "not installed";
     console.error(`       ${a.label.padEnd(12)} ${state}${a.wireable ? "" : " (no hook contract)"}`);
   }
-  console.error("       Install Claude Code or Codex, then run this again.");
+  console.error("       Install Claude Code, Codex or OpenCode, then run this again.");
   process.exit(1);
 }
 
@@ -236,6 +237,29 @@ for (const agent of targets) {
           "\n  config and exec policy stay disabled until you trust the project:" +
           "\n\n      [projects.'" + (r.trustKey || repo) + "']" +
           "\n      trust_level = \"trusted\"",
+      );
+    }
+  } else if (agent.id === "opencode") {
+    const r = installOpencode(repo, { remove });
+    if (!r.ok) {
+      console.error(`zevet: ${r.detail}`);
+      failed = true;
+      continue;
+    }
+    console.log(remove ? `OpenCode       ${r.detail}` : `OpenCode       plugin -> ${r.detail}`);
+    if (!remove) {
+      // OpenRouter is a provider inside opencode, not a binary to find: the
+      // board shows whatever model the session uses, free or paid. A missing
+      // key is not a failed install — opencode runs fine without one — but it
+      // is worth one line, because `:free` models need no credits yet still
+      // need the account the key represents to count against.
+      const key = openrouterReady();
+      notes.push(
+        key.ready
+          ? "OpenRouter key present, so opencode sessions can use `openrouter/...` models (the `:free` ones cost nothing)."
+          : "No OpenRouter key found (no OPENROUTER_API_KEY and none in opencode's auth.json). " +
+            "The plugin still reports; to use `openrouter/...` models, run `/connect` inside " +
+            "opencode and pick OpenRouter, or set OPENROUTER_API_KEY.",
       );
     }
   }
