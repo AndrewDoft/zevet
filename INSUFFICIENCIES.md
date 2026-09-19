@@ -83,27 +83,41 @@ that is reasoning, not observation.
 
 ---
 
-## INSUF-004 — No macOS build has ever been launched — **OPEN**
+## INSUF-004 — No macOS build had ever been launched — **LARGELY RESOLVED 2026-09-18**
 
-**Blast radius: HIGH — it is the artifact the two teammates actually receive.**
+**What was missing.** Apple silicon hardware. The `.dmg` was verified to be a well-formed
+disk image and nothing more, and the first person to find out whether it ran would have been
+Michael or Kai.
 
-**What is missing.** Apple silicon hardware. The `.dmg` is verified to be a well-formed disk
-image and nothing more.
-
-**What is known about what happens when they open it.** It is unsigned and unnotarised. macOS
-will refuse it with *"zevet can't be opened because Apple cannot check it for malicious
-software"*, and the recipient must right-click → Open, or clear the quarantine flag:
+**Resolved by using the Mac that was already available.** A `macos-latest` GitHub runner IS a
+Mac. `.github/workflows/build.yml` now mounts the built image, inspects the bundle, and
+launches the app, failing the job if it is not still alive twelve seconds later. Observed on
+run 35407744201:
 
 ```
-xattr -dr com.apple.quarantine /Applications/zevet.app
+== bundle: /tmp/zevetdmg/zevet.app
+   Format=app bundle with Mach-O thin (arm64)
+   CodeDirectory v=20400 flags=0x20002(adhoc,linker-signed)
+   Signature=adhoc      TeamIdentifier=not set
+node inside the bundle: v22.19.0
+   STILL RUNNING after 12s (pid 12650) — it launches
 ```
 
-This is documented in `.github/workflows/build.yml` and was accepted deliberately — signing
-needs an Apple Developer account at 99 USD/year.
+The launch log was empty: it starts clean, not crashing-but-slowly.
 
-**Smallest action.** Send the `.dmg` to one teammate, have them open it and report what the
-screen said. That single report closes this and probably INSUF-003 with it.
+**What is still NOT proven, and is why this says "largely":**
 
-**Blocks.** Everything multi-user. The roster, collision detection and per-user colour coding
-have only ever been exercised with one participant on one machine, so none of them can be
-called verified.
+1. **That the UI is usable.** The process stays up; nobody has looked at a window.
+2. **What a real recipient sees from Gatekeeper.** The runner BUILT its copy, so the file
+   carries no `com.apple.quarantine` attribute. A downloaded copy does, and that is the path
+   that produces "zevet can't be opened because Apple cannot check it for malicious
+   software". `spctl` on the runner reported *"code has no resources but signature indicates
+   they must be present"* — a rejection, but not the same rejection a download gets.
+3. The signature is ad-hoc and linker-generated: `Identifier=Electron`, not
+   `com.andrewdoft.zevet`, and no team identifier. That is what unsigned means here.
+
+**Smallest action to close the rest.** One teammate opens the downloaded `.dmg` and says what
+the screen showed. Two minutes, and it also closes INSUF-003.
+
+**Still blocked on a second person.** The roster, collision detection and per-user colour
+coding have only ever been exercised with one participant on one machine.
