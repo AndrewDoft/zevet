@@ -1252,8 +1252,31 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-// A second instance should raise the first, not open a second board.
-if (!app.requestSingleInstanceLock()) {
+/**
+ * A second instance should raise the first, not open a second board.
+ *
+ * ⚠️ WITH ONE ESCAPE HATCH, AND IT EXISTS FOR A REASON THE PRODUCT NEEDS.
+ * zevet is now a multiplayer editor, and the only way to watch two participants
+ * edit one document is to run two of it. On one machine the lock makes that
+ * impossible: the second instance quits with status 0 and no message, which
+ * looks exactly like "the app is broken" and cost an hour the first time.
+ *
+ * `ZEVET_ALLOW_MULTI=1` skips the lock. It is NOT a development-only flag in
+ * any enforceable sense — it is read in the shipped binary — so the danger is
+ * worth stating: two instances sharing one `ZEVET_HOME` will both write
+ * `config.json` and `workspaces.json` and the loser's edits vanish. Set
+ * `ZEVET_HOME` to something separate whenever you set this, which is what the
+ * two-instance test rig does.
+ *
+ * Rejected: detecting a dev run (unpackaged `app.isPackaged === false`) and
+ * allowing multiple automatically. That would silently change behaviour between
+ * a checkout and an installer, so the thing you tested is not the thing you
+ * shipped — which is the specific failure this codebase's Windows/macOS section
+ * exists to complain about.
+ */
+if (process.env.ZEVET_ALLOW_MULTI === "1") {
+  // Nothing to do: no lock requested, no `second-instance` handler wanted.
+} else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => {

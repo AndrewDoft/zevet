@@ -292,10 +292,22 @@
      make every one of them a layout pass on every keystroke. */
   .riders { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
   .rider {
-    position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px;
+    /* ⚠️ PINNED TO THE RIGHT EDGE, NOT THE LEFT, and it is not a preference.
+       On the left the figure and its name sit directly on top of the code --
+       which is precisely the line you are being told somebody is editing, so
+       the readout obscures the thing it is pointing at. Seen immediately the
+       first time two real windows were put side by side.
+       `row-reverse` so the name reads inward, toward the code, rather than
+       trailing off the edge of the pane. */
+    position: absolute; right: 10px; top: 0;
+    display: flex; flex-direction: row-reverse; align-items: center; gap: 5px;
     transform: translateY(-100px);
     transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
     will-change: transform;
+    /* A hairline of the teammate's colour behind it, so a figure over a busy
+       line still reads as one object rather than as pixels in the code. */
+    padding: 0 4px; border-radius: 3px;
+    background: color-mix(in srgb, var(--paper) 82%, transparent);
   }
   .rider .who {
     font-family: var(--font-sans); font-size: 9.5px; letter-spacing: 0.05em;
@@ -1516,6 +1528,37 @@
   var SEED_CLIENT_ID = 1;
 
   /**
+   * ⚠️ EVERY MESSAGE ON THE DOCUMENT CHANNEL CARRIES A ONE-BYTE TAG, because
+   * two completely different protocols share that channel.
+   *
+   * This was missed the first time and the bug is worth recording: document
+   * updates were transmitted and AWARENESS WAS NOT, at all. `yCollab` publishes
+   * the local cursor into the Awareness instance quite happily, and nothing
+   * ever put those bytes on the wire — so remote carets and the little figures
+   * could never appear, on any machine, ever. Two real instances editing one
+   * file synced their text perfectly and showed each other nothing, which is
+   * exactly the kind of fault that survives a green test suite: awareness has
+   * no effect a document assertion can see.
+   *
+   * Yjs document updates and awareness updates are separate wire formats with
+   * separate apply functions. They cannot be told apart by inspection, so the
+   * tag is not decoration — feeding an awareness update to `Y.applyUpdate`
+   * throws, and feeding a document update to `applyAwarenessUpdate` is worse
+   * because it may not.
+   *
+   * The tag sits INSIDE the sealed payload, so the hub cannot see even this.
+   */
+  var MSG_DOC = 0;
+  var MSG_AWARENESS = 1;
+
+  function tagged(kind, bytes) {
+    var out = new Uint8Array(bytes.length + 1);
+    out[0] = kind;
+    out.set(bytes, 1);
+    return out;
+  }
+
+  /**
    * How long to wait after joining before deciding a room is empty.
    *
    * There is no "replay finished" message, so a timer is the only signal
@@ -1544,7 +1587,28 @@
     if (e.watching && typeof window.zevetLocal.unwatch === "function") {
       try { window.zevetLocal.unwatch(e.root, e.relPath); } catch (err) { /* nothing to undo */ }
     }
-    if (CAN_SHARE && e.room) { try { window.zevetDoc.leave(e.room); } catch (err) { /* ditto */ } }
+    if (CAN_SHARE && e.room) {
+      // Announce the departure before dropping the socket, or this cursor and
+      // its figure sit in everyone else's editor until they reload. Best
+      // effort: if the socket has already gone there is nothing to be done and
+      // the peers' own awareness timeouts will clear it eventually.
+      try {
+        if (e.awareness) {
+          var bye = window.zevetEditor.awarenessProtocol.encodeAwarenessUpdate(
+            e.awareness, [e.awareness.clientID],
+          );
+          window.zevetEditor.awarenessProtocol.removeAwarenessStates(
+            e.awareness, [e.awareness.clientID], "local",
+          );
+          void bye;
+          var gone = window.zevetEditor.awarenessProtocol.encodeAwarenessUpdate(
+            e.awareness, [e.awareness.clientID],
+          );
+          window.zevetDoc.send(e.room, tagged(MSG_AWARENESS, gone));
+        }
+      } catch (err) { /* the socket is already gone; peers will time it out */ }
+      try { window.zevetDoc.leave(e.room); } catch (err) { /* ditto */ }
+    }
     if (e.destroyView) { try { e.destroyView(); } catch (err) { /* ditto */ } }
     if (e.ydoc) { try { e.ydoc.destroy(); } catch (err) { /* ditto */ } }
   }
@@ -1676,10 +1740,18 @@
         sendState(e);
         clearTimeout(e.seedTimer);
         e.seedTimer = setTimeout(function () { seedIfEmpty(e); }, SEED_GRACE_MS);
-      } else if (m.kind === "update" && m.bytes) {
-        // "remote" as the transaction origin is what stops this update being
-        // echoed straight back out by the local-update handler below.
-        E.Y.applyUpdate(e.ydoc, m.bytes, "remote");
+      } else if (m.kind === "update" && m.bytes && m.bytes.length) {
+        var body = m.bytes.subarray(1);
+        if (m.bytes[0] === MSG_AWARENESS) {
+          // "remote" as the origin so the awareness observer below does not
+          // rebroadcast what it just received, which is an echo loop between
+          // every pair of participants.
+          E.awarenessProtocol.applyAwarenessUpdate(e.awareness, body, "remote");
+        } else {
+          // Same reasoning for the document: "remote" is what stops this update
+          // being echoed straight back out by the local-update handler below.
+          E.Y.applyUpdate(e.ydoc, body, "remote");
+        }
       } else if (m.kind === "snapshot-due") {
         sendState(e, true);
       }
@@ -1692,11 +1764,32 @@
 
     var onUpdate = function (update, origin) {
       if (origin === "remote") return;
-      window.zevetDoc.send(e.room, update);
+      window.zevetDoc.send(e.room, tagged(MSG_DOC, update));
       if (ed === e) scheduleSave(e);
     };
     e.ydoc.on("update", onUpdate);
     e.unsub.push(function () { e.ydoc.off("update", onUpdate); });
+
+    /**
+     * Awareness: who is here and where their cursor is.
+     *
+     * Sent on EVERY change including `removed`, so a teammate closing the file
+     * takes their caret and their figure with them rather than leaving a ghost
+     * parked on line 40 forever.
+     *
+     * Not debounced. A cursor move is a few dozen bytes and the whole value of
+     * the thing is that it is immediate; a caret that lags by 200ms reads as
+     * broken rather than as economical.
+     */
+    var onAwareness = function (changes, origin) {
+      if (origin === "remote") return;
+      var changed = changes.added.concat(changes.updated, changes.removed);
+      if (!changed.length) return;
+      var bytes = E.awarenessProtocol.encodeAwarenessUpdate(e.awareness, changed);
+      window.zevetDoc.send(e.room, tagged(MSG_AWARENESS, bytes));
+    };
+    e.awareness.on("update", onAwareness);
+    e.unsub.push(function () { e.awareness.off("update", onAwareness); });
 
     window.zevetDoc.join(e.room).then(function (r) {
       if (r && r.ok) return;
@@ -1711,8 +1804,21 @@
 
   function sendState(e, snapshot) {
     if (!e.ydoc) return;
-    var full = window.zevetEditor.Y.encodeStateAsUpdate(e.ydoc);
-    window.zevetDoc.send(e.room, full, snapshot ? { snapshot: true } : undefined);
+    var E = window.zevetEditor;
+    window.zevetDoc.send(
+      e.room,
+      tagged(MSG_DOC, E.Y.encodeStateAsUpdate(e.ydoc)),
+      snapshot ? { snapshot: true } : undefined,
+    );
+    // And our own presence, so somebody already in the room sees this cursor
+    // without waiting for it to move. ⚠️ NOT part of a snapshot: a snapshot
+    // replaces the room's whole log, and awareness is ephemeral state that
+    // should never be replayed to a late joiner -- it would resurrect the
+    // cursors of people who have since left.
+    if (!snapshot && e.awareness) {
+      var mine = E.awarenessProtocol.encodeAwarenessUpdate(e.awareness, [e.awareness.clientID]);
+      window.zevetDoc.send(e.room, tagged(MSG_AWARENESS, mine));
+    }
   }
 
   /** Put the file into an empty room. See SEED_CLIENT_ID for why this is not
@@ -1851,7 +1957,13 @@
       if (clientId === localId) return;
       var user = state && state.user;
       var cursor = state && state.cursor;
-      if (!user || !cursor || typeof cursor.head !== "number") return;
+      // ⚠️ DO NOT ADD `typeof cursor.head !== "number"` BACK. It was here, and
+      // it rejected every remote participant before `absolutePosition` below
+      // ever ran -- awareness cursors are Yjs RELATIVE positions, which are
+      // objects. The decoder was added and this line was left behind, so the
+      // riders stayed invisible while the remote carets beside them worked
+      // perfectly. Two real instances found it; no unit test would have.
+      if (!user || !cursor || cursor.head == null) return;
 
       var head = absolutePosition(e, cursor.head);
       if (head == null) return;
