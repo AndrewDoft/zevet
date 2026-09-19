@@ -3707,6 +3707,19 @@
 
   function renderBlank() {
     if (roster.length) return false;
+    // ⚠️ AND NOT WHEN THERE IS A WORKSPACE OPEN, WHICH IS NEW IN 0.2.0.
+    //
+    // This used to blank the tree whenever the ROSTER was empty, which was
+    // right when the board was only a place to watch other people's agents:
+    // with nobody working there was genuinely nothing to draw.
+    //
+    // It is wrong for an IDE. A person who installs zevet, opens a folder and
+    // wants to read a file got "Connected. Nobody is working yet." where the
+    // file tree should be — the app refusing to show them their own checkout
+    // until somebody else did something. Seen on the first launch against the
+    // production hub after the 0.2.0 cutover, with a workspace selected and an
+    // empty roster, which is exactly the state every new install starts in.
+    if (LOCAL && localRoot) return false;
     var main = $("tree");
     main.textContent = "";
     var box = el("div", "blank");
