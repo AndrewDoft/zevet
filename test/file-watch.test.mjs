@@ -281,6 +281,39 @@ describe("file-watch: seeing what an agent did on disk", () => {
     }
   });
 
+  test("changes during native watcher startup survive opening many files at once", async () => {
+    // Reproduces FSEvents' asynchronous startup on Apple Silicon. In the
+    // original implementation 99/100 immediate writes were missed, while
+    // later writes arrived normally. Do not add a delay before these writes.
+    for (let i = 0; i < 100; i++) {
+      const dir = path.join(root, `tab-${i}`);
+      mkdirSync(dir);
+      const rel = `tab-${i}/source.txt`;
+      writeFileSync(path.join(root, rel), "before\n");
+      assert.deepEqual(fw.watch(root, rel), { ok: true });
+      writeFileSync(path.join(root, rel), "after\n");
+    }
+    assert.ok(await waitFor(() => new Set(seen.map((e) => e.relPath)).size === 100),
+      `only ${new Set(seen.map((e) => e.relPath)).size}/100 immediate changes arrived`);
+    assert.ok(seen.every((e) => e.text === "after\n"));
+  });
+
+  test("a directory-named event reconciles changed children without reporting unchanged files", async () => {
+    writeFileSync(path.join(root, "changed.txt"), "before\n");
+    writeFileSync(path.join(root, "same.txt"), "same\n");
+    fw.watch(root, "changed.txt");
+    fw.watch(root, "same.txt");
+    const entry = [...fw.dirs.values()][0];
+    // Replay a native event measured on macOS, independently of timing or
+    // extra events supplied by the host running this regression.
+    entry.watcher.close();
+    for (const sub of entry.subs) { clearTimeout(sub.timer); sub.timer = null; }
+    writeFileSync(path.join(root, "changed.txt"), "after\n");
+    fw.onDirEvent(entry, path.basename(root));
+    assert.ok(await waitFor(() => seen.length > 0));
+    assert.deepEqual(seen.map((e) => [e.relPath, e.text]), [["changed.txt", "after\n"]]);
+  });
+
   test("it refuses exactly what the read path refuses, and refuses it the same way", async () => {
     // The containment guard is local-fs.js's, reused rather than reimplemented.
     // These assert the REFUSAL TEXT, not merely `ok:false`: a traversal that
