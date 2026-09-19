@@ -1633,7 +1633,7 @@
       var box = el("div", "empty-tree");
       tx(box, needsToken
         ? "Sign in to see what the team is working on."
-        : "No files touched yet. The tree fills in as agents read and edit — it shows the part of the repo the team is actually in, never file contents.");
+        : "No files touched yet. Shows where agents read and edit — never file contents.");
       host.appendChild(box);
       return;
     }
@@ -2004,7 +2004,7 @@
       repos.appendChild(add);
 
       var note = el("p", "snote");
-      tx(note, "GitHub sign-in identifies your account. Folder access is limited to the list above.");
+      tx(note, "Identifies your account. Folder access stays limited to the list above.");
       repos.appendChild(note);
     }
     sheet.appendChild(repos);

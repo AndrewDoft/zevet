@@ -117,8 +117,8 @@
   </div>
 
   <div id="ghStep" class="note" hidden>
-    <b>Approve sign-in on GitHub.</b> If the browser did not open, visit
-    <code id="ghUrl"></code> and enter this code:
+    <b>Approve on GitHub.</b> No browser? Visit
+    <code id="ghUrl"></code>, enter this code:
     <div id="ghCode" class="mono"></div>
     <div id="ghState" class="hint">Waiting for approval…</div>
     <div class="row">
@@ -157,8 +157,7 @@
   <div id="msg" class="note" hidden></div>
 
   <div id="repoStep" class="note" hidden>
-    <b>Connect a folder</b> to share agent activity with your team.
-    You can do this later from the menu.
+    <b>Connect a folder</b> to share agent activity. Or later, from the menu.
     <div class="row">
       <button id="pick">Connect a folder…</button>
     </div>
@@ -202,7 +201,7 @@
   $("gh").addEventListener("click", async function () {
     var hub = $("hub").value.trim();
     if (!hub) { say("bad", "Enter a hub address."); return; }
-    if (!/^https?:\/\//i.test(hub)) { say("bad", "Start the hub address with https:// or http://."); return; }
+    if (!/^https?:\/\//i.test(hub)) { say("bad", "Hub address needs https:// or http://."); return; }
 
     say("", "Starting sign-in…");
     ghBusy(true);
@@ -234,7 +233,7 @@
     $("finish").disabled = false;
     if (!$("actor").value.trim()) $("actor").value = done.login;
     say("good", "Signed in as <b>" + done.login + "</b>." +
-      (done.owner ? " You own this hub. Add teammates in Settings." : ""));
+      (done.owner ? " Owner. Invite teammates in Settings." : ""));
     $("repoStep").hidden = false;
   });
 
@@ -248,7 +247,7 @@
     if (!$("hub").value.trim()) return "Enter a hub address.";
     if (!$("token").value) return "Enter your team's master secret.";
     if (!$("actor").value.trim()) return "Enter a display name.";
-    if (!/^https?:\/\//i.test($("hub").value.trim())) return "Start the hub address with https:// or http://.";
+    if (!/^https?:\/\//i.test($("hub").value.trim())) return "Hub address needs https:// or http://.";
     return null;
   }
 
