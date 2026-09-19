@@ -8,7 +8,11 @@
 
 param(
   [string]$Hub,
-  [string]$Token,
+  # The MASTER SECRET, not the hub's token. They are different values now: the
+  # secret is what the team shares and it never leaves this machine, while
+  # everything that talks to the hub presents SHA-256("zevet-auth\0" || secret).
+  # client/secret.mjs is the specification.
+  [string]$Secret,
   [string]$Name,
   [string]$Repo
 )
@@ -49,11 +53,56 @@ $major = [int](((& node --version) -replace '^v','') -split '\.')[0]
 if ($major -lt 20) { Fail "Node $major is too old. zevet needs Node 20 or newer." }
 
 # --- What we need from the person ---------------------------------------
-if (-not $Hub)   { $Hub   = Read-Host "Hub URL (ask Andrew)" }
-if (-not $Token) { $Token = Read-Host "Shared token (ask Andrew)" }
-if (-not $Name)  { $Name  = Read-Host "Your name on the board (e.g. michael)" }
+if (-not $Hub)    { $Hub    = Read-Host "Hub URL (ask Andrew)" }
+if (-not $Secret) { $Secret = Read-Host "Master secret (ask Andrew)" }
+if (-not $Name)   { $Name   = Read-Host "Your name on the board (e.g. michael)" }
 $Hub = $Hub.TrimEnd('/')
-if (-not $Hub -or -not $Token -or -not $Name) { Fail "hub, token and name are all required." }
+if (-not $Hub -or -not $Secret -or -not $Name) { Fail "hub, master secret and name are all required." }
+
+# --- Derive the token this machine will present --------------------------
+# INLINED, NOT IMPORTED, for the same reason setup.sh inlines it: at this point
+# there is either no ~/.zevet/client at all or a stale pre-cutover one, and
+# deriving with an old copy of the rule is the silent-wrong-credential failure
+# the whole scheme exists to avoid. The drift that inlining invites is covered
+# by a test rather than by hoping — test/client.test.mjs extracts the program
+# between the markers below out of BOTH setup scripts, asserts the two are
+# byte-identical, runs one, and compares the answer with deriveAuthToken() from
+# client/secret.mjs.
+#
+# Single-quoted so PowerShell expands nothing inside it: the program contains
+# `$` nowhere, but a double-quoted string here would be one careless edit away
+# from silently interpolating a variable into a cryptographic constant. The
+# backslash in "zevet-auth\0" is literal to PowerShell (its escape character is
+# the backtick) and a NUL to Node, which is what is wanted.
+# zevet:derive:start
+$deriveJs = 'const c=require("node:crypto");const s=String(process.argv[process.argv.length-1]||"").trim().replace(/\s+/g,"").toLowerCase();if(!/^[0-9a-f]+$/.test(s)||s.length<48||s.length%2!==0){console.log("BAD");}else{console.log(c.createHash("sha256").update(Buffer.from("zevet-auth\0","utf8")).update(Buffer.from(s,"hex")).digest("hex"));}'
+# zevet:derive:end
+
+# ⚠️ THE PROGRAM GOES THROUGH A FILE, NOT THROUGH `node -e`. MEASURED on
+# PowerShell 7 against a real hub: `& node -e '<program>' $Secret` runs, and
+# PowerShell's native-argument parser STRIPS every double quote out of the
+# program on the way to node. What node received was
+#   const c=require(node:crypto);const s=String(process.argv[1]||).trim()...
+# which is a SyntaxError. node exited non-zero having written nothing to stdout,
+# so $Token was empty, `$Token -eq "BAD"` was false, and setup carried on and
+# asked the hub for the manifest with an empty credential -- reported to the
+# person as "could not reach the hub, or the token was rejected", which names
+# the wrong problem entirely. Escaping the quotes as \" would fix the call and
+# make this program's text differ from setup.sh's, which is the drift the test
+# exists to prevent. A file is the only route that keeps both true.
+$deriveFile = Join-Path ([System.IO.Path]::GetTempPath()) ("zevet-derive-" + [guid]::NewGuid().ToString("N") + ".cjs")
+Write-Utf8NoBom $deriveFile $deriveJs
+try {
+  $Token = (& node $deriveFile $Secret) | Select-Object -First 1
+} finally {
+  Remove-Item $deriveFile -Force -ErrorAction SilentlyContinue
+}
+# Empty is checked as carefully as "BAD": an empty token is what a derivation
+# that FAILED looks like, and carrying on with one produces a 401 that blames
+# the hub.
+if (-not $Token -or $Token -eq "BAD") {
+  Fail "that does not look like a zevet master secret. It is 48 or more hex characters (0-9, a-f) - check you pasted the whole thing."
+}
 
 if ($Hub -notmatch '^https://' -and $Hub -notmatch '^http://(127\.0\.0\.1|localhost)') {
   Write-Host ""
@@ -110,13 +159,19 @@ foreach ($m in $moves) { Move-Item -Path $m.From -Destination $m.To -Force }
 Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- Remember the settings ----------------------------------------------
-$cfg = @{ hub = $Hub; token = $Token; actor = $Name } | ConvertTo-Json
+# The SECRET is stored; the derived token is not stored at all, because every
+# client re-derives it on each run and two stored copies are two things that can
+# disagree. Still written through Write-Utf8NoBom — see its comment: PowerShell
+# 5.1's `Set-Content -Encoding UTF8` writes a BOM and every reader of this file
+# chokes on it. Only the CONTENTS of the object change here, never how it lands.
+$cfg = @{ hub = $Hub; secret = $Secret; actor = $Name } | ConvertTo-Json
 Write-Utf8NoBom (Join-Path $home_ "config.json") $cfg
 Write-Utf8NoBom (Join-Path $home_ "manifest.json") ($manifest | ConvertTo-Json -Depth 5)
 Write-Utf8NoBom (Join-Path $home_ "last-check") ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString())
 
-# The token is a shared secret sitting in a home directory. Restrict it to this
-# user; on a shared or domain machine the default ACL is more generous.
+# The master secret is now sitting in a home directory, which is a bigger deal
+# than the token was: it is also the document key. Restrict it to this user; on
+# a shared or domain machine the default ACL is more generous.
 try {
   $acl = Get-Acl (Join-Path $home_ "config.json")
   $acl.SetAccessRuleProtection($true, $false)
@@ -149,5 +204,25 @@ if ($Repo) {
   Write-Host "  node `"$clientDir\install.mjs`" <path-to-repo>"
 }
 
-Write-Host "The board: $Hub/?token=<the token you were given>"
+# Deliberately not echoing the MASTER SECRET back: this line gets pasted into
+# chat, and the secret is also the document key.
+Write-Host "The board: $Hub/?token=<the derived token printed below>"
 Write-Host "Updates install themselves from the hub; there's nothing to re-download."
+
+# --- The line the hub operator needs -------------------------------------
+# The derived token IS printed, and that is a considered trade rather than an
+# oversight. Without it there is no way to complete the cutover: the hub
+# compares what clients send against its own ZEVET_TOKEN, so somebody has to be
+# able to read the derived value off a machine that has the secret. It is
+# strictly less dangerous than the secret -- it opens the hub and nothing else,
+# and in particular it decrypts no documents -- but it is still a credential, so
+# it is fenced off rather than mixed into the chatty output above.
+Write-Host ""
+Write-Host "--- hub operator only ------------------------------------------"
+Write-Host "ZEVET_TOKEN=$Token"
+Write-Host "That is the derived token. Set it on the hub, restart the hub, and"
+Write-Host "every machine that has re-run this script will be let in. Anyone still"
+Write-Host "on a pre-cutover install gets a 401 from that moment; there is no"
+Write-Host "dual-accept window, on purpose (see client/secret.mjs)."
+Write-Host "Do NOT paste the master secret anywhere the hub can read it."
+Write-Host "----------------------------------------------------------------"

@@ -50,6 +50,22 @@ const CLIENT_FILES = [
   "codex-trust.mjs",
   "uninstall.mjs",
   "doctor.mjs",
+  // secret.mjs is imported BY hook.mjs, updater.mjs and doctor.mjs. It has to
+  // be here BEFORE those three start importing it, not after: the updater
+  // replaces client files with exactly what this list names, so a hook.mjs that
+  // imports a file the hub does not serve is a hook that dies on `ERR_MODULE_
+  // NOT_FOUND` before it has read a byte of stdin -- on every teammate's
+  // machine, silently, because the hook writes nothing to stdout and exits 0
+  // (see client/hook.mjs, rules 1 and 2). The closure test in
+  // test/codex-trust.test.mjs is what makes that ordering enforceable rather
+  // than remembered.
+  "secret.mjs",
+  // doc-crypto.mjs is NOT yet imported by anything in this list -- the editor
+  // is what will use it. It is shipped anyway, deliberately: the alternative is
+  // that the file arrives on teammates' machines in the same update as the code
+  // that first imports it, which is the exact race the entry above exists to
+  // avoid. Shipping an unused 5 KB file early costs nothing.
+  "doc-crypto.mjs",
 ];
 
 /** The self-hosted faces. All SIL OFL-1.1; see hub/public/fonts/LICENSE. */
@@ -60,6 +76,23 @@ const FONT_FILES = [
   "hanken-grotesk-variable.woff2",
   "frank-ruhl-libre-variable.woff2",
 ];
+
+/**
+ * The remaining static assets the board pulls in, name -> content type.
+ *
+ * An exact-name map, checked with Object.hasOwn: a bare `name in PUBLIC_FILES`
+ * would answer true for "constructor" and "toString" and send the handler off
+ * to read a file named after a prototype member. Same allowlist discipline as
+ * FONT_FILES and CLIENT_FILES, one route each, no directory listing anywhere.
+ */
+const PUBLIC_FILES = {
+  "editor.js": "text/javascript",
+  // Source maps are JSON. Serving one as text/javascript happens to work in
+  // Chrome and is refused by stricter tooling, and "it worked in the browser I
+  // tried" is not a content type.
+  "editor.js.map": "application/json",
+  "agent-sprites.js": "text/javascript",
+};
 
 /**
  * What this hub is currently shipping: a version, and a sha256 per file.
@@ -510,6 +543,33 @@ const server = createServer(async (req, res) => {
       return res.end(buf);
     } catch (err) {
       return json(res, 500, { error: `cannot read highlight.js: ${err.message}` });
+    }
+  }
+
+  // The rest of the board's static assets, allowlisted by exact name exactly as
+  // /highlight.js above is. An exact-name map rather than a prefix match, so
+  // "/editor.js/../../.env" and "/editor.js.bak" are not routes at all and fall
+  // through to the 404 at the bottom of this handler: there is no directory to
+  // list and no path to join against user input.
+  //
+  // ⚠️ NO CACHING, AND editor.js IS 834 KB. This follows /highlight.js, which
+  // answers `cache-control: no-store` with no ETag and no Last-Modified, so
+  // every board load reads the whole bundle off disk and sends it again. That
+  // is a real cost here in a way it is not for a 35 KB file, and it has NOT
+  // been measured against the deployed hub. It is left alone on purpose:
+  // inventing a caching layer for one route would be a second, divergent way of
+  // serving a static file in a server that currently has one. If this needs
+  // fixing, fix it for every static route at once -- an ETag off the file's
+  // mtime and size, honoured for /fonts, /highlight.js and these three
+  // together.
+  if (Object.hasOwn(PUBLIC_FILES, url.pathname.slice(1))) {
+    const name = url.pathname.slice(1);
+    try {
+      const buf = await readFile(path.join(HERE, "public", name));
+      res.writeHead(200, { "content-type": PUBLIC_FILES[name], "cache-control": "no-store" });
+      return res.end(buf);
+    } catch (err) {
+      return json(res, 500, { error: `cannot read ${name}: ${err.message}` });
     }
   }
 

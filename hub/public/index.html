@@ -193,6 +193,78 @@
 
   .empty-tree { padding: 30px 18px; color: var(--muted); font-size: 13px; max-width: 46ch; }
 
+  /* ---- tree badges: how long a file is, and what git thinks changed -----
+     Pushed to the right with margin-left:auto so the names stay a clean
+     left-hand column and the numbers a clean right-hand one; a badge inline
+     after the name would ragged-edge every row. Tabular numerals so 9 and 412
+     occupy the same column and the eye can compare them. */
+  .node .stat { margin-left: auto; display: flex; align-items: baseline; gap: 7px; flex: none;
+                font-family: var(--font-mono); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .stat .loc { color: var(--faint); }
+  .stat .add { color: #4f7a4a; }
+  .stat .del { color: var(--alert); }
+  .stat .new { color: var(--cerulean); }
+  .node[data-sel="true"] .stat .loc { color: var(--muted); }
+  /* A directory gets no badge. Summing a folder's lines invites the question
+     of whether it counts what is collapsed underneath it, and either answer is
+     wrong half the time. */
+
+  /* ---- the editor -------------------------------------------------------
+     CodeMirror is given no theme of its own beyond this: the board already has
+     a palette and a mono face, and a second one fighting it would be obvious.
+     Everything below is either "inherit" or an existing token. */
+  .ed { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; min-width: 0; }
+  .ed-bar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 6px 18px; border-bottom: 1px solid var(--line);
+    font-size: 11px; color: var(--muted); flex: none;
+  }
+  .ed-bar .grow { flex: 1 1 auto; }
+  .ed-state { display: inline-flex; align-items: center; gap: 6px; }
+  .ed-state .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
+  .ed-state[data-state="open"] .dot { background: #4f7a4a; }
+  .ed-state[data-state="connecting"] .dot,
+  .ed-state[data-state="retrying"] .dot { background: var(--who-4); }
+  .ed-state[data-state="error"] .dot,
+  .ed-state[data-state="undecipherable"] .dot { background: var(--alert); }
+  .ed-saved { color: var(--faint); }
+  .ed-saved[data-dirty="true"] { color: var(--who-4); }
+
+  .ed-host { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  .cm-editor { height: 100%; }
+  .cm-editor .cm-scroller { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; }
+  .cm-editor.cm-focused { outline: none; }
+  .cm-gutters { background: transparent; border-right: 1px solid var(--line); color: var(--faint); }
+  .cm-activeLine { background: #ffffff55; }
+  .cm-activeLineGutter { background: transparent; color: var(--muted); }
+  .cm-selectionBackground, .cm-editor ::selection { background: var(--cerulean-soft); }
+  /* y-codemirror.next draws remote carets and a name flag; both take the
+     colour from the inline style it sets per user, which is the teammate hue
+     handed to awareness. Only the typography is ours. */
+  .cm-ySelectionInfo { font-family: var(--font-sans); font-size: 9.5px; letter-spacing: 0.04em; }
+
+  /* ---- the riders -------------------------------------------------------
+     One figure per agent or teammate, floated over the editor's left margin at
+     the line they are on. `pointer-events: none` throughout: these are a
+     readout, and a sprite that swallowed a click on the gutter would be
+     maddening. The transition is on transform only — animating `top` would
+     make every one of them a layout pass on every keystroke. */
+  .riders { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
+  .rider {
+    position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px;
+    transform: translateY(-100px);
+    transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    will-change: transform;
+  }
+  .rider .who {
+    font-family: var(--font-sans); font-size: 9.5px; letter-spacing: 0.05em;
+    color: currentColor; opacity: 0.75; white-space: nowrap;
+  }
+  .rider[data-fading="true"] { opacity: 0; transition: transform 320ms, opacity 900ms; }
+
+  .ed-note { padding: 10px 18px; font-size: 11.5px; color: var(--muted); }
+  .ed-note b { font-weight: 500; color: var(--ink); }
+
   /* ---- agent streams --------------------------------------------------- */
   .stream {
     border-bottom: 1px solid var(--line);
@@ -410,6 +482,12 @@
 </div>
 
 <script src="/highlight.js"></script>
+<!-- The editor bundle (CodeMirror 6 + Yjs) and the agent figures. Both are
+     served by the hub as static files. They are loaded unconditionally but
+     used only in the desktop app: a plain browser tab has no filesystem and
+     nothing to edit, and `zevetEditor` simply goes unused there. -->
+<script src="/agent-sprites.js"></script>
+<script src="/editor.js"></script>
 <script>
 (function () {
   "use strict";
@@ -447,6 +525,120 @@
   var localFile = null;      // { path, text, truncated } for the viewer
   var localError = null;
   var localAgents = [];          // which CLIs this machine has
+
+  /**
+   * ---- the IDE ----------------------------------------------------------
+   *
+   * Three capabilities, each independently absent, and the UI degrades one
+   * step at a time rather than all at once:
+   *
+   *   LOCAL      a filesystem. Without it (a plain browser tab) there is no
+   *              tree of real files, no contents, and nothing to edit.
+   *   CAN_WRITE  `zevetLocal.write`. Without it the editor is read-only.
+   *   CAN_SHARE  `zevetDoc`. Without it the editor is a solo editor: it still
+   *              opens, edits and saves your own file, it just has no peers.
+   *
+   * Checked as capabilities rather than as a version number because that is
+   * what actually determines whether a call will work, and because the board
+   * page and the desktop app update independently of each other — a board
+   * served by a new hub can find itself inside an old app.
+   */
+  var CAN_WRITE = LOCAL && typeof window.zevetLocal.write === "function";
+  /**
+   * Who this machine is, for the name on a remote cursor and its flag.
+   *
+   * It comes from the app's own config, not from the hub, and the call that
+   * provides it is REDACTED: `zevet:config` returns the hub URL and the actor
+   * and deliberately withholds the master secret, because this window's page is
+   * served BY the hub and anything the page can read the hub can ask for. See
+   * the comment on that handler in desktop/main.js.
+   *
+   * Absent until the call comes back, and absent forever in a browser tab. Both
+   * are handled by falling back to "me", which is honest -- a board with no app
+   * behind it genuinely does not know who is looking at it.
+   */
+  var myActor = null;
+  var CAN_SHARE =
+    typeof window.zevetDoc === "object" && window.zevetDoc && window.zevetDoc.available &&
+    typeof window.zevetEditor === "object" && window.zevetEditor;
+
+  if (LOCAL && window.zevet && typeof window.zevet.config === "function") {
+    window.zevet.config().then(function (c) {
+      if (c && c.actor) { myActor = c.actor; render(); }
+    }, function () { /* no config: the cursor flag says "me" and nothing breaks */ });
+  }
+
+  /**
+   * Line counts and diff badges for the tree, refreshed on a leading-edge
+   * debounce.
+   *
+   * Leading edge matters: the first paint after opening a workspace should
+   * carry numbers, and a trailing-only debounce leaves the tree blank for its
+   * whole window. `pending` collapses the storm of calls that a burst of
+   * events would otherwise cause.
+   */
+  var stats = { lines: Object.create(null), diff: null, root: null };
+  var statsAt = 0;
+  var statsPending = false;
+  var STATS_EVERY_MS = 2500;
+  /** A ceiling on what we ask to be counted. The main process caps this too;
+   *  asking for less than the cap keeps the answer quick rather than merely
+   *  legal. */
+  var STATS_MAX_PATHS = 1200;
+
+  function refreshStats(force) {
+    if (!LOCAL || !localRoot || typeof window.zevetLocal.stats !== "function") return;
+    if (!localEntries) return;
+    var now = Date.now();
+    if (!force && now - statsAt < STATS_EVERY_MS) {
+      if (!statsPending) {
+        statsPending = true;
+        setTimeout(function () { statsPending = false; refreshStats(true); }, STATS_EVERY_MS);
+      }
+      return;
+    }
+    statsAt = now;
+    var root = localRoot;
+    var paths = [];
+    for (var i = 0; i < localEntries.length && paths.length < STATS_MAX_PATHS; i++) {
+      if (localEntries[i].kind !== "dir") paths.push(localEntries[i].path);
+    }
+    window.zevetLocal.stats(root, paths).then(function (r) {
+      // The workspace may have been switched while this was in flight. Dropping
+      // a stale answer is the difference between "the numbers lag" and "the
+      // numbers are from another repo", and only one of those is survivable.
+      if (root !== localRoot) return;
+      if (!r || !r.ok) return;
+      stats = { lines: r.lines || Object.create(null), diff: r.diff || null, root: root };
+      render();
+    }, function () { /* a failed count is not worth a message; the badges are simply absent */ });
+  }
+
+  /** The badge for one file row, or null when there is nothing to say. */
+  function statBadge(path) {
+    if (!LOCAL || stats.root !== localRoot) return null;
+    var lines = stats.lines[path];
+    var d = stats.diff && stats.diff[path];
+    if (lines == null && !d) return null;
+
+    var box = el("span", "stat");
+    if (d && d.status === "untracked") {
+      // A new file has no "added" count from git diff -- it is absent from the
+      // diff entirely -- so its length IS the addition. Saying "new" rather
+      // than "+412" is both true and more useful.
+      box.appendChild(tx(el("span", "new"), "new"));
+    } else if (d) {
+      if (d.added == null && d.removed == null) {
+        box.appendChild(tx(el("span", "new"), "bin"));
+      } else {
+        if (d.added) box.appendChild(tx(el("span", "add"), "+" + d.added));
+        if (d.removed) box.appendChild(tx(el("span", "del"), "−" + d.removed));
+      }
+    }
+    if (lines != null) box.appendChild(tx(el("span", "loc"), String(lines)));
+    return box.childNodes.length ? box : null;
+  }
+
   /**
    * Consoles started from THIS machine — plural, deliberately.
    *
@@ -705,6 +897,10 @@
 
   function openLocalRoot(dir) {
     if (!LOCAL) return;
+    closeEditor();
+    // Dropped, not left to be overwritten: badges from the previous repo
+    // beside this one's filenames would be worse than no badges at all.
+    stats = { lines: Object.create(null), diff: null, root: null };
     localRoot = dir;
     localEntries = null;
     localFile = null;
@@ -720,6 +916,10 @@
         localError = (r && r.error) || "could not read that folder";
       }
       render();
+      // Counting lines means reading files, so it happens after the tree is
+      // already on screen. The badges arriving a moment later is the right
+      // trade: a tree that appears instantly and fills in beats one that waits.
+      refreshStats(true);
     });
   }
 
@@ -950,6 +1150,12 @@
         label.appendChild(tx(el("span", "name"), name));
         row.appendChild(label);
 
+        // Lines and diff, files only. A folder gets none -- see the CSS.
+        if (!isDir) {
+          var badge = statBadge(path);
+          if (badge) row.appendChild(badge);
+        }
+
         var marks = el("span", "marks");
         actorsHere
           .filter(function (a) { return !selectedActor || a === selectedActor; })
@@ -969,8 +1175,16 @@
           if (isDir) collapsed[path] = open;
           else {
             selectedPath = selectedPath === path ? null : path;
-            if (selectedPath && LOCAL && localRoot) openLocalFile(selectedPath);
-            else localFile = null;
+            if (selectedPath && LOCAL && localRoot) {
+              // The editor supersedes the read-only viewer wherever it can run.
+              // openLocalFile stays for the case it cannot: no editor bundle
+              // (an old hub), or a file the editor declines to open.
+              if (window.zevetEditor) openEditor(selectedPath);
+              else openLocalFile(selectedPath);
+            } else {
+              localFile = null;
+              closeEditor();
+            }
           }
           render();
         });
@@ -980,6 +1194,547 @@
       });
     }
     walk(built.root, 0, "");
+  }
+
+  /* ======================================================================
+   * THE EDITOR
+   *
+   * One file at a time, opened from the tree. The document lives in a Y.Doc;
+   * CodeMirror is bound to it; the main process carries sealed updates to and
+   * from the hub. Disk stays the source of truth in the sense that matters:
+   * everything typed here is written back to the file, and everything an agent
+   * writes to the file is folded back into here.
+   *
+   * WARNING: THE ROOM NAME MUST BE IDENTICAL ON EVERY MACHINE, or two people
+   * editing the same file sit in two different rooms and never see each other.
+   * It is `<repo>:<repo-relative path>`, both of which the hook already
+   * normalises for exactly this reason (see the note in client/hook.mjs about
+   * Andrew's `C:\dev\masora\src\db.ts` and Kai's
+   * `/Users/kai/code/masora/src/db.ts` being the same file). The repo name
+   * comes from the event stream when there is one and from the folder name
+   * when there is not, and THOSE TWO CAN DISAGREE -- a teammate who cloned
+   * into a differently-named directory lands in a different room and sees an
+   * empty file with nobody in it. Not fixed here. The fix is for the hook to
+   * publish a repo identity that everyone derives the same way.
+   * ====================================================================== */
+
+  var ed = null;                          // the open editor, or null
+  var docStatus = Object.create(null);    // room -> { state, detail }
+
+  /** Yjs holds the text under this key. It is a constant shared by every
+   *  client; changing it orphans every document already in a room. */
+  var Y_TEXT = "content";
+
+  /**
+   * WARNING: A FIXED CLIENT ID FOR SEEDING, AND IT IS LOAD-BEARING.
+   *
+   * When a room is empty, somebody has to put the file's contents into it. If
+   * two people open the same fresh file at the same moment, both find it empty
+   * and both seed -- and because Yjs inserts are not idempotent, the room ends
+   * up holding the file TWICE. Which then gets written to everyone's disk.
+   *
+   * Yjs deduplicates by (clientID, clock). So the seed is produced in a
+   * throwaway doc whose clientID is this constant, which makes two independent
+   * seeds of the same text byte-identical and therefore one operation after
+   * the merge rather than two.
+   *
+   * The remaining hole, stated plainly: if the two machines' copies of the file
+   * DIFFER, the two seeds collide on (clientID, clock) carrying different
+   * content and one of them silently wins. That is a bad outcome. It is a far
+   * better one than the document containing both copies concatenated, which is
+   * what happens without this. The real fix is an acknowledgement from the hub
+   * that a replay is complete, so a client can tell "this room is empty" from
+   * "this room has not finished talking to me"; hub/server.mjs deliberately has
+   * no such ack, and its own notes say so.
+   */
+  var SEED_CLIENT_ID = 1;
+
+  /**
+   * How long to wait after joining before deciding a room is empty.
+   *
+   * There is no "replay finished" message, so a timer is the only signal
+   * available. Too short and two people seed; too long and opening a file feels
+   * broken. 500ms is informed by nothing but loopback latency and is the first
+   * number to change when this misbehaves on a real network.
+   */
+  var SEED_GRACE_MS = 500;
+
+  /** Saving is debounced, so a burst of keystrokes is one write and not forty. */
+  var SAVE_AFTER_MS = 700;
+
+  function roomFor(root, relPath) {
+    var repo = selectedRepo;
+    if (!repo && root) repo = String(root).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+    return (repo || "repo") + ":" + relPath;
+  }
+
+  function closeEditor() {
+    if (!ed) return;
+    var e = ed;
+    ed = null;
+    clearTimeout(e.saveTimer);
+    clearTimeout(e.seedTimer);
+    (e.unsub || []).forEach(function (fn) { try { fn(); } catch (err) { /* already detached */ } });
+    if (e.watching && typeof window.zevetLocal.unwatch === "function") {
+      try { window.zevetLocal.unwatch(e.root, e.relPath); } catch (err) { /* nothing to undo */ }
+    }
+    if (CAN_SHARE && e.room) { try { window.zevetDoc.leave(e.room); } catch (err) { /* ditto */ } }
+    if (e.destroyView) { try { e.destroyView(); } catch (err) { /* ditto */ } }
+    if (e.ydoc) { try { e.ydoc.destroy(); } catch (err) { /* ditto */ } }
+  }
+
+  /**
+   * Open `relPath` for editing.
+   *
+   * The read comes first and always. With no peers and no write capability
+   * this still shows the file, which is exactly what the board did before there
+   * was an editor at all -- the feature degrades to the thing it replaced.
+   */
+  function openEditor(relPath) {
+    closeEditor();
+    if (!LOCAL || !localRoot) return;
+    var root = localRoot;
+
+    ed = {
+      root: root, relPath: relPath, room: roomFor(root, relPath),
+      text: null, bom: false, eol: "lf", truncated: false,
+      loading: true, error: null,
+      dirty: false, saving: false, savedAt: 0, lastWritten: null,
+      ydoc: null, awareness: null, view: null, destroyView: null,
+      getText: null, setText: null,
+      seeded: false, seedTimer: null, saveTimer: null,
+      unsub: [], watching: false,
+    };
+    var mine = ed;
+
+    window.zevetLocal.read(root, relPath).then(function (r) {
+      if (ed !== mine) return;             // the user moved on while we read
+      mine.loading = false;
+      if (!r || !r.ok) {
+        mine.error = (r && r.error) || "could not read it";
+        return render();
+      }
+      mine.text = r.text;
+      // Handed straight back on save. readTextFile strips a BOM and reports the
+      // dominant line ending precisely so that a round trip does not rewrite a
+      // file nobody edited.
+      mine.bom = Boolean(r.bom);
+      mine.eol = r.eol || "lf";
+      mine.truncated = Boolean(r.truncated);
+      mine.lastWritten = r.text;
+      render();
+      mountEditor(mine);                   // the host element exists only after render
+    }, function (err) {
+      if (ed !== mine) return;
+      mine.loading = false;
+      mine.error = String((err && err.message) || err);
+      render();
+    });
+  }
+
+  function mountEditor(e) {
+    var host = $("edHost");
+    if (!host || e !== ed || e.view) return;
+
+    var E = window.zevetEditor;
+    // WARNING: A TRUNCATED READ IS NEVER SHARED AND NEVER SAVED. readTextFile
+    // caps at 512 KiB; sharing the first half of a file and then writing that
+    // back would delete the rest of it, on every machine at once.
+    var shareable = CAN_SHARE && !e.truncated;
+
+    if (shareable) {
+      e.ydoc = new E.Y.Doc();
+      e.awareness = new E.Awareness(e.ydoc);
+      e.awareness.setLocalStateField("user", {
+        name: myActor || "me",
+        color: cssColour(hueOf(myActor)),
+        colorLight: cssColour(hueOf(myActor)) + "33",
+      });
+      joinRoom(e);
+    }
+
+    var handle = E.createEditor({
+      parent: host,
+      doc: shareable ? e.ydoc : null,
+      awareness: shareable ? e.awareness : null,
+      text: shareable ? "" : (e.text || ""),
+      language: E.languageForPath(e.relPath),
+      readOnly: !CAN_WRITE || Boolean(e.truncated),
+      onChange: function () { onLocalEdit(e); },
+    });
+    e.view = handle.view;
+    e.getText = handle.getText;
+    e.setText = handle.setText;
+    e.destroyView = handle.destroy;
+
+    // Solo: the disk text went straight in, because there is no room whose
+    // contents might already be the authoritative ones.
+    if (!shareable) e.seeded = true;
+
+    watchFile(e);
+
+    if (e.awareness) {
+      var onAware = function () { if (ed === e) drawRiders(e); };
+      e.awareness.on("change", onAware);
+      e.unsub.push(function () { e.awareness.off("change", onAware); });
+    }
+    if (e.view) {
+      // The riders are absolutely positioned over the scroller, so they have to
+      // move when it scrolls. A scroll listener rather than a CodeMirror plugin
+      // because this is chrome drawn over the editor, not part of its document.
+      var sc = e.view.scrollDOM;
+      var onScroll = function () { drawRiders(e); };
+      sc.addEventListener("scroll", onScroll, { passive: true });
+      e.unsub.push(function () { sc.removeEventListener("scroll", onScroll); });
+    }
+    drawRiders(e);
+  }
+
+  /** `hueOf` returns `var(--who-N)`; an awareness payload has to carry a real
+   *  colour, because y-codemirror.next writes it into an inline style. */
+  function cssColour(varExpr) {
+    var m = /^var\((--[a-z0-9-]+)\)$/.exec(String(varExpr));
+    if (!m) return String(varExpr);
+    var v = getComputedStyle(document.documentElement).getPropertyValue(m[1]);
+    return (v || "").trim() || "#2f6f8f";
+  }
+
+  function joinRoom(e) {
+    var E = window.zevetEditor;
+
+    e.unsub.push(window.zevetDoc.onMessage(function (m) {
+      if (!ed || ed !== e || m.room !== e.room) return;
+      if (m.kind === "ready") {
+        // Our state goes out first, so a room that already has peers learns
+        // about anything edited here while the socket was down.
+        sendState(e);
+        clearTimeout(e.seedTimer);
+        e.seedTimer = setTimeout(function () { seedIfEmpty(e); }, SEED_GRACE_MS);
+      } else if (m.kind === "update" && m.bytes) {
+        // "remote" as the transaction origin is what stops this update being
+        // echoed straight back out by the local-update handler below.
+        E.Y.applyUpdate(e.ydoc, m.bytes, "remote");
+      } else if (m.kind === "snapshot-due") {
+        sendState(e, true);
+      }
+    }));
+
+    e.unsub.push(window.zevetDoc.onStatus(function (st) {
+      docStatus[st.room] = { state: st.state, detail: st.detail };
+      if (ed === e && st.room === e.room) render();
+    }));
+
+    var onUpdate = function (update, origin) {
+      if (origin === "remote") return;
+      window.zevetDoc.send(e.room, update);
+      if (ed === e) scheduleSave(e);
+    };
+    e.ydoc.on("update", onUpdate);
+    e.unsub.push(function () { e.ydoc.off("update", onUpdate); });
+
+    window.zevetDoc.join(e.room).then(function (r) {
+      if (r && r.ok) return;
+      // A refusal here is usually one of two completely different problems --
+      // "re-run setup, this machine has no master secret" and "the hub is
+      // unreachable" -- and the detail is the only thing that distinguishes
+      // them, so it is shown verbatim rather than summarised.
+      docStatus[e.room] = { state: "error", detail: (r && r.error) || "could not join" };
+      if (ed === e) render();
+    });
+  }
+
+  function sendState(e, snapshot) {
+    if (!e.ydoc) return;
+    var full = window.zevetEditor.Y.encodeStateAsUpdate(e.ydoc);
+    window.zevetDoc.send(e.room, full, snapshot ? { snapshot: true } : undefined);
+  }
+
+  /** Put the file into an empty room. See SEED_CLIENT_ID for why this is not
+   *  simply `ytext.insert(0, text)`. */
+  function seedIfEmpty(e) {
+    if (!ed || ed !== e || e.seeded || !e.ydoc) return;
+    var E = window.zevetEditor;
+
+    if (e.ydoc.getText(Y_TEXT).length > 0) {
+      // Somebody got here first. Adopt what the room holds; if that differs
+      // from this machine's disk, the save below writes the room's version out,
+      // which is the behaviour you want -- while a room exists it is the shared
+      // truth, and the alternative is every machine fighting over the file.
+      e.seeded = true;
+      scheduleSave(e);
+      return;
+    }
+
+    var seed = new E.Y.Doc();
+    seed.clientID = SEED_CLIENT_ID;
+    seed.getText(Y_TEXT).insert(0, e.text || "");
+    E.Y.applyUpdate(e.ydoc, E.Y.encodeStateAsUpdate(seed), "remote");
+    seed.destroy();
+    e.seeded = true;
+    // Deliberately a normal update and not a snapshot: a snapshot replaces the
+    // room's whole log, and if this raced with a peer's seed then the log is
+    // precisely the thing worth keeping.
+    sendState(e);
+  }
+
+  function onLocalEdit(e) {
+    if (ed !== e) return;
+    e.dirty = true;
+    scheduleSave(e);
+    paintSaveState(e);
+    drawRiders(e);
+  }
+
+  function scheduleSave(e) {
+    if (!CAN_WRITE || e.truncated) return;
+    clearTimeout(e.saveTimer);
+    e.saveTimer = setTimeout(function () { saveNow(e); }, SAVE_AFTER_MS);
+  }
+
+  function saveNow(e) {
+    if (ed !== e || !CAN_WRITE || e.truncated) return;
+    var text = e.getText ? e.getText() : null;
+    if (text == null) return;
+    // Writing an identical file still bumps its mtime, which the watcher sees,
+    // which re-reads, which re-renders. A cheap loop, and easy to avoid.
+    if (text === e.lastWritten) { e.dirty = false; return paintSaveState(e); }
+
+    e.saving = true;
+    paintSaveState(e);
+    window.zevetLocal.write(e.root, e.relPath, text, { bom: e.bom, eol: e.eol }).then(function (r) {
+      if (ed !== e) return;
+      e.saving = false;
+      if (r && r.ok) {
+        e.lastWritten = text;
+        e.dirty = false;
+        e.savedAt = Date.now();
+        e.error = null;
+      } else {
+        e.error = (r && r.error) || "could not save";
+      }
+      paintSaveState(e);
+      // A save changes the line count and the diff, and those are the numbers
+      // in the tree the person is looking at.
+      refreshStats(false);
+    });
+  }
+
+  /**
+   * An agent changed the file on disk.
+   *
+   * This is the case the whole product exists for, so it gets the careful
+   * treatment. The new text is folded into the shared document rather than
+   * swapped into the buffer: `setText` replaces the document in one
+   * transaction and Yjs diffs it against what was there, so a teammate's cursor
+   * survives and an unsaved local edit is merged rather than discarded.
+   */
+  function onDiskChanged(e, payload) {
+    if (ed !== e || payload.text == null) return;
+    var current = e.getText ? e.getText() : null;
+    if (current === payload.text) return;          // nothing actually differs
+    if (payload.text === e.lastWritten) return;    // our own save, coming back around
+    e.bom = Boolean(payload.bom);
+    e.eol = payload.eol || e.eol;
+    e.lastWritten = payload.text;
+    e.setText(payload.text);
+    refreshStats(false);
+    drawRiders(e);
+  }
+
+  function watchFile(e) {
+    if (!LOCAL) return;
+    if (typeof window.zevetLocal.watch !== "function") return;
+    if (typeof window.zevetLocal.onFileChanged !== "function") return;
+    e.unsub.push(window.zevetLocal.onFileChanged(function (p) {
+      if (!ed || ed !== e) return;
+      if (p.root !== e.root || p.relPath !== e.relPath) return;
+      onDiskChanged(e, p);
+    }));
+    window.zevetLocal.watch(e.root, e.relPath).then(function (r) {
+      if (ed === e && r && r.ok) e.watching = true;
+    }, function () { /* no watcher: an agent's edits simply will not appear live */ });
+  }
+
+  /* ---- the riders ------------------------------------------------------
+   * One figure per other participant in this file, at the line their cursor is
+   * on, in their colour, holding the tool their agent last used.
+   *
+   * Positions come from Yjs awareness, which is exact: it is the same source
+   * y-codemirror.next draws the remote carets from, so the figure and the caret
+   * cannot drift apart.
+   *
+   * WARNING: THERE IS DELIBERATELY NO FIGURE FOR AN AGENT SEEN ONLY OVER THE
+   * BOARD'S EVENT STREAM. Those events carry a file but NO LINE NUMBER -- the
+   * hook sends `{kind, tool, target, detail}` and nothing positional. Putting a
+   * figure at line 1 because line 1 is all we know would be inventing a fact
+   * and drawing it 40 lines from the truth. Teaching the hook to report a line
+   * is the way to fix this, and it has not been done.
+   */
+  function drawRiders(e) {
+    if (ed !== e || !e.view) return;
+    var layer = $("riders");
+    if (!layer) return;
+    layer.textContent = "";
+    if (!e.awareness) return;
+
+    var localId = e.awareness.clientID;
+    var scrolled = e.view.scrollDOM.scrollTop;
+    var docLen = e.view.state.doc.length;
+
+    e.awareness.getStates().forEach(function (state, clientId) {
+      if (clientId === localId) return;
+      var user = state && state.user;
+      var cursor = state && state.cursor;
+      if (!user || !cursor || typeof cursor.head !== "number") return;
+
+      var head = absolutePosition(e, cursor.head);
+      if (head == null) return;
+      var pos = Math.max(0, Math.min(docLen, head));
+      var block;
+      try {
+        block = e.view.lineBlockAt(pos);
+      } catch (err) {
+        return;   // a position from a document state we have not applied yet
+      }
+
+      var rider = el("div", "rider");
+      rider.style.color = user.color || "var(--who-0)";
+      // The eye holes take the surface behind them, and behind them here is the
+      // editor's own background rather than the page's.
+      rider.style.setProperty("--zevet-sprite-eye", "var(--paper)");
+      rider.style.transform = "translateY(" + Math.round(block.top - scrolled) + "px)";
+      rider.innerHTML = window.zevetSprites.spriteFor({ tool: toolOf(user.name), width: 35, height: 16 });
+      rider.appendChild(tx(el("span", "who"), user.name || ""));
+      layer.appendChild(rider);
+    });
+  }
+
+  /**
+   * An awareness cursor, turned into an offset in this document.
+   *
+   * WARNING: THESE ARE NOT NUMBERS. y-codemirror.next publishes the local
+   * cursor as Yjs RELATIVE positions -- JSON objects that name an item and an
+   * offset within it -- and not as an integer, precisely because an integer
+   * would mean something different on every machine the moment anybody typed.
+   * Reading `cursor.head` as a number therefore always fails, silently, and the
+   * riders simply never appear. (They did not, in the first version of this.)
+   *
+   * `null` means the position cannot be resolved against the state this client
+   * currently holds, which is normal and transient: a peer can publish a cursor
+   * referring to an update that has not reached us yet.
+   */
+  function absolutePosition(e, raw) {
+    if (raw == null) return null;
+    if (typeof raw === "number") return raw;   // a peer on some future encoding
+    var Y = window.zevetEditor.Y;
+    try {
+      var rel = Y.createRelativePositionFromJSON(raw);
+      var abs = Y.createAbsolutePositionFromRelativePosition(rel, e.ydoc);
+      return abs ? abs.index : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /** The last tool this actor's agent used, off the board's own event feed.
+   *  Null is a fine answer -- the figure is then simply empty-handed, which is
+   *  honest about not knowing. */
+  function toolOf(actor) {
+    if (!actor) return null;
+    var evs = scoped();
+    for (var i = evs.length - 1; i >= 0; i--) {
+      if (evs[i].actor === actor && evs[i].kind === "tool" && evs[i].tool) return evs[i].tool;
+    }
+    return null;
+  }
+
+  function paintSaveState(e) {
+    var n = $("edSaved");
+    if (!n || ed !== e) return;
+    n.dataset.dirty = String(Boolean(e.dirty));
+    tx(n, e.error ? e.error : e.saving ? "saving\u2026" : e.dirty ? "unsaved" : e.savedAt ? "saved" : "");
+  }
+
+
+  /**
+   * The editor pane: one status bar and the editor under it.
+   *
+   * Built fresh on every render, EXCEPT the host element, which is reused
+   * whenever an editor is already mounted in it. Re-creating it would destroy
+   * and rebuild CodeMirror on every event that lands on the board -- losing the
+   * cursor, the selection, the scroll position and the undo history several
+   * times a second while a teammate's agent is working.
+   */
+  function editorPane(e) {
+    var wrap = el("div", "ed");
+
+    var bar = el("div", "ed-bar");
+    bar.appendChild(tx(el("span"), e.relPath));
+
+    if (e.truncated) {
+      var big = el("span", "ed-note");
+      tx(big, "too large to edit — showing the first part, read-only");
+      bar.appendChild(big);
+    }
+
+    bar.appendChild(el("span", "grow"));
+
+    var saved = el("span", "ed-saved");
+    saved.id = "edSaved";
+    bar.appendChild(saved);
+
+    // The sharing state, which is the one thing about this pane a person needs
+    // to be able to trust. An editor that has quietly stopped syncing while
+    // looking fine is the failure this project calls its worst.
+    var st = el("span", "ed-state");
+    if (!CAN_SHARE) {
+      st.dataset.state = "solo";
+      st.appendChild(el("span", "dot"));
+      tx(st.appendChild(el("span")), "on this machine only");
+    } else {
+      var s0 = docStatus[e.room] || { state: "connecting", detail: "" };
+      st.dataset.state = s0.state;
+      st.appendChild(el("span", "dot"));
+      var label =
+        s0.state === "open" ? "shared" :
+        s0.state === "connecting" ? "connecting" :
+        s0.state === "retrying" ? "reconnecting" :
+        s0.state === "undecipherable" ? "a frame would not open" :
+        s0.state === "error" ? (s0.detail || "not shared") : s0.state;
+      tx(st.appendChild(el("span")), label);
+      if (s0.detail) st.title = s0.detail;
+    }
+    bar.appendChild(st);
+    wrap.appendChild(bar);
+
+    if (e.loading) {
+      var l = el("div", "ed-note");
+      tx(l, "reading\u2026");
+      wrap.appendChild(l);
+      return wrap;
+    }
+    if (e.error && !e.view) {
+      var err = el("div", "ed-note");
+      tx(err, e.error);
+      wrap.appendChild(err);
+      return wrap;
+    }
+
+    var hostBox = el("div", "ed-host");
+    hostBox.id = "edHost";
+    // Reuse, do not rebuild. See the comment on this function.
+    if (e.view && e.view.dom && e.view.dom.parentNode) {
+      hostBox.appendChild(e.view.dom);
+    }
+    var riders = el("div", "riders");
+    riders.id = "riders";
+    hostBox.appendChild(riders);
+    wrap.appendChild(hostBox);
+
+    // The bar's contents are rebuilt, so the save state has to be repainted
+    // onto the new node.
+    setTimeout(function () { paintSaveState(e); drawRiders(e); }, 0);
+    return wrap;
   }
 
   /**
@@ -1008,7 +1763,12 @@
     var touching = scoped().filter(function (e) { return e.target === selectedPath; });
 
     // In the app, the file itself — read from this machine's disk, never from
-    // the hub, which has never held a byte of it.
+    // the hub, which has never held a byte of it in the clear.
+    if (ed && ed.relPath === selectedPath) {
+      host.appendChild(editorPane(ed));
+      return;
+    }
+
     if (LOCAL && localFile && localFile.path === selectedPath) {
       var viewer = el("div", "viewer");
       if (localFile.loading) {

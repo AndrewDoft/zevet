@@ -222,4 +222,82 @@ function countLines(buf) {
   return buf[buf.length - 1] === 0x0a ? n : n + 1;
 }
 
-module.exports = { diffStats, LineCounter, countLines, renamedTo, EMPTY_TREE, MAX_COUNT_BYTES };
+/**
+ * Branch, short sha, and how far this checkout is from its upstream.
+ *
+ * This is the `repo:branch @sha ^ahead vbehind` segment of Andrew's status
+ * line, which he asked to have inside zevet. Same fail-to-empty contract as
+ * `diffStats`: no git, no repo, no upstream and no commits are all ordinary
+ * situations, and each returns what IS known rather than nothing at all.
+ *
+ * ⚠️ `ahead`/`behind` ARE AGAINST THE RECORDED UPSTREAM AND ARE ONLY AS FRESH
+ * AS THE LAST FETCH. Nothing here fetches -- a status readout that reached the
+ * network would stall a UI on a bad connection and would be a surprising thing
+ * for a panel to do on a timer. So "behind 0" means "nothing new as of your
+ * last fetch", not "nothing new on the remote". Anyone reading that number as
+ * live is being misled, and that is the cost of not fetching.
+ *
+ * Returns `{ branch, sha, ahead, behind, upstream }`, any of which may be null.
+ */
+async function branchState(rootDir) {
+  const empty = { branch: null, sha: null, ahead: null, behind: null, upstream: null };
+  if (!rootDir || typeof rootDir !== "string") return empty;
+
+  // One call for the lot. %(upstream:track) prints "[ahead 2, behind 1]" or
+  // "[gone]" or nothing, which is three answers from one read -- and asking
+  // rev-list separately would be two more subprocesses on a timer.
+  const out = await git(rootDir, [
+    "rev-parse", "--abbrev-ref", "HEAD",
+  ]);
+  if (out === null) return empty;
+  const branch = out.trim() || null;
+  // A detached HEAD prints "HEAD", which is not a branch name and must not be
+  // drawn as one.
+  const named = branch && branch !== "HEAD" ? branch : null;
+
+  const shaOut = await git(rootDir, ["rev-parse", "--short", "HEAD"]);
+  const sha = shaOut && shaOut.trim() ? shaOut.trim() : null;
+
+  if (!named) return { branch: null, sha, ahead: null, behind: null, upstream: null };
+
+  const track = await git(rootDir, [
+    "for-each-ref", "--format=%(upstream:short)%09%(upstream:track)",
+    "refs/heads/" + named,
+  ]);
+  if (track === null) return { branch: named, sha, ahead: null, behind: null, upstream: null };
+
+  // `%09` in the format is a literal tab, so one line is `<upstream>\t<track>`.
+  const [upstream, state] = String(track).split("\n")[0].split("\t");
+  if (!upstream) {
+    // No upstream at all -- a local branch nobody has pushed. Nulls, not zeros:
+    // "0 ahead" would say it is in step with something it has no relationship
+    // to.
+    return { branch: named, sha, ahead: null, behind: null, upstream: null };
+  }
+  // `[gone]` means the upstream ref was deleted, so there is nothing to be
+  // ahead OF and the honest answer is "unknown" rather than a number.
+  if (state === "[gone]") {
+    return { branch: named, sha, ahead: null, behind: null, upstream };
+  }
+  // ⚠️ AN EMPTY TRACK STRING MEANS IN SYNC, NOT UNKNOWN. `%(upstream:track)`
+  // prints nothing at all for a branch level with its upstream -- it only emits
+  // `[ahead N]` / `[behind N]` when there is something to say. Treating empty
+  // as "no information" (which this did, and which is how it was caught) makes
+  // every up-to-date branch on the machine report as unknown, which is the most
+  // common case and therefore the most visible wrong answer.
+  const a = /ahead (\d+)/.exec(state || "");
+  const b = /behind (\d+)/.exec(state || "");
+  return {
+    branch: named,
+    sha,
+    // An upstream that exists and is not gone, with no ahead/behind in the
+    // track string, means in step. Zero is the right answer there.
+    ahead: a ? Number(a[1]) : 0,
+    behind: b ? Number(b[1]) : 0,
+    upstream,
+  };
+}
+
+module.exports = {
+  diffStats, branchState, LineCounter, countLines, renamedTo, EMPTY_TREE, MAX_COUNT_BYTES,
+};

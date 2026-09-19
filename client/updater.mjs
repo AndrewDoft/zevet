@@ -20,6 +20,7 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, rmSync 
 import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
+import { resolveAuth } from "./secret.mjs";
 
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
 const CLIENT_DIR = path.join(HOME, "client");
@@ -130,7 +131,19 @@ function releaseLock() {
 async function main() {
   const cfg = readConfig();
   const hub = (process.env.ZEVET_HUB || cfg.hub || "").replace(/\/+$/, "");
-  const token = process.env.ZEVET_TOKEN || cfg.token || "";
+  // Derived, never the master secret itself — same substitution as hook.mjs,
+  // and for the same reason: the hub is given a value it can compare and not
+  // the value the document key comes from. See client/secret.mjs.
+  const auth = resolveAuth({ env: process.env, file: cfg });
+  if (auth.error) {
+    // Distinct from "no token configured". An updater that says the credential
+    // is MISSING when it is actually MALFORMED sends the reader looking in the
+    // wrong place, and this file is already hard to observe — it runs detached,
+    // with stdio ignored, spawned by a hook nobody is watching.
+    log(`the configured master secret is unusable (${auth.error}) — not checking for updates`);
+    return;
+  }
+  const token = auth.token;
   if (!hub || !token) {
     log("no hub or token configured — nothing to check against");
     return;

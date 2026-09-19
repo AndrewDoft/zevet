@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { diffStats, LineCounter, countLines, renamedTo } = require(
+const { diffStats, branchState, LineCounter, countLines, renamedTo } = require(
   path.join(ROOT, "desktop", "repo-stats.js"),
 );
 
@@ -253,5 +253,124 @@ describe("diff stats", { skip: HAVE_GIT ? false : "git is not installed" }, () =
   test("no root at all fails to empty", async () => {
     assert.equal((await diffStats(null)).ok, false);
     assert.equal((await diffStats("")).ok, false);
+  });
+});
+
+
+describe("branch, sha, ahead and behind", { skip: HAVE_GIT ? false : "git is not installed" }, () => {
+  /** A bare origin plus a clone, which is the only way to have a real upstream
+   *  to be ahead of. Nothing here touches the network. */
+  function makeClone(name) {
+    const origin = path.join(dir, name + "-origin.git");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin], { stdio: "ignore", windowsHide: true });
+
+    const seed = makeRepo(name + "-seed");
+    writeFileSync(path.join(seed.repo, "a.txt"), "one\n");
+    seed.g("add", "-A");
+    seed.g("commit", "-qm", "first");
+    seed.g("remote", "add", "origin", origin);
+    seed.g("push", "-q", "-u", "origin", "main");
+
+    const work = path.join(dir, name);
+    execFileSync("git", ["clone", "-q", origin, work], { stdio: "ignore", windowsHide: true });
+    const g = (...args) => execFileSync("git", ["-C", work, ...args], { stdio: "ignore", windowsHide: true });
+    g("config", "user.email", "test@example.invalid");
+    g("config", "user.name", "zevet test");
+    g("config", "commit.gpgsign", "false");
+    return { work, origin, g, seed };
+  }
+
+  test("a branch level with its upstream is 0 and 0, not unknown", async () => {
+    // THE case that was wrong first. `%(upstream:track)` prints NOTHING for a
+    // branch in sync -- it only speaks up when there is something to report --
+    // so reading empty as "no information" makes every up-to-date branch on the
+    // machine report as unknown. Which is most of them.
+    const { work } = makeClone("sync");
+    const b = await branchState(work);
+    assert.equal(b.branch, "main");
+    assert.equal(b.ahead, 0);
+    assert.equal(b.behind, 0);
+    assert.equal(b.upstream, "origin/main");
+    assert.match(b.sha, /^[0-9a-f]{7,}$/);
+  });
+
+  test("a local commit shows as ahead", async () => {
+    const { work, g } = makeClone("ahead");
+    writeFileSync(path.join(work, "b.txt"), "two\n");
+    g("add", "-A");
+    g("commit", "-qm", "local");
+    const b = await branchState(work);
+    assert.equal(b.ahead, 1);
+    assert.equal(b.behind, 0);
+  });
+
+  test("a commit on the remote shows as behind after a fetch", async () => {
+    // And only after a fetch: nothing in repo-stats.js reaches the network, so
+    // this test does the fetch the UI deliberately will not.
+    const { work, g, seed } = makeClone("behind");
+    writeFileSync(path.join(seed.repo, "c.txt"), "three\n");
+    seed.g("add", "-A");
+    seed.g("commit", "-qm", "remote work");
+    seed.g("push", "-q", "origin", "main");
+    g("fetch", "-q", "origin");
+    const b = await branchState(work);
+    assert.equal(b.ahead, 0);
+    assert.equal(b.behind, 1);
+  });
+
+  test("diverged shows both", async () => {
+    const { work, g, seed } = makeClone("diverged");
+    writeFileSync(path.join(work, "mine.txt"), "mine\n");
+    g("add", "-A");
+    g("commit", "-qm", "mine");
+    writeFileSync(path.join(seed.repo, "theirs.txt"), "theirs\n");
+    seed.g("add", "-A");
+    seed.g("commit", "-qm", "theirs");
+    seed.g("push", "-q", "origin", "main");
+    g("fetch", "-q", "origin");
+    const b = await branchState(work);
+    assert.equal(b.ahead, 1);
+    assert.equal(b.behind, 1);
+  });
+
+  test("a branch with no upstream is null, not zero", async () => {
+    // "0 ahead" would claim it is in step with something it has no
+    // relationship to at all.
+    const { repo, g } = makeRepo("no-upstream");
+    writeFileSync(path.join(repo, "a.txt"), "one\n");
+    g("add", "-A");
+    g("commit", "-qm", "first");
+    const b = await branchState(repo);
+    assert.equal(b.branch, "main");
+    assert.ok(b.sha);
+    assert.equal(b.upstream, null);
+    assert.equal(b.ahead, null);
+    assert.equal(b.behind, null);
+  });
+
+  test("a detached HEAD has a sha but no branch", async () => {
+    const { repo, g } = makeRepo("detached");
+    writeFileSync(path.join(repo, "a.txt"), "one\n");
+    g("add", "-A");
+    g("commit", "-qm", "first");
+    const sha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { windowsHide: true }).toString().trim();
+    g("checkout", "-q", sha);
+    const b = await branchState(repo);
+    // "HEAD" is what git prints there and it is not a branch name; drawing it
+    // as one would put `:HEAD` in the status strip.
+    assert.equal(b.branch, null);
+    assert.ok(b.sha);
+  });
+
+  test("a directory that is not a repo is all nulls, not a throw", async () => {
+    const notRepo = path.join(dir, "plain");
+    mkdirSync(notRepo, { recursive: true });
+    const b = await branchState(notRepo);
+    assert.deepEqual({ ...b }, { branch: null, sha: null, ahead: null, behind: null, upstream: null });
+  });
+
+  test("no root at all is all nulls", async () => {
+    assert.equal((await branchState(null)).branch, null);
+    assert.equal((await branchState("")).sha, null);
   });
 });

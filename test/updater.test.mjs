@@ -13,8 +13,13 @@ import { spawn } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { tempDir, ROOT } from "./helpers.mjs";
+import { deriveAuthToken } from "../client/secret.mjs";
 
 const TOKEN = "updater-test-token";
+
+/** A fixed master secret and the token every client derives from it. */
+const MASTER = "beefcafe0d15ea5e8badf00dfeedfacedead10ccabad1dea";
+const DERIVED = deriveAuthToken(MASTER);
 
 /** A hub that serves exactly what a test tells it to, including nonsense. */
 async function fakeHub(files, { manifestOverride = null, version = "9.9.9", omit = [] } = {}) {
@@ -25,8 +30,12 @@ async function fakeHub(files, { manifestOverride = null, version = "9.9.9", omit
   }));
   const manifest = manifestOverride ?? { version, files: entries };
 
+  /** Every credential this hub was shown, in order. Read by the auth tests. */
+  const seen = [];
+
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://x");
+    seen.push(req.headers["x-zevet-token"]);
     if (url.pathname === "/dist/manifest.json") {
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify(manifest));
@@ -46,14 +55,19 @@ async function fakeHub(files, { manifestOverride = null, version = "9.9.9", omit
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   return {
     base: `http://127.0.0.1:${server.address().port}`,
+    seen,
     stop: () => new Promise((r) => server.close(r)),
   };
 }
 
-function runUpdater(home, hub) {
+function runUpdater(home, hub, env = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(ROOT, "client", "updater.mjs")], {
-      env: { ...process.env, ZEVET_HOME: home, ZEVET_HUB: hub, ZEVET_TOKEN: TOKEN },
+      // ZEVET_SECRET is blanked rather than left alone: resolveAuth lets a
+      // secret in the environment beat everything else, so one exported in the
+      // shell running this suite would replace the credential every test above
+      // assumes. The auth tests at the bottom override these deliberately.
+      env: { ...process.env, ZEVET_HOME: home, ZEVET_HUB: hub, ZEVET_TOKEN: TOKEN, ZEVET_SECRET: "", ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
@@ -230,6 +244,79 @@ describe("the updater", () => {
       const r = await runUpdater(home.dir, hub.base);
       assert.equal(r.code, 0);
       assert.ok(existsSync(path.join(home.dir, "client", "hook.mjs")), "a stale lock must not block forever");
+    } finally {
+      await hub.stop();
+      home.cleanup();
+    }
+  });
+});
+
+describe("what the updater presents as a credential", () => {
+  // The updater is the client component hardest to observe: it runs detached,
+  // with stdio ignored, spawned by a hook nobody is watching. If it presented
+  // the master secret instead of the derived token, the only symptom would be
+  // that the hub -- the one place the secret must never reach -- had it.
+  const seedConfig = (home, config) => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(path.join(home, "config.json"), JSON.stringify(config), "utf8");
+  };
+
+  /** No credential in the environment, so the config file is the only source. */
+  const FILE_ONLY = { ZEVET_TOKEN: "", ZEVET_SECRET: "", ZEVET_HUB: "" };
+
+  test("a secret in the config becomes a derived token on the wire", async () => {
+    const home = tempDir("zevet-auth-up-");
+    const hub = await fakeHub({ "hook.mjs": "// v2\n" });
+    try {
+      seedConfig(home.dir, { hub: hub.base, secret: MASTER, actor: "tester" });
+      const r = await runUpdater(home.dir, "", FILE_ONLY);
+      assert.equal(r.code, 0);
+      assert.ok(hub.seen.length > 0, `the updater never called the hub: ${r.stderr}`);
+      for (const given of hub.seen) {
+        assert.equal(given, DERIVED);
+        assert.notEqual(given, MASTER, "the master secret went on the wire");
+      }
+      // And it did the job with it, rather than merely sending the right bytes.
+      assert.equal(readFileSync(path.join(home.dir, "client", "hook.mjs"), "utf8"), "// v2\n");
+    } finally {
+      await hub.stop();
+      home.cleanup();
+    }
+  });
+
+  test("a legacy token in the config is still sent verbatim", async () => {
+    // The ordering resolveAuth exists to buy: an install written before the
+    // cutover keeps updating from a hub that has not been cut over either.
+    const home = tempDir("zevet-legacy-up-");
+    const hub = await fakeHub({ "hook.mjs": "// v2\n" });
+    try {
+      seedConfig(home.dir, { hub: hub.base, token: TOKEN, actor: "tester" });
+      const r = await runUpdater(home.dir, "", FILE_ONLY);
+      assert.equal(r.code, 0);
+      assert.ok(hub.seen.length > 0, `the updater never called the hub: ${r.stderr}`);
+      for (const given of hub.seen) assert.equal(given, TOKEN);
+    } finally {
+      await hub.stop();
+      home.cleanup();
+    }
+  });
+
+  test("a malformed secret stops the check and says which of the two problems it is", async () => {
+    // Not "no token configured". An updater that reports a MISSING credential
+    // when the credential is actually MALFORMED sends the only person who will
+    // ever read this line looking in the wrong file.
+    const home = tempDir("zevet-badsecret-up-");
+    const hub = await fakeHub({ "hook.mjs": "// v2\n" });
+    try {
+      seedConfig(home.dir, { hub: hub.base, secret: "not hex at all", token: TOKEN, actor: "tester" });
+      const r = await runUpdater(home.dir, "", FILE_ONLY);
+      assert.equal(r.code, 0, "still exits cleanly");
+      assert.match(r.stderr, /master secret is unusable/i);
+      assert.equal(hub.seen.length, 0, "nothing should have been sent at all");
+      assert.ok(
+        !existsSync(path.join(home.dir, "client", "hook.mjs")),
+        "a broken secret must not fall back to the stale token next to it and install anyway",
+      );
     } finally {
       await hub.stop();
       home.cleanup();

@@ -22,6 +22,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { startHub, runScript, tempDir, TOKEN } from "./helpers.mjs";
+import { deriveAuthToken } from "../client/secret.mjs";
 
 /**
  * A token that is obvious in a haystack.
@@ -33,11 +34,26 @@ import { startHub, runScript, tempDir, TOKEN } from "./helpers.mjs";
 const SECRET = "zzsecret-token-qqxv-8f3a1c7e9b2d";
 
 /**
+ * A MASTER secret, which is a different thing from the token above and is a
+ * worse leak: it is also the document key (client/secret.mjs). It has to be
+ * real hex of the real width or resolveAuth refuses it, so it is spelled out of
+ * distinctive hex words instead — "beefca" appearing in this output is a leak
+ * and not a coincidence with a port number or a temp path.
+ */
+const MASTER = "beefcafe0d15ea5e8badf00dfeedfacedead10ccabad1dea";
+const DERIVED = deriveAuthToken(MASTER);
+
+/**
  * Every ZEVET_* name blanked, so the developer's own shell cannot decide the
  * result. Empty rather than deleted because doctor.mjs reads these for
  * truthiness, and "" is the same falsy as absent on both platforms.
+ *
+ * ZEVET_SECRET is on this list for a sharper reason than the others: resolveAuth
+ * lets a secret in the environment WIN over everything in the config file, so
+ * one exported in the shell running this suite would replace the credential
+ * every case below is built around — on one machine and nowhere else.
  */
-const CLEAN = { ZEVET_HUB: "", ZEVET_TOKEN: "", ZEVET_ACTOR: "", ZEVET_TIMEOUT_MS: "" };
+const CLEAN = { ZEVET_HUB: "", ZEVET_TOKEN: "", ZEVET_SECRET: "", ZEVET_ACTOR: "", ZEVET_TIMEOUT_MS: "" };
 
 /**
  * Somewhere nothing is listening, so "unreachable" is the finding under test.
@@ -146,7 +162,7 @@ function assertContract(r, label) {
     assert.ok(!seen.has(name), `${label}: ${name} reported more than once:\n${r.stdout}`);
     seen.add(name);
   }
-  for (const name of ["config", "settings", "hub", "token", "client"]) {
+  for (const name of ["config", "settings", "credential", "hub", "token", "client"]) {
     assert.ok(seen.has(name), `${label}: no ${name} check in:\n${r.stdout}`);
   }
 
@@ -165,7 +181,10 @@ function assertContract(r, label) {
   // on the screen of whoever ran this. A prefix and a suffix are checked
   // separately because both narrow a brute force even when the whole string
   // never appears — which is exactly what a truncated "helpful" hint does.
-  for (const secret of [SECRET, TOKEN]) {
+  // MASTER and DERIVED are in this list for the reason redact() grew a second
+  // parameter: a file that redacted only the hub token would have kept the
+  // lesser secret off the screen and printed the greater one.
+  for (const secret of [SECRET, TOKEN, MASTER, DERIVED]) {
     for (const [what, piece] of [
       ["the token", secret],
       ["the first six characters of the token", secret.slice(0, 6)],
@@ -237,6 +256,75 @@ const INSTALLS = {
     // Built from DEAD rather than retyped: the port is allocated at startup.
     expect: [new RegExp(`\\[ok\\] settings {5}hub ${esc(DEAD)}, actor tester, token set`)],
   },
+
+  // ---- the four credential states --------------------------------------
+  //
+  // These are the reason the `credential` check exists at all. Three of the
+  // four are indistinguishable from every other line of this output: `settings`
+  // says "token set" for a modern config and a legacy one alike, and a
+  // malformed secret produces no token, which reads exactly like having
+  // configured nothing. A teammate on a legacy install is told the board works
+  // and is not told the editor will never appear.
+  "(a) a modern config, with a master secret": {
+    config: { hub: DEAD, secret: MASTER, actor: "tester" },
+    env: { ZEVET_TIMEOUT_MS: QUICK },
+    expect: [
+      /\[ok\] credential {3}master secret configured; the hub is sent a derived token, never the secret/,
+      /\[ok\] settings {5}.*token set/,
+    ],
+  },
+  "(b) a legacy config, with only a raw token": {
+    config: { hub: DEAD, token: SECRET, actor: "tester" },
+    env: { ZEVET_TIMEOUT_MS: QUICK },
+    expect: [
+      /\[--\] credential {3}LEGACY: a raw token, no master secret/,
+      // The two things a person on a legacy install has to be told, in words,
+      // not implied by the absence of something.
+      /editor is unavailable/,
+      /Re-running setup\.ps1 \/ setup\.sh fixes both/,
+    ],
+  },
+  "(c) a malformed master secret": {
+    config: { hub: DEAD, secret: "not hex at all", actor: "tester" },
+    env: { ZEVET_TIMEOUT_MS: QUICK },
+    expect: [
+      /\[--\] credential {3}the master secret is UNUSABLE \(.+\)/,
+      /the board will stay empty/,
+      // No credential is derived, and nothing falls back. The `token` check has
+      // to agree with that rather than reporting a token it does not have.
+      /\[--\] token {8}no token configured/,
+      /\[--\] settings {5}.*token MISSING/,
+    ],
+  },
+  "(c) a master secret truncated by a bad paste": {
+    // The likeliest real version of (c): valid hex, wrong length. Silently
+    // deriving from it would produce a credential that is wrong in a way
+    // nothing on the board could ever explain.
+    config: { hub: DEAD, secret: MASTER.slice(0, 40), actor: "tester" },
+    env: { ZEVET_TIMEOUT_MS: QUICK },
+    expect: [/\[--\] credential {3}the master secret is UNUSABLE \(.*at least.*\)/],
+  },
+  "(c) a broken secret does not quietly fall back to a stale token": {
+    // resolveAuth refuses the fallback on purpose: swapping credentials behind
+    // a typo is the "empty board and nobody knows why" failure this project
+    // treats as its worst. Asserted here because the config that has BOTH is
+    // exactly what a half-finished cutover leaves on disk.
+    config: { hub: DEAD, secret: "zzz", token: SECRET, actor: "tester" },
+    env: { ZEVET_TIMEOUT_MS: QUICK },
+    expect: [/\[--\] credential {3}the master secret is UNUSABLE/, /\[--\] token {8}no token configured/],
+  },
+  "(d) nothing configured at all": {
+    config: { hub: DEAD, actor: "tester" },
+    env: { ZEVET_TIMEOUT_MS: QUICK },
+    expect: [/\[--\] credential {3}nothing configured — no secret and no token\. Run setup\.ps1 \/ setup\.sh/],
+  },
+  "a secret in the environment beats a token in the file": {
+    // The precedence resolveAuth actually implements, asserted where somebody
+    // debugging a machine will look for it.
+    config: { hub: DEAD, token: SECRET, actor: "tester" },
+    env: { ZEVET_SECRET: MASTER, ZEVET_TIMEOUT_MS: QUICK },
+    expect: [/\[ok\] credential {3}master secret configured/],
+  },
 };
 
 describe("a broken install still gets a diagnosis", () => {
@@ -264,6 +352,47 @@ describe("against a hub that is really running", () => {
     // is wrong needs a different person than one whose hub is down.
     assert.match(r.stdout, /\[ok\] hub {10}/);
     assert.match(r.stdout, /\[--\] token {8}rejected \(401\)/);
+  });
+
+  test("a master secret derives a token the hub actually accepts", async () => {
+    // The end-to-end claim, against a hub started with the derived value —
+    // which is what the cutover puts in ZEVET_TOKEN. Everything else in this
+    // file checks what the doctor SAYS; this checks that what it says is true.
+    const cut = await startHub({ ZEVET_TOKEN: DERIVED });
+    try {
+      const r = await doctor({ config: { hub: cut.base, secret: MASTER, actor: "tester" } });
+      assertContract(r, "modern against a cut-over hub");
+      assert.match(r.stdout, /\[ok\] credential {3}master secret configured/);
+      assert.match(r.stdout, /\[ok\] token {8}accepted by the hub$/m);
+    } finally {
+      await cut.stop();
+    }
+  });
+
+  test("a legacy install against a cut-over hub is told what to do about it", async () => {
+    // THE CUTOVER FAILURE, exactly as a teammate will meet it: their install
+    // was fine yesterday, the hub's env changed overnight, and a bare
+    // "rejected (401)" would send them looking for a new token when what they
+    // need is to re-run setup with the master secret.
+    const cut = await startHub({ ZEVET_TOKEN: DERIVED });
+    try {
+      const r = await doctor({ config: { hub: cut.base, token: TOKEN, actor: "tester" } });
+      assertContract(r, "legacy against a cut-over hub");
+      assert.match(r.stdout, /\[--\] credential {3}LEGACY/);
+      assert.match(r.stdout, /\[--\] token {8}rejected \(401\).*Re-run setup\.ps1 \/ setup\.sh with the master secret/);
+    } finally {
+      await cut.stop();
+    }
+  });
+
+  test("a legacy install against a pre-cutover hub still works", async () => {
+    // The other half of "the fallback buys an ordering, not a coexistence": up
+    // until the hub's env changes, a legacy config is a working config, and the
+    // doctor must not cry wolf about the token while it does.
+    const r = await doctor({ config: { hub: hub.base, token: TOKEN, actor: "tester" } });
+    assertContract(r, "legacy against a pre-cutover hub");
+    assert.match(r.stdout, /\[ok\] token {8}accepted by the hub$/m);
+    assert.match(r.stdout, /\[--\] credential {3}LEGACY/, "accepted today, and still the thing to fix");
   });
 
   test("something that answers but is not a hub is told apart from a dead one", async () => {

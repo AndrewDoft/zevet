@@ -15,9 +15,11 @@
 //      exiting non-zero hands them a second one — a red step in setup.sh, a
 //      failed CI line — on top of the thing they came here to diagnose. The
 //      findings are the output, not the exit code.
-//   2. NO SECRETS ON SCREEN. The token is reported as set or not set and never
-//      printed, not even a prefix or a length: both narrow a brute force, and
-//      this output is exactly the thing someone pastes into a group chat when
+//   2. NO SECRETS ON SCREEN. There are two of them now — the team's master
+//      secret in config.json, and the auth token derived from it — and neither
+//      is ever printed. Each is reported as set or not set, not even a prefix
+//      or a length: both narrow a brute force, and this output is exactly the
+//      thing someone pastes into a group chat when
 //      they are stuck. The hub URL is printed with any userinfo and query
 //      string removed, because the documented way to open the board is
 //      `?token=...` and a URL that has been pasted into config once will be
@@ -27,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
 import { detectAgents } from "./detect.mjs";
+import { resolveAuth } from "./secret.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
@@ -53,6 +56,14 @@ const CLIENT_FILES = [
   "codex-trust.mjs",
   "uninstall.mjs",
   "doctor.mjs",
+  // Imported by hook.mjs, updater.mjs and this file. A client missing it has a
+  // hook that cannot start at all, which is the least visible failure in the
+  // product: silence is what a working hook also looks like.
+  "secret.mjs",
+  // Not imported by anything here yet; the editor is what will use it. Listed
+  // because this list's job is to mirror what the hub ships, not to guess what
+  // is currently reachable.
+  "doc-crypto.mjs",
 ];
 
 let passed = 0;
@@ -98,17 +109,30 @@ function safeUrl(raw) {
  * Printing a live credential there is worse than any problem it was run to
  * diagnose. The token is also redacted wherever it appears verbatim, because
  * an error message is not the only thing that can quote it back.
+ *
+ * THERE ARE NOW TWO SECRETS, not one, which is why this takes a list. The
+ * master secret in config.json and the auth token derived from it are both
+ * credentials, and the master one is strictly worse to leak: the derived token
+ * only opens the hub, while the master secret is also the document key (see
+ * client/secret.mjs). Redacting only the token — which is what this file did
+ * when the token WAS the whole credential — would have kept the lesser secret
+ * off the screen and printed the greater one.
  */
-function redact(text, token) {
+function redact(text, ...secrets) {
   let out = String(text == null ? "" : text);
   // userinfo in any URL, whatever the scheme.
   out = out.replace(new RegExp("([a-z][a-z0-9+.-]*://)[^/\\s@]*@", "gi"), "$1[redacted]@");
-  if (token && token.length >= 8) out = out.split(token).join("[redacted]");
+  for (const s of secrets) {
+    // The length floor is not arbitrary: splitting on a 1-character "secret"
+    // would replace that letter everywhere and mangle the diagnosis into
+    // unreadability, which is its own kind of failure.
+    if (typeof s === "string" && s.length >= 8) out = out.split(s).join("[redacted]");
+  }
   return out;
 }
 
 /** "fetch failed" tells nobody anything; the cause's errno is the actual finding. */
-function why(err, token) {
+function why(err, ...secrets) {
   if (err && err.name === "AbortError") return `no answer in ${TIMEOUT_MS}ms`;
   const cause = err && err.cause;
   // MEASURED on node v24.17: a refused connection puts the errno on `cause.code`
@@ -119,7 +143,7 @@ function why(err, token) {
   // straight through to err.message printed "fetch failed", which names nothing
   // the reader can act on. Both are the finding; neither is the wrapper.
   const detail = (cause && (cause.code || cause.message)) || (err && err.message);
-  return redact(detail || "unknown error", token);
+  return redact(detail || "unknown error", ...secrets);
 }
 
 async function get(url, headers) {
@@ -176,7 +200,7 @@ function codexHookState() {
  * thing it is diagnosing, which is worse than not having a doctor.
  */
 function checkConfig() {
-  const envNames = ["ZEVET_HUB", "ZEVET_TOKEN", "ZEVET_ACTOR"].filter((n) => process.env[n]);
+  const envNames = ["ZEVET_HUB", "ZEVET_SECRET", "ZEVET_TOKEN", "ZEVET_ACTOR"].filter((n) => process.env[n]);
 
   let file = {};
   if (!existsSync(CONFIG)) {
@@ -197,7 +221,14 @@ function checkConfig() {
       const raw = readFileSync(CONFIG, "utf8").replace(/^﻿/, "");
       file = JSON.parse(raw);
       if (!file || typeof file !== "object") throw new Error("not a JSON object");
-      const missing = ["hub", "token"].filter((k) => !file[k]);
+      // A `secret` satisfies the credential requirement in place of a `token`:
+      // setup now writes the master secret and the client derives. The word
+      // reported when neither is present stays "token", because that is the
+      // thing the reader is missing from the hub's point of view and the
+      // `credential` check below is where the distinction is actually drawn.
+      const missing = [];
+      if (!file.hub) missing.push("hub");
+      if (!file.secret && !file.token) missing.push("token");
       report(
         missing.length === 0,
         "config",
@@ -219,9 +250,18 @@ function checkConfig() {
     username = "";
   }
 
+  // Resolved through the same function hook.mjs and updater.mjs call, not by
+  // re-implementing the precedence here. A doctor that can disagree with the
+  // thing it is diagnosing is worse than no doctor, and the only way to
+  // guarantee it cannot is to run the same code.
+  const auth = resolveAuth({ env: process.env, file });
+
   const settings = {
     hub: (process.env.ZEVET_HUB || file.hub || "http://127.0.0.1:8787").replace(/\/+$/, ""),
-    token: process.env.ZEVET_TOKEN || file.token || "",
+    token: auth.token,
+    secret: auth.secret,
+    legacy: auth.legacy,
+    error: auth.error,
     actor: process.env.ZEVET_ACTOR || file.actor || username || "unknown",
   };
 
@@ -232,7 +272,62 @@ function checkConfig() {
     `hub ${safeUrl(settings.hub)}, actor ${settings.actor}, token ${settings.token ? "set" : "MISSING"}`,
   );
 
+  checkCredential(settings);
+
   return settings;
+}
+
+/**
+ * WHICH OF THE FOUR CREDENTIAL STATES THIS MACHINE IS IN.
+ *
+ * This is the check the collaborative-editing cutover makes necessary, and it
+ * exists because three of the four states look identical from every other line
+ * of this output. `settings` says "token set" for a modern config and a legacy
+ * one alike; `token` says "accepted by the hub" for a legacy config right up
+ * until the hub's ZEVET_TOKEN changes, and says "rejected (401)" afterwards
+ * without ever saying that re-running setup is the fix rather than a new token.
+ * And a malformed secret produces no token at all, which reads as "you have not
+ * configured anything" when in fact you configured something and mistyped it.
+ *
+ * The four, in the order they are tested:
+ *
+ *   (c) MALFORMED secret — loudest, because it is this project's worst failure
+ *       shape: everything looks configured, nothing works, and the board is
+ *       empty with no line anywhere saying why. Tested first so a config that
+ *       has both a broken `secret` and a stale `token` is reported as broken
+ *       rather than quietly falling back (resolveAuth refuses that fallback for
+ *       the same reason — see client/secret.mjs).
+ *   (d) NOTHING configured.
+ *   (b) LEGACY, a raw `token` and no `secret`. Works against a hub that has not
+ *       been cut over, and the editor is simply unavailable to it, because the
+ *       document key is derived from a secret this install does not have.
+ *   (a) MODERN, a `secret`.
+ */
+function checkCredential(settings) {
+  if (settings.error) {
+    report(
+      false,
+      "credential",
+      `the master secret is UNUSABLE (${settings.error}) — nothing will be sent to the hub and the board will stay empty. ` +
+        `Re-run setup.ps1 / setup.sh and paste the secret again, whole.`,
+    );
+    return;
+  }
+  if (!settings.token) {
+    report(false, "credential", "nothing configured — no secret and no token. Run setup.ps1 / setup.sh");
+    return;
+  }
+  if (settings.legacy) {
+    report(
+      false,
+      "credential",
+      "LEGACY: a raw token, no master secret. Events still work until the hub's ZEVET_TOKEN is cut over, " +
+        "and then this install gets a 401. The shared editor is unavailable to it either way — the document " +
+        "key is derived from the master secret, which this machine does not have. Re-running setup.ps1 / setup.sh fixes both.",
+    );
+    return;
+  }
+  report(true, "credential", "master secret configured; the hub is sent a derived token, never the secret");
 }
 
 // ---- checks 2 and 3: hub, token --------------------------------------------
@@ -256,13 +351,17 @@ async function checkHub(settings) {
     report(false, "hub", `${base} answered ${res.status} on /healthz — is that really a zevet hub?`);
     return false;
   } catch (err) {
-    report(false, "hub", `${redact(base, settings.token)} unreachable (${why(err, settings.token)}) — is the hub running, and is this the right address?`);
+    report(false, "hub", `${redact(base, settings.token, settings.secret)} unreachable (${why(err, settings.token, settings.secret)}) — is the hub running, and is this the right address?`);
     return false;
   }
 }
 
 async function checkToken(settings, hubUp) {
   if (!settings.token) {
+    // Deliberately says nothing about WHY there is no token: the `credential`
+    // check above has already distinguished "you configured nothing" from "you
+    // configured something unusable", and repeating a guess here would be the
+    // second opinion about one fact that makes this output stop being readable.
     report(false, "token", "no token configured — nothing to check, and the hub will refuse every event");
     return;
   }
@@ -275,14 +374,20 @@ async function checkToken(settings, hubUp) {
     if (res.ok) {
       report(true, "token", "accepted by the hub");
     } else if (res.status === 401) {
-      report(false, "token", "rejected (401) — this machine's token is not the string the hub was started with");
+      report(
+        false,
+        "token",
+        settings.legacy
+          ? "rejected (401) — this machine still sends a raw token and the hub has been cut over to the derived one. Re-run setup.ps1 / setup.sh with the master secret"
+          : "rejected (401) — the token derived from this machine's master secret is not what the hub was started with. Either the secret is the wrong one, or the hub's ZEVET_TOKEN has not been cut over yet",
+      );
     } else if (res.status === 429) {
       report(false, "token", "rate limited (429) — too many failed attempts from this address; wait a few minutes");
     } else {
       report(false, "token", `the hub answered ${res.status} on /api/state`);
     }
   } catch (err) {
-    report(false, "token", `could not ask the hub (${why(err, settings.token)})`);
+    report(false, "token", `could not ask the hub (${why(err, settings.token, settings.secret)})`);
   }
 }
 
@@ -381,6 +486,10 @@ setTimeout(() => {
 main().catch((err) => {
   // Including our own bugs: a doctor that crashes has diagnosed nothing and
   // told you less than it knew.
-  console.log(`  [--] doctor       crashed before finishing: ${redact(err && err.message, process.env.ZEVET_TOKEN)}`);
+  // Both environment credentials, because this net catches a throw from
+  // anywhere — including before checkConfig() ever resolved the file ones.
+  console.log(
+    `  [--] doctor       crashed before finishing: ${redact(err && err.message, process.env.ZEVET_TOKEN, process.env.ZEVET_SECRET)}`,
+  );
   process.exitCode = 0;
 });

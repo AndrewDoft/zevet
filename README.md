@@ -116,6 +116,63 @@ installs nothing unless all of them match — see the caveat above for what that
 check is and isn't worth. It also refuses any filename that is not a plain name,
 because `path.join` treats `../evil.mjs` as an instruction rather than a file.
 
+### The master secret, and the cutover
+
+There are now **two values, not one**, and which is which decides whether the
+hub can read your source.
+
+- The **master secret** is what the team shares. It lives in each teammate's
+  `~/.zevet/config.json` as `secret`, and it never leaves their machine.
+- The **derived token** is what the hub holds in `ZEVET_TOKEN` and what every
+  client puts in its `x-zevet-token` header. It is
+  `SHA-256("zevet-auth\0" || secret)`.
+
+The hub is **given the derived token and never the secret**, and that is the
+whole point rather than a nicety. Collaborative editing means file contents now
+cross the hub; the document key is `HKDF-SHA-256(secret, info "zevet-doc")`, so
+a hub that only ever sees the derived token cannot compute it and relays
+ciphertext it cannot read. `client/secret.mjs` is the specification, including
+what this does **not** protect against — a hub that has been taken over serves
+the board's own JavaScript and does not need your key.
+
+Generate a secret, and derive the token from it:
+
+```bash
+# the master secret — this is what you send each teammate, and only them
+openssl rand -hex 24
+
+# the derived token — this is what the hub gets, and it is safe to keep on the server
+node -e 'import("./client/secret.mjs").then(m => console.log(m.deriveAuthToken(process.argv[1])))' <the-master-secret>
+```
+
+Both setup scripts also print the derived token, fenced off under
+`--- hub operator only ---`, so it can be read off any machine that has already
+been set up.
+
+**The cutover, in order.** Do it when everyone is around, because step 1 locks
+out every machine that has not yet done step 3:
+
+1. Set the hub's `ZEVET_TOKEN` to the **derived token**.
+2. Restart the hub (`git pull && sudo docker restart zevet-hub` on the droplet).
+3. Re-run `setup.sh` / `setup.ps1` on **every** machine, pasting the **master
+   secret** where it asks for it. Each one derives the same token and is let
+   back in.
+
+**A legacy install gets a 401 the moment the hub's env changes.** There is
+deliberately no dual-accept window: the hub holds exactly one `ZEVET_TOKEN` and
+compares against it, and teaching it to accept both would mean the raw token
+stayed a valid credential for as long as anyone forgot to finish the migration —
+which, given the derived scheme exists to stop the hub ever holding key
+material, is the one state worth making impossible rather than comfortable. The
+fallback in `client/secret.mjs` buys an ordering, not a coexistence: an install
+that has updated its client but not re-run setup keeps working until step 1, and
+then stops. `node client/doctor.mjs` names that state in so many words —
+`[--] credential  LEGACY: a raw token, no master secret` — and says that
+re-running setup is the fix.
+
+Until a machine has a `secret`, the shared editor is simply unavailable to it.
+It has no way to derive the document key, so there is nothing for it to decrypt.
+
 ### The downloadable app
 
 `desktop/` is an Electron app: a setup window that collects the hub, token and
@@ -262,7 +319,8 @@ Teammates get this written for them by the setup script, into
 
 | Variable | Side | Default | Meaning |
 |---|---|---|---|
-| `ZEVET_TOKEN` | both | *required* | Shared secret. No default, on purpose. |
+| `ZEVET_SECRET` | client | unset | The team's master secret, overriding `secret` in config.json. Never sent anywhere; the client derives from it. |
+| `ZEVET_TOKEN` | both | *required* on the hub | On the hub: the **derived** token it compares against. On a client: a raw token, honoured only by pre-cutover installs that have no `secret`. |
 | `PORT` | hub | `8787` | Port the hub listens on. |
 | `ZEVET_HUB` | client | `http://127.0.0.1:8787` | Where hooks send events. |
 | `ZEVET_ACTOR` | client | OS username | Your name in the lanes. |

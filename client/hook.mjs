@@ -19,6 +19,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
+import { resolveAuth } from "./secret.mjs";
 
 /**
  * Settings, from ~/.zevet/config.json, with environment variables winning.
@@ -51,9 +52,36 @@ function settings() {
   } catch {
     username = "";
   }
+  // THE CREDENTIAL IS DERIVED, NOT COPIED. `file.secret` is the team's master
+  // secret and must never leave this machine; what goes on the wire is
+  // SHA-256("zevet-auth\0" || S), which the hub can check and can do nothing
+  // else with (client/secret.mjs explains why, and why a config holding only a
+  // legacy `token` still works until the hub's env is cut over).
+  //
+  // resolveAuth is documented never to throw — a malformed secret comes back as
+  // `error`. This call is still fenced, because it runs at MODULE SCOPE, above
+  // and outside main()'s .catch(): a throw here would exit non-zero with a
+  // stack trace before a single byte of stdin had been read, on every tool
+  // call, which is rule 2 broken at the first hurdle. The fence is not distrust
+  // of resolveAuth; it is that this one call site has no other net under it.
+  let auth = { token: "", error: null };
+  try {
+    auth = resolveAuth({ env: process.env, file });
+  } catch (err) {
+    // Cannot happen per the contract. If it ever does, the hook still runs and
+    // simply has no credential: the hub answers 401, warn() says so on stderr,
+    // and the turn is unaffected.
+    auth = { token: "", error: err && err.message };
+  }
+  if (auth.error) {
+    // stderr only. Claude Code surfaces it without acting on it, and it is the
+    // single thread connecting "the board is empty" to "the secret is a typo".
+    warn(`the configured master secret is unusable (${auth.error}) — run \`node client/doctor.mjs\``);
+  }
+
   return {
     hub: (process.env.ZEVET_HUB || file.hub || "http://127.0.0.1:8787").replace(/\/+$/, ""),
-    token: process.env.ZEVET_TOKEN || file.token || "",
+    token: auth.token,
     actor: process.env.ZEVET_ACTOR || file.actor || username || "unknown",
   };
 }
