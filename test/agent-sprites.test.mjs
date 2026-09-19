@@ -4,8 +4,8 @@
 // mapping, which is where the bugs actually are. A row one character too long
 // shifts everything after it and produces a figure that looks fine in isolation
 // and wrong next to its neighbours -- exactly the kind of thing that survives
-// eyeballing and is caught by an invariant. (The first version of TOOLS.page
-// had a 7-character row; this file is why it did not ship.)
+// eyeballing and is caught by an invariant. (The first version of the "page"
+// tool had a 7-character row; this file is why it did not ship.)
 //
 // ⚠️ WHAT THIS DOES NOT CHECK: that the sprites look like anything. Nobody has
 // seen them on a real board. The grids are eyeballed, and that is all.
@@ -38,22 +38,25 @@ describe("agent sprites", () => {
     // compares prototypes. Without the copy this fails with two array literals
     // printed identically side by side, which is a deeply unhelpful five
     // minutes.
-    assert.deepEqual(Array.from(sprites.kinds()).sort(), ["eraser", "lens", "none", "page", "pencil", "shell"]);
+    assert.deepEqual(Array.from(sprites.kinds()).sort(), [
+      "book", "bubble", "code", "doc", "eraser", "lens", "none", "pencil", "wrench",
+    ]);
   });
 
-  test("every sprite is the same 16x8 grid", () => {
+  test("every sprite is the same 22x10 grid", () => {
     // The invariant that makes one figure line up with the next.
     for (const kind of sprites.kinds()) {
       const svg = sprites.spriteFor({ hint: kind });
-      assert.match(svg, /viewBox="0 0 16 8"/, `${kind} is not 16x8`);
-      // No rect may start at or past x=16, which is what an over-long row
-      // would produce.
+      assert.match(svg, /viewBox="0 0 22 10"/, `${kind} is not 22x10`);
+      // No rect may extend past x=22, which is what an over-long row would
+      // produce -- and an over-long row is the single easiest mistake to make
+      // in a hand-written pixel grid.
       for (const m of svg.matchAll(/x="(\d+)"[^>]*width="(\d+)"/g)) {
         const right = Number(m[1]) + Number(m[2]);
-        assert.ok(right <= 16, `${kind} has a rect ending at x=${right}`);
+        assert.ok(right <= 22, `${kind} has a rect ending at x=${right}`);
       }
       for (const m of svg.matchAll(/y="(\d+)"/g)) {
-        assert.ok(Number(m[1]) < 8, `${kind} has a rect at y=${m[1]}`);
+        assert.ok(Number(m[1]) < 10, `${kind} has a rect at y=${m[1]}`);
       }
     }
   });
@@ -83,16 +86,16 @@ describe("agent sprites", () => {
     // client/hook.mjs forwards verbatim as `tool`.
     assert.equal(sprites.toolKind("Edit"), "pencil");
     assert.equal(sprites.toolKind("MultiEdit"), "pencil");
-    assert.equal(sprites.toolKind("Write"), "page");
-    assert.equal(sprites.toolKind("Read"), "lens");
+    assert.equal(sprites.toolKind("Write"), "doc");
+    assert.equal(sprites.toolKind("Read"), "book");
     assert.equal(sprites.toolKind("Grep"), "lens");
     assert.equal(sprites.toolKind("Glob"), "lens");
-    assert.equal(sprites.toolKind("Bash"), "shell");
+    assert.equal(sprites.toolKind("Bash"), "wrench");
     assert.equal(sprites.toolKind("apply_patch"), "pencil");
   });
 
   test("matching ignores case and separators", () => {
-    assert.equal(sprites.toolKind("BASH"), "shell");
+    assert.equal(sprites.toolKind("BASH"), "wrench");
     assert.equal(sprites.toolKind("multi_edit"), "pencil");
     assert.equal(sprites.toolKind("Notebook Edit"), "pencil");
   });
@@ -112,12 +115,25 @@ describe("agent sprites", () => {
     assert.equal(sprites.toolKind("Edit", "trombone"), "pencil");
   });
 
+  test("zevet's own event kinds map too, and prompt is the interesting one", () => {
+    // `prompt` is not a tool at all -- it is a person typing -- and it is the
+    // one sprite that says something about the human rather than the agent.
+    assert.equal(sprites.toolKind(null, null, "prompt"), "bubble");
+    assert.equal(sprites.toolKind("", null, "prompt"), "bubble");
+    assert.equal(sprites.toolKind(null, null, "turn_end"), "none");
+    // A tool name alongside a kind we draw for: the kind wins, because a
+    // prompt event carries no meaningful tool.
+    assert.equal(sprites.toolKind("Edit", null, "prompt"), "bubble");
+    // An unknown kind falls through to the tool, rather than erasing it.
+    assert.equal(sprites.toolKind("Edit", null, "something_new"), "pencil");
+  });
+
   test("the drawing is run-length encoded, not one rect per pixel", () => {
-    // 128 cells; a naive encoder emits one rect each and the board redraws
+    // 220 cells; a naive encoder emits one rect each and the board redraws
     // these on every event.
     const svg = sprites.spriteFor({ tool: "Edit" });
     const rects = [...svg.matchAll(/<rect /g)].length;
-    assert.ok(rects < 60, `${rects} rects — the run-length encoding is not working`);
+    assert.ok(rects < 80, `${rects} rects — the run-length encoding is not working`);
     assert.ok(rects > 10, `${rects} rects — suspiciously few, is anything drawn?`);
   });
 });
