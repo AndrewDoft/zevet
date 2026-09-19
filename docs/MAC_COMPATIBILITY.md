@@ -58,10 +58,12 @@ passed. The website click stayed on the page and showed the instruction; an
 automated browser-saved file was not independently verified.
 
 Michael's Apple Developer membership was confirmed active through July 5, 2027.
-The account had no signing certificates, and this Mac had no Developer ID signing
-identity. Certificate issuance is awaiting his approval. Notarization then needs
-separate authentication, saved securely in Keychain; never put credentials in
-this repository or chat. For `--prepackaged` builds, sign and notarize the app
+He created the Developer ID Application certificate on September 19. Its public
+key matches the prepared request and local private key. The identity and Apple's
+G2 intermediate are installed; macOS now reports one valid code-signing identity.
+No trust overrides were applied. Notarization still needs separate authentication,
+saved securely in Keychain; never put credentials in this repository or chat.
+The public download has not yet been signed or notarized. For `--prepackaged` builds, sign and notarize the app
 first: the pinned builder skips that work when given an existing app.
 
 Server rollback files: `/srv/masora/Caddyfile.before-zevet-branded-v2-20260919T185500Z`
