@@ -1,18 +1,30 @@
 // Generates build/icon.png — the app icon — with no image dependency.
 //
 // A PNG is a signature, three chunks and a CRC each; zlib is in Node. Pulling
-// in a graphics library to draw a tile and three bars would be a bigger
+// in a graphics library to draw a tile and three dots would be a bigger
 // liability than the encoder below.
 //
 //   node make-icon.mjs
 //
-// THE PALETTE IS MASORA'S CURRENT ONE, and it is not a guess: the values were
-// read from the tokens the live site serves
-// (usemasora.com/_site/_next/static/chunks/*.css) on 2026-09-18 —
-//   --paper #eae7e2  --ink #2c2f44  --muted #5f6274  --line #cfccc6
-// This icon used to be the OLD theme: a near-black ground (#0d0a0a) with rust,
-// amber and pink bars. That scheme is gone from the product and the icon was
-// the last place it survived.
+// ⚠️ THIS IS THE MASORA LOGO, NOT A DESIGN OF ITS OWN (Andrew, 2026-09-18:
+// "change the favicon or desktop icon of Zevet so that it matches this new
+// Masora logo"). Zevet is sold as a Masora product and its icon is the Masora
+// mark — the mathematical `therefore` symbol, three dots, on the eggshell tile.
+//
+// ⚠️ THE GEOMETRY BELOW WAS MEASURED, NOT EYEBALLED. Every number came off the
+// live favicon, masora-landing/src/app/icon.png, decoded scanline by scanline
+// on 2026-09-18: a 256×256 RGBA tile, ground #eae7e2 to the very edge with no
+// border ring, three #2c2f44 discs of radius 21 centred at (128,81), (74,175)
+// and (182,175), and a corner radius of 48 (recovered from where the top row
+// first goes opaque, x=41, which solves to r=48 and then checks out at y=20).
+// Doubled here for a 512 icon. They do NOT match masora-landing's BrandMark.tsx
+// SVG, which has smaller dots and tighter padding — the PNG was retuned for
+// small sizes in commit f89904e ("Reduce tab icon symbol with balanced
+// padding"), and the PNG is the thing this icon has to sit beside.
+//
+// Before this it was three lanes — cerulean, ink and muted bars, the board at
+// icon scale. Good drawing, wrong mark: it read as a product with its own
+// identity rather than one of Masora's.
 //
 // RGBA rather than truecolour, because the tile has rounded corners and a
 // square icon with four opaque eggshell corners looks like a rendering bug on
@@ -25,11 +37,10 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SIZE = 512;
 
+// Two colours, both read out of the favicon's own pixels rather than off a
+// stylesheet, so this file cannot drift from the image it is copying.
 const PAPER = [0xea, 0xe7, 0xe2]; // --paper, the ground
-const LINE = [0xcf, 0xcc, 0xc6]; // --line, the tile's edge
-const CERULEAN = [0x2f, 0x6f, 0x8f]; // zevet's accent, and --who-0 on the board
-const INK = [0x2c, 0x2f, 0x44]; // --ink
-const MUTED = [0x5f, 0x62, 0x74]; // --muted
+const INK = [0x2c, 0x2f, 0x44]; // --ink, the three dots
 
 // RGBA, transparent until something is drawn.
 const px = Buffer.alloc(SIZE * SIZE * 4);
@@ -71,22 +82,26 @@ function roundRect(left, top, w, h, r, rgb) {
   }
 }
 
-// The tile: eggshell, generously rounded, with a hairline edge so it still has
-// a shape against a light background.
-roundRect(0, 0, SIZE, SIZE, 112, LINE);
-roundRect(6, 6, SIZE - 12, SIZE - 12, 106, PAPER);
+/** A disc. A rounded rect whose corner radius is half its side is a circle, so
+ *  this gets the same antialiased coverage as everything else for free. */
+function disc(cx, cy, r, rgb) {
+  roundRect(cx - r, cy - r, r * 2, r * 2, r, rgb);
+}
 
-// Three lanes of different lengths — the board, at icon scale. Cerulean leads
-// because it is the accent the product is actually built around.
-const BAR_H = 56;
-const LEFT = 104;
-const RADIUS = BAR_H / 2;
-const LANES = [
-  { top: 148, width: 304, rgb: CERULEAN },
-  { top: 228, width: 196, rgb: INK },
-  { top: 308, width: 252, rgb: MUTED },
+// The tile: eggshell, generously rounded, and paper right out to the edge. The
+// old icon had a --line hairline around it; the favicon has none, and matching
+// it is the whole point.
+roundRect(0, 0, SIZE, SIZE, 96, PAPER);
+
+// ∴ — one dot up, two down, the Masora mark. The favicon's 256-space numbers,
+// doubled: r 21→42, (128,81)→(256,162), (74,175)→(148,350), (182,175)→(364,350).
+const DOT_R = 42;
+const DOTS = [
+  [256, 162], // apex
+  [148, 350], // lower left
+  [364, 350], // lower right
 ];
-for (const l of LANES) roundRect(LEFT, l.top, l.width, BAR_H, RADIUS, l.rgb);
+for (const [cx, cy] of DOTS) disc(cx, cy, DOT_R, INK);
 
 // ---- PNG encoding ----------------------------------------------------------
 const CRC_TABLE = (() => {
