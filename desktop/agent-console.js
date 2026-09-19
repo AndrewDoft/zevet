@@ -1,13 +1,14 @@
 // zevet — starting an agent, not just watching one.
 //
 // Everything else in zevet observes work that somebody else began. This module
-// begins it: it finds the `claude` or `codex` binary on this machine, spawns it
-// in headless streaming mode, and turns its stdout into a line of events the UI
-// can render. It runs in the ELECTRON MAIN PROCESS, on the user's own machine,
-// with the user's own credentials — no part of this is reachable from the board
-// window, which is a remote origin with no preload and no Node (see main.js).
+// begins it: it finds the `claude`, `codex` or `opencode` binary on this machine,
+// spawns it in headless streaming mode, and turns its stdout into a line of
+// events the UI can render. It runs in the ELECTRON MAIN PROCESS, on the user's
+// own machine, with the user's own credentials — no part of this is reachable
+// from the board window, which is a remote origin with no preload and no Node
+// (see main.js).
 //
-// The whole file is shaped by four facts that were MEASURED on Windows, not
+// The whole file is shaped by five facts that were MEASURED on Windows, not
 // remembered. Each one is documented at the place it forces a decision, because
 // every one of them looks like a pointless detour until it bites:
 //
@@ -19,6 +20,10 @@
 //      contain codex. (§ knownLocations)
 //   4. `codex exec` reads its prompt from stdin and waits for EOF, which makes
 //      it one-shot in a way `claude -p` is not. (§ send)
+//   5. `opencode run` does the same: with stdin held open it prints nothing
+//      until EOF, then runs and exits 0 — one prompt per process, like codex.
+//      With no message argument it reads the prompt from stdin, which is what
+//      keeps user text off argv. (§ send, § invocationFor)
 //
 // SECURITY POSTURE. A user-typed prompt NEVER becomes an argv element, on any
 // platform, by any path. Prompts go on stdin, always. That is not a stylistic
@@ -40,9 +45,9 @@ const IS_WINDOWS = process.platform === "win32";
 
 /** The only agents this module knows how to drive. Not a lookup table to be
  *  extended casually: each entry below encodes flags that were read off the
- *  installed CLI's own `--help`, and inventing a third entry from memory is
+ *  installed CLI's own `--help`, and inventing a fourth entry from memory is
  *  exactly the failure this project bans. */
-const AGENTS = ["claude", "codex"];
+const AGENTS = ["claude", "codex", "opencode"];
 
 // Extensions Windows can hand straight to CreateProcess. PATHEXT also lists
 // .BAT/.CMD/.VBS/.JS and friends, but those are not executables — they are
@@ -132,6 +137,17 @@ function knownLocations(name) {
       // Codex is not installed, or the layout changed. Either way there is
       // nothing here to add and the PATH search still gets its turn.
     }
+  }
+
+  if (name === "opencode") {
+    // MEASURED 2026-09-19: `where opencode` resolves to %APPDATA%\npm\opencode.cmd
+    // (an npm shim — fact 1 applies, so this usually goes down the shell path).
+    // The extra locations mirror client/detect.mjs.
+    if (IS_WINDOWS) {
+      const appData = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+      dirs.push(path.join(appData, "npm"));
+    }
+    dirs.push(path.join(home, ".opencode", "bin"));
   }
 
   if (!IS_WINDOWS) {
@@ -293,8 +309,19 @@ function buildShimInvocation(file, args) {
  *            -s/--sandbox  read-only | workspace-write | danger-full-access
  *            --approve-for-me
  *            --dangerously-bypass-approvals-and-sandbox
+ *   opencode run -m/--model <provider/model>
+ *            --format default | json
+ *            --auto (auto-approve permissions not explicitly denied)
+ *            --dir <directory>
  *
- * zevet offers four postures because two CLIs with different vocabularies
+ * `opencode run --help` (measured 2026-09-19) has no sandbox, no plan mode
+ * and no full bypass: `--auto` is the strongest posture it offers. The mapping
+ * below is lossy in both new directions and says so to the caller rather than
+ * hiding it: `plan`/`ask` are opencode's default permission behaviour, `auto`
+ * and `dangerous` are both `--auto`, with `dangerous` carrying a note that
+ * explicit denies still hold.
+ *
+ * zevet offers four postures because three CLIs with different vocabularies
  * should not make the person translate. The mapping is lossy in one direction
  * and that is stated rather than hidden: codex has no "plan" mode, so `plan`
  * falls back to its most restrictive sandbox and says so to the caller.
@@ -305,28 +332,37 @@ const MODES = {
     claude: ["--permission-mode", "plan"],
     codex: ["--sandbox", "read-only"],
     codexNote: "codex has no plan mode; using its read-only sandbox instead",
+    opencode: [],
+    opencodeNote: "opencode run has no plan mode; using its default permission behaviour",
   },
   ask: {
     label: "Ask first",
     claude: ["--permission-mode", "manual"],
     codex: ["--sandbox", "workspace-write"],
+    opencode: [],
   },
   auto: {
     label: "Auto",
     claude: ["--permission-mode", "acceptEdits"],
     codex: ["--sandbox", "workspace-write", "--approve-for-me"],
+    opencode: ["--auto"],
   },
   dangerous: {
     label: "Skip permissions",
     claude: ["--dangerously-skip-permissions"],
     codex: ["--dangerously-bypass-approvals-and-sandbox"],
+    opencode: ["--auto"],
+    opencodeNote: "opencode has no full bypass; --auto still honours explicit denies",
   },
 };
 
 function modeFlags(agent, mode) {
   const m = MODES[mode];
   if (!m) return { flags: [], note: null };
-  return { flags: (agent === "claude" ? m.claude : m.codex).slice(), note: agent === "codex" ? m.codexNote || null : null };
+  const flags = (agent === "claude" ? m.claude : agent === "opencode" ? m.opencode : m.codex).slice();
+  const note =
+    agent === "codex" ? m.codexNote || null : agent === "opencode" ? m.opencodeNote || null : null;
+  return { flags, note };
 }
 
 function invocationFor(agent, opts) {
@@ -350,6 +386,15 @@ function invocationFor(agent, opts) {
       ...extra,
     ];
   }
+  if (agent === "opencode") {
+    // MEASURED 2026-09-19: `opencode run -m <model> --format json` with no
+    // message argument reads the prompt from stdin and emits one JSON object
+    // per line ({type:"step_start"|"text"|"tool_use"|"step_finish"|"error"}).
+    // No trailing prompt argument: the prompt goes on stdin (§ send), so user
+    // text never reaches argv and the shim-shell check below stays trivially
+    // clean.
+    return ["run", "--format", "json", ...extra];
+  }
   // codex. The trailing `-` must stay last: it is the positional PROMPT arg.
   return ["exec", "--skip-git-repo-check", "--json", ...extra, "-"];
 }
@@ -366,6 +411,9 @@ function invocationFor(agent, opts) {
  *
  * codex takes the prompt as plain text, because `-` means "the prompt IS
  * stdin". There is no envelope to put it in.
+ *
+ * opencode takes the prompt as plain text for the same reason: with no message
+ * argument, `run` reads stdin to EOF as the prompt (fact 5).
  */
 function encodePrompt(agent, text) {
   if (agent === "claude") {
@@ -502,11 +550,12 @@ function killTree(child, spawnFn) {
  *   { type:"stderr",      text }      raw stderr, unbuffered and unparsed
  *   { type:"exit",        code, signal, error? }  exactly once, ever
  *
- * Both agents emit JSONL on stdout in the modes used here (claude via
- * --output-format stream-json, codex via --json, both read off their own
- * --help), so both get "agent" events. Anything that is not JSON is still
- * delivered, as "stdout-line" — never dropped and never thrown.
- */
+  * All three emit JSONL on stdout in the modes used here (claude via
+  * --output-format stream-json, codex via --json, opencode via --format json,
+  * all read off their own --help), so all three get "agent" events. Anything
+  * that is not JSON is still
+  * delivered, as "stdout-line" — never dropped and never thrown.
+  */
 function startConsole(opts) {
   const options = opts || {};
   const agent = options.agent;
@@ -589,7 +638,7 @@ function startConsole(opts) {
 
   const stdout = makeLineSplitter((line) => {
     // Defensive by contract: a line that is not JSON is DATA, not an error.
-    // Both CLIs print human-readable notices to stdout in some conditions
+    // All three CLIs print human-readable notices to stdout in some conditions
     // (update banners, auth prompts), and a stream reader that throws on the
     // first one is a stream reader that dies on a Tuesday.
     let payload;
@@ -668,10 +717,15 @@ function startConsole(opts) {
      * (That measurement was taken with stdin never closed, deliberately, so
      * that no turn was ever submitted and no quota was spent.)
      *
-     * So codex is ONE-SHOT: the prompt must be followed by end-of-stream, and
-     * there is no second prompt for that process. A follow-up means a new
-     * console. claude, by contrast, reads stream-json line by line and stays
-     * open for as many prompts as you send it.
+     * FACT (5), MEASURED 2026-09-19 against the installed opencode: `opencode
+     * run -m <model> --format json` with stdin held open likewise prints
+     * nothing; ending stdin submits the prompt, emits
+     * step_start/text/tool_use/step_finish JSONL, and exits 0.
+     *
+     * So codex and opencode are ONE-SHOT: the prompt must be followed by
+     * end-of-stream, and there is no second prompt for that process. A
+     * follow-up means a new console. claude, by contrast, reads stream-json
+     * line by line and stays open for as many prompts as you send it.
      *
      * This asymmetry is reported honestly to the caller rather than papered
      * over with a queue that would silently never deliver.
@@ -687,13 +741,16 @@ function startConsole(opts) {
           error:
             agent === "codex"
               ? "codex takes one prompt per run and its input is already closed. Start a new console to continue."
-              : "That agent's input is closed.",
+              : agent === "opencode"
+                ? "opencode takes one prompt per run and its input is already closed. Start a new console to continue."
+                : "That agent's input is closed.",
         };
       }
       try {
         child.stdin.write(encodePrompt(agent, text));
-        // See fact (4): for codex the prompt is not submitted until EOF.
-        if (agent === "codex") child.stdin.end();
+        // See facts (4) and (5): for codex and opencode the prompt is not
+        // submitted until EOF.
+        if (agent === "codex" || agent === "opencode") child.stdin.end();
         return { ok: true };
       } catch (err) {
         return { ok: false, error: `Could not send to ${agent}: ${err.message}` };

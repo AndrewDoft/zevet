@@ -186,6 +186,12 @@ function usageFrom(payload) {
   const u =
     (payload.message && payload.message.usage) ||
     payload.usage ||
+    // opencode `--format json` reports per-step tokens at part.tokens
+    // (MEASURED 2026-09-19: {input, output, ...}, no cache fields).
+    // Shaped as usage so the context rule below applies unchanged.
+    (payload.part && payload.part.tokens
+      ? { input_tokens: payload.part.tokens.input, output_tokens: payload.part.tokens.output }
+      : null) ||
     null;
   if (!u || typeof u !== "object") return null;
 
@@ -217,11 +223,29 @@ function usageFrom(payload) {
 
 /** The cost off a `result` line, or null. Claude Code reports it once, at the
  *  end of a turn, as a running total for the session — so it REPLACES rather
- *  than accumulates, and treating it as a delta would multiply the bill. */
+ *  than accumulates, and treating it as a delta would multiply the bill.
+ *
+ *  opencode is the opposite: `step_finish` carries `part.cost` PER STEP
+ *  (MEASURED 2026-09-19; 0 on `:free` models), so each one ACCUMULATES — see
+ *  costAccumulates() and the `accumulateCost` branch of BurnWindows.add().
+ *  Returning it here keeps one cost path; the replace-vs-sum decision is made
+ *  where the session key is known, not here. */
 function costFrom(payload) {
   if (!payload || typeof payload !== "object") return null;
   const c = payload.total_cost_usd;
-  return typeof c === "number" && Number.isFinite(c) ? c : null;
+  if (typeof c === "number" && Number.isFinite(c)) return c;
+  const part = payload.part;
+  const step = part && part.cost;
+  return typeof step === "number" && Number.isFinite(step) ? step : null;
+}
+
+/** True when costFrom()'s answer for this payload is a per-step delta that
+ *  must be summed, not a running total that replaces. opencode only. */
+function costAccumulates(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  if (payload.total_cost_usd !== undefined) return false;
+  const part = payload.part;
+  return Boolean(part && typeof part.cost === "number" && Number.isFinite(part.cost));
 }
 
 /** The model off an `init` line. */
@@ -264,13 +288,23 @@ class BurnWindows {
     this.costBySession = new Map();
   }
 
-  /** One turn's usage. `sessionId` may be null; it only affects cost. */
+  /** One turn's usage. `sessionId` may be null; it only affects cost.
+   *
+   *  `sample.accumulateCost` sums into the session entry instead of replacing
+   *  it — for per-step costs (opencode), where replacing would keep only the
+   *  last step. Running totals (Claude Code) still replace. */
   add(sample, now) {
     const t = typeof now === "number" ? now : Date.now();
     const tokens = Number(sample && sample.tokens) || 0;
     if (tokens > 0) this.samples.push({ t, tokens });
     if (sample && typeof sample.cost === "number" && Number.isFinite(sample.cost)) {
-      this.costBySession.set(sample.sessionId || "-", { t, cost: sample.cost });
+      const key = sample.sessionId || "-";
+      if (sample.accumulateCost) {
+        const prev = this.costBySession.get(key);
+        this.costBySession.set(key, { t, cost: (prev ? prev.cost : 0) + sample.cost });
+      } else {
+        this.costBySession.set(key, { t, cost: sample.cost });
+      }
     }
     this.trim(t);
   }
@@ -392,6 +426,7 @@ module.exports = {
   probePort,
   usageFrom,
   costFrom,
+  costAccumulates,
   modelFrom,
   BurnWindows,
   STALE_AFTER_DAYS,

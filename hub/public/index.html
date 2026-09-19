@@ -1129,6 +1129,10 @@
   var MODELS = {
     claude: ["", "opus", "sonnet", "haiku"],
     codex: ["", "gpt-5", "gpt-5-codex", "o3"],
+    // Full slugs: opencode needs provider/model, and these are today's free
+    // ones. The free list churns weekly — free text wins, check the catalogue
+    // before relying on one.
+    opencode: ["", "openrouter/cohere/north-mini-code:free", "openrouter/poolside/laguna-s-2.1:free", "openrouter/nvidia/nemotron-3-super-120b-a12b:free"],
   };
 
   function $(id) { return document.getElementById(id); }
@@ -1511,6 +1515,17 @@
           });
         } else if (p.type === "result") {
           pushConsoleLine(c, "meta", "turn finished (" + (p.terminal_reason || p.subtype || "done") + ")");
+        } else if (p.type === "text" && p.part && p.part.type === "text" && p.part.text) {
+          // opencode `--format json`: prose arrives as a text part.
+          pushConsoleLine(c, "out", p.part.text);
+        } else if (p.type === "tool_use" && p.part && p.part.type === "tool") {
+          var ost = p.part.state || {};
+          var about = ost.title || shortInput(ost.input);
+          pushConsoleLine(c, "tool", (p.part.tool || "tool") + (about ? "  " + about : ""));
+        } else if (p.type === "step_finish") {
+          pushConsoleLine(c, "meta", "turn finished (" + ((p.part && p.part.reason) || "done") + ")");
+        } else if (p.type === "error") {
+          pushConsoleLine(c, "err", (p.error && (p.error.message || p.error.name)) || "agent error");
         }
       } else if (evt.type === "stdout-line") {
         pushConsoleLine(c, "out", evt.text || "");
@@ -2087,6 +2102,78 @@
       }, function () { /* the section says it cannot tell */ });
   }
 
+  /**
+   * Connect GitHub from Settings, without re-running setup.
+   *
+   * A machine set up with the team key (or before sign-in existed) had no way
+   * back to the device flow: the Account section said "run setup", and setup
+   * is a full re-onboarding. This runs the same three calls setup.html uses
+   * (`githubStart` paints the code, `githubWait` resolves on Authorize,
+   * `githubCancel` backs out) against the hub this board already shows.
+   * Secrets never cross: start/wait return a code, a URL and a login, and the
+   * main process writes the config — see preload.js. onDone(true) means
+   * re-read whoami and the redacted config, because both changed under us.
+   */
+  function githubConnectBox(onDone) {
+    var box = el("div", "srow");
+    var btn = el("button", "sbtn");
+    btn.type = "button";
+    tx(btn, "Connect GitHub");
+    var msg = el("span", "v");
+    box.appendChild(btn);
+    box.appendChild(msg);
+    var waiting = false;
+
+    function fail(text) {
+      waiting = false;
+      msg.textContent = "";
+      tx(msg, text);
+      btn.disabled = false;
+      tx(btn, "Retry");
+    }
+
+    // One listener and a flag, never two handlers: cancelling must not also
+    // start a second flow.
+    btn.addEventListener("click", function () {
+      if (waiting) {
+        window.zevet.githubCancel();
+        waiting = false;
+        msg.textContent = "";
+        tx(btn, "Connect GitHub");
+        return;
+      }
+      btn.disabled = true;
+      tx(btn, "Starting…");
+      msg.textContent = "";
+      var hub = (window.__zevetCfg && window.__zevetCfg.hub) || undefined;
+      window.zevet.githubStart(hub).then(function (r) {
+        if (!r || !r.ok) { fail((r && r.error) || "Could not start sign-in."); return; }
+        waiting = true;
+        btn.disabled = false;
+        tx(btn, "Cancel");
+        msg.textContent = "";
+        tx(msg, "Approve on GitHub: " + r.userCode);
+        window.zevet.githubWait().then(function (done) {
+          waiting = false;
+          if (!done || !done.ok) {
+            if (done && done.cancelled) { msg.textContent = ""; tx(btn, "Connect GitHub"); return; }
+            fail((done && done.error) || "Sign-in failed.");
+            return;
+          }
+          msg.textContent = "";
+          tx(msg, "Signed in as @" + done.login + ".");
+          tx(btn, "Connect GitHub");
+          if (typeof onDone === "function") onDone(true);
+        }, function (err) {
+          fail((err && err.message) || "Sign-in failed.");
+        });
+      }, function (err) {
+        fail((err && err.message) || "Could not start sign-in.");
+      });
+    });
+    return box;
+  }
+
   function accountSection() {
     var box = section("Account");
     if (!whoState) {
@@ -2101,11 +2188,27 @@
     if (whoState.shared) {
       // A hook-only machine, or an install that predates sign-in. It works; it
       // is just anonymous, and saying so beats showing a blank name.
+      // The button runs the same device flow as setup — no re-onboarding — but
+      // only where the desktop bridge exists to finish it. A plain browser tab
+      // has no bridge and gets the note without the button.
+      var canConnect = whoState.githubSignIn && LOCAL && window.zevet &&
+        typeof window.zevet.githubStart === "function";
       var sh = el("p", "snote");
-      tx(sh, whoState.githubSignIn
-        ? "Connected with a team key. Run setup to sign in with GitHub."
-        : "Connected with a team key. GitHub sign-in is unavailable on this hub.");
+      tx(sh, "Connected with a team key." + (whoState.githubSignIn
+        ? (canConnect ? "" : " Open the desktop app to sign in with GitHub.")
+        : " GitHub sign-in is unavailable on this hub."));
       box.appendChild(sh);
+      if (canConnect && !whoState.login) {
+        box.appendChild(githubConnectBox(function () {
+          refreshWhoami();
+          if (window.zevet && typeof window.zevet.config === "function") {
+            window.zevet.config().then(function (c) {
+              if (c) window.__zevetCfg = c;
+              if (sheetOpen) renderSheet();
+            }, function () { if (sheetOpen) renderSheet(); });
+          }
+        }));
+      }
     }
 
     var people = whoState.people || [];
@@ -2348,6 +2451,17 @@
   function usageOf(payload) {
     if (!payload || typeof payload !== "object") return null;
     var u = (payload.message && payload.message.usage) || payload.usage || null;
+    // opencode `--format json` reports per-step tokens at part.tokens, with no
+    // cache fields. Same rule as above: input, no output (next turn's input
+    // already contains this turn's output). Must agree with usageFrom() in
+    // desktop/status-sources.js — change one, change both.
+    if ((!u || typeof u !== "object") && payload.part && payload.part.tokens && typeof payload.part.tokens === "object") {
+      var ti = payload.part.tokens;
+      var n2 = function (v) { return typeof v === "number" && isFinite(v) ? v : 0; };
+      var cx = n2(ti.input);
+      if (!cx && !n2(ti.output)) return null;
+      return { context: cx, cacheHit: cx > 0 ? 0 : null, model: null };
+    }
     if (!u || typeof u !== "object") return null;
     var n = function (v) { return typeof v === "number" && isFinite(v) ? v : 0; };
     var read = n(u.cache_read_input_tokens);

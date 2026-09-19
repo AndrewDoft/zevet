@@ -17,8 +17,20 @@ const TEMPLATE = path.join(HERE, "opencode-plugin.mjs");
 /** How we recognise our own plugin file. Mirrors install.mjs's MARK discipline. */
 export const PLUGIN_MARK = "zevet-opencode-plugin v1";
 
-/** Where opencode looks for project plugins. Auto-loaded; nothing to register. */
+/**
+ * Where opencode looks for project plugins. Auto-loaded; nothing to register.
+ *
+ * `.js`, not `.mjs`: MEASURED 2026-09-19 against opencode 1.18.31, a `.mjs`
+ * file in this directory is silently never loaded — not evaluated, not called,
+ * no error anywhere. The docs say "JavaScript or TypeScript files" and the
+ * loader means exactly the extensions it knows.
+ */
 export function opencodePluginPathFor(repo) {
+  return path.join(repo, ".opencode", "plugins", "zevet.js");
+}
+
+/** The pre-0.2.5 name, from before the `.mjs` measurement. Removed wherever found. */
+export function opencodeLegacyPathFor(repo) {
   return path.join(repo, ".opencode", "plugins", "zevet.mjs");
 }
 
@@ -68,6 +80,21 @@ export function openrouterReady(home = os.homedir()) {
  */
 export function installOpencode(repo, { remove = false } = {}) {
   const file = opencodePluginPathFor(repo);
+  const legacy = opencodeLegacyPathFor(repo);
+
+  // The `.mjs` name never loaded anywhere (see above). Take ours back out
+  // wherever this meets one, install or remove — leaving it would look
+  // installed while doing nothing, which is the worst state in this project.
+  if (existsSync(legacy)) {
+    try {
+      if (readFileSync(legacy, "utf8").includes(PLUGIN_MARK)) {
+        backup(legacy);
+        rmSync(legacy);
+      }
+    } catch {
+      // Unreadable is not ours to fix; the install below still proceeds.
+    }
+  }
 
   if (remove) {
     if (!existsSync(file)) return { ok: true, state: "absent", detail: "no opencode plugin file" };
@@ -78,7 +105,7 @@ export function installOpencode(repo, { remove = false } = {}) {
       return { ok: false, state: "failed", detail: `could not read ${file} (${err.message}) — left untouched` };
     }
     // Rule borrowed from uninstall.mjs: never delete somebody else's config.
-    // A zevet.mjs we did not write is theirs and it stays.
+    // A zevet.js we did not write is theirs and it stays.
     if (!text.includes(PLUGIN_MARK)) {
       return { ok: true, state: "clean", detail: `no zevet plugin in ${file} — left untouched` };
     }
@@ -128,7 +155,7 @@ export function installOpencode(repo, { remove = false } = {}) {
   } catch (err) {
     return { ok: false, state: "failed", detail: `could not write ${file} (${err.message})` };
   }
-  return { ok: true, state: "removed", detail: file };
+  return { ok: true, state: "installed", detail: file };
 }
 
 /** @returns {{ok: boolean, state: string, detail: string}} */

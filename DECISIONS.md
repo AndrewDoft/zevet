@@ -333,7 +333,7 @@ is the hub having held `S`: once it has been on that disk, it has been on that d
 
 **Decision.** `client/install-opencode.mjs` copies one self-contained plugin
 (`client/opencode-plugin.mjs`, node builtins only) into
-`<repo>/.opencode/plugins/zevet.mjs`, which opencode auto-loads. The per-repo
+`<repo>/.opencode/plugins/zevet.js`, which opencode auto-loads. The per-repo
 file is the opt-in. `detect.mjs` reports `hooks: "unverified"` until a real
 turn is observed on a hub (see `docs/contracts/opencode-hooks.md` §7).
 

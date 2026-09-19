@@ -66,7 +66,7 @@ describe("the opencode plugin file", () => {
     const first = installOpencode(repo);
     assert.ok(first.ok, `install failed: ${first.detail}`);
     const file = opencodePluginPathFor(repo);
-    assert.equal(file, path.join(repo, ".opencode", "plugins", "zevet.mjs"));
+    assert.equal(file, path.join(repo, ".opencode", "plugins", "zevet.js"));
     assert.ok(existsSync(file), "plugin file was not written");
 
     const template = readFileSync(path.join(ROOT, "client", "opencode-plugin.mjs"), "utf8");
@@ -78,7 +78,7 @@ describe("the opencode plugin file", () => {
     assert.equal(readFileSync(file, "utf8"), template, "reinstall changed a current file");
   });
 
-  test("a foreign zevet.mjs is refused, never overwritten", async (t) => {
+  test("a foreign zevet.js is refused, never overwritten", async (t) => {
     const repo = makeRepo(t);
     const file = opencodePluginPathFor(repo);
     mkdirSync(path.dirname(file), { recursive: true });
@@ -91,6 +91,27 @@ describe("the opencode plugin file", () => {
       "// somebody else's plugin\nexport const Mine = {};\n",
       "a refused install edited the file anyway",
     );
+  });
+
+  test("a legacy zevet.mjs carrying our mark is taken out, not left to look installed", async (t) => {
+    // `.mjs` never loads (see install-opencode.mjs). A file with our mark is
+    // unambiguously ours, so install and remove both clear it.
+    const { opencodeLegacyPathFor } = await import("../client/install-opencode.mjs");
+    const repo = makeRepo(t, "legacy");
+    const legacy = opencodeLegacyPathFor(repo);
+    mkdirSync(path.dirname(legacy), { recursive: true });
+    const template = readFileSync(path.join(ROOT, "client", "opencode-plugin.mjs"), "utf8");
+    writeFileSync(legacy, template, "utf8");
+
+    const r = installOpencode(repo);
+    assert.ok(r.ok, `install failed: ${r.detail}`);
+    assert.ok(!existsSync(legacy), "dead .mjs plugin left beside the working one");
+    assert.ok(existsSync(opencodePluginPathFor(repo)), "working .js plugin was not written");
+
+    writeFileSync(legacy, template, "utf8");
+    const gone = removeOpencode(repo);
+    assert.equal(gone.state, "removed");
+    assert.ok(!existsSync(legacy), "dead .mjs plugin survived removal");
   });
 
   test("remove takes ours and leaves theirs", async (t) => {

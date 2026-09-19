@@ -220,3 +220,74 @@ test("the update section degrades safely in browsers and old app builds", async 
     assert.equal(button(ui.version(), "Check now"), null);
   }
 });
+
+// Settings → Account can connect GitHub without re-running setup, through the
+// same three main-process calls setup.html uses. Sliced and executed like the
+// update controls above: no separate renderer implementation.
+function connectUi(zevet) {
+  const a = html.indexOf("  function githubConnectBox(");
+  const b = html.indexOf("  function accountSection(", a);
+  assert.ok(a >= 0 && b > a, "board function boundary moved: githubConnectBox");
+  const context = vm.createContext({
+    window: { zevet, __zevetCfg: { hub: "http://hub" } },
+    el: (tag, className) => Object.assign(new Element(tag), { className }),
+    tx: (node, text) => { node.textContent = text; return node; },
+  });
+  new vm.Script(html.slice(a, b), { filename: "board-github-connect" }).runInContext(context);
+  return context;
+}
+
+test("GitHub connects from Settings: code, approval, done", async () => {
+  let waitedResolve;
+  const calls = [];
+  const done = [];
+  const ui = connectUi({
+    githubStart: async (hub) => { calls.push(["start", hub]); return { ok: true, userCode: "ABCD-1234" }; },
+    githubWait: () => new Promise((r) => { waitedResolve = r; }),
+    githubCancel: () => { calls.push(["cancel"]); return true; },
+  });
+  const box = ui.githubConnectBox((ok) => done.push(ok));
+  await button(box, "Connect GitHub").click();
+  await flush();
+  assert.deepEqual(calls, [["start", "http://hub"]]);
+  assert.match(box.textContent, /Approve on GitHub: ABCD-1234/);
+  assert.ok(button(box, "Cancel"), "waiting must offer a way out");
+  waitedResolve({ ok: true, login: "michael" });
+  await flush();
+  assert.match(box.textContent, /Signed in as @michael/);
+  assert.deepEqual(done, [true]);
+});
+
+test("a failed start shows the reason with a working retry", async () => {
+  let tries = 0;
+  const ui = connectUi({
+    githubStart: async () => (++tries === 1 ? { ok: false, error: "Hub is unreachable." } : { ok: true, userCode: "ZZ-9" }),
+    githubWait: async () => ({ ok: true, login: "kai" }),
+    githubCancel: () => true,
+  });
+  const box = ui.githubConnectBox(() => {});
+  await button(box, "Connect GitHub").click();
+  await flush();
+  assert.match(box.textContent, /Hub is unreachable/);
+  await button(box, "Retry").click();
+  await flush();
+  assert.match(box.textContent, /Signed in as @kai/);
+});
+
+test("cancel stops the wait and restores the button without starting a second flow", async () => {
+  let starts = 0;
+  let cancels = 0;
+  const ui = connectUi({
+    githubStart: async () => { starts++; return { ok: true, userCode: "Q-1" }; },
+    githubWait: () => new Promise(() => {}),
+    githubCancel: () => { cancels++; return true; },
+  });
+  const box = ui.githubConnectBox(() => { assert.fail("cancelled flow must not report done"); });
+  await button(box, "Connect GitHub").click();
+  await flush();
+  await button(box, "Cancel").click();
+  await flush();
+  assert.equal(starts, 1, "cancelling started a second flow");
+  assert.equal(cancels, 1);
+  assert.ok(button(box, "Connect GitHub"));
+});

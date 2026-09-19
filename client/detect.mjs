@@ -131,11 +131,13 @@ const AGENTS = [
     label: "OpenCode",
     bin: "opencode",
     // Installed by client/install-opencode.mjs as <repo>/.opencode/plugins/.
-    // UNVERIFIED 2026-09-19: the plugin is written against opencode's documented
-    // plugin events (tool.execute.before/after, session.idle/created) but no
-    // live turn has been observed on a hub yet. See
-    // docs/contracts/opencode-hooks.md for what would promote this to true.
-    hooks: "unverified",
+    // OBSERVED FIRING 2026-09-19 on opencode 1.18.31. A real turn in a wired
+    // repo (free OpenRouter model, local hub) produced `prompt`, `tool` and
+    // `turn_end`, tagged agent=opencode. Two things that measurement taught:
+    // the installed copy must be `.js` (a `.mjs` file in the plugin directory
+    // is silently never loaded) and the turn must run with the repo as the
+    // working directory. See docs/contracts/opencode-hooks.md.
+    hooks: true,
     extraPaths: () => [path.join(APPDATA, "npm", "opencode"), path.join(HOME, ".opencode", "bin", "opencode")],
     authFiles: () => [
       path.join(HOME, ".local", "share", "opencode", "auth.json"),

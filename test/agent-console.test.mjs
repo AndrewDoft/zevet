@@ -445,6 +445,48 @@ describe("startConsole — sending", () => {
     assert.match(again.error, /one prompt per run/);
     assert.equal(child.writes.length, 1);
   });
+
+  test("opencode gets the prompt as plain text and then EOF, because it is one-shot too", (t) => {
+    const { handle, child, spawnFn } = start(t, { agent: "opencode" });
+    assert.equal(handle.ok, true, handle.error);
+
+    const sent = handle.send("summarise this repo");
+    assert.equal(sent.ok, true, sent.error);
+    assert.equal(child.writes[0], "summarise this repo\n");
+
+    // MEASURED 2026-09-19: `opencode run --format json` with no message
+    // argument holds stdin open and prints nothing until EOF, then runs and
+    // exits 0. Same one-shot shape as codex, same end() requirement.
+    assert.equal(child.stdin.writableEnded, true, "opencode stdin was left open, so its prompt is never submitted");
+
+    const again = handle.send("and again");
+    assert.equal(again.ok, false);
+    assert.match(again.error, /one prompt per run/);
+    assert.equal(child.writes.length, 1);
+
+    // The prompt never reaches argv either — the invocation carries no message
+    // argument at all, which is what makes the shim-shell check trivially safe.
+    const argv = spawnFn.calls[0].args;
+    for (const arg of argv) {
+      assert.ok(!arg.includes("summarise"), `prompt text leaked onto argv: ${arg}`);
+    }
+  });
+
+  test("an opencode console parses step lines into agent events", (t) => {
+    const { handle, events, child } = start(t, { agent: "opencode" });
+    assert.equal(handle.ok, true, handle.error);
+    handle.send("hi");
+
+    child.stdout.emit(
+      "data",
+      '{"type":"text","timestamp":1,"sessionID":"s","part":{"type":"text","text":"ok"}}\n' +
+        '{"type":"step_finish","timestamp":2,"sessionID":"s","part":{"reason":"stop","tokens":{"input":10,"output":2},"cost":0}}\n',
+    );
+    const agentEvents = events.filter((e) => e.type === "agent");
+    assert.equal(agentEvents.length, 2);
+    assert.equal(agentEvents[0].payload.part.text, "ok");
+    assert.equal(agentEvents[1].payload.part.tokens.input, 10);
+  });
 });
 
 describe("startConsole — stopping", () => {
@@ -612,6 +654,7 @@ describe("the platform workarounds themselves", () => {
     const { invocationFor } = _internals;
     assert.deepEqual(unsafeForCmd(invocationFor("claude")), []);
     assert.deepEqual(unsafeForCmd(invocationFor("codex")), []);
+    assert.deepEqual(unsafeForCmd(invocationFor("opencode")), []);
     assert.deepEqual(unsafeForCmd(["C:\\Users\\a b\\AppData\\claude.cmd"]), []);
   });
 
@@ -639,6 +682,24 @@ describe("the platform workarounds themselves", () => {
     const codex = invocationFor("codex");
     assert.deepEqual(codex, ["exec", "--skip-git-repo-check", "--json", "-"]);
     assert.equal(codex[codex.length - 1], "-", "codex must read its prompt from stdin");
+
+    // Read off `opencode run --help` and MEASURED 2026-09-19: no message
+    // argument, `--format json` for JSONL, `-m` for the model. The prompt
+    // arrives on stdin (see the send tests), so there is deliberately no
+    // positional prompt here the way codex has `-`.
+    const opencode = invocationFor("opencode");
+    assert.deepEqual(opencode, ["run", "--format", "json"]);
+    const opencodeModel = invocationFor("opencode", { model: "openrouter/cohere/north-mini-code:free" });
+    assert.deepEqual(opencodeModel.slice(0, 5), ["run", "--format", "json", "-m", "openrouter/cohere/north-mini-code:free"]);
+
+    // opencode has no plan mode and no full bypass (`--auto` is the strongest
+    // posture `run` offers), so two of the four postures fall back and say so.
+    const { modeFlags } = console_;
+    assert.deepEqual(modeFlags("opencode", "plan").flags, []);
+    assert.ok(modeFlags("opencode", "plan").note, "plan fallback is silent");
+    assert.deepEqual(modeFlags("opencode", "auto").flags, ["--auto"]);
+    assert.deepEqual(modeFlags("opencode", "dangerous").flags, ["--auto"]);
+    assert.ok(modeFlags("opencode", "dangerous").note, "dangerous fallback is silent");
   });
 
   test("the line splitter keeps a remainder and flushes it on demand", () => {

@@ -4,7 +4,7 @@
 // `node client/install.mjs <repo> --agents=opencode` to refresh it.
 //
 // SELF-CONTAINED ON PURPOSE. client/install-opencode.mjs copies this file into
-// <repo>/.opencode/plugins/zevet.mjs, where it runs inside opencode with no
+// <repo>/.opencode/plugins/zevet.js, where it runs inside opencode with no
 // access to the zevet checkout. Node builtins only — no imports beyond these.
 // The credential derivation below is a copy of client/secret.mjs
 // (SHA-256("zevet-auth\0" || secret)); if that ever changes, this copy changes

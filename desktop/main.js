@@ -991,6 +991,8 @@ function noteBurn(payload, sessionKey) {
   burn.add({
     tokens: u ? u.context : 0,
     cost: cost == null ? undefined : cost,
+    // opencode reports cost per step, not a running total — summed per console.
+    accumulateCost: statusSources.costAccumulates(payload),
     // Keyed per console, because total_cost_usd is a RUNNING SESSION TOTAL and
     // replaces rather than accumulates. Without a key, two consoles overwrite
     // each other's figure and the cheaper one wins.
@@ -1517,7 +1519,7 @@ ipcMain.handle("local:agents", async () => {
   await runtimeReady;
   const detect = await loadDetect();
   const found = detect ? detect.detectAgents() : [];
-  return ["claude", "codex"].map((name) => {
+  return ["claude", "codex", "opencode"].map((name) => {
     const r = agentConsole.resolveAgent(name);
     const id = name === "claude" ? "claude-code" : name;
     const d = found.find((a) => a.id === id) || {};

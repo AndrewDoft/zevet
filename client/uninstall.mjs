@@ -16,7 +16,7 @@
 //      nobody. Every repo is attempted whatever the one before it did, and what
 //      could not be removed is printed with the command to finish it by hand.
 //   2. NEVER DELETE SOMEBODY ELSE'S CONFIG. A repo's .claude/settings.json,
-//      .codex/config.toml and .opencode/plugins/zevet.mjs belong to the repo,
+//      .codex/config.toml and .opencode/plugins/zevet.js belong to the repo,
 //      not to us. Our hook entries come out; everything else in those files is
 //      out; everything else in those files is left byte-for-byte alone, and a
 //      file with nothing of ours in it is not rewritten at all — not even

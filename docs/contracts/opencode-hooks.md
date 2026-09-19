@@ -18,7 +18,15 @@ that export plugin functions, auto-loaded from `.opencode/plugins/` (project)
 or `~/.config/opencode/plugins/` (global), or named in config `"plugin": [...]`
 for npm packages. So zevet's coverage is a plugin file, not a command string —
 `client/opencode-plugin.mjs`, copied per repo to
-`<repo>/.opencode/plugins/zevet.mjs` by `client/install-opencode.mjs`.
+`<repo>/.opencode/plugins/zevet.js` by `client/install-opencode.mjs`.
+
+The installed copy is `.js`, not `.mjs`, and that is load-bearing rather than
+cosmetic: MEASURED 2026-09-19 against opencode 1.18.31, a `.mjs` file in the
+project plugin directory is silently never loaded — not evaluated, not called,
+no error anywhere — while the identical content as `.js` loads and fires. The
+docs say "JavaScript or TypeScript files" and the loader means the extensions
+it knows. A marker that appends to a file on load is the five-minute test if
+this is ever doubted again.
 
 The per-repo file IS the opt-in, the way Claude Code's per-repo settings entry
 is. A global plugin would report every project on the machine, which is the
@@ -82,29 +90,42 @@ Free-tier mechanics, measured 2026-09-19 against the live API, not remembered:
   free Llama tier all disappeared mid-2026). Never hard-wire one `:free` ID
   into anything that matters; `openrouter/free` auto-routes over the pool.
 
-## 6. Desktop driving is deferred, on purpose
+## 6. Desktop driving — MEASURED 2026-09-19, implemented in agent-console.js
 
-`desktop/agent-console.js` drives `claude` and `codex` only, and opencode is
-not added there in this change. Two reasons, both structural:
+Both questions from the deferral now have measured answers (opencode 1.18.31,
+free model `openrouter/cohere/north-mini-code:free`):
 
-1. `opencode run [message..]` takes the prompt as argv. zevet's security
-   posture (agent-console.js header) is that a user-typed prompt NEVER becomes
-   an argv element — on the `.cmd` fallback path argv is re-parsed by cmd.exe,
-   where `&` starts a new command. Whether `opencode run` reads stdin with no
-   message argument is UNVERIFIED, and the project bans inventing the third
-   entry from memory (agent-console.js:41-45).
-2. Driving is separable from watching: the board needs no spawn path, and the
-   spawn path needs measured stdin behaviour plus a streaming format
-   (`--format json` exists on `--help`; what its JSONL actually contains across
-   tool calls has not been read off a live process).
+1. **stdin:** with no message argument, `opencode run` reads stdin to EOF as
+   the prompt. Prompts stay off argv — the security posture holds.
+2. **One-shot:** with stdin held open the process prints nothing; ending stdin
+   submits the turn and the process exits 0. Same shape as codex fact (4): one
+   prompt per process, follow-ups refused with "start a new console".
+3. **Streaming:** `--format json` emits one object per line —
+   `step_start`, `text` (`part.text`), `tool_use`
+   (`part.tool` + `part.state.{title,input}`), `step_finish`
+   (`part.{reason,tokens,cost}`), `error`. The board renders these; usage and
+   per-step cost fold into the same spend figures as the other agents, with
+   step costs summed per console (running-total semantics would keep only the
+   last step — see status-sources.js).
+4. **Posture:** `run` offers only `--auto` (`plan`/`ask` are default behaviour,
+   `dangerous` is `--auto` with a note that explicit denies still hold).
 
-When someone measures both, the shape is `AGENTS += "opencode"`,
-`knownLocations` plus `%APPDATA%\npm`, `MODES.opencode`, and an
-`invocationFor` branch — and a contract § here first.
+Invocation: `opencode run --format json [-m <model>] [--auto]`, prompt on
+stdin, `%APPDATA%\npm` + `~/.opencode/bin` in the search path. Board model
+shortcuts are today's `:free` slugs; the free list churns, free text wins.
 
-## 7. What promotion to `hooks: true` requires
+## 7. Promotion to `hooks: true` — OBSERVED 2026-09-19
 
-One real turn, on a real hub, from an opencode session in a wired repo:
-a `prompt`, at least one `tool`, and a `turn_end`, all `agent: opencode`,
-visible in `/api/state`. Until then the honest label is `unverified`, and
-`doctor.mjs` says so in as many words.
+A real turn, on a real hub, from an opencode 1.18.31 session in a wired repo
+(free model `openrouter/cohere/north-mini-code:free`, hub on localhost): one
+`prompt`, one `tool` (`bash`), one `turn_end`, all `agent: opencode`, visible
+in `/api/state`. `detect.mjs` reports `hooks: true` on that basis.
+
+Two things the observation taught, the first now in the code:
+
+1. The installed copy must be `.js` — see §1. The first version shipped
+   `.mjs` and watched nothing, silently.
+2. NOT YET OBSERVED: whether a turn run from another directory with `--dir`
+   loads the target repo's plugin directory. The one `--dir` attempt predated
+   the `.js` fix, so it proved nothing either way. Until someone watches it,
+   run wired turns with the repo as the working directory.

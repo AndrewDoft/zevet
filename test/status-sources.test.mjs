@@ -204,6 +204,23 @@ describe("usage off the agent stream", () => {
     assert.equal(S.costFrom({ total_cost_usd: "1.25" }), null);
   });
 
+  test("opencode step lines carry tokens and per-step cost", () => {
+    // Shape MEASURED 2026-09-19 off `opencode run --format json`.
+    const line = {
+      type: "step_finish",
+      sessionID: "ses_1",
+      part: { reason: "stop", tokens: { input: 8404, output: 47 }, cost: 0 },
+    };
+    const u = S.usageFrom(line);
+    assert.equal(u.context, 8404);
+    assert.equal(u.output, 47);
+    // No cache fields on the line: full rate, stated as 0% rather than null.
+    assert.equal(u.cacheHit, 0);
+    assert.equal(S.costFrom(line), 0);
+    assert.equal(S.costAccumulates(line), true);
+    assert.equal(S.costAccumulates({ type: "result", total_cost_usd: 1.25 }), false);
+  });
+
   test("the model comes off the init line", () => {
     assert.equal(S.modelFrom({ type: "system", subtype: "init", model: "claude-opus-5" }), "claude-opus-5");
     assert.equal(S.modelFrom({ type: "assistant", model: "x" }), null);
@@ -237,6 +254,15 @@ describe("rolling spend", () => {
     b.add({ tokens: 10, cost: 0.25, sessionId: "a" }, NOW);
     b.add({ tokens: 10, cost: 0.05, sessionId: "b" }, NOW);
     assert.equal(Number(b.read(NOW).cost.toFixed(2)), 0.30);
+  });
+
+  test("per-step costs SUM per session instead of replacing", () => {
+    // opencode reports part.cost per step. Replacing would keep only the last
+    // step of a multi-step turn; summing keeps the turn.
+    const b = new S.BurnWindows();
+    b.add({ tokens: 10, cost: 0.10, sessionId: "a", accumulateCost: true }, NOW);
+    b.add({ tokens: 10, cost: 0.25, sessionId: "a", accumulateCost: true }, NOW);
+    assert.equal(Number(b.read(NOW).cost.toFixed(2)), 0.35);
   });
 
   test("a sample with no tokens does not create an entry", () => {
