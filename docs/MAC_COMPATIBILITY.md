@@ -34,6 +34,8 @@ It uses temporary files and does not change user agent settings.
 
 ## Distribution
 
+The disk image opens as **Zevet**, with Masora's paper-and-ink styling, a Retina background, and the app beside the real Applications shortcut. The app identity and storage paths are unchanged. Regenerate the committed background images with `cd desktop && swift make-dmg-background.swift`; regular builds need no Swift step. The macOS smoke test checks the final image's contents, Finder layout, and both background resolutions.
+
 The beta bundle has an ad hoc integrity seal. Apple Developer ID signing and notarization still require publisher credentials. The existing configured signing path remains available. Mac updates open the installer; replacing the app is still manual.
 
 The previous update-button hotfix is backed up at `/srv/masora/zevet-ui-before-0e329bd.html`. The later Masora design deployment is backed up at `/srv/masora/zevet-before-masora-design`, with before/after hashes for the eight changed UI/font files. The hub restarted to load the font allowlist; authentication and stored account data were unchanged.

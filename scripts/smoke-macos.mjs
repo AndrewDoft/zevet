@@ -43,6 +43,7 @@ try {
   fs.mkdirSync(mount);
   run("hdiutil", ["attach", dmg, "-nobrowse", "-readonly", "-mountpoint", mount]);
   mounted = true;
+  console.log(run("python3", [path.join(root, "scripts/check-mac-installer.py"), mount]).trim());
   const apps = fs.readdirSync(mount).filter((name) => name.endsWith(".app"));
   assert.equal(apps.length, 1, "the image must contain exactly one app");
   assert.equal(fs.readlinkSync(path.join(mount, "Applications")), "/Applications", "the DMG must offer the Applications install destination");

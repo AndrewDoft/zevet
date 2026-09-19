@@ -99,6 +99,28 @@
       "artifactName": "zevet-${version}-macos-arm64.${ext}",
       "icon": "build/icon.png"
     },
+    "dmg": {
+      "title": "Zevet",
+      "background": "build/dmg-background.png",
+      "iconSize": 104,
+      "iconTextSize": 13,
+      "window": {
+        "width": 660,
+        "height": 440
+      },
+      "contents": [
+        {
+          "x": 180,
+          "y": 232
+        },
+        {
+          "x": 480,
+          "y": 232,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
     "linux": {
       "target": [
         "AppImage"
