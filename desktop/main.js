@@ -85,7 +85,7 @@ const INK = "#2c2f44";
  *  learn what to paint a window, which is worse. The renderer sends its real
  *  computed values on every theme change (see `ui:chrome`), so these two are
  *  only the pre-paint guess. */
-const PAPER_DARK = "#17262e";
+const PAPER_DARK = "#24252c";
 
 /**
  * The window chrome, per theme.
@@ -361,17 +361,33 @@ function openBoard(cfg) {
   startCollisionWatch(cfg);
 }
 
-function unreachablePage(hub, why) {
-  return `<!doctype html><meta charset="utf-8"><style>
-    body{background:${PAPER};color:#2c2f44;font:300 15px/1.65 -apple-system,Segoe UI,sans-serif;
-         margin:0;display:grid;place-items:center;height:100vh;padding:32px}
-    div{max-width:52ch}h1{font-size:22px;font-weight:200;margin:0 0 10px;letter-spacing:.01em}
+function statusPageStyle() {
+  // Data pages cannot load file:// fonts. Bundle the small local face so an
+  // offline error uses the same typography without making a network request.
+  let face = "";
+  try {
+    const font = fs.readFileSync(path.join(__dirname, "fonts", "space-grotesk-variable.woff2"));
+    face = `@font-face{font-family:Space Grotesk;src:url(data:font/woff2;base64,${font.toString("base64")}) format('woff2');font-weight:300 700}`;
+  } catch { /* System typography remains available if a local asset is missing. */ }
+  return `<style>${face}
+    *{box-sizing:border-box}body{background:${PAPER};color:${INK};font:400 15px/1.6 'Space Grotesk',-apple-system,Segoe UI,sans-serif;
+      margin:0;display:grid;place-items:center;min-height:100vh;padding:64px 32px 32px}
+    body:before{content:'';position:fixed;inset:0 0 auto;height:46px;-webkit-app-region:drag}
+    main{width:100%;max-width:52ch}h1{font-size:24px;font-weight:500;margin:24px 0 12px;letter-spacing:-.03em}
+    .brand{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:500}
     p{color:#5f6274;margin:0 0 12px}code{font-family:ui-monospace,monospace;font-size:12px;
-      background:#fff8;border:1px solid #cfccc6;padding:2px 6px}
-  </style><div><h1>Can't reach the hub.</h1>
+      background:#dbdae1;border:1px solid #cfccc6;border-radius:4px;padding:2px 6px;overflow-wrap:anywhere}
+  </style>`;
+}
+
+const STATUS_BRAND = `<div class="brand"><svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true" fill="currentColor"><circle cx="16" cy="8.2" r="3.5"/><circle cx="7" cy="23.8" r="3.5"/><circle cx="25" cy="23.8" r="3.5"/></svg>Zevet</div>`;
+
+function unreachablePage(hub, why) {
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Can't reach the hub</title>${statusPageStyle()}
+  <main>${STATUS_BRAND}<h1>Can't reach the hub.</h1>
   <p>Tried <code>${hub.replace(/[<&]/g, "")}</code> and got: ${String(why).replace(/[<&]/g, "")}</p>
   <p>Check your connection and hub address, then reload.
-  Change the address in <b>zevet &rsaquo; Change hub…</b>.</p></div>`;
+  Change the address in <b>zevet &rsaquo; Change hub…</b>.</p></main></html>`;
 }
 
 /**
@@ -386,16 +402,10 @@ function unreachablePage(hub, why) {
  * which names the fault without ever containing the value.
  */
 function credentialPage(why) {
-  return `<!doctype html><meta charset="utf-8"><style>
-    body{background:${PAPER};color:#2c2f44;font:300 15px/1.65 -apple-system,Segoe UI,sans-serif;
-         margin:0;display:grid;place-items:center;height:100vh;padding:32px}
-    div{max-width:52ch}h1{font-size:22px;font-weight:200;margin:0 0 10px;letter-spacing:.01em}
-    p{color:#5f6274;margin:0 0 12px}code{font-family:ui-monospace,monospace;font-size:12px;
-      background:#fff8;border:1px solid #cfccc6;padding:2px 6px}
-  </style><div><h1>This machine can't sign in.</h1>
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Can't sign in</title>${statusPageStyle()}
+  <main>${STATUS_BRAND}<h1>This machine can't sign in.</h1>
   <p>${String(why).replace(/[<&]/g, "")}</p>
-  <p>The hub is fine as far as zevet knows — this is about the secret saved on this
-  machine. Open <b>zevet &rsaquo; Change hub…</b> and paste the team's secret again.</p></div>`;
+  <p>Open <b>zevet &rsaquo; Change hub…</b> and sign in again, or check the team's secret.</p></main></html>`;
 }
 
 function openSetup(existing) {
