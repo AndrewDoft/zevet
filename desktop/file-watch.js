@@ -158,7 +158,7 @@ class FileWatch {
    *
    * @returns {{ok: true} | {ok: false, error: string}}
    */
-  watch(root, relPath) {
+  watch(root, relPath, initialText) {
     const key = FileWatch.key(root, relPath);
     if (this.subs.has(key)) return { ok: true };
 
@@ -200,7 +200,7 @@ class FileWatch {
       // What this file looked like the last time anybody was told about it.
       // Seeded from the read above, so the first report is a real change and
       // not "here is the file you already have". See `fire`.
-      lastHash: digest(first.text),
+      lastHash: digest(typeof initialText === "string" ? initialText : first.text),
     };
 
     let entry = this.dirs.get(foldCase(dir));
@@ -231,6 +231,11 @@ class FileWatch {
 
     entry.subs.add(sub);
     this.subs.set(key, sub);
+    // FSEvents starts asynchronously. A save between the initial read and
+    // the native subscription becoming active may never generate an event.
+    // Reconcile once after registration; the content hash suppresses unchanged
+    // files. This also covers writes racing the initial read on other systems.
+    this.schedule(sub);
     return { ok: true };
   }
 
@@ -293,7 +298,9 @@ class FileWatch {
     // that loses an agent's edit.
     const name = filename === null || filename === undefined ? null : foldCase(String(filename));
     for (const sub of entry.subs) {
-      if (name === null || name === sub.base) this.schedule(sub);
+      // macOS may name the watched directory itself, rather than a child.
+      // Treat that as a directory-wide hint, just like an absent filename.
+      if (name === null || name === sub.base || name === foldCase(path.basename(sub.dir))) this.schedule(sub);
     }
   }
 

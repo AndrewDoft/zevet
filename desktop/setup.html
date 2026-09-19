@@ -2,14 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self'" />
 <title>Set up zevet</title>
 <style>
-  /* Self-hosted, same faces as the board. font-src 'self' in the CSP above. */
+  /* The same self-hosted face and palette as Masora's home page. */
   @font-face {
-    font-family: "Hanken Grotesk";
-    src: url("fonts/hanken-grotesk-variable.woff2") format("woff2");
-    font-weight: 100 900;
+    font-family: "Space Grotesk";
+    src: url("fonts/space-grotesk-variable.woff2") format("woff2");
+    font-weight: 300 700;
+    font-style: normal;
     font-display: swap;
   }
   @font-face {
@@ -20,76 +22,87 @@
   }
 
   :root {
-    color-scheme: dark;
-    --paper: #0d0a0a;
-    --surface: #16110f;
-    --line: #33221e;
-    --grid: #1a1312;
-    --ink: #f2e6e1;
-    --muted: #8f7d78;
-    --rust: #e07a62;
-    --rust-deep: #b0523c;
-    --rust-bright: #f09c86;
-    --fill: #2e1611;
-    --danger: #ef6a52;
-    --ok: #74bd94;
-    --font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color-scheme: light;
+    --paper: #eae7e2;
+    --ink: #2c2f44;
+    --muted: #5f6274;
+    --line: #cfccc6;
+    --fill: #dbdae1;
+    --font-sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
+  html { background: var(--paper); }
   body {
-    margin: 0; min-height: 100vh;
-    background-color: var(--paper);
-    background-image: radial-gradient(var(--grid) 1px, transparent 1px);
-    background-size: 22px 22px;
+    margin: 0 auto; min-height: 100vh; max-width: 620px;
+    background: var(--paper);
     color: var(--ink);
-    font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
+    font-family: var(--font-sans); font-size: 14px; line-height: 1.5; font-weight: 400;
     letter-spacing: -0.006em;
     -webkit-font-smoothing: antialiased;
-    padding: 34px 30px 26px;
+    padding: 34px 36px 30px;
   }
-  h1 { font-size: 23px; font-weight: 500; margin: 0 0 6px; letter-spacing: -0.02em; }
-  .lede { color: var(--muted); margin: 0 0 26px; max-width: 46ch; }
+  ::selection { background: var(--fill); color: var(--ink); }
+  .heading { display: flex; align-items: center; gap: 9px; }
+  .brand-mark { display: block; flex: none; width: 18px; height: 18px; }
+  h1 { font-size: 23px; line-height: 1.3; font-weight: 500; margin: 0; letter-spacing: -0.02em; }
+  .lede { color: var(--muted); margin: 8px 0 28px; max-width: 46ch; }
   label { display: block; margin: 0 0 16px; }
-  .lbl { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .lbl { display: block; font-size: 12px; color: var(--ink); margin-bottom: 6px; }
   input {
-    width: 100%; padding: 9px 11px;
-    background: var(--surface); color: var(--ink);
-    border: 1px solid var(--line); border-radius: 4px;
+    width: 100%; min-height: 40px; padding: 9px 11px;
+    background: transparent; color: var(--ink);
+    border: 1px solid var(--line); border-bottom-color: var(--muted); border-radius: 2px;
     font: inherit; font-size: 13px;
   }
-  input:focus { outline: 2px solid var(--rust); outline-offset: 1px; border-color: transparent; }
-  input.mono { font-family: var(--font-mono); font-size: 12px; }
-  .hint { font-size: 11px; color: var(--muted); margin-top: 5px; }
+  input::placeholder { color: var(--muted); opacity: 1; }
+  input:focus { outline: 2px solid var(--ink); outline-offset: 2px; border-color: var(--ink); }
+  .mono, code { font-family: var(--font-mono); }
+  input.mono { font-size: 12px; }
+  .hint { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
 
-  .row { display: flex; gap: 9px; align-items: center; margin-top: 22px; }
+  .row { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; margin-top: 18px; }
   button {
-    font: inherit; font-size: 13px; padding: 9px 15px; border-radius: 4px;
-    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
-    cursor: pointer; transition: opacity 140ms;
+    font: inherit; font-size: 13px; min-height: 36px; padding: 7px 0;
+    border: 0; border-bottom: 1px solid var(--muted); border-radius: 0;
+    background: transparent; color: var(--muted);
+    cursor: pointer;
   }
-  button:hover:not(:disabled) { border-color: var(--rust-deep); }
-  button.primary { background: var(--rust-deep); border-color: var(--rust-deep); color: #fff; }
-  button.primary:hover:not(:disabled) { background: var(--rust); border-color: var(--rust); }
-  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.primary { color: var(--ink); border-bottom-color: var(--ink); }
+  button:hover:not(:disabled) { color: var(--ink); border-bottom-color: var(--ink); }
+  button:focus-visible, summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 5px; }
+  button:disabled, button.primary:disabled { color: var(--muted); border-bottom-color: var(--line); cursor: not-allowed; }
 
-  .note { margin-top: 20px; padding: 11px 13px; border-left: 3px solid var(--line); background: var(--surface); font-size: 12px; color: var(--muted); border-radius: 0 4px 4px 0; }
-  .note.bad { border-left-color: var(--danger); color: var(--ink); }
-  .note.good { border-left-color: var(--ok); color: var(--ink); }
-  .note.warn { border-left-color: #d9a430; }
+  details { margin: 18px 0 26px; }
+  summary { width: fit-content; max-width: 100%; cursor: pointer; font-size: 12px; color: var(--muted); }
+  summary:hover { color: var(--ink); }
+  details[open] summary { margin-bottom: 18px; }
+  .note { margin-top: 22px; padding: 12px 0; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+  .note.bad, .note.warn { border-top-color: var(--ink); color: var(--ink); }
+  .note.good { color: var(--ink); }
   .note b { color: var(--ink); font-weight: 500; }
-  .note code { font-family: var(--font-mono); font-size: 11px; }
+  .note code { font-size: 12px; }
+  #ghCode { font-size: 22px; letter-spacing: 3px; margin: 10px 0 4px; color: var(--ink); }
+  #repoMsg { margin-top: 9px; }
   [hidden] { display: none !important; }
+  @media (max-width: 400px) { body { padding: 28px 24px; } }
 </style>
 </head>
 <body>
-  <h1>Set up zevet</h1>
-  <p class="lede">The address of your team's hub, and your GitHub account.</p>
+  <header class="heading">
+    <svg class="brand-mark" width="18" height="18" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true" focusable="false" data-brand-mark="therefore">
+      <circle cx="16" cy="8.2" r="3.5" />
+      <circle cx="7" cy="23.8" r="3.5" />
+      <circle cx="25" cy="23.8" r="3.5" />
+    </svg>
+    <h1>Set up zevet</h1>
+  </header>
+  <p class="lede">Connect to your team's hub.</p>
 
   <label>
     <span class="lbl">Hub address</span>
     <input id="hub" class="mono" placeholder="https://zevet.example.com" autocomplete="off" spellcheck="false" />
-    <span class="hint">The address you were sent. Include https:// or http://</span>
+    <span class="hint">Use the address your team shared.</span>
   </label>
 
   <!-- ⚠️ THE GITHUB PATH IS THE DEFAULT AND THE SECRET IS FOLDED AWAY BEHIND IT.
@@ -104,37 +117,37 @@
   </div>
 
   <div id="ghStep" class="note" hidden>
-    <b>Your browser should have opened GitHub.</b> If it did not, go to
+    <b>Approve sign-in on GitHub.</b> If the browser did not open, visit
     <code id="ghUrl"></code> and enter this code:
-    <div id="ghCode" class="mono" style="font-size:22px;letter-spacing:3px;margin:10px 0 4px"></div>
-    <div id="ghState" class="hint">Waiting for you to approve it on GitHub…</div>
+    <div id="ghCode" class="mono"></div>
+    <div id="ghState" class="hint">Waiting for approval…</div>
     <div class="row">
       <button id="ghCancel">Cancel</button>
     </div>
   </div>
 
   <details id="manual">
-    <summary style="cursor:pointer;font-size:12px;color:var(--dim);margin:14px 0 4px">
-      No GitHub sign-in on this hub? Use a master secret instead
+    <summary>
+      Use a master secret instead
     </summary>
     <label>
       <span class="lbl">Master secret</span>
-      <input id="token" class="mono" type="password" placeholder="the long random string your team shares" autocomplete="off" spellcheck="false" />
+      <input id="token" class="mono" type="password" placeholder="Your team's master secret" autocomplete="off" spellcheck="false" />
       <!-- It is NOT "the token", and the difference is the whole security
            model: the hub is given SHA-256("zevet-auth" || this), and the key
            that encrypts shared editing is HKDF(this). The input id stays
            `token` so the script below keeps working. -->
-      <span class="hint">Shared by your team. What is sent to the hub is a hash of it, never this.</span>
+      <span class="hint">The master secret is never sent to the hub.</span>
     </label>
     <div class="row">
-      <button id="check">Check the connection</button>
+      <button id="check">Connect</button>
     </div>
   </details>
 
   <label>
-    <span class="lbl">Your name on the board</span>
+    <span class="lbl">Display name</span>
     <input id="actor" placeholder="kai" autocomplete="off" spellcheck="false" />
-    <span class="hint">Short and lower case reads best in the lanes. Your GitHub login is filled in for you.</span>
+    <span class="hint">Defaults to your GitHub username.</span>
   </label>
 
   <div class="row">
@@ -144,13 +157,12 @@
   <div id="msg" class="note" hidden></div>
 
   <div id="repoStep" class="note" hidden>
-    <b>One more thing.</b> Pick the repo you'll be working in, and zevet will
-    wire its hooks into that folder's <code>.claude/settings.json</code>.
+    <b>Connect a folder</b> to share agent activity with your team.
     You can do this later from the menu.
     <div class="row">
-      <button id="pick">Choose a folder…</button>
+      <button id="pick">Connect a folder…</button>
     </div>
-    <div id="repoMsg" hidden style="margin-top:9px"></div>
+    <div id="repoMsg" hidden></div>
   </div>
 
 <script>
@@ -189,10 +201,10 @@
 
   $("gh").addEventListener("click", async function () {
     var hub = $("hub").value.trim();
-    if (!hub) { say("bad", "The hub address is required."); return; }
-    if (!/^https?:\/\//i.test(hub)) { say("bad", "The hub address needs to start with http:// or https://"); return; }
+    if (!hub) { say("bad", "Enter a hub address."); return; }
+    if (!/^https?:\/\//i.test(hub)) { say("bad", "Start the hub address with https:// or http://."); return; }
 
-    say("", "Asking GitHub for a code…");
+    say("", "Starting sign-in…");
     ghBusy(true);
     var started = await window.zevet.githubStart(hub);
     if (!started.ok) {
@@ -200,15 +212,15 @@
       // The hub having no OAuth app is the likeliest failure on a self-hosted
       // hub, and it is not the user's fault -- point them at the fallback that
       // is sitting right there rather than leaving them at a dead end.
-      say("bad", started.error + "<br><br>You can still set this machine up with a master secret, below.");
+      say("bad", started.error + "<br><br>Use your team's master secret below.");
       $("manual").open = true;
       return;
     }
 
     $("ghCode").textContent = started.userCode;
     $("ghUrl").textContent = started.url;
-    $("ghState").textContent = "Waiting for you to approve it on GitHub…";
-    say("", "Approve zevet on GitHub and this window will finish by itself.");
+    $("ghState").textContent = "Waiting for approval…";
+    $("msg").hidden = true;
 
     var done = await window.zevet.githubWait();
     ghBusy(false);
@@ -222,7 +234,7 @@
     $("finish").disabled = false;
     if (!$("actor").value.trim()) $("actor").value = done.login;
     say("good", "Signed in as <b>" + done.login + "</b>." +
-      (done.owner ? " You are the first one here, so this hub is yours — you can add teammates from Settings." : ""));
+      (done.owner ? " You own this hub. Add teammates in Settings." : ""));
     $("repoStep").hidden = false;
   });
 
@@ -233,10 +245,10 @@
   });
 
   function invalid() {
-    if (!$("hub").value.trim()) return "The hub address is required.";
-    if (!$("token").value) return "The token is required.";
-    if (!$("actor").value.trim()) return "Pick a name for the board.";
-    if (!/^https?:\/\//i.test($("hub").value.trim())) return "The hub address needs to start with http:// or https://";
+    if (!$("hub").value.trim()) return "Enter a hub address.";
+    if (!$("token").value) return "Enter your team's master secret.";
+    if (!$("actor").value.trim()) return "Enter a display name.";
+    if (!/^https?:\/\//i.test($("hub").value.trim())) return "Start the hub address with https:// or http://.";
     return null;
   }
 
@@ -244,7 +256,7 @@
     var bad = invalid();
     if (bad) { say("bad", bad); return; }
     $("check").disabled = true;
-    say("", "Asking the hub…");
+    say("", "Connecting…");
     var hub = $("hub").value.trim();
     var res = await window.zevet.test(hub, $("token").value);
     $("check").disabled = false;
@@ -255,12 +267,11 @@
     var warn = "";
     if (/^http:\/\//i.test(hub) && !/^http:\/\/(127\.0\.0\.1|localhost)/i.test(hub)) {
       warn =
-        "<br><br><b>This hub is plain HTTP.</b> The token and everything zevet " +
-        "reports travel unencrypted, and anyone who can alter traffic on the way " +
-        "can replace the client code on this machine. Fine on a trusted network; " +
-        "not fine on café wifi.";
+        "<br><br><b>This hub uses HTTP.</b> Your token and activity are unencrypted. " +
+        "Anyone who can alter the traffic could run code on this computer. " +
+        "Use HTTPS outside a trusted network.";
     }
-    say(warn ? "warn" : "good", "Connected. The hub is running zevet " + (res.version || "?") + "." + warn);
+    say(warn ? "warn" : "good", "Connected to zevet " + (res.version || "?") + "." + warn);
     await window.zevet.save(hub, $("token").value, $("actor").value.trim());
     $("repoStep").hidden = false;
   });
@@ -270,9 +281,9 @@
     if (!repo) return;
     var out = $("repoMsg");
     out.hidden = false;
-    out.textContent = "Wiring up " + repo + "…";
+    out.textContent = "Connecting " + repo + "…";
     var r = await window.zevet.install(repo);
-    out.textContent = r.ok ? "Wired up. " + repo : "Could not wire that up: " + r.detail;
+    out.textContent = r.ok ? "Connected: " + repo : "Could not connect this folder: " + r.detail;
   });
 
   $("finish").addEventListener("click", async function () {

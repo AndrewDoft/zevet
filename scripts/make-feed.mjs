@@ -20,9 +20,11 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const { readManifest } = createRequire(import.meta.url)("../desktop/app-update.js");
 
 /**
  * Which artifact belongs to which machine.
@@ -55,7 +57,12 @@ const versions = new Set();
 const found = [];
 
 for (const t of TARGETS) {
-  const hit = names.find((n) => t.re.test(n));
+  const hits = names.filter((n) => t.re.test(n));
+  if (hits.length > 1) {
+    console.error(`multiple artifacts for ${t.key}: ${hits.join(", ")} — use an empty release directory`);
+    process.exit(1);
+  }
+  const [hit] = hits;
   if (!hit) {
     console.error(`!! no artifact for ${t.key} in ${dir}`);
     continue;
@@ -91,6 +98,15 @@ if (pkg.version !== version) {
 }
 
 const feed = { version, notes: arg("--notes", ""), platforms };
+// Apply the reader's own validation before writing something no installed
+// machine can use (for example a zero-byte file from an interrupted build).
+for (const key of Object.keys(platforms)) {
+  const { error } = readManifest(feed, key);
+  if (error) {
+    console.error(error);
+    process.exit(1);
+  }
+}
 const out = arg("--out", path.join(dir, "zevet-latest.json"));
 writeFileSync(out, JSON.stringify(feed, null, 2) + "\n", "utf8");
 

@@ -378,9 +378,9 @@ describe("the installer", () => {
    * A test whose result depends on the name of the directory it was checked
    * out into is not testing what it says it is.
    */
-  function stagedClient() {
+  function stagedClient(subdir = "tooling") {
     const t = tempDir("somewhere-else-");
-    const dest = path.join(t.dir, "tooling", "client");
+    const dest = path.join(t.dir, subdir, "client");
     mkdirSync(dest, { recursive: true });
     // Every client file, not a hand-kept subset: install.mjs imports detect.mjs
     // and install-codex.mjs, and a staging list that drifts from the real one
@@ -507,6 +507,35 @@ describe("the installer", () => {
       assert.match(cmd, /--zevet-agent claude-code\b/, `command should name the agent: ${cmd}`);
     } finally {
       repo.cleanup();
+    }
+  });
+
+  test("POSIX hook commands preserve shell metacharacters in client and repo paths", { skip: process.platform === "win32" }, async () => {
+    const special = "literal $ZEVET_QUOTE_PROBE `printf expanded` ' \"";
+    const base = tempDir("zevet-quoted-");
+    const repoName = `${special} \\`;
+    const repo = path.join(base.dir, repoName);
+    const staged = stagedClient(special);
+    mkdirSync(repo);
+    mkdirSync(path.join(repo, ".git"));
+    writeFileSync(path.join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
+    try {
+      execFileSync(process.execPath, [staged.installer, repo, "--agents=claude-code"], { stdio: "pipe", env: SANDBOX });
+      const cfg = JSON.parse(readFileSync(path.join(repo, ".claude", "settings.json"), "utf8"));
+      const command = cfg.hooks.PreToolUse[0].hooks[0].command;
+      const before = (await state(hub.base)).body.events.length;
+      const stdout = execFileSync("/bin/sh", ["-c", command], {
+        input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: "a.js" } }),
+        env: { ...SANDBOX, ...hookEnv(), ZEVET_QUOTE_PROBE: "expanded" },
+        encoding: "utf8",
+      });
+      assert.equal(stdout, "", "the hook must stay silent even through a shell");
+      const events = (await state(hub.base)).body.events;
+      assert.equal(events.length, before + 1, "the literal client path should execute successfully");
+      assert.equal(events.at(-1).repo, repoName, "the repo argument must reach the hook without shell expansion");
+    } finally {
+      staged.cleanup();
+      base.cleanup();
     }
   });
 

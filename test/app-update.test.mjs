@@ -31,6 +31,9 @@ const {
 } = require(path.join(ROOT, "desktop", "app-update.js"));
 
 const KEY = "win32-x64";
+const FILE = "zevet-0.2.0-windows-x64-setup.exe";
+const MAC_KEY = "darwin-arm64";
+const MAC_FILE = "zevet-0.2.0-macos-arm64.dmg";
 const sha = (b) => createHash("sha256").update(b).digest("hex");
 
 /**
@@ -107,6 +110,22 @@ function updaterFor(host, dir, opts = {}) {
   return u;
 }
 
+async function downloadedMac(context, opts = {}) {
+  const t = tempDir("zevet Mac updates with spaces ");
+  const body = randomBytes(4096);
+  const host = await fakeHost({
+    manifest: { version: "0.2.0", platforms: { [MAC_KEY]: { file: MAC_FILE, sha256: sha(body), bytes: body.length } } },
+    files: { [MAC_FILE]: body },
+  });
+  context.after(async () => {
+    await host.close();
+    t.cleanup();
+  });
+  const u = updaterFor(host, t.dir, { platform: "darwin", platformKey: MAC_KEY, ...opts });
+  assert.equal((await u.check()).phase, "ready");
+  return { u, body, host, dir: t.dir };
+}
+
 describe("comparing versions", () => {
   test("0.10.0 is newer than 0.9.0", () => {
     // ⚠️ THE BUG THIS EXISTS FOR. As strings "0.10.0" < "0.9.0", so a naive
@@ -173,7 +192,7 @@ describe("what the updater is willing to download", () => {
 describe("reading the feed", () => {
   const good = {
     version: "0.2.0",
-    platforms: { [KEY]: { file: "a.exe", sha256: "a".repeat(64), bytes: 10 } },
+    platforms: { [KEY]: { file: FILE, sha256: "a".repeat(64), bytes: 10 } },
   };
 
   test("a well-formed feed reads", () => {
@@ -193,14 +212,26 @@ describe("reading the feed", () => {
       [{ ...good, version: "latest" }, /no usable version/],
       [{ ...good, platforms: null }, /lists no platforms/],
       [{ version: "0.2.0", platforms: { [KEY]: { file: "../x.exe", sha256: "a".repeat(64), bytes: 1 } } }, /refusing the file name/],
-      [{ version: "0.2.0", platforms: { [KEY]: { file: "a.exe", sha256: "short", bytes: 1 } } }, /no usable sha256/],
-      [{ version: "0.2.0", platforms: { [KEY]: { file: "a.exe", sha256: "a".repeat(64), bytes: 0 } } }, /no usable size/],
-      [{ version: "0.2.0", platforms: { [KEY]: { file: "a.exe", sha256: "a".repeat(64), bytes: 1e12 } } }, /no usable size/],
+      [{ version: "0.2.0", platforms: { [KEY]: { file: FILE, sha256: "short", bytes: 1 } } }, /no usable sha256/],
+      [{ version: "0.2.0", platforms: { [KEY]: { file: FILE, sha256: "a".repeat(64), bytes: 0 } } }, /no usable size/],
+      [{ version: "0.2.0", platforms: { [KEY]: { file: FILE, sha256: "a".repeat(64), bytes: 1e12 } } }, /no usable size/],
       [null, /not an object/],
     ];
     for (const [json, re] of cases) {
       const m = readManifest(json, KEY);
       assert.match(m.error || "", re);
+    }
+  });
+
+  test("a Mac entry cannot name another architecture, platform, or version", () => {
+    for (const file of [
+      "zevet-0.2.0-macos-x64.dmg",
+      FILE,
+      "zevet-0.1.2-macos-arm64.dmg",
+      "zevet-0.2.0-macos-arm64.exe",
+    ]) {
+      const m = readManifest({ version: "0.2.0", platforms: { [MAC_KEY]: { file, sha256: "a".repeat(64), bytes: 10 } } }, MAC_KEY);
+      assert.match(m.error, /not the darwin-arm64 artifact/);
     }
   });
 });
@@ -235,8 +266,8 @@ describe("the updater, end to end", () => {
     const t = tempDir("zevet-upd-");
     const body = randomBytes(2048);
     const host = await fakeHost({
-      manifest: { version: "0.1.2", platforms: { [KEY]: { file: "x.exe", sha256: sha(body), bytes: body.length } } },
-      files: { "x.exe": body },
+      manifest: { version: "0.1.2", platforms: { [KEY]: { file: "zevet-0.1.2-windows-x64-setup.exe", sha256: sha(body), bytes: body.length } } },
+      files: { [FILE]: body },
     });
     try {
       const u = updaterFor(host, t.dir);
@@ -255,7 +286,7 @@ describe("the updater, end to end", () => {
     // accident. Only forward.
     const t = tempDir("zevet-upd-");
     const host = await fakeHost({
-      manifest: { version: "0.1.0", platforms: { [KEY]: { file: "x.exe", sha256: "b".repeat(64), bytes: 5 } } },
+      manifest: { version: "0.1.0", platforms: { [KEY]: { file: "zevet-0.1.0-windows-x64-setup.exe", sha256: "b".repeat(64), bytes: 5 } } },
     });
     try {
       const s = await updaterFor(host, t.dir).check();
@@ -270,8 +301,8 @@ describe("the updater, end to end", () => {
     const t = tempDir("zevet-upd-");
     const body = randomBytes(3000);
     const host = await fakeHost({
-      manifest: { version: "0.2.0", platforms: { [KEY]: { file: "x.exe", sha256: sha(Buffer.from("something else")), bytes: body.length } } },
-      files: { "x.exe": body },
+      manifest: { version: "0.2.0", platforms: { [KEY]: { file: FILE, sha256: sha(Buffer.from("something else")), bytes: body.length } } },
+      files: { [FILE]: body },
     });
     try {
       const u = updaterFor(host, t.dir);
@@ -281,8 +312,8 @@ describe("the updater, end to end", () => {
       assert.equal(s.canInstall, false);
       // ⚠️ The file must not exist under its REAL name, or a later run's
       // `_verified` is the only thing between it and being executed.
-      assert.equal(existsSync(path.join(t.dir, "x.exe")), false);
-      assert.equal(existsSync(path.join(t.dir, "x.exe.part")), false);
+      assert.equal(existsSync(path.join(t.dir, FILE)), false);
+      assert.equal(existsSync(path.join(t.dir, FILE + ".part")), false);
     } finally {
       await host.close();
       t.cleanup();
@@ -293,14 +324,14 @@ describe("the updater, end to end", () => {
     const t = tempDir("zevet-upd-");
     const body = randomBytes(9000);
     const host = await fakeHost({
-      manifest: { version: "0.2.0", platforms: { [KEY]: { file: "x.exe", sha256: sha(body), bytes: 100 } } },
-      files: { "x.exe": body },
+      manifest: { version: "0.2.0", platforms: { [KEY]: { file: FILE, sha256: sha(body), bytes: 100 } } },
+      files: { [FILE]: body },
     });
     try {
       const s = await updaterFor(host, t.dir).check();
       assert.equal(s.phase, "error");
       assert.match(s.error, /longer than the manifest/);
-      assert.equal(existsSync(path.join(t.dir, "x.exe")), false);
+      assert.equal(existsSync(path.join(t.dir, FILE)), false);
     } finally {
       await host.close();
       t.cleanup();
@@ -311,14 +342,14 @@ describe("the updater, end to end", () => {
     const t = tempDir("zevet-upd-");
     const body = randomBytes(64);
     const host = await fakeHost({
-      manifest: { version: "0.2.0", platforms: { [KEY]: { file: "x.exe", sha256: sha(body), bytes: 4096 } } },
-      files: { "x.exe": body },
+      manifest: { version: "0.2.0", platforms: { [KEY]: { file: FILE, sha256: sha(body), bytes: 4096 } } },
+      files: { [FILE]: body },
     });
     try {
       const s = await updaterFor(host, t.dir).check();
       assert.equal(s.phase, "error");
       assert.match(s.error, /bytes and the manifest says/);
-      assert.equal(existsSync(path.join(t.dir, "x.exe")), false);
+      assert.equal(existsSync(path.join(t.dir, FILE)), false);
     } finally {
       await host.close();
       t.cleanup();
@@ -373,8 +404,8 @@ describe("the updater, end to end", () => {
     const t = tempDir("zevet-upd-");
     const body = randomBytes(1500);
     const host = await fakeHost({
-      manifest: { version: "0.2.0", platforms: { [KEY]: { file: "x.exe", sha256: sha(body), bytes: body.length } } },
-      files: { "x.exe": body },
+      manifest: { version: "0.2.0", platforms: { [KEY]: { file: FILE, sha256: sha(body), bytes: body.length } } },
+      files: { [FILE]: body },
     });
     try {
       const u = updaterFor(host, t.dir);
@@ -393,16 +424,16 @@ describe("the updater, end to end", () => {
     const t = tempDir("zevet-upd-");
     const body = randomBytes(2500);
     mkdirSync(t.dir, { recursive: true });
-    writeFileSync(path.join(t.dir, "x.exe.part"), randomBytes(900));
+    writeFileSync(path.join(t.dir, FILE + ".part"), randomBytes(900));
     const host = await fakeHost({
-      manifest: { version: "0.2.0", platforms: { [KEY]: { file: "x.exe", sha256: sha(body), bytes: body.length } } },
-      files: { "x.exe": body },
+      manifest: { version: "0.2.0", platforms: { [KEY]: { file: FILE, sha256: sha(body), bytes: body.length } } },
+      files: { [FILE]: body },
     });
     try {
       const s = await updaterFor(host, t.dir).check();
       assert.equal(s.phase, "ready");
       assert.equal(sha(readFileSync(s.file)), sha(body));
-      assert.equal(existsSync(path.join(t.dir, "x.exe.part")), false);
+      assert.equal(existsSync(path.join(t.dir, FILE + ".part")), false);
     } finally {
       await host.close();
       t.cleanup();
@@ -441,8 +472,7 @@ describe("installing", () => {
     }
   });
 
-  test("on Windows the installer is run silently and the app then quits", async (t2) => {
-    if (process.platform !== "win32") return t2.skip("the spawn path is Windows-only");
+  test("on Windows the installer is run silently and the app then quits", async () => {
     const t = tempDir("zevet-upd-");
     try {
       const file = path.join(t.dir, "setup.exe");
@@ -451,6 +481,7 @@ describe("installing", () => {
       let quit = 0;
       const u = new AppUpdater({
         currentVersion: "0.1.2",
+        platform: "win32",
         dir: t.dir,
         platformKey: KEY,
         spawnImpl: (...a) => {
@@ -461,6 +492,7 @@ describe("installing", () => {
       });
       u.state.phase = "ready";
       u.state.file = file;
+      u._readyEntry = { bytes: statSync(file).size, sha256: sha(readFileSync(file)) };
       const r = await u.install();
       assert.equal(r.ok, true);
       assert.equal(calls.length, 1);
@@ -476,6 +508,111 @@ describe("installing", () => {
       t.cleanup();
     }
   });
+
+  test("on Mac the verified disk image opens with its space-containing path intact, without quitting", async (t) => {
+    const opened = [];
+    let quit = false;
+    const { u, dir } = await downloadedMac(t, {
+      openImpl: async (file) => { opened.push(file); return ""; },
+      quitImpl: () => { quit = true; },
+      spawnImpl: () => { throw new Error("Mac installation must not execute an installer"); },
+    });
+    assert.equal(u.status().manual, true);
+    assert.deepEqual(await u.install(), { ok: true, manual: true });
+    assert.deepEqual(opened, [path.join(dir, MAC_FILE)]);
+    assert.equal(quit, false);
+  });
+
+  test("Mac reports Electron's resolved openPath error instead of claiming success", async (t) => {
+    const { u } = await downloadedMac(t, { openImpl: async () => "The disk image could not be opened" });
+    const result = await u.install();
+    assert.equal(result.ok, false);
+    assert.match(result.error, /disk image could not be opened/);
+  });
+
+  test("Mac reports a rejected disk image open", async (t) => {
+    const { u } = await downloadedMac(t, { openImpl: async () => { throw new Error("permission denied"); } });
+    assert.match((await u.install()).error, /permission denied/);
+  });
+
+  test("Mac cannot report success without an opener", async (t) => {
+    const { u } = await downloadedMac(t);
+    assert.equal((await u.install()).ok, false);
+  });
+
+  test("a Mac download changed after verification is not opened and can be fetched again", async (t) => {
+    let opened = false;
+    const { u, body } = await downloadedMac(t, { openImpl: async () => { opened = true; return ""; } });
+    // Same length, different bytes: a size check alone would accept this.
+    writeFileSync(u.status().file, Buffer.alloc(body.length));
+    const result = await u.install();
+    assert.equal(result.ok, false);
+    assert.match(result.error, /changed/);
+    assert.equal(opened, false);
+    assert.equal(u.status().canInstall, false);
+    assert.equal((await u.check()).phase, "ready");
+    assert.deepEqual(readFileSync(u.status().file), body);
+  });
+
+  test("a later rejected feed clears a previously ready Mac install", async (t) => {
+    const { u } = await downloadedMac(t, { openImpl: async () => "" });
+    u.fetchImpl = async () => new Response(JSON.stringify({ version: "0.3.0", platforms: {} }));
+    assert.equal((await u.check()).phase, "error");
+    assert.equal(u.status().canInstall, false);
+    assert.equal(u.status().file, null);
+    assert.equal((await u.install()).ok, false);
+  });
+});
+
+describe("Mac downloads that must never be opened", () => {
+  for (const scenario of ["checksum", "truncated", "wrong architecture", "redirect", "stalled", "writer failure"]) {
+    test(scenario, async (t) => {
+      const temp = tempDir("zevet Mac failure ");
+      const body = Buffer.from("a small disk image fixture");
+      let opens = 0;
+      const host = await fakeHost({
+        manifest: { version: "0.2.0", platforms: { [MAC_KEY]: {
+          file: scenario === "wrong architecture" ? "zevet-0.2.0-macos-x64.dmg" : MAC_FILE,
+          bytes: scenario === "truncated" ? body.length + 20 : body.length,
+          sha256: scenario === "checksum" ? "0".repeat(64) : sha(body),
+        } } },
+        files: { [MAC_FILE]: body },
+        onRequest(req, res) {
+          if (!req.url.endsWith(".dmg")) return false;
+          if (scenario === "redirect") {
+            res.writeHead(302, { location: "https://example.invalid/untrusted.dmg" }).end();
+            return true;
+          }
+          if (scenario === "stalled") {
+            res.writeHead(200);
+            res.flushHeaders();
+            return true;
+          }
+          if (scenario === "writer failure") {
+            // The destination becomes unwritable after staging cleanup but
+            // before createWriteStream opens it. Previously an unhandled
+            // error here could take down the desktop process.
+            mkdirSync(path.join(temp.dir, MAC_FILE + ".part"));
+          }
+          return false;
+        },
+      });
+      t.after(async () => { await host.close(); temp.cleanup(); });
+      const u = updaterFor(host, temp.dir, {
+        platform: "darwin", platformKey: MAC_KEY, downloadTimeoutMs: scenario === "stalled" ? 100 : 5000,
+        openImpl: async () => { opens++; return ""; },
+      });
+      const s = await u.check();
+      assert.equal(s.phase, "error");
+      assert.equal(s.canInstall, false);
+      assert.equal(existsSync(path.join(temp.dir, MAC_FILE)), false);
+      if (scenario !== "writer failure") assert.equal(existsSync(path.join(temp.dir, MAC_FILE + ".part")), false);
+      if (scenario === "wrong architecture") assert.equal(host.seen.length, 1, "wrong-architecture artifact must not be requested");
+      assert.equal((await u.install()).ok, false);
+      assert.equal(opens, 0);
+      assert.equal(u._busy, false, "failure must not wedge subsequent checks");
+    });
+  }
 });
 
 describe("the platform key", () => {

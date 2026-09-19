@@ -35,6 +35,7 @@ const embedder = require("./embedder.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
 const { AppUpdater } = require("./app-update.js");
+const runtime = require("./runtime.js");
 const { GithubSignIn } = require("./github-signin.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
@@ -47,6 +48,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const os = require("node:os");
+
+// Node, npm agent shims and the tools those agents launch need the same PATH
+// whether zevet was opened from Finder or from Terminal.
+const runtimeReady = runtime.preparePath();
 
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
 const CONFIG = path.join(HOME, "config.json");
@@ -80,7 +85,7 @@ const INK = "#2c2f44";
  *  learn what to paint a window, which is worse. The renderer sends its real
  *  computed values on every theme change (see `ui:chrome`), so these two are
  *  only the pre-paint guess. */
-const PAPER_DARK = "#17262e";
+const PAPER_DARK = "#24252c";
 
 /**
  * The window chrome, per theme.
@@ -235,13 +240,9 @@ function writeConfig(cfg) {
   }
 }
 
-/** The installer that ships with the client, if the client has been synced. */
+/** Bootstrap the bundled client on the first install; keep its hook path stable. */
 function installerPath() {
-  const installed = path.join(CLIENT_DIR, "install.mjs");
-  if (fs.existsSync(installed)) return installed;
-  // Running from a checkout rather than a packaged build.
-  const local = path.join(__dirname, "..", "client", "install.mjs");
-  return fs.existsSync(local) ? local : null;
+  return runtime.installerPath({ clientDir: CLIENT_DIR });
 }
 
 function openBoard(cfg) {
@@ -360,17 +361,33 @@ function openBoard(cfg) {
   startCollisionWatch(cfg);
 }
 
-function unreachablePage(hub, why) {
-  return `<!doctype html><meta charset="utf-8"><style>
-    body{background:${PAPER};color:#2c2f44;font:300 15px/1.65 -apple-system,Segoe UI,sans-serif;
-         margin:0;display:grid;place-items:center;height:100vh;padding:32px}
-    div{max-width:52ch}h1{font-size:22px;font-weight:200;margin:0 0 10px;letter-spacing:.01em}
+function statusPageStyle() {
+  // Data pages cannot load file:// fonts. Bundle the small local face so an
+  // offline error uses the same typography without making a network request.
+  let face = "";
+  try {
+    const font = fs.readFileSync(path.join(__dirname, "fonts", "space-grotesk-variable.woff2"));
+    face = `@font-face{font-family:Space Grotesk;src:url(data:font/woff2;base64,${font.toString("base64")}) format('woff2');font-weight:300 700}`;
+  } catch { /* System typography remains available if a local asset is missing. */ }
+  return `<style>${face}
+    *{box-sizing:border-box}body{background:${PAPER};color:${INK};font:400 15px/1.6 'Space Grotesk',-apple-system,Segoe UI,sans-serif;
+      margin:0;display:grid;place-items:center;min-height:100vh;padding:64px 32px 32px}
+    body:before{content:'';position:fixed;inset:0 0 auto;height:46px;-webkit-app-region:drag}
+    main{width:100%;max-width:52ch}h1{font-size:24px;font-weight:500;margin:24px 0 12px;letter-spacing:-.03em}
+    .brand{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:500}
     p{color:#5f6274;margin:0 0 12px}code{font-family:ui-monospace,monospace;font-size:12px;
-      background:#fff8;border:1px solid #cfccc6;padding:2px 6px}
-  </style><div><h1>Can't reach the hub.</h1>
+      background:#dbdae1;border:1px solid #cfccc6;border-radius:4px;padding:2px 6px;overflow-wrap:anywhere}
+  </style>`;
+}
+
+const STATUS_BRAND = `<div class="brand"><svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true" fill="currentColor"><circle cx="16" cy="8.2" r="3.5"/><circle cx="7" cy="23.8" r="3.5"/><circle cx="25" cy="23.8" r="3.5"/></svg>Zevet</div>`;
+
+function unreachablePage(hub, why) {
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Can't reach the hub</title>${statusPageStyle()}
+  <main>${STATUS_BRAND}<h1>Can't reach the hub.</h1>
   <p>Tried <code>${hub.replace(/[<&]/g, "")}</code> and got: ${String(why).replace(/[<&]/g, "")}</p>
-  <p>The hub may be off, or this machine may not be able to see it. Nothing is wrong with your install —
-  zevet will connect as soon as the hub answers. Use <b>zevet &rsaquo; Change hub…</b> if the address changed.</p></div>`;
+  <p>Check your connection and hub address, then reload.
+  Change the address in <b>zevet &rsaquo; Change hub…</b>.</p></main></html>`;
 }
 
 /**
@@ -385,16 +402,10 @@ function unreachablePage(hub, why) {
  * which names the fault without ever containing the value.
  */
 function credentialPage(why) {
-  return `<!doctype html><meta charset="utf-8"><style>
-    body{background:${PAPER};color:#2c2f44;font:300 15px/1.65 -apple-system,Segoe UI,sans-serif;
-         margin:0;display:grid;place-items:center;height:100vh;padding:32px}
-    div{max-width:52ch}h1{font-size:22px;font-weight:200;margin:0 0 10px;letter-spacing:.01em}
-    p{color:#5f6274;margin:0 0 12px}code{font-family:ui-monospace,monospace;font-size:12px;
-      background:#fff8;border:1px solid #cfccc6;padding:2px 6px}
-  </style><div><h1>This machine can't sign in.</h1>
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Can't sign in</title>${statusPageStyle()}
+  <main>${STATUS_BRAND}<h1>This machine can't sign in.</h1>
   <p>${String(why).replace(/[<&]/g, "")}</p>
-  <p>The hub is fine as far as zevet knows — this is about the secret saved on this
-  machine. Open <b>zevet &rsaquo; Change hub…</b> and paste the team's secret again.</p></div>`;
+  <p>Open <b>zevet &rsaquo; Change hub…</b> and sign in again, or check the team's secret.</p></main></html>`;
 }
 
 function openSetup(existing) {
@@ -487,7 +498,7 @@ async function startCollisionWatch(cfg) {
             if (!others.length) continue;
             new Notification({
               title: "Same file",
-              body: `${others.join(" and ")} just touched ${c.target}, which you are also in.`,
+              body: `${others.join(" and ")} edited ${c.target}, which you have open.`,
               silent: false,
             }).show();
           }
@@ -515,7 +526,7 @@ function buildMenu() {
       label: "zevet",
       submenu: [
         {
-          label: "Wire up a repo…",
+          label: "Connect a folder…",
           click: () => wireRepoFromMenu(),
         },
         {
@@ -538,23 +549,30 @@ function buildMenu() {
 async function wireRepoFromMenu() {
   const parent = boardWindow || setupWindow;
   const picked = await dialog.showOpenDialog(parent, {
-    title: "Pick the repo you'll be working in",
+    title: "Choose a project folder",
     properties: ["openDirectory"],
   });
   if (picked.canceled || !picked.filePaths[0]) return;
   const result = await installHooks(picked.filePaths[0]);
   dialog.showMessageBox(parent, {
     type: result.ok ? "info" : "error",
-    message: result.ok ? "Wired up." : "Could not wire that folder up.",
+    message: result.ok ? "Connected." : "Could not connect this folder.",
     detail: result.detail,
   });
 }
 
-function installHooks(repo) {
+async function installHooks(repo) {
+  await runtimeReady;
   return new Promise((resolve) => {
-    const installer = installerPath();
+    let installer;
+    try {
+      installer = installerPath();
+    } catch (err) {
+      resolve({ ok: false, detail: `Could not install the bundled client: ${err.message}` });
+      return;
+    }
     if (!installer) {
-      resolve({ ok: false, detail: "The zevet client is not installed yet. Finish setup first." });
+      resolve({ ok: false, detail: "Finish setup before connecting a folder." });
       return;
     }
     execFile(process.execPath, [installer, repo], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, (err, stdout, stderr) => {
@@ -562,7 +580,9 @@ function installHooks(repo) {
         resolve({ ok: false, detail: (stderr || err.message).trim().slice(0, 600) });
         return;
       }
-      resolve({ ok: true, detail: `${repo}\n\nStart Claude Code there and you'll appear on the board.` });
+      // The installer also reports missing Codex hook trust. Hiding stdout
+      // turned an installed-but-inert hook into an unconditional success.
+      resolve({ ok: true, detail: `${repo}\n\n${stdout.trim() || "Start your agent in this folder."}` });
     });
   });
 }
@@ -759,7 +779,7 @@ ipcMain.handle("zevet:githubStart", async (_e, { hub } = {}) => {
 });
 
 ipcMain.handle("zevet:githubWait", async () => {
-  if (!signIn) return { ok: false, error: "no sign-in is in progress" };
+  if (!signIn) return { ok: false, error: "Start GitHub sign-in first." };
   const attempt = signIn;
   try {
     const r = await attempt.wait();
@@ -799,7 +819,7 @@ ipcMain.handle("zevet:githubCancel", () => {
 
 ipcMain.handle("zevet:pickRepo", async () => {
   const picked = await dialog.showOpenDialog(setupWindow, {
-    title: "Pick the repo you'll be working in",
+    title: "Choose a project folder",
     properties: ["openDirectory"],
   });
   return picked.canceled ? null : picked.filePaths[0];
@@ -1249,12 +1269,12 @@ const fileWatch = new FileWatch({
   onChange: (evt) => toBoard("local:fileChanged", evt),
 });
 
-ipcMain.handle("local:watch", (_e, { root, relPath }) => {
+ipcMain.handle("local:watch", (_e, { root, relPath, initialText }) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   // The resolved root is passed on, not the renderer's spelling, so the
   // echoed `root` in every change event is the one the allowlist approved.
-  return fileWatch.watch(dir, String(relPath || ""));
+  return fileWatch.watch(dir, String(relPath || ""), initialText);
 });
 
 ipcMain.handle("local:unwatch", (_e, { root, relPath }) => {
@@ -1483,9 +1503,8 @@ function toBoard(channel, payload) {
 let detectPromise = null;
 function loadDetect() {
   if (!detectPromise) {
-    const here = path.join(__dirname, "..", "client", "detect.mjs");
-    const installed = path.join(CLIENT_DIR, "detect.mjs");
-    const target = fs.existsSync(installed) ? installed : here;
+    const target = runtime.clientFile("detect.mjs", { clientDir: CLIENT_DIR });
+    if (!target) return Promise.resolve(null);
     detectPromise = import(pathToFileURL(target).href).catch((err) => {
       console.error(`zevet: could not load detect.mjs (${err.message})`);
       return null;
@@ -1495,6 +1514,7 @@ function loadDetect() {
 }
 
 ipcMain.handle("local:agents", async () => {
+  await runtimeReady;
   const detect = await loadDetect();
   const found = detect ? detect.detectAgents() : [];
   return ["claude", "codex"].map((name) => {
@@ -1513,7 +1533,8 @@ ipcMain.handle("local:agents", async () => {
   });
 });
 
-ipcMain.handle("local:startAgent", (_e, { agent, cwd, opts }) => {
+ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
+  await runtimeReady;
   const dir = knownRoot(cwd);
   if (!dir) return { ok: false, error: "not an opened workspace" };
 

@@ -89,27 +89,25 @@ const LANGUAGE_EXTENSIONS = Object.freeze({
 /**
  * Theme: as close to nothing as CodeMirror allows.
  *
- * CodeMirror ships a base theme that hardcodes `font-family: monospace` on the
- * scroller and a white background on the editor. Both would fight the board's
- * stylesheet, which self-hosts its fonts and has its own light/dark handling.
- * So every one of those is pushed back to `inherit`/`transparent` and the
- * board's CSS wins by default. This is NOT a theme — picking colours is another
- * task's job. It is the removal of the theme CodeMirror imposes.
+ * The board supplies the code font through --font-mono and controls the
+ * light/dark surfaces. Resolve that font explicitly here: inheriting from the
+ * editor container picked up the board's proportional UI font instead.
  *
  * `!important` is used on the scroller font because CodeMirror's base theme is
  * injected into the document at a specificity that otherwise beats us for
- * `.cm-scroller`. That was found by reading @codemirror/view's baseTheme, not
- * by experiment — NOT VERIFIED in a browser by this task.
+ * `.cm-scroller`. Native monospace fallbacks keep code aligned before a web
+ * font loads, or when that font is unavailable.
  */
+const codeFont = "var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)";
 const transparentTheme = EditorView.theme({
   "&": {
     backgroundColor: "transparent",
     color: "inherit",
-    fontFamily: "inherit",
+    fontFamily: codeFont,
     fontSize: "inherit",
   },
   ".cm-scroller": {
-    fontFamily: "inherit !important",
+    fontFamily: `${codeFont} !important`,
     lineHeight: "inherit",
   },
   ".cm-content": { fontFamily: "inherit" },
@@ -144,7 +142,7 @@ const darkHighlightStyle = HighlightStyle.define([
   { tag: [tags.definition(tags.name), tags.separator], color: "#d7d4ce" },
   { tag: [tags.typeName, tags.className, tags.number, tags.changed, tags.annotation, tags.modifier, tags.self, tags.namespace], color: "#7fc9a8" },
   { tag: [tags.operator, tags.operatorKeyword, tags.url, tags.escape, tags.regexp, tags.link, tags.special(tags.string)], color: "#e0a36a" },
-  { tag: [tags.meta, tags.comment], color: "#6d7c86", fontStyle: "italic" },
+  { tag: [tags.meta, tags.comment], color: "#b6b5bf", fontStyle: "italic" },
   { tag: tags.strong, fontWeight: "bold" },
   { tag: tags.emphasis, fontStyle: "italic" },
   { tag: tags.strikethrough, textDecoration: "line-through" },
@@ -152,7 +150,7 @@ const darkHighlightStyle = HighlightStyle.define([
   { tag: tags.heading, fontWeight: "bold", color: "#8fc7e8" },
   { tag: [tags.atom, tags.bool, tags.special(tags.variableName)], color: "#e0b464" },
   { tag: [tags.processingInstruction, tags.string, tags.inserted], color: "#c3d98a" },
-  { tag: tags.invalid, color: "#d98a72" },
+  { tag: tags.invalid, color: "#e49a84" },
 ]);
 
 /** The two styles, in a Compartment so a running editor can be switched without

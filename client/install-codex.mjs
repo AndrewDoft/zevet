@@ -28,7 +28,7 @@
 //   2. NO `cwd` IN THE HOOK PAYLOAD. Claude Code sends one; Codex's stdin
 //      vocabulary has no such field. Rather than hope the process cwd is the
 //      repo, the repo path is passed on the command line.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { listCodexHooks, ourHooks, trustBlockFor, stripTrustBlock } from "./codex-trust.mjs";
@@ -95,9 +95,16 @@ function writeCodexRepos(list) {
 `, "utf8");
 }
 
-/** Case-insensitive on Windows, exact elsewhere. */
-const sameRepo = (a, b) =>
-  process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+/** Match the hook's opt-in check: an alias and its target are one repo. This
+ * also makes uninstall through a canonical macOS cwd remove the picked alias. */
+function sameRepo(a, b) {
+  const canonical = (p) => {
+    try { return realpathSync(path.resolve(p)); } catch { return path.resolve(p); }
+  };
+  const left = canonical(a);
+  const right = canonical(b);
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
 
 /**
  * A TOML literal string: single quotes, no escape sequences at all.

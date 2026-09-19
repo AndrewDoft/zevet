@@ -8,11 +8,13 @@
   "scripts": {
     "start": "electron .",
     "icon": "node make-icon.mjs",
-    "dist": "node make-icon.mjs && electron-builder -c electron-builder.config.js --publish never",
-    "dist:win": "node make-icon.mjs && electron-builder -c electron-builder.config.js --win --publish never",
-    "dist:mac": "node make-icon.mjs && electron-builder -c electron-builder.config.js --mac --publish never"
+    "dist": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --publish never",
+    "dist:win": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --win --publish never",
+    "dist:mac": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --mac --publish never",
+    "smoke:mac": "node ../scripts/smoke-macos.mjs"
   },
   "devDependencies": {
+    "@electron/osx-sign": "1.3.1",
     "electron": "38.1.2",
     "electron-builder": "25.1.8"
   },
@@ -20,6 +22,7 @@
     "@huggingface/transformers": "4.3.0"
   },
   "build": {
+    "afterPack": "./sign-macos.cjs",
     "appId": "com.andrewdoft.zevet",
     "productName": "zevet",
     "copyright": "Copyright © 2026 Andrew Doft",
@@ -29,6 +32,7 @@
     },
     "files": [
       "main.js",
+      "runtime.js",
       "preload.js",
       "local-fs.js",
       "agent-console.js",
@@ -94,6 +98,28 @@
       "category": "public.app-category.developer-tools",
       "artifactName": "zevet-${version}-macos-arm64.${ext}",
       "icon": "build/icon.png"
+    },
+    "dmg": {
+      "title": "Zevet",
+      "background": "build/dmg-background.png",
+      "iconSize": 104,
+      "iconTextSize": 13,
+      "window": {
+        "width": 660,
+        "height": 440
+      },
+      "contents": [
+        {
+          "x": 180,
+          "y": 232
+        },
+        {
+          "x": 480,
+          "y": 232,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "linux": {
       "target": [

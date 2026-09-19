@@ -1,18 +1,17 @@
-// The build config, with code signing wired up and switched off.
+// The build config, with publisher signing enabled only when fully configured.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHY THIS FILE EXISTS INSTEAD OF JUST `build` IN package.json
 //
-// Signing is not a setting you can leave on. `hardenedRuntime: true` with no
-// certificate, or `notarize` with no Apple ID, does not produce an unsigned
-// build — it FAILS THE BUILD. So a static config can either sign or not sign,
-// and switching between them means editing the file on the day you buy a
-// certificate, in a hurry, without a test.
+// Publisher signing and notarization need a complete set of credentials.
+// Partial credentials must not trigger a certificate import or submission.
+// Local builds still get an ad-hoc integrity seal from the afterPack hook;
+// that needs no credentials and does not establish publisher trust.
 //
 // This computes the config from the environment instead. With no signing
 // secrets set — which is the state today, and the state on every fork and every
-// pull request — it produces byte-for-byte what `build` in package.json always
-// produced. Add the secrets to GitHub Actions and the same file starts signing.
+// pull request — it keeps publisher signing off. Add the secrets to GitHub
+// Actions and the same file starts signing and notarizing the release.
 // test/signing.test.mjs asserts both halves, so the day the certificate arrives
 // is not the day this is exercised for the first time.
 //
@@ -71,16 +70,18 @@ module.exports = {
           // Notarisation is refused without the hardened runtime, so these two
           // are one setting with two names.
           hardenedRuntime: true,
+          forceCodeSigning: true,
           // The default entitlements electron-builder ships are correct for an
           // Electron app; a custom plist is only needed for camera, microphone
           // or the like, and zevet asks for none of them.
           notarize: { teamId: process.env.APPLE_TEAM_ID },
-          // ⚠️ LEFT ON ONLY WHEN SIGNING. `gatekeeperAssess` runs spctl against
-          // the build, and on an unsigned build it fails — correctly, and
-          // uselessly, because the build being unsigned is the known state.
+          // The final artifact smoke check also requires Gatekeeper acceptance
+          // when this build is configured for publisher signing.
           gatekeeperAssess: true,
         }
       : {
+          // afterPack seals the app ad-hoc. Null keeps the normal signer from
+          // importing incomplete credentials or attempting notarization.
           identity: null,
         }),
   },

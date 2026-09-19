@@ -50,7 +50,7 @@ class SignInError extends Error {}
  */
 class GithubSignIn {
   constructor({ hub, fetchImpl, now = () => Date.now(), sleep } = {}) {
-    if (!hub) throw new SignInError("no hub address");
+    if (!hub) throw new SignInError("Enter a hub address.");
     this.base = String(hub).replace(/\/+$/, "");
     this.fetch = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
     this.now = now;
@@ -76,14 +76,14 @@ class GithubSignIn {
     try {
       parsed = await res.json();
     } catch {
-      throw new SignInError(`The hub answered ${res.status} with something that is not JSON.`);
+      throw new SignInError(`The hub returned an invalid response (HTTP ${res.status}).`);
     }
     if (!res.ok) {
       // 503 is the hub saying it has no client id. That is a DEPLOYMENT
       // problem, not a user problem, and saying "sign-in failed" would send
       // somebody looking at their own GitHub account for an hour.
-      if (res.status === 503) throw new SignInError("This hub does not have GitHub sign-in switched on yet.");
-      throw new SignInError(parsed && parsed.error ? parsed.error : `The hub answered ${res.status}.`);
+      if (res.status === 503) throw new SignInError("GitHub sign-in is not configured for this hub.");
+      throw new SignInError(parsed && parsed.error ? parsed.error : `The hub returned HTTP ${res.status}.`);
     }
     return parsed;
   }
@@ -112,7 +112,7 @@ class GithubSignIn {
    * Rejects with a SignInError carrying a sentence meant for a human.
    */
   async wait() {
-    if (!this.device) throw new SignInError("start() has not been called");
+    if (!this.device) throw new SignInError("Start GitHub sign-in first.");
 
     // ⚠️ THE FIRST WAIT COMES BEFORE THE FIRST POLL, not after. GitHub cannot
     // possibly have an answer in the moment between handing out a code and
@@ -122,7 +122,7 @@ class GithubSignIn {
       await this.sleep(this.intervalMs);
       if (this.cancelled) break;
       if (this.now() > this.deadline) {
-        throw new SignInError("That sign-in expired. Start again and the code will be new.");
+        throw new SignInError("Sign-in expired. Try again for a new code.");
       }
 
       const r = await this.#post("/auth/github/finish", { deviceCode: this.device.deviceCode });
@@ -131,7 +131,7 @@ class GithubSignIn {
         continue;
       }
       if (r && r.ok && r.token) return { token: r.token, secret: r.secret || "", login: r.login, owner: Boolean(r.owner) };
-      throw new SignInError((r && r.error) || "The hub gave an answer that made no sense.");
+      throw new SignInError((r && r.error) || "The hub returned an invalid sign-in response. Try again.");
     }
     throw new SignInError("cancelled");
   }

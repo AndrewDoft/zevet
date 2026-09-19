@@ -185,7 +185,7 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * it. Idempotent — watching an already-watched file is a no-op, not a second
    * stream of events.
    */
-  watch: (root, relPath) => ipcRenderer.invoke("local:watch", { root, relPath }),
+  watch: (root, relPath, initialText) => ipcRenderer.invoke("local:watch", { root, relPath, initialText }),
   unwatch: (root, relPath) => ipcRenderer.invoke("local:unwatch", { root, relPath }),
   /**
    * `fn({ root, relPath, text, bytes, bom, eol })`; returns an unsubscribe.

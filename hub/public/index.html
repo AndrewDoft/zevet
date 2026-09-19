@@ -4,19 +4,13 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>zevet</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23eae7e2'/%3E%3Ccircle cx='4.5' cy='8' r='2' fill='%232f6f8f'/%3E%3Ccircle cx='9.5' cy='5' r='1.6' fill='%239a5b3d'/%3E%3Ccircle cx='10.5' cy='11' r='1.6' fill='%234f7a4a'/%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23eae7e2'/%3E%3Cg fill='%232c2f44'%3E%3Ccircle cx='8' cy='4.5' r='2'/%3E%3Ccircle cx='4.5' cy='11.5' r='2'/%3E%3Ccircle cx='11.5' cy='11.5' r='2'/%3E%3C/g%3E%3C/svg%3E" />
 <style>
-  /* Type: Jost, at 200 and 300 only.
-     The landing page's own rule, quoted from its layout.tsx: "ONE FAMILY
-     CARRIES THE WHOLE SITE. Jost, a Futura-line geometric, set at 200 and 300
-     only. Hierarchy comes from size, tracking and air — never from weight, and
-     never from a second face." Mono is for paths and commands, which are data,
-     not prose. Self-hosted: a workspace that blanks its own labels because a
-     CDN is slow has stopped being a workspace. */
+  /* Masora UI type, served locally; code and paths retain IBM Plex Mono. */
   @font-face {
-    font-family: "Jost";
-    src: url("/fonts/jost-variable.woff2") format("woff2");
-    font-weight: 100 900;
+    font-family: "Space Grotesk";
+    src: url("/fonts/space-grotesk-variable.woff2") format("woff2");
+    font-weight: 300 700;
     font-display: swap;
   }
   @font-face {
@@ -26,104 +20,69 @@
     font-display: swap;
   }
 
-  /* ---- dark mode ---------------------------------------------------------
-     Andrew asked for it to "just invert our eggshell and cerulean", with
-     whatever else is needed kept minimal, so that is literally what this is:
-     the ground becomes a deep cerulean-ink and the type becomes the eggshell.
-     Nine token values and nothing else -- no second stylesheet, no per-rule
-     overrides, no `.dark` classes sprinkled through the file. Every rule in
-     this page already draws from these tokens, which is the whole reason that
-     discipline was worth keeping.
-
-     ⚠️ THE ACCENT HAS TO MOVE, and this is the one place a pure inversion is
-     wrong. #2f6f8f was picked to hold small text against eggshell; against a
-     dark ground the same blue is barely separable from it. So --cerulean
-     brightens and --cerulean-soft becomes a dark tint rather than a pale one.
-     The identity hues get the same treatment for the same reason -- they were
-     chosen "mid-dark and muted" precisely BECAUSE the board was light.
-
-     `color-scheme` is set on both, so native scrollbars, form controls and the
-     caret follow without being styled one at a time. */
-  :root[data-theme="dark"] {
-    color-scheme: dark;
-
-    --paper: #17262e;
-    --ink: #eae7e2;
-    --muted: #a7b3ba;
-    --faint: #6d7c86;
-    --line: #2b3d47;
-    --fill: #21323c;
-
-    --cerulean: #7cb6d4;
-    --cerulean-soft: #23414f;
-    --alert: #d98a72;
-
-    /* See the light values: raised means a few per cent lighter here, not a
-       white panel. */
-    --raise-soft: #ffffff08;
-    --raise: #ffffff12;
-    --raise-line: #ffffff0a;
-
-    --who-0: #7cb6d4;
-    --who-1: #d09a72;
-    --who-2: #8fbf87;
-    --who-3: #b79dd0;
-    --who-4: #d9b06a;
-  }
-
   :root {
     color-scheme: light;
 
-    /* From masora-landing/src/app/globals.css, unchanged. */
+    /* Masora's paper and ink. Faint is for marks, subtle is readable text. */
     --paper: #eae7e2;
     --ink: #2c2f44;
     --muted: #5f6274;
     --faint: #9c9992;
+    --subtle: #5b5e70;
     --line: #cfccc6;
     --fill: #dbdae1;
 
-    /* The one addition. The landing page defines no accent at all — six
-       tokens, no colour beyond the ink. Cerulean is chosen to sit beside
-       #2c2f44 rather than argue with it: same blue family, more saturation,
-       enough darker than the eggshell to hold small text. */
-    --cerulean: #2f6f8f;
-    --cerulean-soft: #d9e4ea;
-    --alert: #a8442f;
+    /* Keep the bridge's accent token name for older desktop versions. */
+    --cerulean: #2c2f44;
+    --cerulean-soft: #dbdae1;
+    --alert: #a23d2c;
+    --success: #42693e;
+    --raise-soft: #e3e0dc;
+    --raise: #f0eeea;
+    --raise-line: #e3e0dc;
 
-    /* ⚠️ RAISED SURFACES, AND WHY THEY ARE TOKENS NOW.
-       Hovers, cards and the console well were all a translucent WHITE over
-       eggshell -- `#fff7`, `#fff9`, `#fffb`. That is invisible-by-design in
-       light mode and catastrophic in dark: translucent white over #17262e is a
-       pale grey PANEL, and the console came out as a light box with eggshell
-       text on it that could not be read. Seen in a screenshot of the running
-       app, not reasoned about.
-       Light keeps the exact alphas it had. Dark lifts by a few per cent
-       instead, which is what "slightly raised" means on a dark ground. */
-    --raise-soft: #ffffff70;
-    --raise: #ffffffbb;
-    --raise-line: #ffffff55;
+    /* Stable collaborator hues, darkened enough for small name labels. */
+    --who-0: #2b6280;
+    --who-1: #874c30;
+    --who-2: #42693e;
+    --who-3: #715287;
+    --who-4: #805725;
+    --syntax-string: #42693e;
+    --syntax-number: #874c30;
+    --syntax-function: #715287;
 
-    /* Identity, and it has to work on a LIGHT ground: these are mid-dark and
-       muted, not the bright hues a dark board can afford. Andrew gets the
-       house cerulean. */
-    --who-0: #2f6f8f;
-    --who-1: #9a5b3d;
-    --who-2: #4f7a4a;
-    --who-3: #7a5a92;
-    --who-4: #a8743a;
-
-    /* Wider, because the rail now carries the status block as well as people
-       and workspaces -- and because the space came free when the title bar
-       went. */
     --rail: 258px;
     --tree: 286px;
     --streams: 340px;
-    /* The teammates column in agent view. Narrower than --streams because it
-       carries a summary rather than a transcript. */
     --talk: 300px;
-
-    --font-sans: "Jost", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
+    --font-sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #24252c;
+    --ink: #eae7e2;
+    --muted: #b6b5bf;
+    --faint: #85858f;
+    --subtle: #b6b5bf;
+    --line: #454750;
+    --fill: #373943;
+    --cerulean: #eae7e2;
+    --cerulean-soft: #373943;
+    --alert: #ed9d89;
+    --success: #a4cd9d;
+    --raise-soft: #2a2b33;
+    --raise: #2d2f38;
+    --raise-line: #2d2f38;
+    --who-0: #96c5e0;
+    --who-1: #dcad8d;
+    --who-2: #a4cd9d;
+    --who-3: #c3aed9;
+    --who-4: #dfbd82;
+    --syntax-string: #a4cd9d;
+    --syntax-number: #dcad8d;
+    --syntax-function: #c3aed9;
   }
 
   * { box-sizing: border-box; }
@@ -133,7 +92,7 @@
     background: var(--paper);
     color: var(--ink);
     font-family: var(--font-sans);
-    font-weight: 300;
+    font-weight: 400;
     font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
@@ -170,7 +129,7 @@
      is published by the overlay and falls back to the full width in a browser
      tab, where the whole idea does not apply and this resolves to zero. */
   .streams > .pane-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
-  .wordmark { font-weight: 200; font-size: 19px; letter-spacing: 0.16em; text-transform: lowercase; }
+  .wordmark { font-weight: 700; font-size: 17px; letter-spacing: -0.04em; text-transform: lowercase; }
   .scope { color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
   .spacer { flex: 1 1 auto; }
 
@@ -184,11 +143,11 @@
   .chip[data-active="true"] { color: var(--ink); border-color: var(--line); background: var(--raise-soft); }
   .chip .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
   .chip[data-active="false"] .bead { opacity: 0.32; }
-  .chip[data-dim="true"] { opacity: 0.5; }
+  .chip[data-dim="true"] { color: var(--subtle); }
 
   .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
   .conn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
-  .conn[data-state="live"] .dot { background: #4f7a4a; }
+  .conn[data-state="live"] .dot { background: var(--success); }
   .conn[data-state="down"] .dot { background: var(--alert); }
 
   /* ---- shell ---------------------------------------------------------- */
@@ -206,10 +165,14 @@
 
   .pane-title {
     padding: 15px 16px 9px;
-    font-size: 10.5px; font-weight: 300;
-    letter-spacing: 0.18em; text-transform: uppercase;
-    color: var(--faint);
+    font-size: 12px; font-weight: 500;
+    letter-spacing: 0;
+    color: var(--subtle);
     display: flex; align-items: center; gap: 8px;
+  }
+  body[data-native-mac="true"] .rail > .pane-title:first-child { padding-left: 86px; }
+  @media (max-width: 700px) {
+    body[data-native-mac="true"] .treecol > .pane-title { padding-left: 86px; }
   }
   .pane-body { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 
@@ -241,13 +204,13 @@
     padding: 6px 0; font-size: 13px; color: var(--muted);
   }
   .ws-item[data-sel="true"] { color: var(--ink); }
-  .ws-item .branch { font-size: 11px; color: var(--faint); }
+  .ws-item .branch { font-size: 11px; color: var(--subtle); }
 
   .ws-add {
     display: block; width: 100%; text-align: left;
     padding: 8px 0 2px; font-size: 12.5px; color: var(--cerulean);
   }
-  .ws-note { font-size: 11px; color: var(--faint); padding-top: 6px; }
+  .ws-note { font-size: 11px; color: var(--subtle); padding-top: 6px; }
 
   /* ---- file tree ------------------------------------------------------ */
   .tree { padding: 2px 0 20px; }
@@ -258,13 +221,14 @@
     font-size: 13.5px;
   }
   .node[data-sel="true"] { background: var(--cerulean-soft); }
+  .node[data-sel="true"][data-kind] .name { color: var(--ink); }
   .node:hover { background: var(--raise-soft); }
   .node .label { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 0 1 auto; }
   .node .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .node[data-kind="dir"] .name { color: var(--ink); }
   .node[data-kind="file"] .name { color: var(--muted); }
   .node[data-touched="true"][data-kind="file"] .name { color: var(--ink); }
-  .caret { width: 9px; color: var(--faint); flex: none; font-size: 9px; }
+  .caret { width: 9px; color: var(--subtle); flex: none; font-size: 9px; }
   .ficon { width: 13px; height: 13px; flex: none; opacity: 0.55; }
 
   .marks { display: flex; align-items: center; gap: 3px; flex: none; }
@@ -408,7 +372,7 @@
     padding: 34px 26px; max-width: 60ch; margin: 0 auto;
     color: var(--muted); font-size: 14px; line-height: 1.65;
   }
-  .chat-empty h2 { font-size: 17px; font-weight: 300; color: var(--ink); margin-bottom: 9px; }
+  .chat-empty h2 { font-size: 17px; font-weight: 400; color: var(--ink); margin-bottom: 9px; }
 
   /* ---- what the agents changed -------------------------------------------
      Agent view's answer to the file tree. Not a tree: a flat list of the files
@@ -429,7 +393,7 @@
   .changed-row:hover { background: var(--fill); }
   .changed-row[data-sel="true"] { border-left-color: var(--cerulean); background: var(--fill); }
   .changed-row .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-  .changed-none { padding: 16px; color: var(--faint); font-size: 12.5px; }
+  .changed-none { padding: 16px; color: var(--subtle); font-size: 12.5px; }
 
   /* ---- the rail's footer: theme, and a way into settings ------------------
      Above the Workspaces header, where Andrew asked for it. */
@@ -450,137 +414,37 @@
   }
   .updaterow[hidden] { display: none; }
   .updaterow .hd { color: var(--ink); font-size: 12.5px; }
-  .updaterow .sub { color: var(--faint); font-size: 11px; }
+  .updaterow .sub { color: var(--subtle); font-size: 11px; }
   .updaterow .go {
     align-self: flex-start;
     padding: 4px 12px; border: 1px solid var(--cerulean); color: var(--cerulean);
-    border-radius: 100px; font-size: 12px;
+    border-radius: 4px; font-size: 12px;
   }
+  .update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .updaterow .go:disabled { opacity: .6; cursor: default; }
   .updaterow .go:hover { background: var(--cerulean); color: var(--paper); }
   /* A real bar, not a spinner: the length of this download is known, so the
      progress can be honest about how far through it is. */
   .updaterow .bar { height: 3px; background: var(--fill); overflow: hidden; }
   .updaterow .bar i { display: block; height: 100%; background: var(--cerulean); transition: width 300ms; }
-  /* ---- the sky toggle ----------------------------------------------------
-     Andrew's, supplied as a styled-components React component. Ported to plain
-     CSS because the component was a <div> wrapper around a style block and a
-     checkbox — there was no React in it beyond the wrapper, and adding React
-     and styled-components to this page to render one switch would be the
-     larger change by a wide margin.
-
-     Two deliberate departures from the original:
-
-       • --toggle-size is 13px, not 30px. The original is 168px wide, which in
-         a 224px rail is a control that dominates the pane it sits in. The
-         whole thing is sized off that one value, which is the nice property
-         of how it was written.
-       • The daytime sky is --cerulean rather than #3D7EAE. They are close
-         cousins, and using the token means the switch is painted in the same
-         blue as everything else rather than in a blue that merely resembles it.
-
-     Everything else — the clouds, the stars, the sun sliding into a cratered
-     moon, the easing — is as supplied. It is by far the most decorative thing
-     on this page and that is the point of it. */
+  /* The same theme control and saved preference, in Masora's neutral palette. */
   .themer {
-    --toggle-size: 13px;
-    --container-width: 5.625em;
-    --container-height: 2.5em;
-    --container-radius: 6.25em;
-    --container-light-bg: var(--cerulean);
-    --container-night-bg: #1D1F2C;
-    --circle-container-diameter: 3.375em;
-    --sun-moon-diameter: 2.125em;
-    --sun-bg: #ECCA2F;
-    --moon-bg: #C4C9D1;
-    --spot-color: #959DB1;
-    --circle-container-offset: calc((var(--circle-container-diameter) - var(--container-height)) / 2 * -1);
-    --stars-color: #fff;
-    --clouds-color: #F3FDFF;
-    --back-clouds-color: #AACADF;
-    --transition: 0.5s cubic-bezier(0, -0.02, 0.4, 1.25);
-    --circle-transition: 0.3s cubic-bezier(0, -0.02, 0.35, 1.17);
-
-    display: inline-flex; align-items: center; gap: 9px; cursor: pointer;
-    background: none; border: 0; padding: 0;
+    display: inline-flex; align-items: center; gap: 9px;
+    min-height: 32px; padding: 0; border: 0; background: none;
   }
-  .themer, .themer *, .themer *::before, .themer *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  .themer .lbl {
-    font-family: var(--font-sans); font-size: 10.5px; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--faint);
-  }
+  .themer .lbl { font-size: 12px; color: var(--muted); }
   .sky {
-    font-size: var(--toggle-size);
-    width: var(--container-width); height: var(--container-height);
-    background-color: var(--container-light-bg);
-    border-radius: var(--container-radius);
-    overflow: hidden; position: relative; flex: none;
-    box-shadow: 0em -0.062em 0.062em rgba(0,0,0,0.25), 0em 0.062em 0.125em rgba(255,255,255,0.94);
-    transition: var(--transition);
-  }
-  .sky::before {
-    content: ""; position: absolute; z-index: 1; inset: 0;
-    box-shadow: 0em 0.05em 0.187em rgba(0,0,0,0.25) inset, 0em 0.05em 0.187em rgba(0,0,0,0.25) inset;
-    border-radius: var(--container-radius);
+    position: relative; display: block; width: 42px; height: 24px;
+    border: 1px solid var(--muted); border-radius: 20px;
+    background: var(--fill); flex: none;
   }
   .sky-circle {
-    width: var(--circle-container-diameter); height: var(--circle-container-diameter);
-    background-color: rgba(255,255,255,0.1);
-    position: absolute; left: var(--circle-container-offset); top: var(--circle-container-offset);
-    border-radius: var(--container-radius);
-    box-shadow: inset 0 0 0 3.375em rgba(255,255,255,0.1), inset 0 0 0 3.375em rgba(255,255,255,0.1),
-                0 0 0 0.625em rgba(255,255,255,0.1), 0 0 0 1.25em rgba(255,255,255,0.1);
-    display: flex; transition: var(--circle-transition); pointer-events: none;
+    position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--ink);
+    transition: transform 180ms ease;
   }
-  .sky-sunmoon {
-    position: relative; z-index: 2;
-    width: var(--sun-moon-diameter); height: var(--sun-moon-diameter);
-    margin: auto; border-radius: var(--container-radius);
-    background-color: var(--sun-bg);
-    box-shadow: 0.062em 0.062em 0.062em 0em rgba(254,255,239,0.61) inset, 0em -0.062em 0.062em 0em #a1872a inset;
-    filter: drop-shadow(0.062em 0.125em 0.125em rgba(0,0,0,0.25)) drop-shadow(0em 0.062em 0.125em rgba(0,0,0,0.25));
-    overflow: hidden; transition: var(--transition);
-  }
-  .sky-moon {
-    transform: translateX(100%); width: 100%; height: 100%;
-    background-color: var(--moon-bg); border-radius: inherit;
-    box-shadow: 0.062em 0.062em 0.062em 0em rgba(254,255,239,0.61) inset, 0em -0.062em 0.062em 0em #969696 inset;
-    transition: var(--transition); position: relative;
-  }
-  .sky-spot {
-    position: absolute; top: 0.75em; left: 0.312em; width: 0.75em; height: 0.75em;
-    border-radius: var(--container-radius); background-color: var(--spot-color);
-    box-shadow: 0em 0.0312em 0.062em rgba(0,0,0,0.25) inset;
-  }
-  .sky-spot:nth-of-type(2) { width: 0.375em; height: 0.375em; top: 0.937em; left: 1.375em; }
-  .sky-spot:nth-last-of-type(3) { width: 0.25em; height: 0.25em; top: 0.312em; left: 0.812em; }
-  .sky-clouds {
-    width: 1.25em; height: 1.25em; background-color: var(--clouds-color);
-    border-radius: var(--container-radius);
-    position: absolute; bottom: -0.625em; left: 0.312em;
-    box-shadow: 0.937em 0.312em var(--clouds-color), -0.312em -0.312em var(--back-clouds-color),
-                1.437em 0.375em var(--clouds-color), 0.5em -0.125em var(--back-clouds-color),
-                2.187em 0 var(--clouds-color), 1.25em -0.062em var(--back-clouds-color),
-                2.937em 0.312em var(--clouds-color), 2em -0.312em var(--back-clouds-color),
-                3.625em -0.062em var(--clouds-color), 2.625em 0em var(--back-clouds-color),
-                4.5em -0.312em var(--clouds-color), 3.375em -0.437em var(--back-clouds-color),
-                4.625em -1.75em 0 0.437em var(--clouds-color), 4em -0.625em var(--back-clouds-color),
-                4.125em -2.125em 0 0.437em var(--back-clouds-color);
-    transition: var(--transition);
-  }
-  .sky-stars {
-    position: absolute; color: var(--stars-color); top: -100%; left: 0.312em;
-    width: 2.75em; height: auto; transition: var(--transition);
-  }
-  .themer[aria-pressed="true"] .sky { background-color: var(--container-night-bg); }
-  .themer[aria-pressed="true"] .sky-circle {
-    left: calc(100% - var(--circle-container-offset) - var(--circle-container-diameter));
-  }
-  .themer[aria-pressed="true"] .sky-moon { transform: translate(0); }
-  .themer[aria-pressed="true"] .sky-clouds { bottom: -4.062em; }
-  .themer[aria-pressed="true"] .sky-stars { top: 50%; transform: translateY(-50%); }
-  .themer:focus-visible { outline: 2px solid var(--cerulean); outline-offset: 3px; border-radius: 100px; }
-  /* Somebody who has asked not to be moved gets the state change without the
-     sun sliding across the sky. */
+  .themer[aria-pressed="true"] .sky-circle { transform: translateX(18px); }
+  .themer:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 4px; }
   @media (prefers-reduced-motion: reduce) {
     .themer * { transition: none !important; }
   }
@@ -607,13 +471,13 @@
     display: flex; align-items: baseline; justify-content: space-between;
     padding: 18px 22px 14px; border-bottom: 1px solid var(--line);
   }
-  .sheet-head h2 { margin: 0; font-size: 15px; font-weight: 300; letter-spacing: 0.02em; }
+  .sheet-head h2 { margin: 0; font-size: 15px; font-weight: 400; letter-spacing: 0.02em; }
   .sheet-close { font-size: 12px; color: var(--muted); }
   .sheet-close:hover { color: var(--ink); }
   .sset { padding: 16px 22px; border-bottom: 1px solid var(--line); }
   .sset h3 {
-    margin: 0 0 10px; font-size: 10.5px; font-weight: 400;
-    letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint);
+    margin: 0 0 10px; font-size: 12px; font-weight: 500;
+    letter-spacing: 0; color: var(--subtle);
   }
   .srow { display: flex; gap: 14px; align-items: baseline; padding: 3px 0; font-size: 12.5px; }
   .srow .k { color: var(--muted); flex: 0 0 140px; }
@@ -626,7 +490,7 @@
     transition: border-color 200ms;
   }
   .sbtn:hover:not(:disabled) { border-color: var(--cerulean); }
-  .sbtn:disabled { color: var(--faint); cursor: default; }
+  .sbtn:disabled { color: var(--subtle); cursor: default; }
   .sbar { height: 3px; background: var(--fill); margin-top: 10px; overflow: hidden; }
   .sbar span { display: block; height: 100%; background: var(--cerulean); transition: width 200ms; }
 
@@ -661,12 +525,12 @@
   .strip:empty { height: 0; padding: 0; border-top: 0; }
   .strip .seg { display: inline-flex; align-items: baseline; gap: 5px; }
   .strip .sep { color: var(--line); padding: 0 10px; }
-  .strip .k { color: var(--faint); }
+  .strip .k { color: var(--subtle); }
   .strip .v { color: var(--ink); }
-  .strip .ok { color: #4f7a4a; }
+  .strip .ok { color: var(--success); }
   .strip .warn { color: var(--who-4); }
   .strip .bad { color: var(--alert); }
-  .strip .dim { color: var(--faint); }
+  .strip .dim { color: var(--subtle); }
   /* The bar is drawn with block characters rather than a div, so it sits on the
      same baseline as the number beside it and needs no vertical alignment
      fiddling at 10px. */
@@ -679,11 +543,11 @@
      occupy the same column and the eye can compare them. */
   .node .stat { margin-left: auto; display: flex; align-items: baseline; gap: 7px; flex: none;
                 font-family: var(--font-mono); font-size: 10px; font-variant-numeric: tabular-nums; }
-  .stat .loc { color: var(--faint); }
-  .stat .add { color: #4f7a4a; }
+  .stat .loc { color: var(--subtle); }
+  .stat .add { color: var(--success); }
   .stat .del { color: var(--alert); }
   .stat .new { color: var(--cerulean); }
-  .node[data-sel="true"] .stat .loc { color: var(--muted); }
+  .node[data-sel="true"] .stat .loc { color: var(--subtle); }
   /* A directory gets no badge. Summing a folder's lines invites the question
      of whether it counts what is collapsed underneath it, and either answer is
      wrong half the time. */
@@ -701,12 +565,12 @@
   .ed-bar .grow { flex: 1 1 auto; }
   .ed-state { display: inline-flex; align-items: center; gap: 6px; }
   .ed-state .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
-  .ed-state[data-state="open"] .dot { background: #4f7a4a; }
+  .ed-state[data-state="open"] .dot { background: var(--success); }
   .ed-state[data-state="connecting"] .dot,
   .ed-state[data-state="retrying"] .dot { background: var(--who-4); }
   .ed-state[data-state="error"] .dot,
   .ed-state[data-state="undecipherable"] .dot { background: var(--alert); }
-  .ed-saved { color: var(--faint); }
+  .ed-saved { color: var(--subtle); }
   .ed-saved[data-dirty="true"] { color: var(--who-4); }
 
   .ed-host { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
@@ -715,7 +579,7 @@
      you look at longest, so it gets the increase first. */
   .cm-editor .cm-scroller { font-family: var(--font-mono); font-size: 13.5px; line-height: 1.6; }
   .cm-editor.cm-focused { outline: none; }
-  .cm-gutters { background: transparent; border-right: 1px solid var(--line); color: var(--faint); }
+  .cm-gutters { background: transparent; border-right: 1px solid var(--line); color: var(--subtle); }
   .cm-activeLine { background: var(--raise-line); }
   .cm-activeLineGutter { background: transparent; color: var(--muted); }
   .cm-selectionBackground, .cm-editor ::selection { background: var(--cerulean-soft); }
@@ -747,11 +611,11 @@
     /* A hairline of the teammate's colour behind it, so a figure over a busy
        line still reads as one object rather than as pixels in the code. */
     padding: 0 4px; border-radius: 3px;
-    background: color-mix(in srgb, var(--paper) 82%, transparent);
+    background: var(--paper);
   }
   .rider .who {
     font-family: var(--font-sans); font-size: 9.5px; letter-spacing: 0.05em;
-    color: currentColor; opacity: 0.75; white-space: nowrap;
+    color: var(--ink); white-space: nowrap;
   }
   .rider[data-fading="true"] { opacity: 0; transition: transform 320ms, opacity 900ms; }
 
@@ -771,11 +635,11 @@
   .stream-head .nm { font-size: 13px; letter-spacing: 0.02em; }
   .dwho > span + span { margin-left: 0; }
   .stream-head .agent {
-    font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--faint); margin-left: auto;
+    font-size: 11px; letter-spacing: 0;
+    color: var(--subtle); margin-left: auto;
   }
   .bubble {
-    background: var(--raise); border: 1px solid var(--line);
+    background: var(--raise); border: 0;
     border-left: 2px solid var(--who);
     padding: 8px 11px; margin-bottom: 7px;
     font-size: 13px; line-height: 1.55;
@@ -785,7 +649,7 @@
     display: grid; grid-template-columns: 78px 1fr; gap: 10px;
     align-items: baseline; padding: 2.5px 0; font-size: 12px;
   }
-  .step .t { color: var(--faint); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .step .t { color: var(--subtle); font-size: 11px; letter-spacing: 0; }
   .step .v { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .step .v b { font-weight: 400; color: var(--ink); }
   /* The house "working" mark. No spinners: a spinner claims progress it
@@ -800,7 +664,7 @@
   @keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .typing i { animation: none; opacity: 0.7; } }
 
-  .idle-note { font-size: 12px; color: var(--faint); }
+  .idle-note { font-size: 12px; color: var(--subtle); }
 
   /* ---- your own agent, running here ------------------------------------ */
   .newagent { display: flex; flex-direction: column; gap: 9px; padding: 4px 16px 16px; }
@@ -814,7 +678,7 @@
      with `currentColor` so it takes --muted in both modes; a background-image
      with a hardcoded fill would be invisible in one of them. */
   .launch-select, .launch-model {
-    font: inherit; font-size: 12px; font-weight: 300; letter-spacing: 0.01em;
+    font: inherit; font-size: 12px; font-weight: 400; letter-spacing: 0.01em;
     padding: 6px 9px; border-radius: 2px;
     border: 1px solid var(--line); background: var(--fill); color: var(--ink);
     appearance: none; -webkit-appearance: none;
@@ -824,7 +688,7 @@
   .launch-select:focus-visible, .launch-model:focus-visible {
     outline: 2px solid var(--cerulean); outline-offset: 1px; border-color: var(--cerulean);
   }
-  .launch-model::placeholder { color: var(--faint); }
+  .launch-model::placeholder { color: var(--subtle); }
   .launch-select {
     padding-right: 26px;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='currentColor' stroke-width='1.2'/></svg>");
@@ -841,17 +705,17 @@
   .launch-warn { font-size: 11.5px; color: var(--alert); }
   .newagent-btn[data-danger="true"] { border-color: var(--alert); color: var(--alert); }
   .newagent-btn[data-danger="true"]:hover { background: var(--alert); color: var(--paper); }
-  .posture { margin-left: 8px; font-size: 11px; color: var(--faint); }
+  .posture { margin-left: 8px; font-size: 11px; color: var(--subtle); }
   .posture[data-danger="true"] { color: var(--alert); }
   .newagent-btn {
     padding: 6px 13px; border: 1px solid var(--cerulean);
-    color: var(--cerulean); font-size: 12.5px; border-radius: 100px;
+    color: var(--cerulean); font-size: 12.5px; border-radius: 4px;
   }
   .newagent-btn:hover { background: var(--cerulean); color: var(--paper); }
-  .newagent-none { font-size: 12px; color: var(--faint); }
+  .newagent-none { font-size: 12px; color: var(--subtle); }
   .signin-dot {
     display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-    background: var(--warn, #a8743a); margin-left: 7px; vertical-align: middle;
+    background: var(--who-4); margin-left: 7px; vertical-align: middle;
   }
 
   .console { border-bottom: 1px solid var(--line); padding: 12px 16px 14px; background: var(--raise-soft); }
@@ -859,31 +723,31 @@
   .console-head .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
   .console-head .nm { font-size: 13px; letter-spacing: 0.02em; }
   .console { border-left: 2px solid var(--who); }
-  .console-head .where { font-size: 11px; color: var(--faint); }
+  .console-head .where { font-size: 11px; color: var(--subtle); }
   .console-stop {
     margin-left: auto; font-size: 11.5px; color: var(--muted);
-    border: 1px solid var(--line); border-radius: 100px; padding: 3px 10px;
+    border: 1px solid var(--line); border-radius: 4px; padding: 3px 10px;
   }
   .console-stop:hover { color: var(--alert); border-color: var(--alert); }
   .console-err { font-size: 12px; color: var(--alert); margin-bottom: 8px; }
   .console-out {
     max-height: 300px; overflow-y: auto;
     font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
-    background: var(--raise); border: 1px solid var(--line); padding: 8px 10px;
+    background: var(--raise); border: 0; padding: 8px 10px;
   }
   .cline { white-space: pre-wrap; overflow-wrap: anywhere; }
   .cline b { font-weight: 500; color: var(--ink); }
   /* Inline code keeps the mono face even where the surrounding line is prose,
      which is the only reason it is worth marking up at all. */
   .cline code {
-    font-family: var(--font-mono); font-size: 0.88em;
-    background: var(--raise-soft); border: 1px solid var(--line);
+    font-family: var(--font-mono); font-size: 0.88em; color: var(--ink);
+    background: var(--fill); border: 0;
     border-radius: 2px; padding: 0 4px;
   }
   .cline[data-kind="you"]   { color: var(--cerulean); }
-  .cline[data-kind="tool"]  { color: #9a5b3d; }
+  .cline[data-kind="tool"]  { color: var(--muted); }
   .cline[data-kind="err"]   { color: var(--alert); }
-  .cline[data-kind="meta"]  { color: var(--faint); }
+  .cline[data-kind="meta"]  { color: var(--subtle); }
   .console-form { margin-top: 8px; }
   .console-input {
     display: block; width: 100%; padding: 7px 10px;
@@ -895,7 +759,7 @@
        once a prompt passes the height ceiling. */
     resize: none; overflow: auto; min-height: 34px;
   }
-  .console-input::placeholder { color: var(--faint); }
+  .console-input::placeholder { color: var(--subtle); }
   .console-input:focus { outline: 2px solid var(--cerulean); outline-offset: -1px; border-color: transparent; }
 
   /* ---- collisions ------------------------------------------------------ */
@@ -907,18 +771,18 @@
     font-size: 12.5px;
   }
   .collide-bar .file { color: var(--alert); }
-  .collide-bar .who-list { color: var(--muted); display: flex; gap: 14px; }
+  .collide-bar .who-list { color: var(--subtle); display: flex; gap: 14px; }
   .collide-bar b { font-weight: 400; color: var(--who); }
 
   /* ---- file detail ----------------------------------------------------- */
   .detail-who { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 18px 14px; }
   .dwho {
     display: inline-flex; align-items: center; gap: 7px;
-    padding: 5px 11px; border: 1px solid var(--line); border-radius: 100px;
+    padding: 5px 11px; border: 0; border-radius: 4px;
     font-size: 12.5px; background: var(--raise-soft);
   }
   .dwho .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); }
-  .dwho .when { color: var(--faint); font-size: 11.5px; margin-left: 2px; }
+  .dwho .when { color: var(--subtle); font-size: 11.5px; margin-left: 2px; }
   .detail-events { padding: 0 18px 24px; }
   .detail-events.after-code { padding-top: 16px; }
   .devent {
@@ -927,7 +791,7 @@
     padding: 5px 0; border-bottom: 1px solid var(--line);
     font-size: 12.5px;
   }
-  .devent .dt { color: var(--faint); font-size: 11px; }
+  .devent .dt { color: var(--subtle); font-size: 11px; }
   .devent .da { color: var(--who); }
   .devent .dv { color: var(--ink); }
   .devent .dd { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -938,7 +802,7 @@
   .viewer.err { color: var(--alert); }
   .viewer .code {
     margin: 0; padding: 12px 14px;
-    background: var(--raise); border: 1px solid var(--line);
+    background: var(--raise); border: 0;
     font-family: var(--font-mono); font-size: 12px; line-height: 1.65;
     color: var(--ink);
     /* Scrolls sideways only. The pane it sits in already scrolls vertically,
@@ -948,33 +812,45 @@
     white-space: pre;
     tab-size: 2;
   }
-  .viewer-note { font-size: 11px; color: var(--faint); padding-top: 6px; }
+  .viewer-note { font-size: 11px; color: var(--subtle); padding-top: 6px; }
   /* Syntax colours drawn from the same six tokens, so code does not become a
      second palette living inside the first. */
-  .tok-com  { color: var(--faint); font-style: italic; }
-  .tok-str  { color: #4f7a4a; }
-  .tok-num  { color: #9a5b3d; }
+  .tok-com  { color: var(--subtle); font-style: italic; }
+  .tok-str  { color: var(--syntax-string); }
+  .tok-num  { color: var(--syntax-number); }
   .tok-kw   { color: var(--cerulean); }
-  .tok-fn   { color: #7a5a92; }
-  .tok-attr { color: #9a5b3d; }
+  .tok-fn   { color: var(--syntax-function); }
+  .tok-attr { color: var(--syntax-number); }
   .tok-tag  { color: var(--cerulean); }
   .tok-punc { color: var(--muted); }
 
   /* ---- empty / onboarding --------------------------------------------- */
   .blank { padding: 56px 28px; max-width: 58ch; }
-  .blank h2 { font-weight: 200; font-size: 26px; letter-spacing: 0.01em; margin: 0 0 12px; }
+  .blank h2 { font-weight: 400; font-size: 26px; letter-spacing: 0.01em; margin: 0 0 12px; }
   .blank p { color: var(--muted); margin: 0 0 12px; line-height: 1.65; }
   .blank code {
     font-family: var(--font-mono); font-size: 12px;
-    background: var(--raise); border: 1px solid var(--line); padding: 2px 6px;
+    background: var(--raise); border: 0; padding: 2px 6px;
   }
 
   @media (max-width: 1100px) {
-    .shell { grid-template-columns: 180px 1fr; }
+    .shell, body[data-view="agent"] .shell { grid-template-columns: 180px 1fr; }
     .streams { display: none; }
   }
+  @media (max-width: 1000px) {
+    body[data-view="agent"] .middle,
+    body[data-view="agent"][data-picked="true"] .middle {
+      grid-template-columns: minmax(150px, 0.38fr) minmax(0, 1fr);
+    }
+    body[data-view="agent"][data-picked="true"] .middle {
+      grid-template-rows: minmax(0, 1.15fr) minmax(0, 1fr);
+    }
+    body[data-view="agent"][data-picked="true"] .treecol { grid-row: 1 / 3; }
+    body[data-view="agent"][data-picked="true"] .chatcol { grid-column: 2; grid-row: 1; border-right: 0; }
+    body[data-view="agent"][data-picked="true"] .detail { grid-column: 2; grid-row: 2; border-top: 1px solid var(--line); }
+  }
   @media (max-width: 700px) {
-    .shell { grid-template-columns: 1fr; }
+    .shell, body[data-view="agent"] .shell { grid-template-columns: 1fr; }
     .rail { display: none; }
   }
 </style>
@@ -1003,18 +879,8 @@
          therefore never read. -->
     <div class="updaterow" id="updateRow" hidden></div>
     <div class="railfoot">
-      <button type="button" class="themer" id="themer" aria-pressed="false" title="Light or dark">
-        <span class="sky">
-          <span class="sky-clouds"></span>
-          <span class="sky-stars"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 55" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M135.831 3.00688C135.055 3.85027 134.111 4.29946 133 4.35447C134.111 4.40947 135.055 4.85867 135.831 5.71123C136.607 6.55462 136.996 7.56303 136.996 8.72727C136.996 7.95722 137.172 7.25134 137.525 6.59129C137.886 5.93124 138.372 5.39954 138.98 5.00535C139.598 4.60199 140.268 4.39114 141 4.35447C139.88 4.2903 138.936 3.85027 138.16 3.00688C137.384 2.16348 136.996 1.16425 136.996 0C136.996 1.16425 136.607 2.16348 135.831 3.00688ZM31 23.3545C32.1114 23.2995 33.0551 22.8503 33.8313 22.0069C34.6075 21.1635 34.9956 20.1642 34.9956 19C34.9956 20.1642 35.3837 21.1635 36.1599 22.0069C36.9361 22.8503 37.8798 23.2903 39 23.3545C38.2679 23.3911 37.5976 23.602 36.9802 24.0053C36.3716 24.3995 35.8864 24.9312 35.5248 25.5913C35.172 26.2513 34.9956 26.9572 34.9956 27.7273C34.9956 26.563 34.6075 25.5546 33.8313 24.7112C33.0551 23.8587 32.1114 23.4095 31 23.3545ZM0 36.3545C1.11136 36.2995 2.05513 35.8503 2.83131 35.0069C3.6075 34.1635 3.99559 33.1642 3.99559 32C3.99559 33.1642 4.38368 34.1635 5.15987 35.0069C5.93605 35.8503 6.87982 36.2903 8 36.3545C7.26792 36.3911 6.59757 36.602 5.98015 37.0053C5.37155 37.3995 4.88644 37.9312 4.52481 38.5913C4.172 39.2513 3.99559 39.9572 3.99559 40.7273C3.99559 39.563 3.6075 38.5546 2.83131 37.7112C2.05513 36.8587 1.11136 36.4095 0 36.3545ZM56.8313 24.0069C56.0551 24.8503 55.1114 25.2995 54 25.3545C55.1114 25.4095 56.0551 25.8587 56.8313 26.7112C57.6075 27.5546 57.9956 28.563 57.9956 29.7273C57.9956 28.9572 58.172 28.2513 58.5248 27.5913C58.8864 26.9312 59.3716 26.3995 59.9802 26.0053C60.5976 25.602 61.2679 25.3911 62 25.3545C60.8798 25.2903 59.9361 24.8503 59.1599 24.0069C58.3837 23.1635 57.9956 22.1642 57.9956 21C57.9956 22.1642 57.6075 23.1635 56.8313 24.0069ZM81 25.3545C82.1114 25.2995 83.0551 24.8503 83.8313 24.0069C84.6075 23.1635 84.9956 22.1642 84.9956 21C84.9956 22.1642 85.3837 23.1635 86.1599 24.0069C86.9361 24.8503 87.8798 25.2903 89 25.3545C88.2679 25.3911 87.5976 25.602 86.9802 26.0053C86.3716 26.3995 85.8864 26.9312 85.5248 27.5913C85.172 28.2513 84.9956 28.9572 84.9956 29.7273C84.9956 28.563 84.6075 27.5546 83.8313 26.7112C83.0551 25.8587 82.1114 25.4095 81 25.3545ZM136 36.3545C137.111 36.2995 138.055 35.8503 138.831 35.0069C139.607 34.1635 139.996 33.1642 139.996 32C139.996 33.1642 140.384 34.1635 141.16 35.0069C141.936 35.8503 142.88 36.2903 144 36.3545C143.268 36.3911 142.598 36.602 141.98 37.0053C141.372 37.3995 140.886 37.9312 140.525 38.5913C140.172 39.2513 139.996 39.9572 139.996 40.7273C139.996 39.563 139.607 38.5546 138.831 37.7112C138.055 36.8587 137.111 36.4095 136 36.3545ZM101.831 49.0069C101.055 49.8503 100.111 50.2995 99 50.3545C100.111 50.4095 101.055 50.8587 101.831 51.7112C102.607 52.5546 102.996 53.563 102.996 54.7273C102.996 53.9572 103.172 53.2513 103.525 52.5913C103.886 51.9312 104.372 51.3995 104.98 51.0053C105.598 50.602 106.268 50.3911 107 50.3545C105.88 50.2903 104.936 49.8503 104.16 49.0069C103.384 48.1635 102.996 47.1642 102.996 46C102.996 47.1642 102.607 48.1635 101.831 49.0069Z" fill="currentColor"/></svg></span>
-          <span class="sky-circle">
-            <span class="sky-sunmoon">
-              <span class="sky-moon">
-                <span class="sky-spot"></span><span class="sky-spot"></span><span class="sky-spot"></span>
-              </span>
-            </span>
-          </span>
-        </span>
+      <button type="button" class="themer" id="themer" aria-label="Dark theme" aria-pressed="false" title="Light or dark">
+        <span class="sky" aria-hidden="true"><span class="sky-circle"></span></span>
         <span class="lbl" id="themeLabel">Light</span>
       </button>
       <button type="button" class="settings-link" id="settingsLink">Settings</button>
@@ -1092,6 +958,7 @@
    * rather than quietly showing a partial tree as if it were the whole repo.
    */
   var LOCAL = typeof window.zevetLocal === "object" && window.zevetLocal && window.zevetLocal.available;
+  if (LOCAL && /Mac/.test(navigator.platform || "")) document.body.setAttribute("data-native-mac", "true");
   var localWorkspaces = [];
   var localRoot = null;
   var localEntries = null;   // flat [{path, kind, depth}] from the app
@@ -1501,7 +1368,7 @@
     });
     if (!roster.length) {
       var p = el("div");
-      p.style.cssText = "padding:14px 16px;color:var(--faint);font-size:12.5px";
+      p.style.cssText = "padding:14px 16px;color:var(--subtle);font-size:12.5px";
       tx(p, "nobody yet");
       host.appendChild(p);
     }
@@ -1727,7 +1594,7 @@
     });
     if (!list.length) {
       var p = el("div");
-      p.style.cssText = "color:var(--faint);font-size:12.5px";
+      p.style.cssText = "color:var(--subtle);font-size:12.5px";
       tx(p, "none yet");
       host.appendChild(p);
     }
@@ -1926,11 +1793,13 @@
   /* ---- the settings sheet ---------------------------------------------- */
 
   var sheetOpen = false;
+  var sheetReturnFocus = null;
   var indexState = null;      // the last answer from indexStatus()
   var indexProgressText = "";
   var indexBarPct = 0;
 
   function openSettings() {
+    if (!sheetOpen) sheetReturnFocus = document.activeElement;
     sheetOpen = true;
     refreshIndexStatus();
     refreshWhoami();
@@ -1939,6 +1808,30 @@
   function closeSettings() {
     sheetOpen = false;
     renderSheet();
+    var target = sheetReturnFocus && sheetReturnFocus.isConnected ? sheetReturnFocus : $("settingsLink");
+    if (target) target.focus();
+    sheetReturnFocus = null;
+  }
+
+  function sheetKeydown(ev) {
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeSettings();
+      return;
+    }
+    if (ev.key !== "Tab") return;
+    var sheet = ev.currentTarget;
+    var controls = Array.from(sheet.querySelectorAll("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex='0']"))
+      .filter(function (node) { return node.getClientRects().length; });
+    var first = controls[0];
+    var last = controls[controls.length - 1];
+    if (!first) { ev.preventDefault(); sheet.focus(); return; }
+    if (ev.shiftKey && (document.activeElement === first || document.activeElement === sheet)) {
+      ev.preventDefault(); last.focus();
+    } else if (!ev.shiftKey && (document.activeElement === last || document.activeElement === sheet)) {
+      ev.preventDefault(); first.focus();
+    }
   }
 
   function refreshIndexStatus() {
@@ -1967,8 +1860,15 @@
   function renderSheet() {
     var existing = $("sheet");
     var back = $("sheetBack");
+    var active = document.activeElement;
+    var focusId = existing && existing.contains(active) ? active.id : null;
+    var invitation = $("settingsInvite");
+    var draft = invitation ? { value: invitation.value, start: invitation.selectionStart, end: invitation.selectionEnd } : null;
+    var scrollTop = existing ? existing.scrollTop : 0;
     if (existing) existing.remove();
     if (back) back.remove();
+    var shell = document.querySelector(".shell");
+    if (shell) shell.inert = sheetOpen;
     if (!sheetOpen) return;
 
     var b = el("div", "sheet-back");
@@ -1980,11 +1880,15 @@
     sheet.id = "sheet";
     sheet.setAttribute("role", "dialog");
     sheet.setAttribute("aria-label", "Settings");
+    sheet.setAttribute("aria-modal", "true");
+    sheet.tabIndex = -1;
+    sheet.addEventListener("keydown", sheetKeydown);
 
     var head = el("div", "sheet-head");
     head.appendChild(tx(el("h2"), "Settings"));
     var close = el("button", "sheet-close");
     close.type = "button";
+    close.id = "settingsClose";
     tx(close, "Close");
     close.addEventListener("click", closeSettings);
     head.appendChild(close);
@@ -1994,6 +1898,7 @@
     var look = section("Appearance");
     var themeBtn = el("button", "sbtn");
     themeBtn.type = "button";
+    themeBtn.id = "settingsTheme";
     tx(themeBtn, theme === "dark" ? "Switch to light" : "Switch to dark");
     themeBtn.addEventListener("click", function () {
       setTheme(theme === "dark" ? "light" : "dark");
@@ -2013,12 +1918,13 @@
      */
     var view = section("View");
     var modes = [
-      ["ide", "IDE", "The file tree, the editor and everyone's cursors. What zevet has been."],
-      ["agent", "Agent", "The conversation front and centre; the editor tucked away. For driving agents rather than typing."],
+      ["ide", "IDE", "Files, editor and shared cursors."],
+      ["agent", "Agent", "Agent conversations with a compact editor."],
     ];
     modes.forEach(function (m) {
       var btn = el("button", "sbtn");
       btn.type = "button";
+      btn.id = "settingsView-" + m[0];
       btn.style.marginRight = "8px";
       btn.disabled = viewMode === m[0];
       tx(btn, m[1] + (viewMode === m[0] ? " · on" : ""));
@@ -2050,15 +1956,15 @@
      * read every repo on the disk the moment it started would be a worse
      * default than one that asks.
      */
-    var repos = section("Folders it can open");
+    var repos = section("Folders");
     if (!LOCAL) {
       var noLocal = el("p", "snote");
-      tx(noLocal, "This is a browser tab, so there is no filesystem to open. Use the desktop app.");
+      tx(noLocal, "Use the desktop app to open local folders.");
       repos.appendChild(noLocal);
     } else {
       if (!localWorkspaces.length) {
         var none = el("p", "snote");
-        tx(none, "None yet. Nothing on this machine is readable by zevet until you add a folder here.");
+        tx(none, "Add a folder to give zevet access.");
         repos.appendChild(none);
       }
       localWorkspaces.forEach(function (w) {
@@ -2083,14 +1989,7 @@
       repos.appendChild(add);
 
       var note = el("p", "snote");
-      note.appendChild(tx(el("b"), "On GitHub: "));
-      note.appendChild(document.createTextNode(
-        "this list is still about FOLDERS, not repositories. Signing in with GitHub proves who you are to " +
-        "the hub — see Account above — and asks for nothing but your username. It grants no access to any " +
-        "repository, and zevet reads only folders on this machine that appear in this list. Browsing or " +
-        "cloning repos you have not already got locally would need a wider permission than sign-in asks " +
-        "for, and that is a separate feature and is not built.",
-      ));
+      tx(note, "GitHub sign-in identifies your account. Folder access is limited to the list above.");
       repos.appendChild(note);
     }
     sheet.appendChild(repos);
@@ -2111,6 +2010,15 @@
     sheet.appendChild(versionSection());
 
     document.body.appendChild(sheet);
+    var nextInvitation = $("settingsInvite");
+    if (draft && nextInvitation) {
+      nextInvitation.value = draft.value;
+      nextInvitation.setSelectionRange(draft.start, draft.end);
+    }
+    var nextFocus = focusId && $(focusId);
+    if (!nextFocus || !sheet.contains(nextFocus) || nextFocus.disabled) nextFocus = close;
+    nextFocus.focus({ preventScroll: true });
+    sheet.scrollTop = scrollTop;
   }
 
   /**
@@ -2122,59 +2030,37 @@
    */
   function versionSection() {
     var box = section("Version");
+    box.id = "versionSection";
     if (!LOCAL || typeof window.zevetLocal.updateStatus !== "function") {
       var na = el("p", "snote");
-      tx(na, "This build has no updater. Downloads are at usemasora.com/zevet.");
+      tx(na, "Get the latest version at usemasora.com/zevet.");
       box.appendChild(na);
       return box;
     }
     var s = updateState || {};
     box.appendChild(srow("Installed", s.current || "unknown"));
+    var status = srow("Status", updateStatusText(s));
+    status.setAttribute("aria-live", "polite");
+    box.appendChild(status);
+    if (s.phase === "downloading") box.appendChild(updateProgress(s, "sbar"));
 
-    var state = "up to date";
-    if (s.phase === "checking") state = "checking…";
-    else if (s.phase === "downloading") state = "downloading " + s.version + " — " + (s.percent || 0) + "%";
-    else if (s.phase === "ready") state = s.version + " is ready to install";
-    else if (s.phase === "error") state = s.error || "the last check failed";
-    box.appendChild(srow("Status", state));
-
-    var btn = el("button", "sbtn");
-    btn.type = "button";
-    tx(btn, "Check now");
-    btn.disabled = s.phase === "checking" || s.phase === "downloading";
-    btn.addEventListener("click", function () {
-      btn.disabled = true;
-      tx(btn, "Checking…");
-      window.zevetLocal.updateCheck().then(function (r) {
-        updateState = r;
-        renderUpdate();
-        if (sheetOpen) renderSheet();
-      }, function () {
-        tx(btn, "Check failed");
-      });
-    });
-    box.appendChild(srow("Updates", btn));
-
-    // ⚠️ SAID OUT LOUD, because the alternative is somebody assuming the
-    // opposite. macOS cannot be updated in place here: the app is unsigned, so
-    // the new build is downloaded and opened and the person drags it across.
-    if (s.manual) {
-      var note = el("p", "snote");
-      tx(note, "On macOS zevet cannot replace itself — it is not code-signed. New versions are downloaded and opened for you to drag into Applications.");
-      box.appendChild(note);
-    }
+    var actions = el("div", "update-actions");
+    if (canInstallUpdate(s)) actions.appendChild(updateInstallButton("sbtn"));
+    if (typeof window.zevetLocal.updateCheck === "function") actions.appendChild(updateCheckButton("sbtn"));
+    box.appendChild(srow("Updates", actions));
+    appendUpdateFeedback(box, "snote");
     return box;
   }
 
   function credentialLabel() {
     var c = window.__zevetCfg;
     if (!c) return "unknown";
-    if (c.legacy) return "legacy token — re-run setup to enable shared editing";
+    if (c.legacy) return "legacy token · run setup for shared editing";
     // A GitHub session and the master secret normally sit side by side: the
     // session is what the hub checks, the secret is what the editor derives its
     // document key from. Naming only one of them makes the other look missing.
-    if (c.session) return "GitHub sign-in" + (c.hasSecret ? " + team key" : " (no team key — the editor will not open)");
-    return c.hasSecret ? "master secret" : "none configured";
+    if (c.session) return "GitHub sign-in" + (c.hasSecret ? " + team key" : " · team key missing");
+    return c.hasSecret ? "team key" : "none configured";
   }
 
   /* ======================================================================
@@ -2205,7 +2091,7 @@
     var box = section("Account");
     if (!whoState) {
       var loading = el("p", "snote");
-      tx(loading, "Asking the hub…");
+      tx(loading, "Loading account…");
       box.appendChild(loading);
       return box;
     }
@@ -2217,8 +2103,8 @@
       // is just anonymous, and saying so beats showing a blank name.
       var sh = el("p", "snote");
       tx(sh, whoState.githubSignIn
-        ? "This machine is using the shared team secret rather than a GitHub account. That still works. Re-running setup and signing in gives it a name and lets the hub revoke it on its own."
-        : "This machine is using the shared team secret. This hub has no GitHub sign-in configured.");
+        ? "Connected with a team key. Run setup to sign in with GitHub."
+        : "Connected with a team key. GitHub sign-in is unavailable on this hub.");
       box.appendChild(sh);
     }
 
@@ -2251,7 +2137,9 @@
       form.style.marginTop = "10px";
       var input = el("input", "mono");
       input.type = "text";
-      input.placeholder = "github username";
+      input.id = "settingsInvite";
+      input.setAttribute("aria-label", "GitHub username");
+      input.placeholder = "GitHub username";
       input.autocomplete = "off";
       input.spellcheck = false;
       var add = el("button", "sbtn");
@@ -2268,7 +2156,7 @@
       box.appendChild(form);
 
       var howto = el("p", "snote");
-      tx(howto, "They install zevet, enter this hub's address and click Sign in with GitHub. Nothing to paste, and nothing to send them but the address.");
+      tx(howto, "Send them this hub’s address. They can sign in with GitHub after installing zevet.");
       box.appendChild(howto);
     }
 
@@ -2327,17 +2215,10 @@
      * to somebody who already has a working index is the app failing to read
      * its own status bar. */
     if (machine && machine.cindex === true) {
-      box.appendChild(srow("Status", "already running outside zevet"));
+      box.appendChild(srow("Status", "external index running"));
       var ext = el("p", "snote");
-      tx(ext, "Something is serving a code index on port " +
-        (machine.cindexPort || 8080) + " on this machine, which is what the " +
-        "strip means by “cindex on”. zevet will not download a second " +
-        "model or build a second store over the top of it.");
+      tx(ext, "External index on port " + (machine.cindexPort || 8080) + ". Stop it to use zevet’s built-in index.");
       box.appendChild(ext);
-      var stop = el("p", "snote");
-      tx(stop, "Stop that process, or set ZEVET_CINDEX_PORT to a port it is not " +
-        "using, and zevet’s own index reappears here.");
-      box.appendChild(stop);
       return box;
     }
 
@@ -2368,7 +2249,7 @@
       tx(why, indexState.reasons.join("  ·  "));
       box.appendChild(why);
       var stillFine = el("p", "snote");
-      tx(stillFine, "Everything else in zevet works exactly as it does anywhere else. The index is the only thing this affects.");
+      tx(stillFine, "Other features remain available.");
       box.appendChild(stillFine);
       return box;
     }
@@ -2402,7 +2283,7 @@
 
     if (!localRoot) {
       var pick = el("p", "snote");
-      tx(pick, "Open a folder first — the index is built per folder.");
+      tx(pick, "Open a folder to build its index.");
       box.appendChild(pick);
     }
 
@@ -2420,7 +2301,7 @@
     }
 
     var cost = el("p", "snote");
-    tx(cost, "Building reads every file in the folder once and keeps a vector store under your home directory. Nothing leaves the machine — the model runs here.");
+    tx(cost, "The index is built and stored on this machine.");
     box.appendChild(cost);
     return box;
   }
@@ -3106,7 +2987,7 @@
       if (p.root !== e.root || p.relPath !== e.relPath) return;
       onDiskChanged(e, p);
     }));
-    window.zevetLocal.watch(e.root, e.relPath).then(function (r) {
+    window.zevetLocal.watch(e.root, e.relPath, e.lastWritten).then(function (r) {
       if (ed === e && r && r.ok) e.watching = true;
     }, function () { /* no watcher: an agent's edits simply will not appear live */ });
   }
@@ -3316,7 +3197,7 @@
       tx($("detailTitle"), "Nothing selected");
       var hint = el("div", "blank");
       hint.appendChild(tx(el("h2"), "Pick a file."));
-      hint.appendChild(tx(el("p"), "The tree shows the part of the repo the team is actually working in, built from what everyone's agents have touched. Select a file to see who has been in it."));
+      hint.appendChild(tx(el("p"), "Select a file to see recent activity."));
       host.appendChild(hint);
       return;
     }
@@ -3425,7 +3306,7 @@
     var usable = localAgents.filter(function (a) { return a.ok; });
     if (!usable.length) {
       var none = el("div", "newagent-none");
-      tx(none, localAgents.length ? "no agent CLI found on this machine" : "looking for agents…");
+      tx(none, localAgents.length ? "No agents found" : "looking for agents…");
       bar.appendChild(none);
       host.appendChild(bar);
       return;
@@ -3481,7 +3362,7 @@
 
     if (launchMode === "dangerous") {
       var warn = el("div", "launch-warn");
-      tx(warn, "This agent will not ask before running commands or editing files.");
+      tx(warn, "Runs commands and edits files without asking.");
       bar.appendChild(warn);
     }
     host.appendChild(bar);
@@ -3712,55 +3593,172 @@
    * the file came from, or whether it is safe. Everything in `updateState`
    * arrives over IPC from desktop/app-update.js.
    *
-   * Silent in every phase except two. "Checking" and "you are current" are the
-   * normal state of this feature and are not news.
+   * The rail shows downloads, ready installers and failures. Settings shows
+   * every phase and uses the same actions.
    */
   var updateState = null;
+  var updateRevision = 0;
+  var updateChecking = false;
+  var updateInstalling = false;
+  var updateInstallError = "";
+  var updateNotice = "";
+
+  function canInstallUpdate(s) {
+    return s.phase === "ready" && s.canInstall === true &&
+      typeof window.zevetLocal.updateInstall === "function";
+  }
+
+  function updateStatusText(s) {
+    if (updateInstalling) return s.manual ? "Opening installer…" : "Restarting…";
+    if (s.phase === "downloading") return "Downloading " + s.version + " · " + updatePercent(s) + "%";
+    if (s.phase === "ready") return s.version + " ready to install";
+    if (s.phase === "error") return s.error || "Update failed. Try again.";
+    if (updateChecking || s.phase === "checking") return "Checking…";
+    if (s.phase === "current") return "Up to date";
+    return "Not checked yet";
+  }
+
+  function updatePercent(s) {
+    return Math.max(0, Math.min(100, Math.floor(Number(s.percent) || 0)));
+  }
+
+  function updateProgress(s, className) {
+    var bar = el("div", className);
+    bar.setAttribute("role", "progressbar");
+    bar.setAttribute("aria-label", "Update download");
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+    bar.setAttribute("aria-valuenow", String(updatePercent(s)));
+    var fill = el(className === "bar" ? "i" : "span");
+    fill.style.width = updatePercent(s) + "%";
+    bar.appendChild(fill);
+    return bar;
+  }
+
+  function receiveUpdate(s) {
+    if (!s || typeof s !== "object") return;
+    if (!updateState || s.version !== updateState.version || s.phase === "checking") {
+      updateInstallError = "";
+      updateNotice = "";
+    }
+    updateState = s;
+    updateRevision++;
+    refreshUpdateViews();
+  }
+
+  function refreshUpdateViews() {
+    renderUpdate();
+    // Progress must not rebuild Account's form or discard a typed invitation.
+    var version = $("versionSection");
+    if (sheetOpen && version && version.parentNode) {
+      version.parentNode.replaceChild(versionSection(), version);
+    }
+  }
+
+  function updateCheckButton(className) {
+    var btn = el("button", className);
+    btn.type = "button";
+    var s = updateState || {};
+    btn.disabled = updateChecking || updateInstalling || s.phase === "checking" || s.phase === "downloading";
+    tx(btn, updateChecking || s.phase === "checking" ? "Checking…" : "Check now");
+    btn.addEventListener("click", checkForUpdates);
+    return btn;
+  }
+
+  function checkForUpdates() {
+    var s = updateState || {};
+    if (updateChecking || updateInstalling || s.phase === "checking" || s.phase === "downloading") return;
+    updateChecking = true;
+    updateInstallError = "";
+    updateNotice = "";
+    refreshUpdateViews();
+    return Promise.resolve().then(function () {
+      return window.zevetLocal.updateCheck();
+    }).then(function (r) {
+      if (!r || typeof r.phase !== "string") throw new Error("No update status received. Try again.");
+      receiveUpdate(r);
+    }).catch(function (err) {
+      receiveUpdate(Object.assign({}, updateState, {
+        phase: "error", canInstall: false, error: (err && err.message) || "Update check failed. Try again.",
+      }));
+    }).finally(function () {
+      updateChecking = false;
+      refreshUpdateViews();
+    });
+  }
+
+  function updateInstallButton(className) {
+    var btn = el("button", className);
+    btn.type = "button";
+    btn.disabled = updateInstalling || updateChecking;
+    var manual = updateState && updateState.manual;
+    tx(btn, updateInstalling ? (manual ? "Opening…" : "Restarting…") : (manual ? "Open installer" : "Restart to install"));
+    btn.addEventListener("click", installUpdate);
+    return btn;
+  }
+
+  function installUpdate() {
+    if (updateInstalling || updateChecking || !canInstallUpdate(updateState || {})) return;
+    updateInstalling = true;
+    updateInstallError = "";
+    updateNotice = "";
+    refreshUpdateViews();
+    return Promise.resolve().then(function () {
+      return window.zevetLocal.updateInstall();
+    }).then(function (r) {
+      if (!r || !r.ok) throw new Error((r && r.error) || "Installer could not open. Try again.");
+      if (r.manual) {
+        updateInstalling = false;
+        updateNotice = "Installer opened. Quit zevet, replace it in Applications, then reopen.";
+      }
+    }).catch(function (err) {
+      updateInstalling = false;
+      updateInstallError = (err && err.message) || "Installer could not open. Try again.";
+    }).finally(refreshUpdateViews);
+  }
+
+  function appendUpdateFeedback(host, className) {
+    var s = updateState || {};
+    var message = updateInstallError || updateNotice;
+    if (!message || message === s.error) return;
+    var note = tx(el("p", className), message);
+    note.setAttribute("role", updateInstallError ? "alert" : "status");
+    if (updateInstallError) note.style.color = "var(--alert)";
+    host.appendChild(note);
+  }
+
   function renderUpdate() {
     var host = $("updateRow");
     if (!host) return;
-    var s = updateState;
-    var show = s && (s.phase === "downloading" || s.phase === "ready");
+    var s = updateState || {};
+    var show = s.phase === "downloading" || s.phase === "ready" || s.phase === "error";
     host.hidden = !show;
-    if (!show) { host.textContent = ""; return; }
     host.textContent = "";
-
+    if (!show) return;
+    host.appendChild(tx(el("div", "hd"), updateStatusText(s)));
     if (s.phase === "downloading") {
-      host.appendChild(tx(el("div", "hd"), "Getting " + s.version + "…"));
-      var bar = el("div", "bar");
-      var fill = el("i");
-      fill.style.width = Math.max(2, Math.min(100, s.percent || 0)) + "%";
-      bar.appendChild(fill);
-      host.appendChild(bar);
-      return;
+      host.appendChild(updateProgress(s, "bar"));
+    } else if (canInstallUpdate(s)) {
+      if (s.notes) host.appendChild(tx(el("div", "sub"), s.notes));
+      host.appendChild(updateInstallButton("go"));
+    } else if (s.phase === "error" && typeof window.zevetLocal.updateCheck === "function") {
+      host.appendChild(updateCheckButton("go"));
     }
+    appendUpdateFeedback(host, "sub");
+  }
 
-    host.appendChild(tx(el("div", "hd"), "Version " + s.version + " is ready."));
-    if (s.notes) host.appendChild(tx(el("div", "sub"), s.notes));
-    var btn = el("button", "go");
-    // ⚠️ TWO DIFFERENT PROMISES, AND THE BUTTON MUST NOT MAKE THE WRONG ONE.
-    // On Windows this restarts into the new version. On macOS the app is
-    // unsigned, so nothing is replaced: the disk image is opened and the
-    // person drags it across, exactly as they did the first time. A button
-    // that said "Restart" on a Mac would be a lie about what happens next.
-    tx(btn, s.manual ? "Open the installer" : "Restart to install");
-    btn.addEventListener("click", function () {
-      btn.disabled = true;
-      tx(btn, s.manual ? "Opening…" : "Restarting…");
-      window.zevetLocal.updateInstall().then(function (r) {
-        if (r && r.ok === false) {
-          btn.disabled = false;
-          tx(btn, "Try again");
-          var e = el("div", "sub");
-          e.style.color = "var(--alert)";
-          tx(e, r.error || "the installer did not start");
-          host.appendChild(e);
-        } else if (r && r.manual) {
-          tx(btn, "Opened — drag zevet to Applications");
-        }
-      });
+  function startUpdates() {
+    if (!LOCAL) return;
+    var bridge = window.zevetLocal;
+    if (typeof bridge.onUpdate === "function") bridge.onUpdate(receiveUpdate);
+    if (typeof bridge.updateStatus !== "function") return;
+    var revision = updateRevision;
+    Promise.resolve().then(function () { return bridge.updateStatus(); }).then(function (s) {
+      // A delayed initial snapshot must not replace a newer pushed status.
+      if (revision === updateRevision) receiveUpdate(s);
+    }, function (err) {
+      if (revision === updateRevision) receiveUpdate({ phase: "error", error: (err && err.message) || "Update status unavailable." });
     });
-    host.appendChild(btn);
   }
 
   function renderStreams(now) {
@@ -3789,8 +3787,8 @@
       var box = el("div", "chat-empty");
       box.appendChild(tx(el("h2"), "Nothing running yet."));
       box.appendChild(tx(el("p"), LOCAL
-        ? "Start an agent above and tell it what you want. It runs on this machine, with your account, in the workspace selected on the left."
-        : "This view drives an agent on your own machine, so it needs the desktop app rather than a browser tab."));
+        ? "Start an agent in the selected workspace."
+        : "Use the desktop app to start an agent."));
       chat.appendChild(box);
     }
 
@@ -3863,7 +3861,7 @@
 
     if (!host.childNodes.length) {
       var p = el("div");
-      p.style.cssText = "padding:16px;color:var(--faint);font-size:12.5px";
+      p.style.cssText = "padding:16px;color:var(--subtle);font-size:12.5px";
       tx(p, roster.length ? "nothing in this workspace yet" : "no agents yet");
       host.appendChild(p);
     }
@@ -3894,7 +3892,7 @@
     // with nobody working there was genuinely nothing to draw.
     //
     // It is wrong for an IDE. A person who installs zevet, opens a folder and
-    // wants to read a file got "Connected. Nobody is working yet." where the
+    // wants to read a file got "No activity yet" where the
     // file tree should be — the app refusing to show them their own checkout
     // until somebody else did something. Seen on the first launch against the
     // production hub after the 0.2.0 cutover, with a workspace selected and an
@@ -3905,13 +3903,13 @@
     var box = el("div", "blank");
     if (needsToken) {
       box.appendChild(tx(el("h2"), "Not signed in."));
-      box.appendChild(tx(el("p"), "This board needs the shared token. Open the link you were sent, or ask whoever runs the hub for it."));
+      box.appendChild(tx(el("p"), "Open your invitation link or sign in through the desktop app."));
     } else if (conn === "down") {
       box.appendChild(tx(el("h2"), "Can't reach the hub."));
-      box.appendChild(tx(el("p"), "Retrying on its own. If this stays red, the hub is probably off."));
+      box.appendChild(tx(el("p"), "Reconnecting… Check the hub if this continues."));
     } else {
-      box.appendChild(tx(el("h2"), "Connected. Nobody is working yet."));
-      box.appendChild(tx(el("p"), "This is the hub working, not failing. Start an agent in a wired repo and the tree fills in with who is in which folder."));
+      box.appendChild(tx(el("h2"), "No activity yet"));
+      box.appendChild(tx(el("p"), "Open a folder or start an agent in a connected repo."));
       var p = el("p");
       p.appendChild(document.createTextNode("To wire a repo: "));
       p.appendChild(tx(el("code"), "node client/install.mjs <repo>"));
@@ -3995,10 +3993,7 @@
   // Staying current. Both halves are guarded on the function existing: this
   // page is also served to a plain browser tab, and to desktop builds older
   // than the updater, and neither has it.
-  if (LOCAL && typeof window.zevetLocal.onUpdate === "function") {
-    window.zevetLocal.onUpdate(function (s) { updateState = s; renderUpdate(); });
-    window.zevetLocal.updateStatus().then(function (s) { updateState = s; renderUpdate(); }, function () {});
-  }
+  startUpdates();
 
   if (LOCAL && typeof window.zevetLocal.onIndexEvent === "function") {
     window.zevetLocal.onIndexEvent(function (p) {

@@ -92,7 +92,7 @@ describe("the bridge surface the renderer is written against", () => {
       assert.match(local, new RegExp(`\\b${name}:`), `zevetLocal is missing ${name}`);
     }
     assert.match(local, /invoke\("local:stats",\s*\{\s*root,\s*relPaths\s*\}/);
-    assert.match(local, /invoke\("local:watch",\s*\{\s*root,\s*relPath\s*\}/);
+    assert.match(local, /invoke\("local:watch",\s*\{\s*root,\s*relPath,\s*initialText\s*\}/);
     assert.match(local, /invoke\("local:unwatch",\s*\{\s*root,\s*relPath\s*\}/);
   });
 
