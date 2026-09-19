@@ -80,12 +80,12 @@ function interpreter() {
 /**
  * Quote a path for the shell the agent runs hook commands through.
  *
- * NOT JSON.stringify: that escapes backslashes for JSON, and the result then
- * gets JSON-escaped a second time when the settings file is written. Plain
- * double quotes are what both cmd.exe and sh actually want around a path with
- * a space in it.
+ * NOT JSON.stringify: settings.json adds its own JSON escaping. POSIX double
+ * quotes still expand dollars and backticks, and consume backslashes, so each
+ * of those must be escaped before a path can safely go through sh.
  */
 function shellQuote(p) {
+  if (process.platform !== "win32") return `"${p.replace(/[\\"$`]/g, "\\$&")}"`;
   if (p.includes('"')) {
     console.error(`zevet: refusing to build a command from a path containing a quote: ${p}`);
     process.exit(1);

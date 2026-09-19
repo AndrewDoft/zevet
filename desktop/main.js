@@ -35,6 +35,7 @@ const embedder = require("./embedder.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
 const { AppUpdater } = require("./app-update.js");
+const runtime = require("./runtime.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -46,6 +47,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const os = require("node:os");
+
+// Node, npm agent shims and the tools those agents launch need the same PATH
+// whether zevet was opened from Finder or from Terminal.
+const runtimeReady = runtime.preparePath();
 
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
 const CONFIG = path.join(HOME, "config.json");
@@ -224,13 +229,9 @@ function writeConfig(cfg) {
   }
 }
 
-/** The installer that ships with the client, if the client has been synced. */
+/** Bootstrap the bundled client on the first install; keep its hook path stable. */
 function installerPath() {
-  const installed = path.join(CLIENT_DIR, "install.mjs");
-  if (fs.existsSync(installed)) return installed;
-  // Running from a checkout rather than a packaged build.
-  const local = path.join(__dirname, "..", "client", "install.mjs");
-  return fs.existsSync(local) ? local : null;
+  return runtime.installerPath({ clientDir: CLIENT_DIR });
 }
 
 function openBoard(cfg) {
@@ -539,9 +540,16 @@ async function wireRepoFromMenu() {
   });
 }
 
-function installHooks(repo) {
+async function installHooks(repo) {
+  await runtimeReady;
   return new Promise((resolve) => {
-    const installer = installerPath();
+    let installer;
+    try {
+      installer = installerPath();
+    } catch (err) {
+      resolve({ ok: false, detail: `Could not install the bundled client: ${err.message}` });
+      return;
+    }
     if (!installer) {
       resolve({ ok: false, detail: "The zevet client is not installed yet. Finish setup first." });
       return;
@@ -551,7 +559,9 @@ function installHooks(repo) {
         resolve({ ok: false, detail: (stderr || err.message).trim().slice(0, 600) });
         return;
       }
-      resolve({ ok: true, detail: `${repo}\n\nStart Claude Code there and you'll appear on the board.` });
+      // The installer also reports missing Codex hook trust. Hiding stdout
+      // turned an installed-but-inert hook into an unconditional success.
+      resolve({ ok: true, detail: `${repo}\n\n${stdout.trim() || "Start your coding agent there and you'll appear on the board."}` });
     });
   });
 }
@@ -1375,9 +1385,8 @@ function toBoard(channel, payload) {
 let detectPromise = null;
 function loadDetect() {
   if (!detectPromise) {
-    const here = path.join(__dirname, "..", "client", "detect.mjs");
-    const installed = path.join(CLIENT_DIR, "detect.mjs");
-    const target = fs.existsSync(installed) ? installed : here;
+    const target = runtime.clientFile("detect.mjs", { clientDir: CLIENT_DIR });
+    if (!target) return Promise.resolve(null);
     detectPromise = import(pathToFileURL(target).href).catch((err) => {
       console.error(`zevet: could not load detect.mjs (${err.message})`);
       return null;
@@ -1387,6 +1396,7 @@ function loadDetect() {
 }
 
 ipcMain.handle("local:agents", async () => {
+  await runtimeReady;
   const detect = await loadDetect();
   const found = detect ? detect.detectAgents() : [];
   return ["claude", "codex"].map((name) => {
@@ -1405,7 +1415,8 @@ ipcMain.handle("local:agents", async () => {
   });
 });
 
-ipcMain.handle("local:startAgent", (_e, { agent, cwd, opts }) => {
+ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
+  await runtimeReady;
   const dir = knownRoot(cwd);
   if (!dir) return { ok: false, error: "not an opened workspace" };
 
