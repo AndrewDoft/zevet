@@ -18,6 +18,7 @@
  * committed hub/public/board.js. Activate with `?dev=1`.
  */
 import type { LocalBridge } from "./bridge";
+import { MULTI_TURN } from "./constants";
 
 export const FIXTURE_MARK = "__zevet_fixture_bridge__";
 
@@ -267,7 +268,15 @@ export function installFixtureBridge(): boolean {
     script.forEach((payload, i) => {
       setTimeout(() => emit({ id, type: "agent", payload }), 220 * (i + 1));
     });
-    setTimeout(() => emit({ id, type: "exit", code: 0 }), 220 * (script.length + 1));
+    // ⚠️ ONLY THE ONE-SHOT AGENTS EXIT. claude reads stream-json line by line
+    // and stays open for as many prompts as you send it (agent-console.js
+    // § send); codex and opencode take one prompt and close stdin. Exiting
+    // after every turn made the multi-turn path untestable here — the composer
+    // is correctly disabled against a dead process, so a fixture that always
+    // died could never show a second prompt being sent.
+    if (!MULTI_TURN.has(agent)) {
+      setTimeout(() => emit({ id, type: "exit", code: 0 }), 220 * (script.length + 1));
+    }
   }
 
   const local: LocalBridge = {
