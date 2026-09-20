@@ -121,3 +121,38 @@ the screen showed. Two minutes, and it also closes INSUF-003.
 
 **Still blocked on a second person.** The roster, collision detection and per-user colour
 coding have only ever been exercised with one participant on one machine.
+
+---
+
+## INSUF-005 — codex's `exec --json` vocabulary has never been observed here — **OPEN**
+
+**Blast radius: MEDIUM — a codex user sees a degraded transcript, not a broken board.**
+
+**What is missing.** A machine with codex installed and signed in, and one recorded
+turn of `codex exec --skip-git-repo-check --json`. codex is not on the PATH of the
+machine `board/src/lib/transcript.mjs` was written on, and no recorded `--json`
+output exists anywhere in this repository — `test/codex.test.mjs` covers hook
+installation and trust, not the streaming vocabulary.
+
+**What this means for the code.** `fromClaude` and `fromOpencode` in
+`transcript.mjs` are written against measurements (claude's `stream-json` is the
+shape the console has consumed since it existed; opencode's was measured
+2026-09-19, recorded in `agent-console.js` § send fact 5). `fromCodex` is written
+against codex's *documented* event names — `item.started`/`item.completed` with an
+`item.type` of `agent_message`, `reasoning` or `command_execution`, plus
+`turn.completed`/`turn.failed`. That is reasoning, not observation, and it is the
+one branch of the three that could be simply wrong.
+
+**Why it fails safely.** `appendAgentPayload` renders any payload it does not
+recognise as a `[codex: <type>]` line rather than dropping it. So a wrong table
+costs fidelity — a command shows as a line instead of a tool card — and never
+costs the event itself. The transcript still moves, and the real event names
+appear in it, which is the measurement.
+
+**Smallest action that unblocks it.** On a machine with codex signed in: start a
+codex console from the board, run one turn, and read the `[codex: …]` lines. Each
+one names an event the table does not handle. Correct the table from them and
+record the shapes in `docs/contracts/`. Ten minutes.
+
+**What it blocks.** Nothing ships on it — it is fidelity for one of three agents.
+It should be closed before codex is described anywhere as fully supported.

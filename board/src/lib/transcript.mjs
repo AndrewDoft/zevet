@@ -1,0 +1,371 @@
+/**
+ * Agent JSONL -> assistant-ui messages.
+ *
+ * All three CLIs emit structured events. `agent-console.js` delivers them
+ * intact. Until now `classifyAgentPayloadLine` flattened each one to a
+ * `[kind, string]` pair and `ConsoleEntry.lines` was the only thing the UI ever
+ * saw, so a tool call, its arguments, its result and a block of reasoning all
+ * arrived as grey text that nothing downstream could tell apart. Structure
+ * cannot be recovered once it has been stringified.
+ *
+ * This keeps it. The output is `ThreadMessageLike[]` — what
+ * `useExternalStoreRuntime` consumes — with `tool-call` parts that carry their
+ * own arguments and results, and `reasoning` parts kept separate from prose.
+ *
+ * WHY .mjs AND NOT .ts: the gate runs `node --test` straight against the source
+ * tree and cannot import TypeScript. `roster.mjs`, `update.mjs`, `prose.mjs`
+ * and `connect.mjs` are all here for the same reason, each with a `.d.mts`
+ * beside it. Board logic that needs test coverage lives in .mjs; the React that
+ * renders it is .tsx.
+ *
+ * COPY ON WRITE, deliberately. assistant-ui memoises per message by reference,
+ * so mutating a message in place shows a stale render. Every append returns a
+ * new state, sharing every message it did not touch.
+ */
+
+/** @typedef {import("./transcript.d.mts").TranscriptState} TranscriptState */
+
+let seq = 0;
+const nextId = () => `zv-${++seq}`;
+
+/** Reset the id counter. Tests only — ids are otherwise process-lifetime. */
+export function _resetIds() {
+  seq = 0;
+}
+
+/** @returns {TranscriptState} */
+export function emptyTranscript() {
+  return { messages: [], openIndex: -1, toolIndex: {}, running: false };
+}
+
+/* ---------------------------------------------------------------------------
+ * Small helpers over the message list. Each returns a new list.
+ * ------------------------------------------------------------------------- */
+
+function withMessage(state, index, update) {
+  const messages = state.messages.slice();
+  const current = messages[index];
+  messages[index] = { ...current, content: update(current.content.slice()) };
+  return { ...state, messages };
+}
+
+function pushMessage(state, message) {
+  return { ...state, messages: state.messages.concat(message) };
+}
+
+/** The assistant message currently being streamed into, opening one if the
+ *  last thing that happened was a user prompt or a finished turn. */
+function openAssistant(state) {
+  if (state.openIndex >= 0) return state;
+  const next = pushMessage(state, {
+    id: nextId(),
+    role: "assistant",
+    content: [],
+    status: { type: "running" },
+  });
+  return { ...next, openIndex: next.messages.length - 1 };
+}
+
+/** Append text to the trailing part of `kind`, or start a new one. Streaming
+ *  deltas arrive as many events and must read as one paragraph. */
+function appendStreamed(state, kind, text) {
+  if (!text) return state;
+  const s = openAssistant(state);
+  return withMessage(s, s.openIndex, (content) => {
+    const last = content[content.length - 1];
+    if (last && last.type === kind) {
+      content[content.length - 1] = { ...last, text: last.text + text };
+    } else {
+      content.push({ type: kind, text });
+    }
+    return content;
+  });
+}
+
+/* ---------------------------------------------------------------------------
+ * Public API
+ * ------------------------------------------------------------------------- */
+
+/** A prompt the person sent. Closes whatever turn was open. */
+export function appendUserText(state, text) {
+  if (typeof text !== "string" || !text.length) return state;
+  const closed = { ...state, openIndex: -1 };
+  return pushMessage(closed, {
+    id: nextId(),
+    role: "user",
+    content: [{ type: "text", text }],
+  });
+}
+
+/**
+ * A line the agent printed that was not JSON, or anything it wrote to stderr.
+ *
+ * These are NOT errors by default. All three CLIs print update banners, auth
+ * notices and progress to the same streams, and a reader that treats the first
+ * one as a failure is a reader that dies on a Tuesday (the same reasoning as
+ * `agent-console.js`'s line splitter). They become plain text on the open
+ * assistant message so nothing is ever silently dropped.
+ */
+export function appendRaw(state, text) {
+  return appendStreamed(state, "text", String(text ?? ""));
+}
+
+/**
+ * One `{type:"agent", payload}` event.
+ *
+ * `agent` selects the vocabulary. An unrecognised payload is NOT dropped — it
+ * is rendered as text naming its own type, because a transcript that quietly
+ * omits what it did not understand is how you end up believing an agent did
+ * nothing for thirty seconds.
+ */
+export function appendAgentPayload(state, payload, opts = {}) {
+  if (!payload || typeof payload !== "object") return state;
+  const agent = opts.agent || "claude";
+  const root = opts.localRoot || null;
+
+  const handler =
+    agent === "codex" ? fromCodex : agent === "opencode" ? fromOpencode : fromClaude;
+  const handled = handler(state, payload, root);
+  if (handled !== null) return handled;
+
+  // Unknown, but real. Show it rather than lose it.
+  const label = typeof payload.type === "string" ? payload.type : "event";
+  return appendStreamed(state, "text", `[${agent}: ${label}]\n`);
+}
+
+/** The process ended. Closes the open turn and records how it went. */
+export function closeTranscript(state, { code = null, error = null } = {}) {
+  let s = { ...state, running: false };
+  if (s.openIndex < 0) return s;
+  const index = s.openIndex;
+  s = { ...s, openIndex: -1 };
+  const messages = s.messages.slice();
+  messages[index] = {
+    ...messages[index],
+    status:
+      error || (code !== null && code !== 0)
+        ? { type: "incomplete", reason: "error", error: error || `exited ${code}` }
+        : { type: "complete", reason: "stop" },
+  };
+  return { ...s, messages };
+}
+
+/** Convenience for tests and for rebuilding a console from its stored events. */
+export function assembleTranscript(events, opts = {}) {
+  let state = emptyTranscript();
+  for (const e of events ?? []) {
+    if (!e) continue;
+    if (e.type === "you") state = appendUserText(state, e.text);
+    else if (e.type === "agent") state = appendAgentPayload(state, e.payload, opts);
+    else if (e.type === "stdout-line") state = appendRaw(state, e.line);
+    else if (e.type === "stderr") state = appendRaw(state, e.text);
+    else if (e.type === "exit") state = closeTranscript(state, e);
+  }
+  return state;
+}
+
+/* ---------------------------------------------------------------------------
+ * Tool calls
+ * ------------------------------------------------------------------------- */
+
+function addToolCall(state, { id, name, args }, root) {
+  const s = openAssistant(state);
+  const callId = id || nextId();
+  const next = withMessage(s, s.openIndex, (content) => {
+    content.push({
+      type: "tool-call",
+      toolCallId: callId,
+      toolName: name || "tool",
+      args: trimRoot(args, root) ?? {},
+      argsText: JSON.stringify(trimRoot(args, root) ?? {}, null, 2),
+    });
+    return content;
+  });
+  return {
+    ...next,
+    toolIndex: { ...next.toolIndex, [callId]: { message: s.openIndex, part: next.messages[s.openIndex].content.length - 1 } },
+  };
+}
+
+function setToolResult(state, callId, result, isError) {
+  const at = state.toolIndex[callId];
+  if (!at) return state;
+  return withMessage(state, at.message, (content) => {
+    const part = content[at.part];
+    if (!part || part.type !== "tool-call") return content;
+    content[at.part] = { ...part, result, isError: Boolean(isError) };
+    return content;
+  });
+}
+
+/**
+ * Absolute paths under the open repo are noise in a tool-call header — every
+ * one of them starts with the same 40 characters. Trimmed to repo-relative,
+ * exactly as `shortInput` has always done for the line view.
+ */
+function trimRoot(value, root) {
+  if (!root) return value;
+  if (typeof value === "string") {
+    return value.startsWith(root) ? value.slice(root.length).replace(/^[\\/]+/, "") : value;
+  }
+  if (Array.isArray(value)) return value.map((v) => trimRoot(v, root));
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = trimRoot(v, root);
+    return out;
+  }
+  return value;
+}
+
+/* ---------------------------------------------------------------------------
+ * claude — `--output-format stream-json`
+ *
+ * MEASURED: this is the shape zevet has been consuming since the console
+ * existed; `classifyAgentPayloadLine` reads the same fields.
+ * ------------------------------------------------------------------------- */
+
+function fromClaude(state, p, root) {
+  if (p.type === "assistant" && p.message && Array.isArray(p.message.content)) {
+    let s = state;
+    for (const part of p.message.content) {
+      if (!part || typeof part !== "object") continue;
+      if (part.type === "text") s = appendStreamed(s, "text", String(part.text ?? ""));
+      else if (part.type === "thinking") s = appendStreamed(s, "reasoning", String(part.thinking ?? ""));
+      else if (part.type === "redacted_thinking") s = appendStreamed(s, "reasoning", "[redacted]");
+      else if (part.type === "tool_use") {
+        s = addToolCall(s, { id: part.id, name: part.name, args: part.input }, root);
+      }
+    }
+    return s;
+  }
+
+  // Tool results come back as a USER message, which is a shape worth knowing:
+  // it is the transcript's own record of what the tool said, not a person
+  // typing. It must attach to the call, never render as a prompt.
+  if (p.type === "user" && p.message && Array.isArray(p.message.content)) {
+    let s = state;
+    for (const part of p.message.content) {
+      if (part && part.type === "tool_result") {
+        s = setToolResult(s, part.tool_use_id, part.content, part.is_error);
+      }
+    }
+    return s;
+  }
+
+  if (p.type === "result") {
+    return closeTranscript(state, { code: p.is_error ? 1 : 0 });
+  }
+
+  // `system`/`init` carries the model and the session id. The strip already
+  // reads it off the raw payload; it is not transcript content.
+  if (p.type === "system") return state;
+
+  return null;
+}
+
+/* ---------------------------------------------------------------------------
+ * opencode — `run --format json`
+ *
+ * MEASURED 2026-09-19 (see agent-console.js § send, fact 5): one JSON object
+ * per line, {type:"step_start"|"text"|"tool_use"|"step_finish"|"error"}.
+ * ------------------------------------------------------------------------- */
+
+function fromOpencode(state, p, root) {
+  const part = p.part || {};
+
+  if (p.type === "step_start") return state;
+
+  if (p.type === "text" && part.type === "text") {
+    return appendStreamed(state, "text", String(part.text ?? ""));
+  }
+
+  if (p.type === "reasoning") {
+    return appendStreamed(state, "reasoning", String(part.text ?? p.text ?? ""));
+  }
+
+  if (p.type === "tool_use" && part.type === "tool") {
+    const st = part.state || {};
+    const callId = part.id || part.callID || st.id;
+    // opencode reports the same tool twice: once when it starts and again with
+    // output. The second must update the first, not stack a duplicate.
+    if (callId && state.toolIndex[callId] && (st.output !== undefined || st.status === "completed")) {
+      return setToolResult(state, callId, st.output, st.status === "error");
+    }
+    let s = addToolCall(state, { id: callId, name: part.tool, args: st.input }, root);
+    if (st.output !== undefined) {
+      s = setToolResult(s, callId || Object.keys(s.toolIndex).pop(), st.output, st.status === "error");
+    }
+    return s;
+  }
+
+  if (p.type === "step_finish") return closeTranscript(state, { code: 0 });
+
+  if (p.type === "error") {
+    const e = p.error || {};
+    return closeTranscript(state, { error: e.message || e.name || "agent error" });
+  }
+
+  return null;
+}
+
+/* ---------------------------------------------------------------------------
+ * codex — `exec --json`
+ *
+ * ⚠️ UNVERIFIED. codex is not installed on the machine this was written on and
+ * no recorded `exec --json` output exists anywhere in this repository, so
+ * unlike the two above, this branch is read off codex's documented event names
+ * and not off a measurement. That is exactly the kind of claim INSUFFICIENCIES
+ * exists to track — see INSUF-005.
+ *
+ * It is written to fail VISIBLY: an event whose name is not below falls
+ * through to the `[codex: <type>]` line in appendAgentPayload rather than
+ * disappearing, so the first person to run a codex turn sees the real
+ * vocabulary in the transcript and can correct this table from it.
+ * ------------------------------------------------------------------------- */
+
+function fromCodex(state, p, root) {
+  if (p.type === "thread.started" || p.type === "turn.started") return state;
+
+  if (p.type === "agent_message_delta" || p.type === "agent_message") {
+    return appendStreamed(state, "text", String(p.delta ?? p.text ?? p.message ?? ""));
+  }
+
+  if (p.type === "reasoning" || p.type === "agent_reasoning" || p.type === "agent_reasoning_delta") {
+    return appendStreamed(state, "reasoning", String(p.delta ?? p.text ?? ""));
+  }
+
+  if (p.type === "item.started" || p.type === "item.completed" || p.type === "item.updated") {
+    const item = p.item || {};
+    if (item.type === "agent_message") {
+      return appendStreamed(state, "text", String(item.text ?? ""));
+    }
+    if (item.type === "reasoning") {
+      return appendStreamed(state, "reasoning", String(item.text ?? ""));
+    }
+    if (item.type === "command_execution" || item.type === "file_change" || item.type === "mcp_tool_call") {
+      const callId = item.id || nextId();
+      const name = item.type === "command_execution" ? "Bash" : item.type === "file_change" ? "Edit" : item.tool || "tool";
+      const args = item.command !== undefined ? { command: item.command } : item.changes || item.arguments || {};
+      if (state.toolIndex[callId]) {
+        const done = item.status === "completed" || p.type === "item.completed";
+        return done ? setToolResult(state, callId, item.aggregated_output ?? item.output ?? "", item.status === "failed") : state;
+      }
+      let s = addToolCall(state, { id: callId, name, args }, root);
+      if (p.type === "item.completed") {
+        s = setToolResult(s, callId, item.aggregated_output ?? item.output ?? "", item.status === "failed");
+      }
+      return s;
+    }
+    return state;
+  }
+
+  if (p.type === "turn.completed") return closeTranscript(state, { code: 0 });
+  if (p.type === "turn.failed") {
+    return closeTranscript(state, { error: (p.error && p.error.message) || "turn failed" });
+  }
+  if (p.type === "error") {
+    return closeTranscript(state, { error: (p.error && p.error.message) || p.message || "agent error" });
+  }
+
+  return null;
+}
