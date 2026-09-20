@@ -288,3 +288,82 @@ for debugging an agent that has gone wrong.
 **codex's event vocabulary is the least certain part of §3.1.** It is pinned by
 tests against recorded output; if the installed codex emits something else, the
 table is wrong and gets corrected rather than worked around.
+
+---
+
+## 9. What actually shipped — 0.2.9
+
+Written after the release, against what is live rather than what was planned.
+
+### Converted to registry elements
+
+| Surface | Elements now used |
+|---|---|
+| Conversation | `thread`, its composer, message actions, scroll anchor, day separator |
+| Agent output | tool calls, tool groups, reasoning panel, terminal block, streaming text |
+| Rail "You" | thread list behaviour + `agent-status` per row |
+| Hub connection | `connection-state` (renders nothing while online) |
+| Launcher | `model-picker`, `surfaces` tokens, empty states |
+| Update row | `job-progress`, `error-state` |
+| Blank and error states | `empty-state`, `error-state` |
+
+### NOT converted, and why
+
+Each of these has a registry element with a similar name. Each was left alone
+because the element does not model the data, and swapping it in would have
+deleted behaviour that is the product:
+
+- **The file tree.** `elements-file-tree` carries path, name, depth, kind and
+  add/delete counts. zevet's rows also carry per-teammate colour marks and the
+  collision state — the thing the whole product exists to show.
+- **The detail pane.** `elements-code-diff` and `elements-reviewable-diff` are
+  read-only diff views. This pane holds the live collaborative editor.
+- **The status strip.** `elements-cost-meter` and `elements-context-breakdown`
+  are chat-width cards. The strip is a compact mono line in a 258px rail and
+  already says the same things in a tenth of the space.
+- **The people roster.** `elements-agent-card` is a card per agent. The rail
+  rows are per-person, hue-coded and expandable, at rail width.
+- **The settings sheet.** `elements-settings-panel` is a small toggle card.
+  Settings is accounts, the code index, the hub and the theme.
+
+They all read as one interface regardless, because §2 gave them one palette:
+the registry components resolve their colours from masora's tokens.
+
+### Measured
+
+- Gate 943 tests green, from 875. New: `transcript.test.mjs` (31),
+  `zoom.test.mjs` (18), `board-bundle.test.mjs` (8), `board-jsx.test.mjs` (1).
+- Bundle 1,049,014 bytes, from ~500 kB. Accepted in advance.
+- The dev fixture is absent from the shipped bundle, asserted rather than
+  assumed.
+- Zoom verified against the running app: Ctrl+= took the level 0 → 1.5 in three
+  steps, Ctrl+- back to 1.0, Ctrl+0 to 0, each persisted, layout intact at
+  1.44x.
+- Auto-update verified against production: the app's own `AppUpdater`, told it
+  was 0.2.8, downloaded the real 117 MB installer, checksummed it and returned
+  ready.
+
+### Found on the way, and fixed
+
+- `components.json` had `"registries": {}`, so nothing could ever have been
+  installed from the registry; the four `*.aui.tsx` files were hand-pasted.
+- `vite.config.ts` had no `@/*` alias although `tsconfig.json` did, so tsc
+  passed and vite could resolve no registry-style import at all.
+- shadcn flattens registry files that declare nested paths, and some published
+  files disagree with their own manifest. Both are handled by
+  `board/scripts/sync-registry.mjs` so a re-install does not undo the fix.
+- Seven `\uXXXX` escapes sat in JSX text and rendered literally on screen.
+- `board/build.mjs` referenced a `test/board-bundle.test.mjs` that did not
+  exist, so the committed bundle the hub serves verbatim was unguarded.
+- The 0.2.8 release bumped only `desktop/package.json`, so
+  `scripts/release-check.mjs` had been refusing ever since.
+- The live landing container predated the 0.2.8 page change: the site offered
+  0.2.7 while the feed offered 0.2.8.
+- `activeConsole: null` meant both "the newest console" and "show the
+  launcher", which made the launcher unreachable once anything was running.
+
+### Still open
+
+`INSUF-005` — codex's `exec --json` vocabulary is written from documentation,
+not observation, because codex is not installed on the machine this was built
+on. It fails visibly rather than silently.
