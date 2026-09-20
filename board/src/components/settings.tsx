@@ -537,7 +537,7 @@ export function SettingsSheet() {
               >
                 {label + (viewMode === id ? " \u00b7 on" : "")}
               </button>
-              <span className="v" style={{ color: "var(--muted)", fontSize: "11.5px" }}>
+              <span className="v" style={{ color: "var(--ink-muted)", fontSize: "11.5px" }}>
                 {note}
               </span>
             </div>

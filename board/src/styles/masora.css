@@ -18,7 +18,7 @@
     /* Masora's paper and ink. Faint is for marks, subtle is readable text. */
     --paper: #eae7e2;
     --ink: #2c2f44;
-    --muted: #5f6274;
+    --ink-muted: #5f6274;
     --faint: #9c9992;
     --subtle: #5b5e70;
     --line: #cfccc6;
@@ -53,7 +53,7 @@
     color-scheme: dark;
     --paper: #24252c;
     --ink: #eae7e2;
-    --muted: #b6b5bf;
+    --ink-muted: #b6b5bf;
     --faint: #85858f;
     --subtle: #b6b5bf;
     --line: #454750;
@@ -82,6 +82,22 @@
   * { scrollbar-width: none; -ms-overflow-style: none; }
   *::-webkit-scrollbar { display: none; }
   html, body { height: 100%; margin: 0; }
+
+  /* THE REACT ROOT IS A GRID ITEM NOW.
+     body is a one-row grid whose single in-flow child used to be .shell. The
+     React rebuild put #root in between, and #root had no height rule, so
+     .shell sized to its content: the panes stopped partway down the window
+     and everything below was blank paper. It read as "zoom is broken",
+     because zooming made the dead space change size.
+     One row, one in-flow child, stated again here. The settings sheet and the
+     split handles are position:fixed and so take no row. */
+  #root {
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: 1fr;
+    grid-template-columns: 1fr;
+  }
 
   body {
     background: var(--paper);
@@ -128,14 +144,14 @@
      header (the detail pane's) gets out from under them. (This used to live
      on the removed teammates column.) */
   .detail > .pane-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
-  .scope { color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
+  .scope { color: var(--ink-muted); font-size: 12.5px; letter-spacing: 0.02em; }
   .spacer { flex: 1 1 auto; }
 
   .presence { display: flex; align-items: center; gap: 4px; }
   .chip {
     display: inline-flex; align-items: center; gap: 7px;
     padding: 4px 11px 4px 9px; border-radius: 100px;
-    font-size: 12.5px; color: var(--muted);
+    font-size: 12.5px; color: var(--ink-muted);
     border: 1px solid transparent;
   }
   .chip[data-active="true"] { color: var(--ink); border-color: var(--line); background: var(--raise-soft); }
@@ -143,7 +159,7 @@
   .chip[data-active="false"] .bead { opacity: 0.32; }
   .chip[data-dim="true"] { color: var(--subtle); }
 
-  .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+  .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-muted); }
   .conn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
   .conn[data-state="live"] .dot { background: var(--success); }
   .conn[data-state="down"] .dot { background: var(--alert); }
@@ -186,10 +202,10 @@
   .person .bead { width: 9px; height: 9px; border-radius: 50%; background: var(--who); margin-top: 5px; }
   .person[data-idle="true"] .bead { opacity: 0.3; }
   .person .nm { display: block; font-size: 13.5px; letter-spacing: 0.01em; }
-  .person[data-idle="true"] .nm { color: var(--muted); }
+  .person[data-idle="true"] .nm { color: var(--ink-muted); }
   .person .sub {
     display: block;
-    font-size: 11.5px; color: var(--muted);
+    font-size: 11.5px; color: var(--ink-muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .person .sub .verb { margin-right: 6px; }
@@ -198,7 +214,7 @@
   .ws { padding: 6px 16px 10px; }
   .ws-item {
     display: block; width: 100%; text-align: left;
-    padding: 6px 0; font-size: 13px; color: var(--muted);
+    padding: 6px 0; font-size: 13px; color: var(--ink-muted);
   }
   .ws-item[data-sel="true"] { color: var(--ink); }
   .ws-item .branch { font-size: 11px; color: var(--subtle); }
@@ -229,7 +245,7 @@
   /* Follow control + resizable panes. */
   .pane-title.row { justify-content: space-between; }
   .follow {
-    font: inherit; font-size: 11px; color: var(--muted);
+    font: inherit; font-size: 11px; color: var(--ink-muted);
     background: transparent; border: 0; cursor: pointer;
   }
   .follow:hover { color: var(--ink); }
@@ -256,7 +272,7 @@
   .node .label { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 0 1 auto; }
   .node .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .node[data-kind="dir"] .name { color: var(--ink); }
-  .node[data-kind="file"] .name { color: var(--muted); }
+  .node[data-kind="file"] .name { color: var(--ink-muted); }
   .node[data-touched="true"][data-kind="file"] .name { color: var(--ink); }
   .caret { width: 9px; color: var(--subtle); flex: none; font-size: 9px; }
   .ficon { width: 13px; height: 13px; flex: none; opacity: 0.55; }
@@ -267,7 +283,7 @@
   .node[data-collide="true"] { background: color-mix(in srgb, var(--alert) 9%, transparent); }
   .node[data-collide="true"] .name { color: var(--alert); }
 
-  .empty-tree { padding: 30px 18px; color: var(--muted); font-size: 13px; max-width: 46ch; }
+  .empty-tree { padding: 30px 18px; color: var(--ink-muted); font-size: 13px; max-width: 46ch; }
 
   /* ---- agent view --------------------------------------------------------
      The same board, rearranged for driving agents instead of typing.
@@ -385,7 +401,7 @@
 
   .chat-empty {
     padding: 34px 26px; max-width: 60ch; margin: 0 auto;
-    color: var(--muted); font-size: 14px; line-height: 1.65;
+    color: var(--ink-muted); font-size: 14px; line-height: 1.65;
   }
   .chat-empty h2 { font-size: 17px; font-weight: 400; color: var(--ink); margin-bottom: 9px; }
 
@@ -407,7 +423,7 @@
   .updaterow {
     display: flex; flex-direction: column; gap: 6px;
     padding: 11px 16px; border-top: 1px solid var(--line);
-    font-size: 12px; color: var(--muted);
+    font-size: 12px; color: var(--ink-muted);
   }
   .updaterow[hidden] { display: none; }
   .updaterow .hd { color: var(--ink); font-size: 12.5px; }
@@ -429,10 +445,10 @@
     display: inline-flex; align-items: center; gap: 9px;
     min-height: 32px; padding: 0; border: 0; background: none;
   }
-  .themer .lbl { font-size: 12px; color: var(--muted); }
+  .themer .lbl { font-size: 12px; color: var(--ink-muted); }
   .sky {
     position: relative; display: block; width: 42px; height: 24px;
-    border: 1px solid var(--muted); border-radius: 20px;
+    border: 1px solid var(--ink-muted); border-radius: 20px;
     background: var(--fill); flex: none;
   }
   .sky-circle {
@@ -446,7 +462,7 @@
     .themer * { transition: none !important; }
   }
   .settings-link {
-    font-size: 11.5px; color: var(--muted); letter-spacing: 0.02em;
+    font-size: 11.5px; color: var(--ink-muted); letter-spacing: 0.02em;
     transition: color 200ms;
   }
   .settings-link:hover { color: var(--ink); }
@@ -469,7 +485,7 @@
     padding: 18px 22px 14px; border-bottom: 1px solid var(--line);
   }
   .sheet-head h2 { margin: 0; font-size: 15px; font-weight: 400; letter-spacing: 0.02em; }
-  .sheet-close { font-size: 12px; color: var(--muted); }
+  .sheet-close { font-size: 12px; color: var(--ink-muted); }
   .sheet-close:hover { color: var(--ink); }
   .sset { padding: 16px 22px; border-bottom: 1px solid var(--line); }
   .sset h3 {
@@ -477,10 +493,10 @@
     letter-spacing: 0; color: var(--subtle);
   }
   .srow { display: flex; gap: 14px; align-items: baseline; padding: 3px 0; font-size: 12.5px; }
-  .srow .k { color: var(--muted); flex: 0 0 140px; }
+  .srow .k { color: var(--ink-muted); flex: 0 0 140px; }
   .srow .v { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
   .srow .v.mono { font-family: var(--font-mono); font-size: 11.5px; }
-  .snote { font-size: 11.5px; color: var(--muted); line-height: 1.65; margin-top: 8px; max-width: 52ch; }
+  .snote { font-size: 11.5px; color: var(--ink-muted); line-height: 1.65; margin-top: 8px; max-width: 52ch; }
   .sbtn {
     font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 2px;
     border: 1px solid var(--line); background: var(--fill); color: var(--ink);
@@ -506,7 +522,7 @@
     flex: none; padding: 12px 16px 12px;
     border-top: 1px solid var(--line);
     font-family: var(--font-mono); font-size: 11px;
-    color: var(--muted); white-space: nowrap;
+    color: var(--ink-muted); white-space: nowrap;
     font-variant-numeric: tabular-nums;
     overflow: hidden;
   }
@@ -557,7 +573,7 @@
   .ed-bar {
     display: flex; align-items: center; gap: 14px;
     padding: 6px 18px; border-bottom: 1px solid var(--line);
-    font-size: 11px; color: var(--muted); flex: none;
+    font-size: 11px; color: var(--ink-muted); flex: none;
   }
   .ed-bar .grow { flex: 1 1 auto; }
   .ed-state { display: inline-flex; align-items: center; gap: 6px; }
@@ -578,7 +594,7 @@
   .cm-editor.cm-focused { outline: none; }
   .cm-gutters { background: transparent; border-right: 1px solid var(--line); color: var(--subtle); }
   .cm-activeLine { background: var(--raise-line); }
-  .cm-activeLineGutter { background: transparent; color: var(--muted); }
+  .cm-activeLineGutter { background: transparent; color: var(--ink-muted); }
   .cm-selectionBackground, .cm-editor ::selection { background: var(--cerulean-soft); }
   /* y-codemirror.next draws remote carets and a name flag; both take the
      colour from the inline style it sets per user, which is the teammate hue
@@ -616,7 +632,7 @@
   }
   .rider[data-fading="true"] { opacity: 0; transition: transform 320ms, opacity 900ms; }
 
-  .ed-note { padding: 10px 18px; font-size: 11.5px; color: var(--muted); }
+  .ed-note { padding: 10px 18px; font-size: 11.5px; color: var(--ink-muted); }
   .ed-note b { font-weight: 500; color: var(--ink); }
 
   /* ---- teammate activity now lives in the roster dropdowns (personDetail);
@@ -626,7 +642,7 @@
     align-items: baseline; padding: 2.5px 0; font-size: 12px;
   }
   .step .t { color: var(--subtle); font-size: 11px; letter-spacing: 0; }
-  .step .v { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step .v { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .step .v b { font-weight: 400; color: var(--ink); }
   /* The house "working" mark. No spinners: a spinner claims progress it
      cannot measure, and this one is measured ΓÇö it is on while a turn is. */
@@ -660,7 +676,7 @@
     appearance: none; -webkit-appearance: none;
     transition: border-color 200ms, background-color 200ms;
   }
-  .launch-select:hover, .launch-model:hover { border-color: var(--muted); }
+  .launch-select:hover, .launch-model:hover { border-color: var(--ink-muted); }
   .launch-select:focus-visible, .launch-model:focus-visible {
     outline: 2px solid var(--cerulean); outline-offset: 1px; border-color: var(--cerulean);
   }
@@ -701,7 +717,7 @@
   .console { border-left: 2px solid var(--who); }
   .console-head .where { font-size: 11px; color: var(--subtle); }
   .console-stop {
-    margin-left: auto; font-size: 11.5px; color: var(--muted);
+    margin-left: auto; font-size: 11.5px; color: var(--ink-muted);
     border: 1px solid var(--line); border-radius: 4px; padding: 3px 10px;
   }
   .console-stop:hover { color: var(--alert); border-color: var(--alert); }
@@ -721,7 +737,7 @@
     border-radius: 2px; padding: 0 4px;
   }
   .cline[data-kind="you"]   { color: var(--cerulean); }
-  .cline[data-kind="tool"]  { color: var(--muted); }
+  .cline[data-kind="tool"]  { color: var(--ink-muted); }
   .cline[data-kind="err"]   { color: var(--alert); }
   .cline[data-kind="meta"]  { color: var(--subtle); }
   .console-form { margin-top: 8px; }
@@ -771,11 +787,11 @@
   .devent .dt { color: var(--subtle); font-size: 11px; }
   .devent .da { color: var(--who); }
   .devent .dv { color: var(--ink); }
-  .devent .dd { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .devent .dd { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ---- the file viewer ------------------------------------------------- */
   .viewer { padding: 0 18px 20px; min-width: 0; }
-  .viewer.loading, .viewer.err { color: var(--muted); font-size: 12.5px; padding: 8px 18px 20px; }
+  .viewer.loading, .viewer.err { color: var(--ink-muted); font-size: 12.5px; padding: 8px 18px 20px; }
   .viewer.err { color: var(--alert); }
   .viewer .code {
     margin: 0; padding: 12px 14px;
@@ -799,12 +815,12 @@
   .tok-fn   { color: var(--syntax-function); }
   .tok-attr { color: var(--syntax-number); }
   .tok-tag  { color: var(--cerulean); }
-  .tok-punc { color: var(--muted); }
+  .tok-punc { color: var(--ink-muted); }
 
   /* ---- empty / onboarding --------------------------------------------- */
   .blank { padding: 56px 28px; max-width: 58ch; }
   .blank h2 { font-weight: 400; font-size: 26px; letter-spacing: 0.01em; margin: 0 0 12px; }
-  .blank p { color: var(--muted); margin: 0 0 12px; line-height: 1.65; }
+  .blank p { color: var(--ink-muted); margin: 0 0 12px; line-height: 1.65; }
   .blank code {
     font-family: var(--font-mono); font-size: 12px;
     background: var(--raise); border: 0; padding: 2px 6px;

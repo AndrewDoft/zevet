@@ -3,7 +3,7 @@
 @import "shadcn/tailwind.css";
 @import "tw-shimmer";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @theme inline {
     --font-heading: var(--font-sans);
@@ -64,73 +64,71 @@
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * The shadcn / assistant-ui contract, expressed in masora's palette.
+ *
+ * There used to be two colour systems here: this file's own oklch neutrals
+ * flipping on `.dark`, and masora.css's paper-and-ink flipping on
+ * :root[data-theme="dark"]. Nothing ever set `.dark`, so every installed
+ * component stayed in light colours while the rest of the board went dark.
+ *
+ * Now there is one. These variables are aliases, not values — masora.css owns
+ * the colours and already flips them on data-theme, so this block needs no
+ * dark counterpart. Change a colour there and every registry component
+ * follows.
+ * ------------------------------------------------------------------------- */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
-}
+    --background: var(--paper);
+    --foreground: var(--ink);
 
-.dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    /* Raised surfaces: cards, popovers, the composer. */
+    --card: var(--raise);
+    --card-foreground: var(--ink);
+    --popover: var(--raise);
+    --popover-foreground: var(--ink);
+
+    /* --cerulean inverts with the theme (dark ink on paper, pale ink on
+       night), which is exactly shadcn's convention for primary. */
+    --primary: var(--cerulean);
+    --primary-foreground: var(--paper);
+    --secondary: var(--fill);
+    --secondary-foreground: var(--ink);
+
+    /* THE COLLISION. masora's --muted was a foreground grey; shadcn's is a
+       background fill with --muted-foreground as its text. Keeping both
+       names meant grey on grey, so masora's is --ink-muted now. */
+    --muted: var(--fill);
+    --muted-foreground: var(--ink-muted);
+
+    --accent: var(--cerulean-soft);
+    --accent-foreground: var(--ink);
+    --destructive: var(--alert);
+    --destructive-foreground: var(--paper);
+
+    --border: var(--line);
+    --input: var(--line);
+    --ring: var(--subtle);
+
+    /* The collaborator hues. They are already chosen to stay legible at label
+       size in both themes, which is the same constraint a chart series has. */
+    --chart-1: var(--who-0);
+    --chart-2: var(--who-1);
+    --chart-3: var(--who-2);
+    --chart-4: var(--who-3);
+    --chart-5: var(--who-4);
+
+    /* masora is flat: its own radii are 2-4px. The shadcn default of 10px
+       would make an installed component read as pasted in. */
+    --radius: 0.25rem;
+
+    --sidebar: var(--paper);
+    --sidebar-foreground: var(--ink);
+    --sidebar-primary: var(--cerulean);
+    --sidebar-primary-foreground: var(--paper);
+    --sidebar-accent: var(--cerulean-soft);
+    --sidebar-accent-foreground: var(--ink);
+    --sidebar-border: var(--line);
+    --sidebar-ring: var(--subtle);
 }
 
 @layer base {
