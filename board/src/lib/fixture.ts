@@ -89,6 +89,108 @@ const CLAUDE_SCRIPT: unknown[] = [
       ],
     },
   },
+  {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "t3",
+          name: "Edit",
+          input: {
+            file_path: "board/src/lib/roster.mjs",
+            old_string: "const seen = [];\nfor (const a of actors) seen.push(a);",
+            new_string: "const seen = new Set(actors.map((a) => a.actor));",
+          },
+        },
+      ],
+    },
+  },
+  {
+    type: "user",
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t3", content: "Applied 1 edit." }] },
+  },
+  {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "t4",
+          name: "TodoWrite",
+          input: {
+            todos: [
+              { content: "Find where collisions are grouped", status: "completed" },
+              { content: "Dedupe by actor, not by machine", status: "in_progress" },
+              { content: "Re-run the roster suite", status: "pending" },
+            ],
+          },
+        },
+      ],
+    },
+  },
+  {
+    type: "user",
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t4", content: "ok" }] },
+  },
+  {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "tool_use", id: "t5", name: "Grep", input: { pattern: "liveActorsOf", glob: "**/*.mjs" } },
+      ],
+    },
+  },
+  {
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "t5",
+          content: "board/src/lib/roster.mjs:41:export function liveActorsOf(\nboard/src/lib/board.ts:903:  const live = liveActorsOf(\ntest/roster.test.mjs:18:  liveActorsOf,",
+        },
+      ],
+    },
+  },
+  {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "t6",
+          name: "Task",
+          input: { subagent_type: "code-reviewer", description: "Review the dedupe change for off-by-one" },
+        },
+      ],
+    },
+  },
+  {
+    type: "user",
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t6", content: "No issues found." }] },
+  },
+  {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "tool_use", id: "t7", name: "Bash", input: { command: "npm test" } },
+      ],
+    },
+  },
+  {
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "t7", content: "943 passing\n0 failing" }],
+    },
+  },
   { type: "result", subtype: "success", total_cost_usd: 0.1842 },
 ];
 

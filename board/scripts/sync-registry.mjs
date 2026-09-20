@@ -49,7 +49,13 @@ export const ITEMS = [
   "elements-reviewable-diff", "elements-approval-card", "elements-permission-grant",
   "elements-reasoning-effort", "elements-model-picker", "elements-job-progress",
   "elements-quota-banner", "elements-settings-panel", "elements-guardrail-notice",
-  "elements-task-card", "elements-timeline",
+  "elements-task-card", "elements-timeline", "elements-web-search",
+  "elements-web-preview", "sources", "elements-data-table",
+  "elements-conversation-search", "elements-thread-search",
+  "elements-number-ticker", "elements-checkpoint-history",
+  "elements-regenerate-menu", "elements-edit-message", "elements-quote-reply",
+  "elements-trace-waterfall", "elements-message-queue",
+  "elements-document-reference", "elements-inline-citation",
 ];
 
 const manifestUrl = (name) =>

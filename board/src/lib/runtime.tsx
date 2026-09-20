@@ -27,6 +27,7 @@ import {
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import { selectActiveConsole, selectMyConsoles, useBoard } from "./board";
+import { ToolUIs } from "../components/tools";
 import type { ConsoleEntry } from "./types";
 
 const NO_MESSAGES: ThreadMessageLike[] = [];
@@ -111,5 +112,12 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     },
   });
 
-  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      {/* Registers a rendering per tool name. Draws nothing itself, and has to
+          be inside the provider to register at all. */}
+      <ToolUIs />
+      {children}
+    </AssistantRuntimeProvider>
+  );
 }
