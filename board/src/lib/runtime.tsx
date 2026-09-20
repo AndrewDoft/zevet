@@ -27,6 +27,7 @@ import {
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import { selectActiveConsole, selectMyConsoles, useBoard } from "./board";
+import { MULTI_TURN } from "./constants";
 import { ToolUIs } from "../components/tools";
 import type { ConsoleEntry } from "./types";
 
@@ -71,24 +72,42 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     [consoles],
   );
 
+  const messages = active?.transcript.messages ?? NO_MESSAGES;
+  /** An assistant message is open, so the agent is mid-answer. */
+  const streaming = (active?.transcript.openIndex ?? -1) >= 0;
+  const oneShot = Boolean(active) && !MULTI_TURN.has(active!.agent);
+  const sent = messages.reduce((n, m) => n + (m.role === "user" ? 1 : 0), 0);
+
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
-    messages: active?.transcript.messages ?? NO_MESSAGES,
+    messages,
     // transcript.mjs already emits ThreadMessageLike, so the converter is
     // identity. It has to be present all the same: the adapter's type only
     // omits it when the messages are full ThreadMessages.
     convertMessage: (m) => m,
 
-    // `isRunning` is the process, not the last message's status. An agent that
-    // has printed its answer but not exited is still running, and the composer
-    // and stop button must agree with the process rather than with the prose.
-    isRunning: Boolean(active?.running),
+    // `isRunning` is a TURN in flight, not the process being alive.
+    //
+    // ⚠️ It used to be `active.running`, the process. That reads correctly, and
+    // it made the composer useless: the vendored ComposerAction renders Send
+    // only when `!isRunning` and Cancel when `isRunning`, so a console showed
+    // Stop from the moment it spawned and there was no way to send it the first
+    // prompt at all. Enter just inserted a newline. A one-prompt agent then sat
+    // on an open stdin until it was killed.
+    //
+    // The transcript already knows: `openIndex >= 0` means an assistant message
+    // is open and being streamed into. Stopping the PROCESS is still offered —
+    // on the console row, whose button already says Stop while it runs.
+    isRunning: streaming,
 
     // codex and opencode take one prompt per run and close their stdin (see
     // agent-console.js § send, facts 4 and 5). Typing into a console that
     // cannot receive it would be a lie, so the composer is disabled rather
-    // than silently dropping the text.
+    // than silently dropping the text. That is why `sent` is counted: for a
+    // one-prompt agent the second prompt is the one that goes nowhere, and the
+    // first must still be allowed through.
     isDisabled: !active,
-    isSendDisabled: !active?.running,
+    isSendDisabled:
+      !active?.running || streaming || (oneShot && sent > 0),
 
     onNew: async (message) => {
       if (!active) return;
