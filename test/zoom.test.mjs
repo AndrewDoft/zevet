@@ -23,11 +23,23 @@ const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
 const css = readFileSync(path.join(ROOT, "board", "src", "styles", "masora.css"), "utf8");
 
 describe("the accelerators exist", () => {
-  for (const accel of ["CommandOrControl+Plus", "CommandOrControl+=", "CommandOrControl+-", "CommandOrControl+0"]) {
+  // ⚠️ MEASURED, and it cost a round trip. The first version bound
+  // "CommandOrControl+Plus" on a visible item and "CommandOrControl+=" on a
+  // hidden duplicate. Three Ctrl+= presses against a running build left
+  // config.zoom at 0, because Electron does not register an accelerator for an
+  // invisible menu item — and "Plus" matches only the SHIFTED press, + and =
+  // being one key. The unshifted spelling is the one that has to be on the
+  // visible item.
+  for (const accel of ["CommandOrControl+=", "CommandOrControl+-", "CommandOrControl+0"]) {
     test(`${accel} is bound`, () => {
       assert.ok(main.includes(`accelerator: "${accel}"`), `${accel} is not bound in buildMenu()`);
     });
   }
+
+  test("no zoom accelerator hides on an invisible item", () => {
+    const view = main.slice(main.indexOf('label: "View"'), main.indexOf('role: "windowMenu"'));
+    assert.ok(!/visible: false/.test(view), "an invisible menu item registers no accelerator");
+  });
 
   test("they live in a View menu the template actually includes", () => {
     const template = main.slice(main.indexOf("function buildMenu()"), main.indexOf("Menu.setApplicationMenu"));
@@ -109,5 +121,36 @@ describe("the layout survives being zoomed", () => {
     assert.ok(css.includes("#root {"), "#root has no rule at all");
     assert.match(rule, /height: 100%/);
     assert.match(rule, /grid-template-rows: 1fr/);
+  });
+});
+
+describe("the spellings an accelerator cannot reach", () => {
+  // Ctrl+Shift+= (the "+" most keyboards actually produce) and the numpad's
+  // own keys. An accelerator string names a character; before-input-event
+  // names the key, which is what survives a different keyboard layout.
+  test("before-input-event is handled", () => {
+    assert.match(main, /webContents\.on\("before-input-event"/);
+  });
+
+  test("it only acts on a modified keyDown", () => {
+    const h = main.slice(main.indexOf('"before-input-event"'), main.indexOf('"before-input-event"') + 520);
+    assert.match(h, /input\.type !== "keyDown"/);
+    assert.match(h, /input\.meta : input\.control/, "Cmd on macOS, Ctrl elsewhere");
+  });
+
+  test("it covers the shifted and numpad spellings", () => {
+    const fn = main.slice(main.indexOf("function onZoomKey"), main.indexOf("function stepZoom"));
+    for (const key of ['"+"', '"="', '"Add"', '"-"', '"Subtract"', '"0"']) {
+      assert.ok(fn.includes(key), `onZoomKey does not handle ${key}`);
+    }
+  });
+
+  test("actual size is distinguished from no-match", () => {
+    // onZoomKey returns 0 for Ctrl+0 and undefined for everything else, so the
+    // caller must test undefined. Testing falsiness would make Ctrl+0 a no-op —
+    // which is exactly the bug that looks like "reset doesn't work".
+    const h = main.slice(main.indexOf('"before-input-event"'), main.indexOf('"before-input-event"') + 620);
+    assert.match(h, /delta === undefined/);
+    assert.match(h, /delta === 0/);
   });
 });

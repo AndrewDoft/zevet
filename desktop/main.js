@@ -189,6 +189,15 @@ function applyZoom(win, level) {
   }
 }
 
+/** The zoom a key means, or undefined if it means nothing. 0 is "actual
+ *  size", which is why the caller tests for undefined and not falsiness. */
+function onZoomKey(key) {
+  if (key === "+" || key === "=" || key === "Add") return ZOOM_STEP;
+  if (key === "-" || key === "_" || key === "Subtract") return -ZOOM_STEP;
+  if (key === "0") return 0;
+  return undefined;
+}
+
 function stepZoom(win, delta) {
   if (!win || win.isDestroyed()) return;
   applyZoom(win, win.webContents.getZoomLevel() + delta);
@@ -381,6 +390,19 @@ function openBoard(cfg) {
   // the app; without this handler the event fires and nothing moves.
   boardWindow.webContents.on("zoom-changed", (_event, direction) => {
     stepZoom(boardWindow, direction === "in" ? ZOOM_STEP : -ZOOM_STEP);
+  });
+
+  // The spellings the menu accelerator cannot cover: Ctrl+Shift+= (the "+"
+  // most keyboards actually produce) and the numpad's own +, - and 0. An
+  // accelerator string names a character; this names the key.
+  boardWindow.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    if (!(process.platform === "darwin" ? input.meta : input.control)) return;
+    const delta = onZoomKey(input.key);
+    if (delta === undefined) return;
+    event.preventDefault();
+    if (delta === 0) applyZoom(boardWindow, 0);
+    else stepZoom(boardWindow, delta);
   });
 
   const hubOrigin = new URL(cfg.hub).origin;
@@ -646,14 +668,10 @@ function buildMenu() {
       submenu: [
         {
           label: "Zoom In",
-          accelerator: "CommandOrControl+Plus",
-          click: () => stepZoom(BrowserWindow.getFocusedWindow(), ZOOM_STEP),
-        },
-        {
-          // Chrome binds both; a keyboard without a numpad sends the second.
-          label: "Zoom In",
+          // The UNSHIFTED spelling. "CommandOrControl+Plus" matches only
+          // Ctrl+Shift+=, which is not what anyone presses; the other
+          // spellings are handled in onZoomKey below.
           accelerator: "CommandOrControl+=",
-          visible: false,
           click: () => stepZoom(BrowserWindow.getFocusedWindow(), ZOOM_STEP),
         },
         {
