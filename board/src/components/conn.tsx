@@ -11,6 +11,15 @@ import { ConnectionState, type ConnectionPhase } from "./assistant-ui/elements/c
 import { useBoard } from "../lib/board";
 import type { Conn } from "../lib/types";
 
+/**
+ * ⚠️ THE ELEMENT SHIPPED A SENTENCE THAT IS FALSE HERE.
+ *
+ * ConnectionState's dropped state read "Connection lost. The run kept going on
+ * the server." zevet's hub relays events and runs nothing; the agent that kept
+ * going is on somebody's own machine — the opposite claim, and the reassuring
+ * one. It takes no copy prop, so the sentence is corrected in the element and
+ * re-applied by board/scripts/sync-registry.mjs after any re-install.
+ */
 const PHASE: Record<Conn, ConnectionPhase> = {
   live: "online",
   init: "reconnecting",
@@ -23,7 +32,7 @@ export function ConnBanner() {
   if (phase === "online") return null;
 
   return (
-    <div className="conn-banner">
+    <div className="conn-banner" data-phase={phase}>
       <ConnectionState phase={phase} onRetry={() => location.reload()} />
     </div>
   );

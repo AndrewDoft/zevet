@@ -141,3 +141,37 @@ for (const file of walk(path.join(SRC, "components", "assistant-ui"))) {
   }
 }
 if (fixed) console.log(`repaired ${fixed} file(s) whose imports disagreed with the manifest`);
+
+/* Copy that is wrong for this product.
+ *
+ * These are not style preferences. Each one is a sentence the registry ships
+ * that states something FALSE about zevet, so it has to survive a re-install
+ * the same way the import repairs do. Keep the list short and keep the reason
+ * on every entry; anything that is merely a wording preference does not belong
+ * here, because every entry is a patch that has to be re-checked when upstream
+ * rewrites the file. */
+const COPY = [
+  {
+    file: "components/assistant-ui/elements/connection-state.tsx",
+    // zevet's hub relays events and runs nothing. The agent that kept going is
+    // on somebody's own machine — the opposite claim, and the reassuring one.
+    from: "Connection lost. The run kept going on the server.",
+    to: "Lost the hub. Your agents keep running on their own machines.",
+  },
+];
+
+let copied = 0;
+for (const { file, from, to } of COPY) {
+  const full = path.join(SRC, file);
+  if (!statSync(full, { throwIfNoEntry: false })) continue;
+  const before = readFileSync(full, "utf8");
+  if (before.includes(to)) continue;
+  if (!before.includes(from)) {
+    console.error(`  ! ${file}: upstream copy changed — re-check "${from.slice(0, 40)}…"`);
+    continue;
+  }
+  writeFileSync(full, before.replace(from, to));
+  console.log(`  corrected copy in ${file}`);
+  copied++;
+}
+if (copied) console.log(`corrected ${copied} sentence(s) that were wrong for zevet`);

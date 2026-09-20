@@ -145,3 +145,29 @@ describe("only one syntax highlighter ships", () => {
     assert.deepEqual(engines.slice(0, 3), [], `a second highlighting engine is in the bundle (${engines.length} modules)`);
   });
 });
+
+describe("no shipped sentence claims something untrue about zevet", () => {
+  // The registry is written for chat products with a server-side run loop.
+  // zevet's hub relays events and runs nothing, and the agents are on people's
+  // own machines — so some of that copy is not a style difference, it is a
+  // false statement about where somebody's code is executing.
+  //
+  // board/scripts/sync-registry.mjs re-applies the corrections after every
+  // re-install. This is what notices when one of them silently did not.
+  const bundle = readFileSync(BUNDLE, "utf8");
+
+  const FALSE_CLAIMS = [
+    ["The run kept going on the server", "zevet's hub runs nothing; the agent is on the user's own machine"],
+  ];
+
+  for (const [claim, why] of FALSE_CLAIMS) {
+    test(`"${claim}" is not in the bundle`, () => {
+      assert.ok(!bundle.includes(claim), `${why}\n        Run \`node scripts/sync-registry.mjs\` in board/ and rebuild.`);
+    });
+  }
+
+  test("the correction is actually present, not just the claim absent", () => {
+    // Absence alone would also pass if the component were dropped entirely.
+    assert.ok(bundle.includes("Lost the hub. Your agents keep running on their own machines."));
+  });
+});

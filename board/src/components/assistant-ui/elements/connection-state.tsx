@@ -40,7 +40,7 @@ export function ConnectionState({
         <>
           <CloudOffIcon className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
           <span className="min-w-0 flex-1 text-[13px]">
-            Connection lost. The run kept going on the server.
+            Lost the hub. Your agents keep running on their own machines.
           </span>
           <button
             type="button"

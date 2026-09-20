@@ -766,3 +766,4 @@
      retry a tool call any more than it can end a turn — and a control that
      does nothing is worse than no control. The card keeps everything else. */
   .tool-error-inert > div:last-child { display: none; }
+
