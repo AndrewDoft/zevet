@@ -42,3 +42,9 @@ zevet-*.tar.gz
 
 # Playwright MCP scratch: page snapshots and screenshots taken while working.
 .playwright-mcp/
+
+# Scratch output that lands in the repo root while working: the gate writes
+# gate-out.txt, sprite-test.md is a rendering scratch. Neither is a source file,
+# and release-check.mjs refuses to publish from a tree that is not clean.
+gate-out.txt
+sprite-test.md
