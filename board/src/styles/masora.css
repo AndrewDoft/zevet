@@ -1,0 +1,831 @@
+﻿  /* Masora UI type, served locally; code and paths retain IBM Plex Mono. */
+  @font-face {
+    font-family: "Space Grotesk";
+    src: url("/fonts/space-grotesk-variable.woff2") format("woff2");
+    font-weight: 300 700;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "IBM Plex Mono";
+    src: url("/fonts/ibm-plex-mono-400.woff2") format("woff2");
+    font-weight: 400;
+    font-display: swap;
+  }
+
+  :root {
+    color-scheme: light;
+
+    /* Masora's paper and ink. Faint is for marks, subtle is readable text. */
+    --paper: #eae7e2;
+    --ink: #2c2f44;
+    --muted: #5f6274;
+    --faint: #9c9992;
+    --subtle: #5b5e70;
+    --line: #cfccc6;
+    --fill: #dbdae1;
+
+    /* Keep the bridge's accent token name for older desktop versions. */
+    --cerulean: #2c2f44;
+    --cerulean-soft: #dbdae1;
+    --alert: #a23d2c;
+    --success: #42693e;
+    --raise-soft: #e3e0dc;
+    --raise: #f0eeea;
+    --raise-line: #e3e0dc;
+
+    /* Stable collaborator hues, darkened enough for small name labels. */
+    --who-0: #2b6280;
+    --who-1: #874c30;
+    --who-2: #42693e;
+    --who-3: #715287;
+    --who-4: #805725;
+    --syntax-string: #42693e;
+    --syntax-number: #874c30;
+    --syntax-function: #715287;
+
+    --rail: 258px;
+    --tree: 300px;
+    --font-sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #24252c;
+    --ink: #eae7e2;
+    --muted: #b6b5bf;
+    --faint: #85858f;
+    --subtle: #b6b5bf;
+    --line: #454750;
+    --fill: #373943;
+    --cerulean: #eae7e2;
+    --cerulean-soft: #373943;
+    --alert: #ed9d89;
+    --success: #a4cd9d;
+    --raise-soft: #2a2b33;
+    --raise: #2d2f38;
+    --raise-line: #2d2f38;
+    --who-0: #96c5e0;
+    --who-1: #dcad8d;
+    --who-2: #a4cd9d;
+    --who-3: #c3aed9;
+    --who-4: #dfbd82;
+    --syntax-string: #a4cd9d;
+    --syntax-number: #dcad8d;
+    --syntax-function: #c3aed9;
+  }
+
+  * { box-sizing: border-box; }
+  /* No visible scrollbars anywhere: panes, sheets, consoles and the viewer
+     scroll by wheel, touch and keyboard exactly as before ΓÇö only the chrome
+     goes. (The one previous exception, the status strip, is subsumed.) */
+  * { scrollbar-width: none; -ms-overflow-style: none; }
+  *::-webkit-scrollbar { display: none; }
+  html, body { height: 100%; margin: 0; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    display: grid;
+    /* ONE ROW. The title bar and the status strip both used to live up here;
+       the bar is gone (its wordmark, scope and presence chips all said things
+       the left rail already says) and the strip moved into the rail. The row
+       count and the child count must stay equal -- getting that wrong once put
+       a 400px void above the panes, because the wrong child got the 1fr. */
+    grid-template-rows: 1fr;
+    overflow: hidden;
+  }
+  .mono { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--cerulean); outline-offset: 2px; }
+
+  /* ---- title bar ---------------------------------------------------- */
+  /* ΓÜá∩╕Å THE COLUMN HEADERS ARE THE WINDOW'S DRAG HANDLE.
+     The native caption is hidden so the OS accent bar is gone, which also means
+     there is nothing to grab the window by. Removing the title bar took the
+     last obvious candidate with it, so the job falls to the one strip of
+     non-interactive chrome that runs across the top of every column: the pane
+     titles. They are text nobody clicks, they are already at the top of the
+     window, and a person dragging an app by its header is not surprised.
+     Rejected: a thin invisible drag strip across the top. It is a 6px target
+     that people miss, and an app you cannot reliably move is worse than one
+     with a visible bar. */
+  .pane-title { -webkit-app-region: drag; }
+  .pane-title button, .pane-title a, .pane-title input, .pane-title select {
+    -webkit-app-region: no-drag;
+  }
+  /* The window controls float over the top-right of the page, so the rightmost
+     column's header has to get out from under them. `env(titlebar-area-width)`
+     is published by the overlay and falls back to the full width in a browser
+     tab, where the whole idea does not apply and this resolves to zero. */
+  .wordmark { font-weight: 700; font-size: 17px; letter-spacing: -0.04em; text-transform: lowercase; }
+  /* The window controls float over the top-right of the page: the rightmost
+     header (the detail pane's) gets out from under them. (This used to live
+     on the removed teammates column.) */
+  .detail > .pane-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
+  .scope { color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
+  .spacer { flex: 1 1 auto; }
+
+  .presence { display: flex; align-items: center; gap: 4px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 4px 11px 4px 9px; border-radius: 100px;
+    font-size: 12.5px; color: var(--muted);
+    border: 1px solid transparent;
+  }
+  .chip[data-active="true"] { color: var(--ink); border-color: var(--line); background: var(--raise-soft); }
+  .chip .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
+  .chip[data-active="false"] .bead { opacity: 0.32; }
+  .chip[data-dim="true"] { color: var(--subtle); }
+
+  .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+  .conn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+  .conn[data-state="live"] .dot { background: var(--success); }
+  .conn[data-state="down"] .dot { background: var(--alert); }
+
+  /* ---- shell ---------------------------------------------------------- */
+  .shell {
+    display: grid;
+    grid-template-columns: var(--rail) 1fr;
+    min-height: 0;
+  }
+  .middle { display: grid; grid-template-columns: var(--tree) 1fr; min-height: 0; min-width: 0; }
+  .treecol { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .rail { border-right: 1px solid var(--line); }
+
+  .pane-title {
+    padding: 15px 16px 9px;
+    font-size: 12px; font-weight: 500;
+    letter-spacing: 0;
+    color: var(--subtle);
+    display: flex; align-items: center; gap: 8px;
+  }
+  body[data-native-mac="true"] .rail > .pane-title:first-child { padding-left: 86px; }
+  @media (max-width: 700px) {
+    body[data-native-mac="true"] .treecol > .pane-title { padding-left: 86px; }
+  }
+  .pane-body { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+
+  /* ---- people rail ---------------------------------------------------- */
+  .person {
+    display: grid; grid-template-columns: 10px 1fr; gap: 10px;
+    align-items: start;
+    width: 100%; text-align: left;
+    padding: 9px 16px;
+    border-left: 2px solid transparent;
+  }
+  .person:hover { background: var(--raise-soft); }
+  .person[data-sel="true"] { background: var(--raise); border-left-color: var(--who); }
+  .person .bead { width: 9px; height: 9px; border-radius: 50%; background: var(--who); margin-top: 5px; }
+  .person[data-idle="true"] .bead { opacity: 0.3; }
+  .person .nm { display: block; font-size: 13.5px; letter-spacing: 0.01em; }
+  .person[data-idle="true"] .nm { color: var(--muted); }
+  .person .sub {
+    display: block;
+    font-size: 11.5px; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .person .sub .verb { margin-right: 6px; }
+  .person .sub .verb { color: var(--ink); }
+
+  .ws { padding: 6px 16px 10px; }
+  .ws-item {
+    display: block; width: 100%; text-align: left;
+    padding: 6px 0; font-size: 13px; color: var(--muted);
+  }
+  .ws-item[data-sel="true"] { color: var(--ink); }
+  .ws-item .branch { font-size: 11px; color: var(--subtle); }
+
+  .ws-add {
+    display: block; width: 100%; text-align: left;
+    padding: 8px 0 2px; font-size: 12.5px; color: var(--cerulean);
+  }
+  .ws-note { font-size: 11px; color: var(--subtle); padding-top: 6px; }
+  .ws-item[data-live="true"] { color: var(--ink); font-weight: 500; }
+  .livedot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--who); margin-left: 6px; vertical-align: 1px;
+  }
+
+  /* Agent marks: vendor paths as currentColor glyphs, person-hued. */
+  .mark { display: inline-flex; width: 14px; height: 14px; margin-top: 3px; flex: none; }
+  .mark .fmark { width: 14px; height: 14px; }
+
+  /* Roster dropdowns: one expanded card per person, mission first. */
+  .person-wrap { border-left: 2px solid transparent; }
+  .person-detail { padding: 2px 16px 10px 36px; font-size: 12px; }
+  .person-detail .mission {
+    color: var(--ink); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; margin-bottom: 4px;
+  }
+
+  /* Follow control + resizable panes. */
+  .pane-title.row { justify-content: space-between; }
+  .follow {
+    font: inherit; font-size: 11px; color: var(--muted);
+    background: transparent; border: 0; cursor: pointer;
+  }
+  .follow:hover { color: var(--ink); }
+  .split {
+    position: fixed; top: 0; bottom: 0; width: 9px; margin-left: -4px;
+    cursor: col-resize; z-index: 60; touch-action: none;
+  }
+  .split:hover::after, .split[data-on="true"]::after {
+    content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 1px;
+    background: var(--cerulean);
+  }
+
+  /* ---- file tree ------------------------------------------------------ */
+  .tree { padding: 2px 0 20px; }
+  .node {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%; text-align: left;
+    padding: 4px 16px 4px 0;
+    font-size: 13.5px;
+  }
+  .node[data-sel="true"] { background: var(--cerulean-soft); }
+  .node[data-sel="true"][data-kind] .name { color: var(--ink); }
+  .node:hover { background: var(--raise-soft); }
+  .node .label { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 0 1 auto; }
+  .node .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node[data-kind="dir"] .name { color: var(--ink); }
+  .node[data-kind="file"] .name { color: var(--muted); }
+  .node[data-touched="true"][data-kind="file"] .name { color: var(--ink); }
+  .caret { width: 9px; color: var(--subtle); flex: none; font-size: 9px; }
+  .ficon { width: 13px; height: 13px; flex: none; opacity: 0.55; }
+
+  .marks { display: flex; align-items: center; gap: 3px; flex: none; }
+  .mark { width: 7px; height: 7px; border-radius: 50%; background: var(--who); }
+  .mark[data-stale="true"] { opacity: 0.28; }
+  .node[data-collide="true"] { background: color-mix(in srgb, var(--alert) 9%, transparent); }
+  .node[data-collide="true"] .name { color: var(--alert); }
+
+  .empty-tree { padding: 30px 18px; color: var(--muted); font-size: 13px; max-width: 46ch; }
+
+  /* ---- agent view --------------------------------------------------------
+     The same board, rearranged for driving agents instead of typing.
+
+     ΓÜá∩╕Å IT IS A LAYOUT, NOT A SECOND APP. Every pane below is the same element
+     with the same state and the same sockets; only the grid and the type
+     change. A second view that forked the data would be two boards to keep in
+     step, and they would drift within a week. This is also why the console
+     MOVES between columns rather than being drawn twice: one `#chat` host in
+     agent view, one `#consoles` host in ide view, and renderConsoles picks.
+
+     The shape, and why:
+
+       rail | CONVERSATION | editor
+
+     The conversation is the widest thing on screen because in this mode
+     reading what the agent said is the work. The editor stays ΓÇö a vibe coder
+     still lands in a file eventually, and taking it away would mean switching
+     views to read one function. The file tree stays too: it is the only way
+     to reach the files the conversation is about.
+
+     `display: none` on the tree is deliberate rather than a narrower width: a
+     vestigial 80px of file list would be worse than none. Switching back
+     restores it with its selection intact, because nothing was torn down. */
+  .chatcol {
+    display: none; flex-direction: column;
+    min-height: 0; min-width: 0;
+    border-right: 1px solid var(--line);
+  }
+  body[data-view="agent"] .chatcol { display: flex; }
+  /* The tree stays in both views now that the changed-file list is gone:
+     hiding it in agent view would leave no way to reach a file. */
+  /* ΓÜá∩╕Å THESE TRACKS ARE MATCHED TO DOM ORDER, WHICH IS treecol, chatcol,
+     detail. There is no `grid-area` here, so the second track is whichever
+     element comes second in the markup. Moving an element inside .middle
+     means re-reading this line. */
+  body[data-view="agent"] .middle {
+    grid-template-columns: var(--tree) minmax(0, 1fr);
+  }
+  body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr; }
+  /* The chat column is the page's main surface here, so its right edge needs a
+     rule: without one the conversation and the editor run together. */
+  body[data-view="agent"] .chatcol { border-right: 1px solid var(--line); }
+
+  /* THREE COLUMNS NEED ROOM, and they are dropped in order of what is repeated
+     elsewhere on screen. The editor goes first: a vibe coder can switch to ide
+     view to read a file, and losing it is survivable in a way that losing the
+     conversation is not. The conversation is never dropped, at any width. */
+  @media (max-width: 1500px) {
+    body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr; }
+  }
+  /* ΓÜá∩╕Å THE EDITOR IS NOT ALWAYS ON IN THIS VIEW ΓÇö it appears when a file is
+     picked and gives its width back when the file is closed.
+
+     MEASURED, on a 1240px window: three permanent columns left the
+     conversation 402px wide, which is NARROWER than it is in ide view, i.e.
+     the opposite of the point of this mode. The first fix was a media query
+     that dropped the editor under 1400px, and that was worse: it made clicking
+     a file in the Changed list do nothing at all, silently, on exactly the
+     window size most people have.
+     Tying it to the selection instead means the conversation is full width
+     while you are talking, the editor is there the moment you ask for a file,
+     and no width ever makes a click a no-op. */
+  body[data-view="agent"] .detail { display: none; }
+  body[data-view="agent"][data-picked="true"] .detail { display: flex; }
+  body[data-view="agent"][data-picked="true"] .middle {
+    grid-template-columns: var(--tree) minmax(0, 1.05fr) minmax(0, 1fr);
+  }
+
+  /* ---- the conversation, when it is the main column ----------------------
+     Same console element, different typography. In the rail it is a 340px
+     monospace log, which is the right shape for glancing at. Here it is the
+     thing being read for minutes at a time, so the agent's prose gets the
+     page font at a size meant for reading, and the mono box around it goes:
+     a scrolling bordered well inside a column that is already a scrolling
+     bordered well is one frame too many. */
+  .chatcol .console {
+    background: none; border-left: 0; border-bottom: 0;
+    padding: 6px 26px 18px;
+    max-width: 78ch; margin: 0 auto; width: 100%;
+  }
+  .chatcol .console-out {
+    max-height: none; overflow: visible;
+    background: none; border: 0; padding: 0;
+    font-family: var(--font-sans); font-size: 14.5px; line-height: 1.72;
+  }
+  /* What the agent said: prose, with space between paragraphs. */
+  .chatcol .cline[data-kind="out"] {
+    margin: 0 0 11px; color: var(--ink);
+  }
+  /* What you said: set apart, not indented into a chat bubble. A bubble would
+     imply a messaging app and a per-message identity neither side has here. */
+  .chatcol .cline[data-kind="you"] {
+    margin: 18px 0 13px; padding: 9px 13px;
+    background: var(--cerulean-soft); border-left: 2px solid var(--who);
+    color: var(--ink); font-size: 14px;
+  }
+  /* What it DID: still monospace, still small. These are the lines you skim
+     past when the prose is what you want, and they should read as machinery. */
+  .chatcol .cline[data-kind="tool"],
+  .chatcol .cline[data-kind="meta"],
+  .chatcol .cline[data-kind="err"] {
+    font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55;
+    padding: 1px 0;
+  }
+  .chatcol .console-head { margin-bottom: 14px; }
+  .chatcol .newagent { padding: 10px 26px 18px; max-width: 78ch; margin: 0 auto; }
+  /* The composer sticks to the bottom of the column, where the hands are. */
+  .chatcol .console-form {
+    position: sticky; bottom: 0;
+    margin-top: 14px; padding-top: 10px;
+    background: linear-gradient(to bottom, transparent, var(--paper) 22%);
+  }
+  .chatcol .console-input { font-size: 14px; padding: 11px 13px; }
+
+  .chat-empty {
+    padding: 34px 26px; max-width: 60ch; margin: 0 auto;
+    color: var(--muted); font-size: 14px; line-height: 1.65;
+  }
+  .chat-empty h2 { font-size: 17px; font-weight: 400; color: var(--ink); margin-bottom: 9px; }
+
+  /* (The changed-file list lived here and is gone: one way to reach a file,
+     kept in the tree. Its churn sort now only exists as tree-badge order.) */
+
+  /* ---- the rail's footer: theme, and a way into settings ------------------
+      Above the Repos header, where Andrew asked for it. */
+  .railfoot {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 16px; border-top: 1px solid var(--line);
+  }
+
+  /* ---- the update row ----------------------------------------------------
+     Above the theme toggle, at the bottom of the rail: present enough to be
+     seen on the next glance at the window, quiet enough not to interrupt. It
+     is NOT a modal. A dialog in front of the board would stop somebody's work
+     to tell them about a version they can install whenever they like. */
+  .updaterow {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 11px 16px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--muted);
+  }
+  .updaterow[hidden] { display: none; }
+  .updaterow .hd { color: var(--ink); font-size: 12.5px; }
+  .updaterow .sub { color: var(--subtle); font-size: 11px; }
+  .updaterow .go {
+    align-self: flex-start;
+    padding: 4px 12px; border: 1px solid var(--cerulean); color: var(--cerulean);
+    border-radius: 4px; font-size: 12px;
+  }
+  .update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .updaterow .go:disabled { opacity: .6; cursor: default; }
+  .updaterow .go:hover { background: var(--cerulean); color: var(--paper); }
+  /* A real bar, not a spinner: the length of this download is known, so the
+     progress can be honest about how far through it is. */
+  .updaterow .bar { height: 3px; background: var(--fill); overflow: hidden; }
+  .updaterow .bar i { display: block; height: 100%; background: var(--cerulean); transition: width 300ms; }
+  /* The same theme control and saved preference, in Masora's neutral palette. */
+  .themer {
+    display: inline-flex; align-items: center; gap: 9px;
+    min-height: 32px; padding: 0; border: 0; background: none;
+  }
+  .themer .lbl { font-size: 12px; color: var(--muted); }
+  .sky {
+    position: relative; display: block; width: 42px; height: 24px;
+    border: 1px solid var(--muted); border-radius: 20px;
+    background: var(--fill); flex: none;
+  }
+  .sky-circle {
+    position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--ink);
+    transition: transform 180ms ease;
+  }
+  .themer[aria-pressed="true"] .sky-circle { transform: translateX(18px); }
+  .themer:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 4px; }
+  @media (prefers-reduced-motion: reduce) {
+    .themer * { transition: none !important; }
+  }
+  .settings-link {
+    font-size: 11.5px; color: var(--muted); letter-spacing: 0.02em;
+    transition: color 200ms;
+  }
+  .settings-link:hover { color: var(--ink); }
+
+  /* ---- settings ----------------------------------------------------------
+     A sheet over the board rather than a route, because the board has no
+     router and adding one for a panel of six rows would be the larger change. */
+  .sheet-back {
+    position: fixed; inset: 0; z-index: 40;
+    background: color-mix(in srgb, var(--ink) 34%, transparent);
+  }
+  .sheet {
+    position: fixed; z-index: 41; top: 0; right: 0; bottom: 0; width: min(520px, 92vw);
+    background: var(--paper); border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; overflow-y: auto;
+    box-shadow: -18px 0 40px -30px var(--ink);
+  }
+  .sheet-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 18px 22px 14px; border-bottom: 1px solid var(--line);
+  }
+  .sheet-head h2 { margin: 0; font-size: 15px; font-weight: 400; letter-spacing: 0.02em; }
+  .sheet-close { font-size: 12px; color: var(--muted); }
+  .sheet-close:hover { color: var(--ink); }
+  .sset { padding: 16px 22px; border-bottom: 1px solid var(--line); }
+  .sset h3 {
+    margin: 0 0 10px; font-size: 12px; font-weight: 500;
+    letter-spacing: 0; color: var(--subtle);
+  }
+  .srow { display: flex; gap: 14px; align-items: baseline; padding: 3px 0; font-size: 12.5px; }
+  .srow .k { color: var(--muted); flex: 0 0 140px; }
+  .srow .v { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+  .srow .v.mono { font-family: var(--font-mono); font-size: 11.5px; }
+  .snote { font-size: 11.5px; color: var(--muted); line-height: 1.65; margin-top: 8px; max-width: 52ch; }
+  .sbtn {
+    font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 2px;
+    border: 1px solid var(--line); background: var(--fill); color: var(--ink);
+    transition: border-color 200ms;
+  }
+  .sbtn:hover:not(:disabled) { border-color: var(--cerulean); }
+  .sbtn:disabled { color: var(--subtle); cursor: default; }
+  .sbar { height: 3px; background: var(--fill); margin-top: 10px; overflow: hidden; }
+  .sbar span { display: block; height: 100%; background: var(--cerulean); transition: width 200ms; }
+
+  /* ---- the status strip -------------------------------------------------
+     Andrew's own Claude Code status line, brought inside zevet. Segments
+     separated by a dim pipe, monospace numerals, nothing that reflows when a
+     number changes width -- it updates constantly and a strip that jitters is
+     a strip you learn to ignore. */
+  /* In the rail, not across the top. Andrew: "it belongs unified there."
+     A 260px column cannot hold eight segments on one line, so they stack --
+     which turns out to read better anyway: each fact gets its own row and the
+     eye can scan down them instead of along. The pipes are hidden rather than
+     removed from the DOM, so the same renderStrip() serves both shapes. */
+  .strip {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+    flex: none; padding: 12px 16px 12px;
+    border-top: 1px solid var(--line);
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--muted); white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+  }
+  .strip .sep { display: none; }
+  .strip::-webkit-scrollbar { display: none; }
+  /* Nothing to say, no bar. In a plain browser tab there is no agent stream and
+     no machine to probe, so the strip is empty -- and an empty 10px bar with a
+     rule under it reads as a rendering fault rather than as an absence.
+     ΓÜá∩╕Å COLLAPSED, NOT `display: none`. Removing it from the layout takes it out
+     of the body grid too, which leaves three declared rows with two children:
+     the shell then lands on an auto row instead of the 1fr one and stops
+     halfway down the window. Zero height keeps the slot and shows nothing. */
+  .strip:empty { height: 0; padding: 0; border-top: 0; }
+  .strip .seg { display: inline-flex; align-items: baseline; gap: 5px; }
+  .strip .sep { color: var(--line); padding: 0 10px; }
+  .strip .k { color: var(--subtle); }
+  .strip .v { color: var(--ink); }
+  .strip .ok { color: var(--success); }
+  .strip .warn { color: var(--who-4); }
+  .strip .bad { color: var(--alert); }
+  .strip .dim { color: var(--subtle); }
+  /* The bar is drawn with block characters rather than a div, so it sits on the
+     same baseline as the number beside it and needs no vertical alignment
+     fiddling at 10px. */
+  .strip .bar { letter-spacing: -0.5px; }
+
+  /* ---- tree badges: how long a file is, and what git thinks changed -----
+     Pushed to the right with margin-left:auto so the names stay a clean
+     left-hand column and the numbers a clean right-hand one; a badge inline
+     after the name would ragged-edge every row. Tabular numerals so 9 and 412
+     occupy the same column and the eye can compare them. */
+  .node .stat { margin-left: auto; display: flex; align-items: baseline; gap: 7px; flex: none;
+                font-family: var(--font-mono); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .stat .loc { color: var(--subtle); }
+  .stat .add { color: var(--success); }
+  .stat .del { color: var(--alert); }
+  .stat .new { color: var(--cerulean); }
+  .node[data-sel="true"] .stat .loc { color: var(--subtle); }
+  /* A directory gets no badge. Summing a folder's lines invites the question
+     of whether it counts what is collapsed underneath it, and either answer is
+     wrong half the time. */
+
+  /* ---- the editor -------------------------------------------------------
+     CodeMirror is given no theme of its own beyond this: the board already has
+     a palette and a mono face, and a second one fighting it would be obvious.
+     Everything below is either "inherit" or an existing token. */
+  .ed { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; min-width: 0; }
+  .ed-bar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 6px 18px; border-bottom: 1px solid var(--line);
+    font-size: 11px; color: var(--muted); flex: none;
+  }
+  .ed-bar .grow { flex: 1 1 auto; }
+  .ed-state { display: inline-flex; align-items: center; gap: 6px; }
+  .ed-state .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
+  .ed-state[data-state="open"] .dot { background: var(--success); }
+  .ed-state[data-state="connecting"] .dot,
+  .ed-state[data-state="retrying"] .dot { background: var(--who-4); }
+  .ed-state[data-state="error"] .dot,
+  .ed-state[data-state="undecipherable"] .dot { background: var(--alert); }
+  .ed-saved { color: var(--subtle); }
+  .ed-saved[data-dirty="true"] { color: var(--who-4); }
+
+  .ed-host { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  .cm-editor { height: 100%; }
+  /* Bigger, with the room the title bar gave back. The editor is the thing
+     you look at longest, so it gets the increase first. */
+  .cm-editor .cm-scroller { font-family: var(--font-mono); font-size: 13.5px; line-height: 1.6; }
+  .cm-editor.cm-focused { outline: none; }
+  .cm-gutters { background: transparent; border-right: 1px solid var(--line); color: var(--subtle); }
+  .cm-activeLine { background: var(--raise-line); }
+  .cm-activeLineGutter { background: transparent; color: var(--muted); }
+  .cm-selectionBackground, .cm-editor ::selection { background: var(--cerulean-soft); }
+  /* y-codemirror.next draws remote carets and a name flag; both take the
+     colour from the inline style it sets per user, which is the teammate hue
+     handed to awareness. Only the typography is ours. */
+  .cm-ySelectionInfo { font-family: var(--font-sans); font-size: 9.5px; letter-spacing: 0.04em; }
+
+  /* ---- the riders -------------------------------------------------------
+     One figure per agent or teammate, floated over the editor's left margin at
+     the line they are on. `pointer-events: none` throughout: these are a
+     readout, and a sprite that swallowed a click on the gutter would be
+     maddening. The transition is on transform only ΓÇö animating `top` would
+     make every one of them a layout pass on every keystroke. */
+  .riders { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
+  .rider {
+    /* ΓÜá∩╕Å PINNED TO THE RIGHT EDGE, NOT THE LEFT, and it is not a preference.
+       On the left the figure and its name sit directly on top of the code --
+       which is precisely the line you are being told somebody is editing, so
+       the readout obscures the thing it is pointing at. Seen immediately the
+       first time two real windows were put side by side.
+       `row-reverse` so the name reads inward, toward the code, rather than
+       trailing off the edge of the pane. */
+    position: absolute; right: 10px; top: 0;
+    display: flex; flex-direction: row-reverse; align-items: center; gap: 5px;
+    transform: translateY(-100px);
+    transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    will-change: transform;
+    /* A hairline of the teammate's colour behind it, so a figure over a busy
+       line still reads as one object rather than as pixels in the code. */
+    padding: 0 4px; border-radius: 3px;
+    background: var(--paper);
+  }
+  .rider .who {
+    font-family: var(--font-sans); font-size: 9.5px; letter-spacing: 0.05em;
+    color: var(--ink); white-space: nowrap;
+  }
+  .rider[data-fading="true"] { opacity: 0; transition: transform 320ms, opacity 900ms; }
+
+  .ed-note { padding: 10px 18px; font-size: 11.5px; color: var(--muted); }
+  .ed-note b { font-weight: 500; color: var(--ink); }
+
+  /* ---- teammate activity now lives in the roster dropdowns (personDetail);
+     these row primitives are shared by those cards. */
+  .step {
+    display: grid; grid-template-columns: 78px 1fr; gap: 10px;
+    align-items: baseline; padding: 2.5px 0; font-size: 12px;
+  }
+  .step .t { color: var(--subtle); font-size: 11px; letter-spacing: 0; }
+  .step .v { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step .v b { font-weight: 400; color: var(--ink); }
+  /* The house "working" mark. No spinners: a spinner claims progress it
+     cannot measure, and this one is measured ΓÇö it is on while a turn is. */
+  .typing { display: inline-flex; gap: 3px; align-items: center; margin-left: 2px; }
+  .typing i {
+    width: 3px; height: 3px; border-radius: 50%; background: var(--who);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .typing i:nth-child(2) { animation-delay: 0.15s; }
+  .typing i:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .typing i { animation: none; opacity: 0.7; } }
+
+  .idle-note { font-size: 12px; color: var(--subtle); }
+
+  /* ---- your own agent, running here ------------------------------------ */
+  .newagent { display: flex; flex-direction: column; gap: 9px; padding: 4px 16px 16px; }
+  .launch-controls { display: flex; gap: 8px; }
+  .launch-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  /* ΓÜá∩╕Å `appearance: none` IS THE POINT OF THIS RULE. Without it a <select> is
+     drawn by the operating system: Segoe UI on Windows, a grey gradient, a
+     blue focus ring and a chevron nobody chose -- three of which contradict
+     the one-family, one-colour rule the rest of this page is built on, and
+     none of which follow the theme. The chevron is drawn back as an inline SVG
+     with `currentColor` so it takes --muted in both modes; a background-image
+     with a hardcoded fill would be invisible in one of them. */
+  .launch-select, .launch-model {
+    font: inherit; font-size: 12px; font-weight: 400; letter-spacing: 0.01em;
+    padding: 6px 9px; border-radius: 2px;
+    border: 1px solid var(--line); background: var(--fill); color: var(--ink);
+    appearance: none; -webkit-appearance: none;
+    transition: border-color 200ms, background-color 200ms;
+  }
+  .launch-select:hover, .launch-model:hover { border-color: var(--muted); }
+  .launch-select:focus-visible, .launch-model:focus-visible {
+    outline: 2px solid var(--cerulean); outline-offset: 1px; border-color: var(--cerulean);
+  }
+  .launch-model::placeholder { color: var(--subtle); }
+  .launch-select {
+    padding-right: 26px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='currentColor' stroke-width='1.2'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 9px center;
+    background-size: 9px 6px;
+  }
+  /* The popup list itself is the OS's and cannot be styled; giving the OPTIONS
+     the theme's colours is the most that can be done, and on Windows it is
+     honoured. */
+  .launch-select option { background: var(--paper); color: var(--ink); }
+  .launch-select { flex: 0 0 auto; }
+  .launch-model { flex: 1 1 auto; min-width: 0; }
+  .launch-warn { font-size: 11.5px; color: var(--alert); }
+  .newagent-btn[data-danger="true"] { border-color: var(--alert); color: var(--alert); }
+  .newagent-btn[data-danger="true"]:hover { background: var(--alert); color: var(--paper); }
+  .posture { margin-left: 8px; font-size: 11px; color: var(--subtle); }
+  .posture[data-danger="true"] { color: var(--alert); }
+  .newagent-btn {
+    padding: 6px 13px; border: 1px solid var(--cerulean);
+    color: var(--cerulean); font-size: 12.5px; border-radius: 4px;
+  }
+  .newagent-btn:hover { background: var(--cerulean); color: var(--paper); }
+  .newagent-none { font-size: 12px; color: var(--subtle); }
+  .signin-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--who-4); margin-left: 7px; vertical-align: middle;
+  }
+
+  .console { border-bottom: 1px solid var(--line); padding: 12px 16px 14px; background: var(--raise-soft); }
+  .console-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; }
+  .console-head .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
+  .console-head .nm { font-size: 13px; letter-spacing: 0.02em; }
+  .console { border-left: 2px solid var(--who); }
+  .console-head .where { font-size: 11px; color: var(--subtle); }
+  .console-stop {
+    margin-left: auto; font-size: 11.5px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 4px; padding: 3px 10px;
+  }
+  .console-stop:hover { color: var(--alert); border-color: var(--alert); }
+  .console-err { font-size: 12px; color: var(--alert); margin-bottom: 8px; }
+  .console-out {
+    max-height: 300px; overflow-y: auto;
+    font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
+    background: var(--raise); border: 0; padding: 8px 10px;
+  }
+  .cline { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cline b { font-weight: 500; color: var(--ink); }
+  /* Inline code keeps the mono face even where the surrounding line is prose,
+     which is the only reason it is worth marking up at all. */
+  .cline code {
+    font-family: var(--font-mono); font-size: 0.88em; color: var(--ink);
+    background: var(--fill); border: 0;
+    border-radius: 2px; padding: 0 4px;
+  }
+  .cline[data-kind="you"]   { color: var(--cerulean); }
+  .cline[data-kind="tool"]  { color: var(--muted); }
+  .cline[data-kind="err"]   { color: var(--alert); }
+  .cline[data-kind="meta"]  { color: var(--subtle); }
+  .console-form { margin-top: 8px; }
+  .console-input {
+    display: block; width: 100%; padding: 7px 10px;
+    border: 1px solid var(--line); background: var(--paper);
+    font: inherit; font-size: 12.5px; line-height: 1.5; color: var(--ink);
+    /* A textarea, made to behave. `resize: none` because it sizes itself to
+       its content (see fit()), and a drag handle in the corner would fight
+       that. `overflow: auto` matters: `hidden` would swallow the scrollbar
+       once a prompt passes the height ceiling. */
+    resize: none; overflow: auto; min-height: 34px;
+  }
+  .console-input::placeholder { color: var(--subtle); }
+  .console-input:focus { outline: 2px solid var(--cerulean); outline-offset: -1px; border-color: transparent; }
+
+  /* ---- collisions ------------------------------------------------------ */
+  .collide-bar {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 9px 16px;
+    background: color-mix(in srgb, var(--alert) 8%, var(--paper));
+    border-bottom: 1px solid color-mix(in srgb, var(--alert) 28%, var(--line));
+    font-size: 12.5px;
+  }
+  .collide-bar .file { color: var(--alert); }
+  .collide-bar .who-list { color: var(--subtle); display: flex; gap: 14px; }
+  .collide-bar b { font-weight: 400; color: var(--who); }
+
+  /* ---- file detail ----------------------------------------------------- */
+  .detail-who { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 18px 14px; }
+  .dwho {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 11px; border: 0; border-radius: 4px;
+    font-size: 12.5px; background: var(--raise-soft);
+  }
+  .dwho .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); }
+  .dwho > span + span { margin-left: 0; }
+  .dwho .when { color: var(--subtle); font-size: 11.5px; margin-left: 2px; }
+  .detail-events { padding: 0 18px 24px; }
+  .detail-events.after-code { padding-top: 16px; }
+  .devent {
+    display: grid; grid-template-columns: 70px 90px 74px 1fr;
+    gap: 12px; align-items: baseline;
+    padding: 5px 0; border-bottom: 1px solid var(--line);
+    font-size: 12.5px;
+  }
+  .devent .dt { color: var(--subtle); font-size: 11px; }
+  .devent .da { color: var(--who); }
+  .devent .dv { color: var(--ink); }
+  .devent .dd { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---- the file viewer ------------------------------------------------- */
+  .viewer { padding: 0 18px 20px; min-width: 0; }
+  .viewer.loading, .viewer.err { color: var(--muted); font-size: 12.5px; padding: 8px 18px 20px; }
+  .viewer.err { color: var(--alert); }
+  .viewer .code {
+    margin: 0; padding: 12px 14px;
+    background: var(--raise); border: 0;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.65;
+    color: var(--ink);
+    /* Scrolls sideways only. The pane it sits in already scrolls vertically,
+       and two nested vertical scrollbars means the wheel does the wrong thing
+       depending on where the pointer happens to be. */
+    overflow-x: auto; overflow-y: hidden;
+    white-space: pre;
+    tab-size: 2;
+  }
+  .viewer-note { font-size: 11px; color: var(--subtle); padding-top: 6px; }
+  /* Syntax colours drawn from the same six tokens, so code does not become a
+     second palette living inside the first. */
+  .tok-com  { color: var(--subtle); font-style: italic; }
+  .tok-str  { color: var(--syntax-string); }
+  .tok-num  { color: var(--syntax-number); }
+  .tok-kw   { color: var(--cerulean); }
+  .tok-fn   { color: var(--syntax-function); }
+  .tok-attr { color: var(--syntax-number); }
+  .tok-tag  { color: var(--cerulean); }
+  .tok-punc { color: var(--muted); }
+
+  /* ---- empty / onboarding --------------------------------------------- */
+  .blank { padding: 56px 28px; max-width: 58ch; }
+  .blank h2 { font-weight: 400; font-size: 26px; letter-spacing: 0.01em; margin: 0 0 12px; }
+  .blank p { color: var(--muted); margin: 0 0 12px; line-height: 1.65; }
+  .blank code {
+    font-family: var(--font-mono); font-size: 12px;
+    background: var(--raise); border: 0; padding: 2px 6px;
+  }
+
+  @media (max-width: 1100px) {
+    .shell, body[data-view="agent"] .shell { grid-template-columns: 180px 1fr; }
+  }
+  @media (max-width: 1000px) {
+    body[data-view="agent"] .middle,
+    body[data-view="agent"][data-picked="true"] .middle {
+      grid-template-columns: minmax(150px, 0.38fr) minmax(0, 1fr);
+    }
+    body[data-view="agent"][data-picked="true"] .middle {
+      grid-template-rows: minmax(0, 1.15fr) minmax(0, 1fr);
+    }
+    body[data-view="agent"][data-picked="true"] .treecol { grid-row: 1 / 3; }
+    body[data-view="agent"][data-picked="true"] .chatcol { grid-column: 2; grid-row: 1; border-right: 0; }
+    body[data-view="agent"][data-picked="true"] .detail { grid-column: 2; grid-row: 2; border-top: 1px solid var(--line); }
+  }
+  @media (max-width: 700px) {
+    .shell, body[data-view="agent"] .shell { grid-template-columns: 1fr; }
+    .rail { display: none; }
+  }

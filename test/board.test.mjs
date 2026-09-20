@@ -1,17 +1,15 @@
-// The board's own inline script, checked for the things nothing else checks.
+// The board's own page and source, checked for the things nothing else checks.
 //
-// ⚠️ WHY THIS FILE EXISTS. hub/public/index.html carries ~2500 lines of inline
-// JavaScript and it is the only part of zevet with no compiler, no bundler and
-// no import graph between it and the user. A missing brace in it does not fail
-// a build — there is no build — it ships, and the whole window comes up blank
-// with a message in a console nobody has open. Every other test in this
-// directory can be green while the product does not start.
-//
-// So the first test here is the important one: the page's script must PARSE.
-// The rest assert the small number of structural contracts that the renderer
-// depends on and that a careless edit to the markup would quietly break — an
-// element id the script looks up by name, and the one-host-per-view rule that
-// keeps a single console from being drawn in two columns at once.
+// ⚠️ WHY THIS FILE EXISTS. hub/public/index.html used to carry the board as
+// ~2500 lines of inline JavaScript with no compiler, no bundler and no import
+// graph between it and the user: a missing brace did not fail a build — there
+// was no build — it shipped, and the whole window came up blank. The board is
+// now a bundled React app built out of board/, so that failure mode is gone;
+// what is left are the same structural contracts the old file pinned down,
+// asserted against the artifacts the hub actually serves. A typo in a pane id,
+// a second console host, or a composer that quietly dropped to a single-line
+// input are all still silent failures: the pane never fills, or nobody has a
+// console where they expect one. These tests catch them.
 //
 // This is deliberately NOT a DOM test. Running the board needs a browser, and
 // there is one — see the CDP dogfooding runs — but a dependency-free parse and
@@ -19,156 +17,181 @@
 // actually happens, which is a typo.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { pathToFileURL } from "node:url";
 import { ROOT } from "./helpers.mjs";
 
-const PAGE = path.join(ROOT, "hub", "public", "index.html");
-const html = readFileSync(PAGE, "utf8");
+const INDEX = path.join(ROOT, "hub", "public", "index.html");
+const PUBLIC = path.join(ROOT, "hub", "public");
+const SRC = path.join(ROOT, "board", "src");
+const html = readFileSync(INDEX, "utf8");
+
+/** Every readable .tsx/.ts/.mjs/.css file under board/src, in a stable order. */
+function sources() {
+  const out = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const full = path.join(dir, name);
+      const st = statSync(full);
+      if (st.isDirectory()) walk(full);
+      else if (/\.(tsx|ts|mjs|css)$/.test(name)) out.push(full);
+    }
+  };
+  walk(SRC);
+  return out.sort();
+}
+
+const sourceText = () => sources().map((f) => readFileSync(f, "utf8")).join("\n");
 
 /** Every inline <script> body on the page, in order. */
 function inlineScripts(source) {
   const out = [];
-  // Only scripts with no `src`: the others are separate files with their own
-  // tests, and their contents are not in this document to parse.
   const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
   let m;
   while ((m = re.exec(source))) out.push(m[1]);
   return out;
 }
 
+/** The src of every <script>, and href of every <link>, on the page. */
+function loads(source) {
+  const scripts = Array.from(source.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)).map((m) => m[1]);
+  const links = Array.from(source.matchAll(/<link[^>]*\bhref="([^"]+)"/g)).map((m) => m[1]);
+  return { scripts, links };
+}
+
 describe("the board page", () => {
-  test("every inline script parses", () => {
-    const scripts = inlineScripts(html);
-    assert.ok(scripts.length >= 1, "expected at least one inline script on the board");
-    scripts.forEach((body, i) => {
-      // `new vm.Script` compiles without running: a syntax error throws here,
-      // and nothing in the page's script — which touches `document` on the
-      // first line — is executed.
-      assert.doesNotThrow(
-        () => new vm.Script(body, { filename: `index.html#script${i}` }),
-        `inline script ${i} does not parse`,
-      );
-    });
+  test("every script and style it references exists on disk", () => {
+    const { scripts, links } = loads(html);
+    assert.ok(scripts.length >= 1, "expected at least one script on the board");
+    for (const name of [...scripts, ...links]) {
+      const clean = name.replace(/^\//, "");
+      assert.ok(existsSync(path.join(PUBLIC, clean.replace(/\?.*$/, ""))), `the page loads ${name} and it is not there`);
+    }
   });
 
-  test("the page is one script plus the bundles it loads", () => {
-    // If this number changes, the parse test above is still correct but
-    // somebody has added a second inline script — which is worth noticing,
-    // because the page's one IIFE is the reason `var` at the top level is not
-    // a global.
-    assert.equal(inlineScripts(html).length, 1);
+  test("the page is one bundled module plus the three legacy frames it loads", () => {
+    // The board is now board.js, a Vite bundle. It shares the page with the
+    // three un-bundled frames the hub still serves separately (there is a
+    // whole other build for editor.js) — and with no inline script: the bundle
+    // is where `var` stays contained now.
+    assert.equal(inlineScripts(html).length, 0, "the board must not gain an inline script");
+    const { scripts } = loads(html);
+    const modules = scripts.filter((s) => s.startsWith("/board.js"));
+    assert.equal(modules.length, 1, "there must be exactly one board bundle");
+    assert.deepEqual(
+      scripts.filter((s) => !s.startsWith("/board.js")).sort(),
+      ["/agent-sprites.js", "/editor.js", "/highlight.js"],
+      "the legacy frames are exactly the three the hub serves",
+    );
+    assert.equal(html.match(/board\.css/g).length, 1, "the stylesheet must be included exactly once");
   });
 
   const ids = [
-    // The renderer looks each of these up by id. Renaming one in the markup is
-    // a silent failure: `$()` returns null and the pane simply never fills.
-    // ("changed" was here until the changed-file list was removed in favour
-    // of the tree, and "streams"/"streamsTitle" until teammate cards folded
-    // into the roster and consoles moved to the rail and chat; the absences
-    // are the contract now, not oversights.)
+    // The app looks each of these up by id. Renaming one in the source is a
+    // silent failure: the lookup returns undefined and the pane simply never
+    // fills. ("changed" was here until the changed-file list was removed in
+    // favour of the tree, and "streams"/"streamsTitle" until teammate cards
+    // folded into the roster and consoles moved to the rail and chat; the
+    // absences are the contract now, not oversights.)
     "people", "workspaces", "tree", "detail", "detailTitle", "collisions",
     "chat", "consolesSlot", "strip", "themer", "settingsLink",
   ];
   for (const id of ids) {
-    test(`#${id} is in the markup`, () => {
+    test(`#${id} is written into the board`, () => {
       assert.ok(
-        new RegExp(`id="${id}"`).test(html),
-        `the script reads #${id} and the markup does not define it`,
+        new RegExp(`id="${id}"`).test(sourceText()),
+        `the board renders #${id} and no source defines it`,
       );
     });
   }
 
   test("the console has exactly one host per view", () => {
     // ⚠️ THE CONTRACT AGENT VIEW RESTS ON. The conversation moves between the
-    // middle column (#chat) and the rail (#consolesSlot); it is never in both. A
-    // second renderMyConsole call against a fixed host is how that rule gets
-    // broken, and the symptom — two live transcripts of one agent, with two
-    // composers that disagree about the draft — is confusing enough to be
-    // worth a test that reads like this one.
-    const calls = html.match(/renderMyConsole\(/g) || [];
-    assert.equal(calls.length, 2, "expected one definition and one call site");
+    // middle column (#chat) and the rail (#consolesSlot); it is never in both.
+    // A second #consolesSlot definition, or a rail host that renders even when
+    // the agent view has taken the consoles, is how that rule gets broken —
+    // and the symptom, two live transcripts of one agent with two composers
+    // that disagree about the draft, is the same confusion it was in the old
+    // page.
+    const app = readFileSync(path.join(SRC, "App.tsx"), "utf8");
+    assert.equal((app.match(/id="consolesSlot"/g) || []).length, 1, "there must be exactly one rail host");
+    assert.ok(app.includes('viewMode === "ide"'), "the rail host must be gated on the ide view");
+    assert.equal((app.match(/<Consoles/g) || []).length, 2, "one mount in the rail, one in #chat");
+    const css = readFileSync(path.join(ROOT, "hub", "public", "board.css"), "utf8");
+    assert.ok(/\.chatcol\{[^}]*display:none\}/.test(css), "the chat column must be hidden in ide view");
+    assert.ok(css.includes("data-view=agent] .chatcol{display:flex"), "only the agent view may show the chat column");
   });
 
   test("the tree and follow-mode open files the same way", () => {
     // Both rows call toggleSelection rather than each doing their own
     // openEditor/openLocalFile dance, which is how paths drift. (The second
-    // caller used to be the changed-file list; it is followEvent now that
-    // the list is gone.)
-    const calls = html.match(/toggleSelection\(/g) || [];
-    assert.ok(calls.length >= 3, "expected one definition and two call sites");
+    // caller is the follow handler; the third is the definition.)
+    const src = sourceText();
+    assert.ok((src.match(/toggleSelection\(/g) || []).length >= 3, "expected one definition and two call sites");
   });
 
   test("the composer is a textarea, so a prompt can have newlines in it", () => {
-    assert.ok(
-      /el\("textarea", "console-input"\)/.test(html),
-      "the composer went back to a single-line input",
-    );
+    const consoles = readFileSync(path.join(SRC, "components", "consoles.tsx"), "utf8");
+    assert.ok(consoles.includes("<textarea"), "the composer went back to a single-line input");
     // Enter sends. Losing this makes the field behave like a form nobody
     // expects, and it was the whole reason the input was single-line.
-    assert.ok(/ev\.key === "Enter" && !ev\.shiftKey/.test(html));
+    assert.ok(/ev\.key === "Enter" && !ev\.shiftKey/.test(consoles));
   });
 
-  test("prose() renders bold and code and nothing else", () => {
-    // The function is lifted out of the page and run against a fake document,
-    // because the claim being tested is a SECURITY claim — that model output
-    // cannot become markup — and "I read it and it looked fine" is not a test.
-    // A fake DOM is enough: the only DOM calls it makes are createElement and
-    // createTextNode, and the thing under test is which of the two it picks.
-    const src = html.slice(html.indexOf("var INLINE_MD"), html.indexOf("function serverNow"));
-    assert.ok(src.includes("function prose"), "prose() moved; this test needs re-aiming");
+  test("prose() renders bold and code and nothing else", async () => {
+    // The parser is lifted out of the app and run directly, because the claim
+    // being tested is a SECURITY claim — that model output cannot become
+    // markup — and "I read it and it looked fine" is not a test. The component
+    // that renders the parts is checked separately for not trusting them.
+    const { inlineParts } = await import(
+      pathToFileURL(path.join(ROOT, "board", "src", "lib", "prose.mjs")).href
+    );
+    const render = (s) => inlineParts(s).map((p) => `${p.kind}:${p.text}`);
 
-    const mk = (tag) => ({ tag, kids: [], className: "", appendChild(n) { this.kids.push(n); } });
-    const sandbox = {
-      el: (t) => mk(t),
-      tx: (n, s) => { n.text = String(s); return n; },
-      document: { createTextNode: (s) => ({ tag: "#text", text: s }) },
-    };
-    vm.createContext(sandbox);
-    new vm.Script(src + "\n globalThis.prose = prose;").runInContext(sandbox);
-
-    const render = (s) => {
-      const root = mk("div");
-      sandbox.prose(root, s);
-      return root.kids.map((k) => `${k.tag}:${k.text}`);
-    };
-
-    assert.deepEqual(render("plain words"), ["#text:plain words"]);
-    assert.deepEqual(render("a **bold** b"), ["#text:a ", "b:bold", "#text: b"]);
-    assert.deepEqual(render("run `npm test` now"), ["#text:run ", "code:npm test", "#text: now"]);
+    assert.deepEqual(render("plain words"), ["text:plain words"]);
+    assert.deepEqual(render("a **bold** b"), ["text:a ", "b:bold", "text: b"]);
+    assert.deepEqual(render("run `npm test` now"), ["text:run ", "code:npm test", "text: now"]);
 
     // The one that matters. Angle brackets are text, in every position.
     const evil = '<img src=x onerror="alert(1)">';
-    assert.deepEqual(render(evil), [`#text:${evil}`]);
+    assert.deepEqual(render(evil), [`text:${evil}`]);
     assert.deepEqual(render(`**${evil}**`), [`b:${evil}`]);
-    // A <b> whose TEXT is a tag is still only text: tx() sets textContent.
+    // A <b> whose TEXT is a tag is still only text.
     assert.ok(!render(evil).some((k) => k.startsWith("img:")));
 
     // Unbalanced markers stay literal rather than eating the rest of the line.
-    assert.deepEqual(render("2 ** 3 = 8"), ["#text:2 ** 3 = 8"]);
-    assert.deepEqual(render("a ` b"), ["#text:a ` b"]);
+    assert.deepEqual(render("2 ** 3 = 8"), ["text:2 ** 3 = 8"]);
+    assert.deepEqual(render("a ` b"), ["text:a ` b"]);
     // Markers do not span lines, so a stray backtick cannot swallow a
     // paragraph — the reason both patterns exclude \n.
-    assert.deepEqual(render("a `b\nc` d"), ["#text:a `b\nc` d"]);
+    assert.deepEqual(render("a `b\nc` d"), ["text:a `b\nc` d"]);
+
+    // And React is never handed a string to trust as HTML.
+    const proseTsx = readFileSync(path.join(SRC, "components", "prose.tsx"), "utf8");
+    assert.ok(!proseTsx.includes("dangerouslySetInnerHTML"), "agent words must not become markup");
   });
 
   test("agent view is a stylesheet, not a second renderer", () => {
-    // Every agent-view rule is a CSS selector on the body attribute. If this
-    // ever needs a JS branch per pane, the two views have forked and the
-    // comment in the stylesheet is lying.
-    assert.ok(html.includes('body[data-view="agent"]'));
-    assert.ok(/document\.body\.setAttribute\("data-view", viewMode\)/.test(html));
+    // Every agent-view rule is a CSS selector on the body attribute, in the
+    // built stylesheet the hub serves. If this ever needs a JS branch per
+    // pane, the two views have forked and the comment in the stylesheet is
+    // lying.
+    const css = readFileSync(path.join(ROOT, "hub", "public", "board.css"), "utf8");
+    assert.ok(/body\[data-view=?["']?agent["']?\]/.test(css));
+    const board = readFileSync(path.join(SRC, "lib", "board.ts"), "utf8");
+    assert.ok(board.includes('setAttribute("data-view"'), "the view must be a body attribute, not drawn by JS");
   });
 });
 
 /* ==========================================================================
  * THE SETUP WINDOW
  *
- * desktop/setup.html has the same problem the board has and had no test at
- * all: ~140 lines of inline script with no build step between it and the
- * user, reached on a FIRST RUN, where a ReferenceError is not a degraded
- * feature -- it is an app that cannot be configured and a person with
+ * desktop/setup.html has the same problem the board used to have and had no
+ * test at all: ~140 lines of inline script with no build step between it and
+ * the user, reached on a FIRST RUN, where a ReferenceError is not a degraded
+ * feature — it is an app that cannot be configured and a person with
  * nowhere to go.
  *
  * ⚠️ THE id CHECK IS NOT PEDANTRY. `$("gh")` on an element that is not there
@@ -176,7 +199,7 @@ describe("the board page", () => {
  * this bug in a different alphabet the day before: a stylesheet rule written
  * `.chat` for an element whose id was `chat`, which silently applied to
  * nothing and was found in a screenshot rather than by a test.
- * ======================================================================= */
+ * ========================================================================= */
 describe("the setup window", () => {
   const html = readFileSync(path.join(ROOT, "desktop", "setup.html"), "utf8");
 
@@ -195,9 +218,8 @@ describe("the setup window", () => {
   });
 
   test("GitHub sign-in is the primary action and the secret is the fallback", () => {
-    // The ordering IS the feature (Andrew: "without having to enter some long
-    // code"). A refactor that puts the secret field back at the top has undone
-    // the change while leaving every line of it in place.
+    // The ordering IS the feature. A refactor that puts the secret field back
+    // at the top has undone the change while leaving every line of it in place.
     assert.ok(/id="gh"[^>]*class="[^"]*primary/.test(html), "the GitHub button must be the primary one");
     assert.ok(html.indexOf('id="gh"') < html.indexOf('id="token"'), "the secret field must come after the GitHub button");
     assert.ok(/<details[^>]*id="manual"/.test(html), "the secret field must be folded away behind a disclosure");
@@ -205,8 +227,8 @@ describe("the setup window", () => {
 
   test("the setup window never asks the main process for a credential back", () => {
     // It writes credentials and is never given one. `zevet:config` redacts
-    // them for the same reason, and the board window -- which loads REMOTE
-    // html from the hub -- shares this preload.
+    // them for the same reason, and the board window — which loads REMOTE
+    // html from the hub — shares this preload.
     for (const name of ["secret", "session"]) {
       assert.equal(
         new RegExp(`\b(c|cfg)\.${name}\b`).test(html),

@@ -185,6 +185,11 @@ const PUBLIC_FILES = {
   // tried" is not a content type.
   "editor.js.map": "application/json",
   "agent-sprites.js": "text/javascript",
+  // The React board, built by board/build.mjs into hub/public. Same committed-
+  // bundle contract as editor.js: build here, commit the output.
+  "board.js": "text/javascript",
+  "board.js.map": "application/json",
+  "board.css": "text/css",
 };
 
 /**

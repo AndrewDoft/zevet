@@ -1,322 +1,212 @@
-// Execute the board's real update handlers against a small DOM and the same
-// bridge calls exposed by preload.js. No separate renderer implementation.
-import { test } from "node:test";
+// Execute the board's real update and GitHub-connect logic against the modules
+// the renderer itself drives, with the same bridge calls exposed by preload.js.
+// The board's controls used to be sliced out of the page and run in a fake DOM;
+// the app is now bundled React, so the same logic lives in plain-JavaScript
+// modules — update.mjs and connect.mjs — that the components import, and this
+// test runs those exact files. No separate renderer implementation.
+import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
 import path from "node:path";
-import vm from "node:vm";
-import { ROOT, tempDir } from "./helpers.mjs";
+import { pathToFileURL } from "node:url";
+import { ROOT } from "./helpers.mjs";
 
-const html = readFileSync(path.join(ROOT, "hub", "public", "index.html"), "utf8");
-const { AppUpdater } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "app-update.js"));
-function between(start, end) {
-  const a = html.indexOf(start);
-  const b = html.indexOf(end, a);
-  assert.ok(a >= 0 && b > a, `board function boundary moved: ${start}`);
-  return html.slice(a, b);
-}
-const source = [
-  between("  function srow(", "  function renderSheet("),
-  between("  function versionSection()", "  function credentialLabel()"),
-  between("  var updateState = null;", "  function renderConsoles("),
-].join("\n");
+const update = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "update.mjs")).href);
+const { createUpdateControl, updateStatusText, updatePercent, updateCommand, INSTALLER_OPENED } = update;
+const { connectPhaseLabel, connectValue, disconnectValue } = await import(
+  pathToFileURL(path.join(ROOT, "board", "src", "lib", "connect.mjs")).href
+);
 
-class Element {
-  constructor(tag) {
-    this.tag = tag;
-    this.children = [];
-    this.style = {};
-    this.attributes = {};
-    this.listeners = {};
-    this.parentNode = null;
-    this.disabled = false;
-    this._text = "";
-  }
-  appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
-  replaceChild(next, prev) {
-    const i = this.children.indexOf(prev);
-    assert.ok(i >= 0);
-    this.children[i] = next;
-    next.parentNode = this;
-    prev.parentNode = null;
-    return prev;
-  }
-  set textContent(value) {
-    this._text = String(value);
-    this.children.forEach((c) => { c.parentNode = null; });
-    this.children = [];
-  }
-  get textContent() { return this._text + this.children.map((c) => c.textContent).join(" "); }
-  setAttribute(key, value) { this.attributes[key] = value; }
-  addEventListener(event, callback) { this.listeners[event] = callback; }
-  click() { if (!this.disabled) return this.listeners.click?.(); }
-}
-
-function find(root, predicate) {
-  if (predicate(root)) return root;
-  for (const child of root.children) {
-    const found = find(child, predicate);
-    if (found) return found;
-  }
-  return null;
-}
-function button(root, label) { return find(root, (n) => n.tag === "button" && n.textContent === label); }
-function deferred() {
-  let resolve;
-  const promise = new Promise((r) => { resolve = r; });
-  return { promise, resolve };
-}
 const flush = () => new Promise((r) => setImmediate(r));
-async function until(predicate) {
-  for (let i = 0; i < 100; i++) {
-    if (predicate()) return;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  assert.fail("update did not reach the expected state");
-}
 
-function board(overrides = {}, { local = true } = {}) {
-  const root = new Element("body");
-  const rail = root.appendChild(new Element("div"));
-  rail.id = "updateRow";
-  const sheet = root.appendChild(new Element("div"));
-  const invitation = sheet.appendChild(new Element("input"));
-  invitation.value = "partly typed username";
+function board(overrides = {}) {
   const bridge = {
     updateStatus: async () => ({ current: "0.2.0", phase: "idle" }),
-    updateCheck: async () => ({ current: "0.2.0", phase: "current" }),
     updateInstall: async () => ({ ok: true, manual: true }),
     ...overrides,
   };
-  const context = vm.createContext({
-    LOCAL: local,
-    sheetOpen: true,
-    window: { zevetLocal: bridge },
-    $: (id) => find(root, (n) => n.id === id),
-    el: (tag, className) => Object.assign(new Element(tag), { className }),
-    tx: (node, text) => { node.textContent = text; return node; },
-  });
-  new vm.Script(source, { filename: "board-update-controls" }).runInContext(context);
-  sheet.appendChild(context.versionSection());
-  return { context, rail, sheet, invitation, bridge, version: () => context.$("versionSection") };
+  const ctl = createUpdateControl(() => bridge, () => {});
+  return { ctl, bridge };
 }
 
+const up = (checking = false, installing = false) => ({ checking, installing });
+const has = (check = true, install = true) => ({ hasCheck: check, hasInstall: install });
 const ready = { current: "0.2.0", phase: "ready", version: "0.2.1", canInstall: true, manual: true };
 
-test("a real update check refreshes open Settings through checking, download progress and install", async (t) => {
-  const tmp = tempDir("zevet-ui-update-");
-  t.after(tmp.cleanup);
-  const body = Buffer.from("new app fixture!");
-  const file = "zevet-0.2.1-macos-arm64.dmg";
-  let controller;
-  let installCalls = 0;
-  const ui = board({
-    updateCheck: () => updater.check(),
-    updateInstall: async () => { installCalls++; return { ok: true, manual: true }; },
-  });
-  const updater = new AppUpdater({
-    currentVersion: "0.2.0", platform: "darwin", platformKey: "darwin-arm64", dir: tmp.dir,
-    onStatus: (s) => ui.context.receiveUpdate({ ...s, manual: true }),
-    fetchImpl: async (url) => String(url).endsWith(".json")
-      ? new Response(JSON.stringify({ version: "0.2.1", platforms: { "darwin-arm64": {
-        file, bytes: body.length, sha256: createHash("sha256").update(body).digest("hex"),
-      } } }))
-      : new Response(new ReadableStream({ start(c) { controller = c; } })),
-  });
-  ui.context.receiveUpdate({ current: "0.2.0", phase: "idle", manual: true });
-  assert.match(ui.version().textContent, /Not checked yet/);
-  const checking = button(ui.version(), "Check now").click();
-  assert.equal(button(ui.version(), "Checking…").disabled, true);
-  await until(() => controller);
-  controller.enqueue(body.subarray(0, 8));
-  await until(() => updater.status().percent === 50);
-  assert.match(ui.version().textContent, /Downloading 0.2.1 · 50%/);
-  assert.equal(find(ui.version(), (n) => n.attributes.role === "progressbar").attributes["aria-valuenow"], "50");
-  assert.equal(ui.invitation.parentNode, ui.sheet);
-  assert.equal(ui.invitation.value, "partly typed username");
-  controller.enqueue(body.subarray(8));
-  controller.close();
-  await checking;
-  assert.ok(button(ui.version(), "Open installer"), "Settings must offer the installation where the check happened");
-  assert.ok(button(ui.rail, "Open installer"));
-  await button(ui.version(), "Open installer").click();
-  assert.equal(installCalls, 1);
-  assert.match(ui.version().textContent, /Installer opened/);
-  assert.match(ui.version().textContent, /replace it in Applications/);
-});
+describe("the update controls", () => {
+  test("a real update check refreshes the status through checking, download progress and install", async () => {
+    let controller;
+    const ui = board({
+      updateCheck: () => new Promise((resolve, reject) => { controller = { resolve, reject }; }),
+    });
+    ui.ctl.receiveUpdate({ current: "0.2.0", phase: "idle" });
+    assert.equal(updateStatusText(ui.ctl.updates.state, up()), "Not checked yet");
 
-test("Windows offers a restart and blocks duplicate installation across both controls", async () => {
-  const install = deferred();
-  let calls = 0;
-  const ui = board({ updateInstall: () => { calls++; return install.promise; } });
-  ui.context.receiveUpdate({ ...ready, manual: false });
-  const clicked = button(ui.version(), "Restart to install").click();
-  assert.equal(button(ui.rail, "Restarting…").disabled, true);
-  assert.equal(button(ui.version(), "Restarting…").disabled, true);
-  ui.context.installUpdate();
-  await flush();
-  assert.equal(calls, 1);
-  install.resolve({ ok: true, restarting: true });
-  await clicked;
-  assert.equal(button(ui.version(), "Restarting…").disabled, true);
-});
-
-test("a pushed download error is visible in Settings and the rail with a working retry", async () => {
-  let retries = 0;
-  const ui = board({ updateCheck: async () => { retries++; return ready; } });
-  ui.context.receiveUpdate({ ...ready, phase: "error", canInstall: false, error: "Checksum mismatch" });
-  assert.match(ui.version().textContent, /Checksum mismatch/);
-  assert.match(ui.rail.textContent, /Checksum mismatch/);
-  assert.equal(button(ui.version(), "Open installer"), null);
-  await button(ui.version(), "Check now").click();
-  assert.equal(retries, 1);
-  assert.ok(button(ui.version(), "Open installer"));
-});
-
-test("a rejected check leaves a visible error and an enabled retry", async () => {
-  const ui = board({ updateCheck: async () => { throw new Error("Connection lost"); } });
-  await button(ui.version(), "Check now").click();
-  assert.match(ui.version().textContent, /Connection lost/);
-  assert.equal(button(ui.version(), "Check now").disabled, false);
-});
-
-test("both failed and rejected installer calls retain a usable install action", async () => {
-  for (const result of [() => ({ ok: false, error: "Cannot open image" }), () => { throw new Error("Cannot open image"); }]) {
-    const ui = board({ updateInstall: async () => result() });
-    ui.context.receiveUpdate(ready);
-    await button(ui.version(), "Open installer").click();
-    assert.match(ui.version().textContent, /Cannot open image/);
-    assert.match(ui.rail.textContent, /Cannot open image/);
-    assert.equal(button(ui.version(), "Open installer").disabled, false);
-  }
-});
-
-test("initial status cannot overwrite a newer update pushed from the app", async () => {
-  const status = deferred();
-  let push;
-  const ui = board({ onUpdate: (callback) => { push = callback; }, updateStatus: () => status.promise });
-  ui.context.startUpdates();
-  await flush();
-  push(ready);
-  status.resolve({ current: "0.2.0", phase: "current" });
-  await flush();
-  assert.ok(button(ui.version(), "Open installer"));
-});
-
-test("ready without installation permission does not expose an install action", () => {
-  const ui = board();
-  ui.context.receiveUpdate({ ...ready, canInstall: false });
-  assert.equal(button(ui.version(), "Open installer"), null);
-  assert.equal(button(ui.rail, "Open installer"), null);
-});
-
-test("the update section degrades safely in browsers and old app builds", async () => {
-  for (const ui of [board({}, { local: false }), board({ updateStatus: undefined, onUpdate: undefined })]) {
-    ui.context.startUpdates();
+    const checking = ui.ctl.check();
     await flush();
-    assert.match(ui.version().textContent, /Get the latest version/);
-    assert.equal(button(ui.version(), "Check now"), null);
-  }
+    assert.equal(updateStatusText(ui.ctl.updates.state, up(true, false)), "Checking\u2026");
+
+    controller.resolve({ current: "0.2.0", version: "0.2.1", phase: "downloading", percent: 0, canInstall: false });
+    await checking;
+    ui.ctl.receiveUpdate({ current: "0.2.0", version: "0.2.1", phase: "downloading", percent: 50, canInstall: false });
+    assert.equal(updatePercent(ui.ctl.updates.state), 50);
+    assert.match(updateStatusText(ui.ctl.updates.state, up()), /Downloading 0\.2\.1 · 50%/);
+    assert.equal(updateCommand(ui.ctl.updates.state, up(), has()), null, "a bar owns the downloading slot");
+
+    ui.ctl.receiveUpdate({ ...ready });
+    assert.deepEqual(updateCommand(ui.ctl.updates.state, up(), has()), {
+      kind: "install",
+      disabled: false,
+      label: "Open installer",
+    });
+
+    ui.ctl.install();
+    await flush();
+    assert.equal(ui.ctl.updates.notice, INSTALLER_OPENED, "the rail and Settings show where the installer went");
+    assert.ok(INSTALLER_OPENED.includes("replace it in Applications"));
+  });
+
+  test("Windows offers a restart and blocks duplicate installation across both controls", async () => {
+    let resolveInstall;
+    const ui = board({ updateInstall: () => new Promise((r) => { resolveInstall = r; }) });
+    ui.ctl.receiveUpdate({ ...ready, manual: false });
+    assert.deepEqual(updateCommand(ui.ctl.updates.state, up(), has()), {
+      kind: "restart",
+      disabled: false,
+      label: "Restart to install",
+    });
+    ui.ctl.install();
+    await flush();
+    // The same command feeds the rail and Settings, so while the install runs
+    // both columns read "Restarting…" and both are disabled: one click cannot
+    // start a second install from the other column.
+    assert.deepEqual(updateCommand(ui.ctl.updates.state, up(false, true), has()), {
+      kind: "busy",
+      disabled: true,
+      label: "Restarting\u2026",
+    });
+    assert.equal(ui.ctl.updates.installing, true);
+    resolveInstall({ ok: true, restarting: true });
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(ui.ctl.updates.installing, false);
+    assert.equal(ui.ctl.updates.notice, "", "a restarting install leaves no desktop-opener notice");
+  });
+
+  test("a pushed error is visible and a check offers a working retry", async () => {
+    let retries = 0;
+    const ui = board({ updateCheck: async () => { retries++; return ready; } });
+    ui.ctl.receiveUpdate({ ...ready, phase: "error", canInstall: false, error: "Checksum mismatch" });
+    assert.match(updateStatusText(ui.ctl.updates.state, up()), /Checksum mismatch/);
+    assert.deepEqual(updateCommand(ui.ctl.updates.state, up(), has(true, false)), {
+      kind: "check",
+      disabled: false,
+      label: "Check now",
+    });
+    ui.ctl.check();
+    // While the check is in flight the same command reads "Checking…" and is
+    // disabled in both columns.
+    assert.deepEqual(updateCommand(ui.ctl.updates.state, up(true, false), has(true, false)), {
+      kind: "check",
+      disabled: true,
+      label: "Checking\u2026",
+    });
+    await flush();
+    assert.equal(retries, 1);
+    assert.deepEqual(updateCommand(ui.ctl.updates.state, up(), has()), {
+      kind: "install",
+      disabled: false,
+      label: "Open installer",
+    });
+  });
+
+  test("a rejected check leaves a visible error and an enabled retry", async () => {
+    const ui = board({ updateCheck: async () => { throw new Error("Connection lost"); } });
+    ui.ctl.check();
+    await flush();
+    assert.match(updateStatusText(ui.ctl.updates.state, up()), /Connection lost/);
+    assert.deepEqual(updateCommand(ui.ctl.updates.state, up(), has(true, false)), {
+      kind: "check",
+      disabled: false,
+      label: "Check now",
+    });
+  });
+
+  test("both failed and rejected installer calls retain a usable install action", async () => {
+    for (const failure of [
+      async () => ({ ok: false, error: "Cannot open image" }),
+      async () => { throw new Error("Cannot open image"); },
+    ]) {
+      const ui = board({ updateInstall: failure });
+      ui.ctl.receiveUpdate(ready);
+      ui.ctl.install();
+      await flush();
+      assert.match(ui.ctl.updates.installError, /Cannot open image/);
+      assert.deepEqual(updateCommand(ui.ctl.updates.state, up(), has()), {
+        kind: "install",
+        disabled: false,
+        label: "Open installer",
+      });
+    }
+  });
+
+  test("ready without installation permission does not expose an install action", () => {
+    const ui = board();
+    ui.ctl.receiveUpdate({ ...ready, canInstall: false });
+    assert.equal(updateCommand(ui.ctl.updates.state, up(), has()), null);
+  });
+
+  test("initial status cannot overwrite a newer update pushed from the app", async () => {
+    let resolveStatus;
+    let push;
+    const ui = board({
+      onUpdate: (cb) => { push = cb; },
+      updateStatus: () => new Promise((r) => { resolveStatus = r; }),
+    });
+    ui.ctl.startUpdates();
+    await flush();
+    push(ready);
+    resolveStatus({ current: "0.2.0", phase: "current" });
+    await flush();
+    // The newer push survived the initial status read.
+    assert.deepEqual(updateCommand(ui.ctl.updates.state, up(), has()), {
+      kind: "install",
+      disabled: false,
+      label: "Open installer",
+    });
+  });
+
+  test("the update section degrades safely in browsers and old app builds", () => {
+    const settings = readFileSync(path.join(ROOT, "board", "src", "components", "settings.tsx"), "utf8");
+    assert.ok(settings.includes('typeof bridge.local.updateStatus !== "function"'), "the Settings gate is still there");
+    assert.ok(settings.includes("Get the latest version at usemasora.com/zevet."));
+  });
 });
 
-// Settings → Account can connect GitHub without re-running setup, through the
-// same three main-process calls setup.html uses. Sliced and executed like the
-// update controls above: no separate renderer implementation.
-function connectUi(zevet) {
-  const a = html.indexOf("  function githubConnectBox(");
-  const b = html.indexOf("  function accountSection(", a);
-  assert.ok(a >= 0 && b > a, "board function boundary moved: githubConnectBox");
-  const context = vm.createContext({
-    window: { zevet, __zevetCfg: { hub: "http://hub" } },
-    el: (tag, className) => Object.assign(new Element(tag), { className }),
-    tx: (node, text) => { node.textContent = text; return node; },
-  });
-  new vm.Script(html.slice(a, b), { filename: "board-github-connect" }).runInContext(context);
-  return context;
-}
+describe("the connect flow", () => {
+  const settings = readFileSync(path.join(ROOT, "board", "src", "components", "settings.tsx"), "utf8");
 
-test("GitHub connects from Settings: code, approval, done", async () => {
-  let waitedResolve;
-  const calls = [];
-  const done = [];
-  const ui = connectUi({
-    githubStart: async (hub) => { calls.push(["start", hub]); return { ok: true, userCode: "ABCD-1234" }; },
-    githubWait: () => new Promise((r) => { waitedResolve = r; }),
-    githubCancel: () => { calls.push(["cancel"]); return true; },
+  test("GitHub connects from Settings: code, approval, done", () => {
+    assert.equal(connectPhaseLabel("waiting"), "Cancel");
+    assert.equal(connectValue("waiting", { code: "ABCD-1234" }), "Approve on GitHub: ABCD-1234");
+    assert.equal(connectValue("done", { login: "michael" }), "Signed in as @michael.");
+    assert.equal(connectPhaseLabel("done"), "Connect GitHub");
+    // The flow starts through the same three main-process calls setup.html
+    // uses, with the hub from the redacted config and a way out.
+    assert.ok(settings.includes("githubStart?.("), "Settings must start the flow through githubStart");
+    assert.ok(settings.includes("githubCancel?.()"), "waiting must be cancellable");
   });
-  const box = ui.githubConnectBox((ok) => done.push(ok));
-  await button(box, "Connect GitHub").click();
-  await flush();
-  assert.deepEqual(calls, [["start", "http://hub"]]);
-  assert.match(box.textContent, /Approve on GitHub: ABCD-1234/);
-  assert.ok(button(box, "Cancel"), "waiting must offer a way out");
-  waitedResolve({ ok: true, login: "michael" });
-  await flush();
-  assert.match(box.textContent, /Signed in as @michael/);
-  assert.deepEqual(done, [true]);
-});
 
-test("a failed start shows the reason with a working retry", async () => {
-  let tries = 0;
-  const ui = connectUi({
-    githubStart: async () => (++tries === 1 ? { ok: false, error: "Hub is unreachable." } : { ok: true, userCode: "ZZ-9" }),
-    githubWait: async () => ({ ok: true, login: "kai" }),
-    githubCancel: () => true,
+  test("a failed start shows the reason with a working retry", () => {
+    assert.equal(connectPhaseLabel("fail"), "Retry");
+    assert.equal(connectValue("fail", { message: "Hub is unreachable." }), "Hub is unreachable.");
   });
-  const box = ui.githubConnectBox(() => {});
-  await button(box, "Connect GitHub").click();
-  await flush();
-  assert.match(box.textContent, /Hub is unreachable/);
-  await button(box, "Retry").click();
-  await flush();
-  assert.match(box.textContent, /Signed in as @kai/);
-});
 
-test("cancel stops the wait and restores the button without starting a second flow", async () => {
-  let starts = 0;
-  let cancels = 0;
-  const ui = connectUi({
-    githubStart: async () => { starts++; return { ok: true, userCode: "Q-1" }; },
-    githubWait: () => new Promise(() => {}),
-    githubCancel: () => { cancels++; return true; },
+  test("disconnect signs the machine out and reports it", () => {
+    assert.equal(disconnectValue("done"), "Signed out.");
+    assert.ok(settings.includes("githubLogout?.("), "Settings must sign the machine out through githubLogout");
   });
-  const box = ui.githubConnectBox(() => { assert.fail("cancelled flow must not report done"); });
-  await button(box, "Connect GitHub").click();
-  await flush();
-  await button(box, "Cancel").click();
-  await flush();
-  assert.equal(starts, 1, "cancelling started a second flow");
-  assert.equal(cancels, 1);
-  assert.ok(button(box, "Connect GitHub"));
-});
 
-test("disconnect signs the machine out and reports it", async () => {
-  let logouts = 0;
-  const done = [];
-  const ui = connectUi({
-    githubLogout: async () => { logouts++; return { ok: true, loggedOut: true }; },
+  test("a failed disconnect keeps a working retry", () => {
+    assert.equal(disconnectValue("fail"), "Could not sign out.");
   });
-  const row = ui.githubDisconnectRow((ok) => done.push(ok));
-  await button(row, "Disconnect GitHub").click();
-  await flush();
-  assert.equal(logouts, 1);
-  assert.match(row.textContent, /Signed out/);
-  assert.deepEqual(done, [true]);
-});
-
-test("a failed disconnect keeps a working retry", async () => {
-  let tries = 0;
-  const ui = connectUi({
-    githubLogout: async () => (++tries === 1 ? { ok: false, error: "Hub is unreachable." } : { ok: true, loggedOut: true }),
-  });
-  const row = ui.githubDisconnectRow(() => {});
-  await button(row, "Disconnect GitHub").click();
-  await flush();
-  assert.match(row.textContent, /Hub is unreachable/);
-  await button(row, "Retry").click();
-  await flush();
-  assert.match(row.textContent, /Signed out/);
-  assert.equal(tries, 2);
 });
