@@ -367,3 +367,97 @@ the registry components resolve their colours from masora's tokens.
 `INSUF-005` — codex's `exec --json` vocabulary is written from documentation,
 not observation, because codex is not installed on the machine this was built
 on. It fails visibly rather than silently.
+
+---
+
+## 10. 0.2.10 — the rest of it
+
+0.2.9 shipped the conversation. This is everything else, after "make sure you
+have all of the assistant-ui stuff everywhere".
+
+### Tool UIs — the biggest change
+
+`components/tools.tsx` registers a rendering per tool name with
+`makeAssistantToolUI`. Before this, every tool call fell through to
+`ToolFallback`: a name and a blob of JSON, in a product whose entire job is
+watching an agent work.
+
+| Tool | Renders as |
+|---|---|
+| `Bash` / `bash` / `command_execution` | terminal block, with the output |
+| `Edit` / `Write` / `patch` / `file_change` | a coloured diff |
+| `Read` / `read` / `view` | collapsed, with the line count |
+| `Glob` / `Grep` / `LS` | a file tree of what matched |
+| `TodoWrite` | the plan, as a checklist |
+| `Task` | the subagent, as its own agent |
+| `WebSearch` | the query and the results |
+
+Registered under every spelling the three CLIs use. A tool nobody has modelled
+still gets the fallback, which is correct rather than a gap.
+
+The arguments are untrusted shapes — three CLIs across versions — so every
+field goes through a reader that returns a usable default. The Edit diff is
+built from the before/after strings the CLIs hand over and is deliberately not
+a diff algorithm: every old line reads as removed and every new line as added,
+which is honest about what we were told instead of inventing a common
+subsequence the agent never claimed.
+
+### Also converted
+
+- **File tree** — elements/file-tree's chevron and folder/file icons, its
+  indent formula, its emerald/red diff pair, and the "N files changed" header
+  the data was already there for. The collision marks and per-teammate hues
+  stay: the element has no notion of them and they are the product.
+- **People rail** — `AgentStatus`, so a teammate's state reads the same as a
+  local console's. It never produces "failed": the hub sees that somebody
+  stopped, never why.
+- **Conversation** — `ContextBreakdown`, `CostMeter` and `MessageTiming` under
+  the transcript. The rail's 258px strip says the same numbers at a glance and
+  has no room to say them properly.
+- **Markdown code blocks** — highlighted, by zevet's own engine (see below).
+
+### Still not converted, and still for a reason
+
+**Settings.** `elements-settings-panel` requires a system prompt and a
+temperature. Those belong to the agent CLI, not to zevet, and wiring the
+component in would put two controls in Settings that do nothing.
+
+### Three things that would have shipped broken
+
+**486 chunk files.** The hub serves an exact-name allowlist — `board.js`,
+`board.js.map`, `board.css` — with no directory listing, deliberately. Adding
+the registry's Prism highlighter made the build emit 486 chunks, which
+`index.html` then requested by `modulepreload`. Every one would have 404'd: a
+board that loads and does nothing. `build.codeSplitting: false` was already set
+and is not the option that governs it; `output.inlineDynamicImports` is.
+
+**A second syntax highlighter.** Inlining then took the bundle to 2,772,465
+bytes, because `react-syntax-highlighter`'s root entry carries both engines —
+1,339 kB of `highlight.js` beside 939 kB of `refractor` — in a board that
+already loads its own as a committed side bundle with its own gate test.
+`components/highlight.tsx` fills the same slot with the engine already on the
+page. Final: **1,076,276 bytes, 319 kB gzipped**, 27 kB more than before any of
+this.
+
+**A sentence that was false.** `ConnectionState`'s dropped state read
+"Connection lost. The run kept going on the server." zevet's hub relays events
+and runs nothing; the agent that kept going is on somebody's own machine. It
+takes no copy prop, so the sentence is corrected in the element and
+`sync-registry.mjs` re-applies it after any re-install, beside the import
+repairs. The gate asserts both halves — the false sentence absent AND the true
+one present, since absence alone would also pass if the component were dropped.
+
+Two smaller ones, both found by driving the board rather than reading it: a
+failing `npm test` rendered as "exit 0" (isError was being sniffed from the
+result object instead of read off the part), and `ToolError`'s Retry button
+rendered live while doing nothing — zevet drives no agent's loop and cannot
+retry a tool call any more than it can end a turn, so the row is hidden.
+
+### Measured
+
+- Gate **950** green, from 875 at the start of the day.
+- Bundle 1,076,276 bytes / 319 kB gzipped.
+- Hub serving a bundle sha256-identical to the committed one.
+- Zoom persists across an app restart: restored at 2, two steps took it to 3.
+- Auto-update: a 0.2.9 machine downloads and checksums 0.2.10 and reports
+  ready.
