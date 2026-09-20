@@ -65,10 +65,11 @@ describe("the board page", () => {
     // The renderer looks each of these up by id. Renaming one in the markup is
     // a silent failure: `$()` returns null and the pane simply never fills.
     // ("changed" was here until the changed-file list was removed in favour
-    // of the tree; the absence is the contract now, not an oversight.)
+    // of the tree, and "streams"/"streamsTitle" until teammate cards folded
+    // into the roster and consoles moved to the rail and chat; the absences
+    // are the contract now, not oversights.)
     "people", "workspaces", "tree", "detail", "detailTitle", "collisions",
-    "streams", "chat", "strip", "themer", "settingsLink",
-    "streamsTitle",
+    "chat", "consolesSlot", "strip", "themer", "settingsLink",
   ];
   for (const id of ids) {
     test(`#${id} is in the markup`, () => {
@@ -81,7 +82,7 @@ describe("the board page", () => {
 
   test("the console has exactly one host per view", () => {
     // ⚠️ THE CONTRACT AGENT VIEW RESTS ON. The conversation moves between the
-    // middle column (#chat) and the rail (#streams); it is never in both. A
+    // middle column (#chat) and the rail (#consolesSlot); it is never in both. A
     // second renderMyConsole call against a fixed host is how that rule gets
     // broken, and the symptom — two live transcripts of one agent, with two
     // composers that disagree about the draft — is confusing enough to be

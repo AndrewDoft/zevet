@@ -20,7 +20,7 @@ function between(start, end) {
 const source = [
   between("  function srow(", "  function renderSheet("),
   between("  function versionSection()", "  function credentialLabel()"),
-  between("  var updateState = null;", "  function renderStreams("),
+  between("  var updateState = null;", "  function renderConsoles("),
 ].join("\n");
 
 class Element {

@@ -53,8 +53,6 @@
 
     --rail: 258px;
     --tree: 300px;
-    --streams: 400px;
-    --talk: 350px;
     --font-sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
@@ -133,8 +131,11 @@
      column's header has to get out from under them. `env(titlebar-area-width)`
      is published by the overlay and falls back to the full width in a browser
      tab, where the whole idea does not apply and this resolves to zero. */
-  .streams > .pane-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
   .wordmark { font-weight: 700; font-size: 17px; letter-spacing: -0.04em; text-transform: lowercase; }
+  /* The window controls float over the top-right of the page: the rightmost
+     header (the detail pane's) gets out from under them. (This used to live
+     on the removed teammates column.) */
+  .detail > .pane-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
   .scope { color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
   .spacer { flex: 1 1 auto; }
 
@@ -158,7 +159,7 @@
   /* ---- shell ---------------------------------------------------------- */
   .shell {
     display: grid;
-    grid-template-columns: var(--rail) 1fr var(--streams);
+    grid-template-columns: var(--rail) 1fr;
     min-height: 0;
   }
   .middle { display: grid; grid-template-columns: var(--tree) 1fr; min-height: 0; min-width: 0; }
@@ -166,7 +167,6 @@
   .detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .rail { border-right: 1px solid var(--line); }
-  .streams { border-left: 1px solid var(--line); }
 
   .pane-title {
     padding: 15px 16px 9px;
@@ -225,7 +225,6 @@
   /* Agent marks: vendor paths as currentColor glyphs, person-hued. */
   .mark { display: inline-flex; width: 14px; height: 14px; margin-top: 3px; flex: none; }
   .mark .fmark { width: 14px; height: 14px; }
-  .stream-head .mark { margin-top: 2px; }
 
   /* Roster dropdowns: one expanded card per person, mission first. */
   .person-wrap { border-left: 2px solid transparent; }
@@ -286,11 +285,11 @@
      change. A second view that forked the data would be two boards to keep in
      step, and they would drift within a week. This is also why the console
      MOVES between columns rather than being drawn twice: one `#chat` host in
-     agent view, one `#streams` host in ide view, and renderStreams picks.
+     agent view, one `#consoles` host in ide view, and renderConsoles picks.
 
      The shape, and why:
 
-       rail | CONVERSATION | editor | teammates
+       rail | CONVERSATION | editor
 
      The conversation is the widest thing on screen because in this mode
      reading what the agent said is the work. The editor stays — a vibe coder
@@ -311,31 +310,21 @@
      hiding it in agent view would leave no way to reach a file. */
   /* ⚠️ THESE TRACKS ARE MATCHED TO DOM ORDER, WHICH IS treecol, chatcol,
      detail. There is no `grid-area` here, so the second track is whichever
-     element comes second in the markup. Written the other way round once and
-     the conversation — the widest thing this view has — came out 286px wide
-     while the changed-file list got the 1.35fr. Moving an element inside
-     .middle means re-reading this line. */
+     element comes second in the markup. Moving an element inside .middle
+     means re-reading this line. */
   body[data-view="agent"] .middle {
     grid-template-columns: var(--tree) minmax(0, 1fr);
   }
-  body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr var(--talk); }
+  body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr; }
   /* The chat column is the page's main surface here, so its right edge needs a
      rule: without one the conversation and the editor run together. */
   body[data-view="agent"] .chatcol { border-right: 1px solid var(--line); }
-  /* Teammates keep a column, narrow. Dropping them entirely would have been
-     simpler and would have made a multiplayer product single-player in one of
-     its two modes. What they lose here is the per-turn detail, which the
-     People rail already carries as "editing src/". */
-  body[data-view="agent"] .streams .stream { padding: 10px 14px 12px; }
-  body[data-view="agent"] .streams .bubble { font-size: 12px; }
 
-  /* FOUR COLUMNS NEED ROOM, and they are dropped in order of what is repeated
-     elsewhere on screen. Teammates go first: the People rail already says who
-     is doing what. The editor goes second: a vibe coder can switch to ide view
-     to read a file, and losing it is survivable in a way that losing the
+  /* THREE COLUMNS NEED ROOM, and they are dropped in order of what is repeated
+     elsewhere on screen. The editor goes first: a vibe coder can switch to ide
+     view to read a file, and losing it is survivable in a way that losing the
      conversation is not. The conversation is never dropped, at any width. */
   @media (max-width: 1500px) {
-    body[data-view="agent"] .streams { display: none; }
     body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr; }
   }
   /* ⚠️ THE EDITOR IS NOT ALWAYS ON IN THIS VIEW — it appears when a file is
@@ -638,29 +627,8 @@
   .ed-note { padding: 10px 18px; font-size: 11.5px; color: var(--muted); }
   .ed-note b { font-weight: 500; color: var(--ink); }
 
-  /* ---- agent streams --------------------------------------------------- */
-  .stream {
-    border-bottom: 1px solid var(--line);
-    padding: 12px 16px 14px;
-  }
-  .stream-head {
-    display: flex; align-items: center; gap: 8px;
-    margin-bottom: 8px;
-  }
-  .stream-head .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
-  .stream-head .nm { font-size: 13px; letter-spacing: 0.02em; }
-  .dwho > span + span { margin-left: 0; }
-  .stream-head .agent {
-    font-size: 11px; letter-spacing: 0;
-    color: var(--subtle); margin-left: auto;
-  }
-  .bubble {
-    background: var(--raise); border: 0;
-    border-left: 2px solid var(--who);
-    padding: 8px 11px; margin-bottom: 7px;
-    font-size: 13px; line-height: 1.55;
-  }
-  .bubble.prompt { background: var(--cerulean-soft); border-color: transparent; border-left-color: var(--who); }
+  /* ---- teammate activity now lives in the roster dropdowns (personDetail);
+     these row primitives are shared by those cards. */
   .step {
     display: grid; grid-template-columns: 78px 1fr; gap: 10px;
     align-items: baseline; padding: 2.5px 0; font-size: 12px;
@@ -798,6 +766,7 @@
     font-size: 12.5px; background: var(--raise-soft);
   }
   .dwho .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); }
+  .dwho > span + span { margin-left: 0; }
   .dwho .when { color: var(--subtle); font-size: 11.5px; margin-left: 2px; }
   .detail-events { padding: 0 18px 24px; }
   .detail-events.after-code { padding-top: 16px; }
@@ -851,7 +820,6 @@
 
   @media (max-width: 1100px) {
     .shell, body[data-view="agent"] .shell { grid-template-columns: 180px 1fr; }
-    .streams { display: none; }
   }
   @media (max-width: 1000px) {
     body[data-view="agent"] .middle,
@@ -885,11 +853,12 @@
   <span class="conn" id="conn" data-state="init"><span class="dot"></span><span id="connText">connecting</span></span>
 </div>
 
-<div class="shell">
-  <aside class="pane rail">
-    <div class="pane-title">People</div>
-    <div class="pane-body" id="people"></div>
-    <div class="strip" id="strip"></div>
+  <div class="shell">
+    <aside class="pane rail">
+      <div class="pane-title">People</div>
+      <div class="pane-body" id="people"></div>
+      <div id="consolesSlot"></div>
+      <div class="strip" id="strip"></div>
     <!-- Only ever shown when there is something to say. A permanent "you are
          up to date" row is a line of chrome that is right 99% of the time and
          therefore never read. -->
@@ -921,7 +890,7 @@
     </div>
     <!-- Agent view's main column. Empty and `display: none` in ide view; the
          consoles are MOVED here rather than duplicated, so there is only ever
-         one of each on the page. See renderStreams. -->
+         one of each on the page. See renderConsoles. -->
     <div class="chatcol">
       <div class="pane-title">Conversation</div>
       <div class="pane-body" id="chat"></div>
@@ -933,10 +902,6 @@
     </main>
   </div>
 
-  <aside class="pane streams">
-    <div class="pane-title" id="streamsTitle">Agents</div>
-    <div class="pane-body" id="streams"></div>
-  </aside>
 </div>
 
 <script src="/highlight.js"></script>
@@ -1986,10 +1951,6 @@
 
   function applyView() {
     document.body.setAttribute("data-view", viewMode);
-    var st = $("streamsTitle");
-    // In agent view this column is a summary of other people, not a place you
-    // read a transcript. The heading should say which.
-    if (st) tx(st, viewMode === "agent" ? "Teammates" : "Agents");
     // The console lives in a different column in each view, so a view change
     // has to re-render or the transcript stays in the column that is now
     // hidden — which looked exactly like the agent had died.
@@ -3486,68 +3447,81 @@
     if (ed !== e || !e.view) return;
     var layer = $("riders");
     if (!layer) return;
-    layer.textContent = "";
     var scrolled = e.view.scrollDOM.scrollTop;
 
+    // Keyed reconciliation, not wipe-and-rebuild: this runs on every scroll
+    // frame and every event, and recreating the figures each time made the
+    // whole screen shudder. Nodes are keyed by participant (or "agent" for
+    // the hunk rider), created once, moved by transform, and removed when
+    // their source goes quiet.
+    var wanted = [];
     if (e.awareness) {
       var localId = e.awareness.clientID;
       var docLen = e.view.state.doc.length;
 
-    e.awareness.getStates().forEach(function (state, clientId) {
-      if (clientId === localId) return;
-      var user = state && state.user;
-      var cursor = state && state.cursor;
-      // ⚠️ DO NOT ADD `typeof cursor.head !== "number"` BACK. It was here, and
-      // it rejected every remote participant before `absolutePosition` below
-      // ever ran -- awareness cursors are Yjs RELATIVE positions, which are
-      // objects. The decoder was added and this line was left behind, so the
-      // riders stayed invisible while the remote carets beside them worked
-      // perfectly. Two real instances found it; no unit test would have.
-      if (!user || !cursor || cursor.head == null) return;
+      e.awareness.getStates().forEach(function (state, clientId) {
+        if (clientId === localId) return;
+        var user = state && state.user;
+        var cursor = state && state.cursor;
+        // ⚠️ DO NOT ADD `typeof cursor.head !== "number"` BACK. It was here, and
+        // it rejected every remote participant before `absolutePosition` below
+        // ever ran -- awareness cursors are Yjs RELATIVE positions, which are
+        // objects. The decoder was added and this line was left behind, so the
+        // riders stayed invisible while the remote carets beside them worked
+        // perfectly. Two real instances found it; no unit test would have.
+        if (!user || !cursor || cursor.head == null) return;
 
-      var head = absolutePosition(e, cursor.head);
-      if (head == null) return;
-      var pos = Math.max(0, Math.min(docLen, head));
+        var head = absolutePosition(e, cursor.head);
+        if (head == null) return;
+        wanted.push({ key: "peer-" + clientId, name: user.name || "", color: user.color || "var(--who-0)", tool: toolOf(user.name), pos: Math.max(0, Math.min(docLen, head)) });
+      });
+    }
+    var a = e.agentLine;
+    if (a && typeof a.line === "number" && e.view.state && e.view.state.doc) {
+      var n = Math.max(1, Math.min(e.view.state.doc.lines, Math.round(a.line)));
+      try {
+        wanted.push({ key: "agent", name: a.actor || "", color: hueOf(a.actor), tool: a.tool, pos: e.view.state.doc.line(n).from });
+      } catch (err) {
+        // A document mid-update: no rider this frame.
+      }
+    }
+
+    // Reconcile, don't repopulate: figures already on the layer are moved in
+    // place and only released when their source goes quiet. Wipe-and-rebuild
+    // here does a full layout on every scroll frame, and that is the shudder.
+    var alive = {};
+    Array.prototype.forEach.call(layer.childNodes, function (node) {
+      var k = node.dataset ? node.dataset.rkey : "";
+      if (k) alive[k] = node;
+    });
+    wanted.forEach(function (w) {
       var block;
       try {
-        block = e.view.lineBlockAt(pos);
+        block = e.view.lineBlockAt(w.pos);
       } catch (err) {
         return;   // a position from a document state we have not applied yet
       }
-
+      var y = "translateY(" + Math.round(block.top - scrolled) + "px)";
+      var node = alive[w.key];
+      if (node) {
+        delete alive[w.key];
+        if (node.style.transform !== y) node.style.transform = y;
+        return;
+      }
       var rider = el("div", "rider");
-      rider.style.color = user.color || "var(--who-0)";
+      rider.dataset.rkey = w.key;
+      rider.style.color = w.color;
       // The eye holes take the surface behind them, and behind them here is the
       // editor's own background rather than the page's.
       rider.style.setProperty("--zevet-sprite-eye", "var(--paper)");
-      rider.style.transform = "translateY(" + Math.round(block.top - scrolled) + "px)";
-      rider.innerHTML = window.zevetSprites.spriteFor({ tool: toolOf(user.name), width: 35, height: 16 });
-      rider.appendChild(tx(el("span", "who"), user.name || ""));
+      rider.style.transform = y;
+      rider.innerHTML = window.zevetSprites.spriteFor({ tool: w.tool, width: 35, height: 16 });
+      rider.appendChild(tx(el("span", "who"), w.name));
       layer.appendChild(rider);
     });
-    }
-    drawAgentRider(e, layer, scrolled);
-  }
-
-  /** The locally measured agent hunk (see refreshAgentLine): same figure,
-   *  different source. Drawn only when a hunk was actually measured. */
-  function drawAgentRider(e, layer, scrolled) {
-    var a = e.agentLine;
-    if (!a || typeof a.line !== "number" || !e.view || !e.view.state || !e.view.state.doc) return;
-    var n = Math.max(1, Math.min(e.view.state.doc.lines, Math.round(a.line)));
-    var block;
-    try {
-      block = e.view.lineBlockAt(e.view.state.doc.line(n).from);
-    } catch (err) {
-      return;
-    }
-    var rider = el("div", "rider");
-    rider.style.color = hueOf(a.actor);
-    rider.style.setProperty("--zevet-sprite-eye", "var(--paper)");
-    rider.style.transform = "translateY(" + Math.round(block.top - scrolled) + "px)";
-    rider.innerHTML = window.zevetSprites.spriteFor({ tool: a.tool, width: 35, height: 16 });
-    rider.appendChild(tx(el("span", "who"), a.actor || ""));
-    layer.appendChild(rider);
+    Object.keys(alive).forEach(function (k) {
+      if (alive[k].parentNode === layer) layer.removeChild(alive[k]);
+    });
   }
 
   /**
@@ -4181,14 +4155,16 @@
     });
   }
 
-  function renderStreams(now) {
+  function renderConsoles(now) {
     // ⚠️ THE CONSOLE MOVES, IT IS NOT DUPLICATED. In agent view the thing you
     // are driving belongs in the wide middle column; in ide view it belongs in
-    // the rail with the teammates. Rendering into both hosts would give two
-    // live transcripts of one agent and two composers that could disagree.
+    // the rail under People. Rendering into both hosts would give two live
+    // transcripts of one agent and two composers that could disagree.
+    // (Teammate activity used to live in a third column here; it moved into
+    // the roster dropdowns, and the column went with it.)
     var agentView = viewMode === "agent";
     var chat = $("chat");
-    var host = $("streams");
+    var slot = $("consolesSlot");
 
     // Stick to the bottom, but only if that is where the person already was.
     // In agent view the transcript is not in a fixed-height well — the COLUMN
@@ -4198,11 +4174,19 @@
     // somebody was reading what the agent said five minutes ago.
     var stick = chat && chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60;
 
-    host.textContent = "";
+    if (slot) slot.textContent = "";
     if (chat) chat.textContent = "";
 
-    var mineHost = agentView && chat ? chat : host;
-    renderMyConsole(mineHost);
+    var mineHost = agentView && chat ? chat : null;
+    if (!mineHost && slot && LOCAL) {
+      var title = el("div", "pane-title");
+      tx(title, "You");
+      slot.appendChild(title);
+      mineHost = el("div", "pane-body");
+      mineHost.id = "consoles";
+      slot.appendChild(mineHost);
+    }
+    if (mineHost) renderMyConsole(mineHost);
     if (agentView && chat && !myConsoles.length) {
       var box = el("div", "chat-empty");
       box.appendChild(tx(el("h2"), "Nothing running yet."));
@@ -4210,52 +4194,6 @@
         ? "Start an agent in the selected repo."
         : "Use the desktop app to start an agent."));
       chat.appendChild(box);
-    }
-
-    var shown = roster.filter(function (r) { return !selectedActor || r.actor === selectedActor; });
-
-    shown.forEach(function (r) {
-      var mine = scoped().filter(function (e) { return e.actor === r.actor; });
-      if (!mine.length) return;
-      var idle = isIdle(r, now);
-
-      // Slim by design: mission plus current command. The full turn lives in
-      // the roster dropdown (personDetail) — one place for detail, reached by
-      // expanding the person, so the rail never tries to fit every step.
-      var card = el("div", "stream");
-      card.style.setProperty("--who", hueOf(r.actor));
-      card.dataset.idle = String(idle);
-
-      var head = el("div", "stream-head");
-      head.appendChild(agentBadge(r.lastEvent && r.lastEvent.agent));
-      head.appendChild(tx(el("span", "nm"), r.actor));
-      card.appendChild(head);
-
-      var mission = missionOf(r);
-      if (mission) {
-        var bub = el("div", "bubble prompt");
-        tx(bub, mission);
-        card.appendChild(bub);
-      }
-
-      var cur = currentOf(r);
-      if (cur) {
-        var row = el("div", "step");
-        row.appendChild(tx(el("span", "t"), idle ? "idle" : "now"));
-        var v = el("span", "v mono");
-        tx(v, cur);
-        row.appendChild(v);
-        card.appendChild(row);
-      }
-
-      host.appendChild(card);
-    });
-
-    if (!host.childNodes.length) {
-      var p = el("div");
-      p.style.cssText = "padding:16px;color:var(--subtle);font-size:12.5px";
-      tx(p, roster.length ? "nothing in this repo yet" : "no agents yet");
-      host.appendChild(p);
     }
 
     if (agentView && chat && stick) chat.scrollTop = chat.scrollHeight;
@@ -4267,17 +4205,17 @@
    * The grids size columns from CSS vars with DOM-order tracks and view- and
    * breakpoint-specific overrides — inserting splitter columns into the grids
    * would mean re-matching every one of those rules. So the handles are
-   * overlays parked on the three main boundaries (rail|middle, tree|detail,
-   * middle|streams): dragging one sets its var live, releasing persists the
+   * overlays parked on the two remaining boundaries (rail|middle,
+   * tree|detail): dragging one sets its var live, releasing persists the
    * set to localStorage, and boot restores it before paint. Narrow-viewport
    * rules still win, because they hide columns the vars cannot show.
    */
-  var PANE_LIMITS = { rail: [180, 420], tree: [200, 560], streams: [260, 640] };
+  var PANE_LIMITS = { rail: [180, 420], tree: [200, 560] };
   var paneWidths = (function () {
-    var d = { rail: 258, tree: 300, streams: 400 };
+    var d = { rail: 258, tree: 300 };
     try {
       var s = JSON.parse(localStorage.getItem("zevet.panes.v1") || "{}");
-      ["rail", "tree", "streams"].forEach(function (k) {
+      ["rail", "tree"].forEach(function (k) {
         if (typeof s[k] === "number") d[k] = clampPaneWidth(s[k], PANE_LIMITS[k][0], PANE_LIMITS[k][1]);
       });
     } catch {
@@ -4296,7 +4234,6 @@
     var root = document.documentElement;
     root.style.setProperty("--rail", paneWidths.rail + "px");
     root.style.setProperty("--tree", paneWidths.tree + "px");
-    root.style.setProperty("--streams", paneWidths.streams + "px");
   }
 
   function storePaneWidths() {
@@ -4310,7 +4247,7 @@
   var splits = [];
   function buildSplits() {
     if (splits.length || typeof document === "undefined") return;
-    [["rail", "rail"], ["tree", "tree"], ["streams", "streams"]].forEach(function (pair) {
+    [["rail", "rail"], ["tree", "tree"]].forEach(function (pair) {
       var d = document.createElement("div");
       d.className = "split";
       d.dataset.pane = pair[0];
@@ -4345,12 +4282,10 @@
   }
 
   /** Pixels the named pane currently spans, from a pointer x. Pure geometry:
-   *  rail and tree grow rightward from their left edge; streams grows
-   *  leftward from the shell's right edge. */
+   *  rail and tree grow rightward from their left edge. */
   function paneEdgeWidth(pane, clientX) {
     var shell = document.querySelector(".shell");
     var box = shell ? shell.getBoundingClientRect() : { left: 0, right: window.innerWidth };
-    if (pane === "streams") return box.right - clientX;
     var left = box.left;
     if (pane === "tree") left += railWidth();
     return clientX - left;
@@ -4364,7 +4299,6 @@
     var edges = {
       rail: box.left + railWidth(),
       tree: box.left + railWidth() + treeWidth(),
-      streams: box.right - paneWidths.streams,
     };
     splits.forEach(function (d) {
       d.style.left = Math.round(edges[d.dataset.pane] || 0) + "px";
@@ -4440,7 +4374,7 @@
     renderCollisions(now);
     renderScope();
     if (!renderBlank()) { renderTree(now); renderDetail(now); }
-    renderStreams(now);
+    renderConsoles(now);
     positionSplits();
   }
 
