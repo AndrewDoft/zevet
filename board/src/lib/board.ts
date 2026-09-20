@@ -127,6 +127,10 @@ interface BoardState {
    *  it; null means "the newest one", so a freshly started agent is in front
    *  without anything having to select it. */
   activeConsole: number | null;
+  /** Show the launcher instead of a thread. Separate from activeConsole
+   *  BECAUSE null there already means "the newest one" — overloading it made
+   *  the launcher unreachable the moment a console existed. */
+  launching: boolean;
   launchModel: string;
   launchMode: LaunchMode;
 
@@ -171,6 +175,7 @@ interface BoardState {
   startAgent: (name: string) => void;
   closeConsole: (key: number) => void;
   setActiveConsole: (key: number | null) => void;
+  openLauncher: () => void;
   stopConsole: (key: number) => void;
   sendPrompt: (key: number, text: string) => void;
   noteComposing: (key: number | null, text: string) => void;
@@ -312,6 +317,7 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   myConsoles: [],
   activeConsole: null,
+  launching: false,
   launchModel: "",
   launchMode: "auto",
 
@@ -433,7 +439,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       root,
       hue: get().myConsoles.length % 5,
     };
-    set((g) => ({ myConsoles: [...g.myConsoles, c], activeConsole: c.key }));
+    set((g) => ({ myConsoles: [...g.myConsoles, c], activeConsole: c.key, launching: false }));
     br.startAgent(name, root, { model: get().launchModel, mode: get().launchMode }).then((r) => {
       if (!r || !r.ok) {
         c.running = false;
@@ -445,7 +451,8 @@ export const useBoard = create<BoardState>((set, get) => ({
     });
   },
 
-  setActiveConsole: (key) => set({ activeConsole: key }),
+  setActiveConsole: (key) => set({ activeConsole: key, launching: false }),
+  openLauncher: () => set({ launching: true }),
 
   closeConsole: (key) => {
     const del = get().myConsoles.find((x) => x.key === key);
@@ -1761,7 +1768,10 @@ export const selectRoster = (s: BoardState) => s.roster;
 export const selectCollisions = (s: BoardState) => s.collisions;
 export const selectMyConsoles = (s: BoardState) => s.myConsoles;
 export const selectActiveConsole = (s: BoardState) =>
-  s.myConsoles.find((c) => c.key === s.activeConsole) ?? s.myConsoles[s.myConsoles.length - 1];
+  s.launching
+    ? undefined
+    : (s.myConsoles.find((c) => c.key === s.activeConsole) ?? s.myConsoles[s.myConsoles.length - 1]);
+export const selectLaunching = (s: BoardState) => s.launching;
 export const selectPanes = (s: BoardState) => s.panes;
 export const selectStrip = (s: BoardState) => s.strip;
 export const selectTheme = (s: BoardState) => s.theme;

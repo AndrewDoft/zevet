@@ -15,7 +15,7 @@ import { AgentStatus, type AgentState } from "./assistant-ui/elements/agent-stat
 import { ghostButton, mono } from "./assistant-ui/elements/surfaces";
 import { cn } from "@/lib/utils";
 import { MODE_LABEL } from "../lib/constants";
-import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
+import { selectActiveConsole, selectLaunching, selectMyConsoles, useBoard } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import type { ConsoleEntry } from "../lib/types";
 
@@ -73,8 +73,8 @@ function ConsoleRow({ c }: { c: ConsoleEntry }) {
 
 export function Consoles() {
   const consoles = useBoard(selectMyConsoles);
-  const active = useBoard(selectActiveConsole);
-  const setActiveConsole = useBoard((s) => s.setActiveConsole);
+  const launching = useBoard(selectLaunching);
+  const openLauncher = useBoard((s) => s.openLauncher);
   const localRoot = useBoard((s) => s.localRoot);
 
   if (!bridge.local) return null;
@@ -88,8 +88,8 @@ export function Consoles() {
         <button
           type="button"
           className="console-new"
-          aria-pressed={!active}
-          onClick={() => setActiveConsole(null)}
+          aria-pressed={launching}
+          onClick={openLauncher}
         >
           {consoles.length ? "Start another…" : "Start an agent…"}
         </button>

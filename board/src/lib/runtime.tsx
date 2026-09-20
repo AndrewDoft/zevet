@@ -58,6 +58,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
   const sendPrompt = useBoard((s) => s.sendPrompt);
   const stopConsole = useBoard((s) => s.stopConsole);
   const setActiveConsole = useBoard((s) => s.setActiveConsole);
+  const openLauncher = useBoard((s) => s.openLauncher);
 
   const threads = useMemo<readonly ExternalStoreThreadData<"regular">[]>(
     () =>
@@ -104,8 +105,8 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
         threads,
         onSwitchToThread: (id) => setActiveConsole(keyOfThreadId(id)),
         // "New thread" means "start another agent", which needs a choice of
-        // which one — so it clears the selection and lets the launcher show.
-        onSwitchToNewThread: () => setActiveConsole(null),
+        // which one — so it opens the launcher rather than selecting nothing.
+        onSwitchToNewThread: () => openLauncher(),
       },
     },
   });
