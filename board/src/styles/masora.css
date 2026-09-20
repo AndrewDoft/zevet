@@ -812,3 +812,5 @@
      reserve 24px in a 180px rail. */
   .console-row-status [data-slot="agent-status-trailing"],
   .person-status [data-slot="agent-status-trailing"] { display: none; }
+
+  .thinking-row { padding: 0 22px 8px; flex: none; }

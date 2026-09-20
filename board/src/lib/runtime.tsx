@@ -21,6 +21,8 @@
 import { type PropsWithChildren, useMemo } from "react";
 import {
   AssistantRuntimeProvider,
+  CompositeAttachmentAdapter,
+  SimpleTextAttachmentAdapter,
   type AppendMessage,
   type ExternalStoreThreadData,
   type ThreadMessageLike,
@@ -44,14 +46,29 @@ function titleOf(c: ConsoleEntry): string {
   return `${c.agent}${suffix}`;
 }
 
-/** The text of a message the composer just produced. Attachments arrive as
- *  their own parts and are not prompt text. */
+/**
+ * The text of a message the composer just produced, INCLUDING its attachments.
+ *
+ * An agent CLI reads one thing: text on stdin. So an attached file is not a
+ * side channel here — it has to become part of the prompt or it does not reach
+ * the agent at all. SimpleTextAttachmentAdapter has already turned each one
+ * into text content by the time this runs; this puts it in front of the
+ * question, fenced and named, which is how a person would paste it.
+ */
 function textOf(message: AppendMessage): string {
-  return message.content
+  const typed = message.content
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text)
     .join("")
     .trim();
+
+  const attached = (message.attachments ?? []).flatMap((a) =>
+    (a.content ?? [])
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => `--- ${a.name} ---\n${p.text}`),
+  );
+
+  return attached.length ? `${attached.join("\n\n")}\n\n${typed}`.trim() : typed;
 }
 
 export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
@@ -120,6 +137,12 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     },
 
     adapters: {
+      /* TEXT ONLY, deliberately. The composer will take anything, and these
+       * agents take a prompt on stdin — there is nothing useful to do with an
+       * image, and an attachment that silently contributes nothing is worse
+       * than one the composer refuses. */
+      attachments: new CompositeAttachmentAdapter([new SimpleTextAttachmentAdapter()]),
+
       threadList: {
         threadId: active ? threadIdOf(active) : undefined,
         threads,

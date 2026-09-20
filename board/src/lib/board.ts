@@ -132,6 +132,10 @@ interface BoardState {
    *  the launcher unreachable the moment a console existed. */
   launching: boolean;
   launchModel: string;
+  /** Reasoning effort, for the one CLI that takes the flag (codex). Sticky
+   *  across model switches; the selector only shows it for a model that
+   *  declares support, so it is carried even while it does not apply. */
+  launchEffort: string;
   launchMode: LaunchMode;
 
   edView: EditorViewState | null;
@@ -172,6 +176,7 @@ interface BoardState {
 
   setLaunchMode: (m: LaunchMode) => void;
   setLaunchModel: (m: string) => void;
+  setLaunchEffort: (e: string) => void;
   startAgent: (name: string) => void;
   closeConsole: (key: number) => void;
   setActiveConsole: (key: number | null) => void;
@@ -319,6 +324,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   activeConsole: null,
   launching: false,
   launchModel: "",
+  launchEffort: "",
   launchMode: "auto",
 
   edView: null,
@@ -421,6 +427,7 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   setLaunchMode: (m) => set({ launchMode: m }),
   setLaunchModel: (m) => set({ launchModel: m }),
+  setLaunchEffort: (e) => set({ launchEffort: e }),
 
   startAgent: (name) => {
     const br = bridge.local;
