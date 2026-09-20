@@ -64,7 +64,7 @@ function EditorPane({ e }: { e: EditorViewState }) {
         </span>
       </div>
 {e.loading ? (
-        <div className="ed-note">reading\u2026</div>
+        <div className="ed-note">reading…</div>
       ) : e.error ? (
         <div className="ed-note">{e.error}</div>
       ) : (

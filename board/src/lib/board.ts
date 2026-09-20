@@ -2,6 +2,13 @@ import { create } from "zustand";
 import { bridge, type StatusResult } from "./bridge";
 import { shortInput } from "./fmt";
 import {
+  appendAgentPayload,
+  appendRaw,
+  appendUserText,
+  closeTranscript,
+  emptyTranscript,
+} from "./transcript.mjs";
+import {
   canInstallState,
   createUpdateControl,
   type UpdateControl,
@@ -116,6 +123,10 @@ interface BoardState {
   statsPending: boolean;
 
   myConsoles: ConsoleEntry[];
+  /** Which console the conversation column is showing. The thread list picks
+   *  it; null means "the newest one", so a freshly started agent is in front
+   *  without anything having to select it. */
+  activeConsole: number | null;
   launchModel: string;
   launchMode: LaunchMode;
 
@@ -159,6 +170,7 @@ interface BoardState {
   setLaunchModel: (m: string) => void;
   startAgent: (name: string) => void;
   closeConsole: (key: number) => void;
+  setActiveConsole: (key: number | null) => void;
   stopConsole: (key: number) => void;
   sendPrompt: (key: number, text: string) => void;
   noteComposing: (key: number | null, text: string) => void;
@@ -299,6 +311,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   statsPending: false,
 
   myConsoles: [],
+  activeConsole: null,
   launchModel: "",
   launchMode: "auto",
 
@@ -412,6 +425,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       id: null,
       agent: name,
       lines: [],
+      transcript: emptyTranscript(),
       running: true,
       error: null,
       mode: get().launchMode,
@@ -419,7 +433,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       root,
       hue: get().myConsoles.length % 5,
     };
-    set((g) => ({ myConsoles: [...g.myConsoles, c] }));
+    set((g) => ({ myConsoles: [...g.myConsoles, c], activeConsole: c.key }));
     br.startAgent(name, root, { model: get().launchModel, mode: get().launchMode }).then((r) => {
       if (!r || !r.ok) {
         c.running = false;
@@ -431,9 +445,16 @@ export const useBoard = create<BoardState>((set, get) => ({
     });
   },
 
+  setActiveConsole: (key) => set({ activeConsole: key }),
+
   closeConsole: (key) => {
     const del = get().myConsoles.find((x) => x.key === key);
-    set((g) => ({ myConsoles: g.myConsoles.filter((x) => x.key !== key) }));
+    set((g) => ({
+      myConsoles: g.myConsoles.filter((x) => x.key !== key),
+      // Closing the console you were reading must not leave the conversation
+      // column pointed at a thread that no longer exists.
+      activeConsole: g.activeConsole === key ? null : g.activeConsole,
+    }));
     if (del && del.running && del.id) void bridge.local?.stopAgent(del.id);
     const cur = get();
     if (cur.edView) { /* unchanged */ }
@@ -453,6 +474,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     const c = get().myConsoles.find((x) => x.key === key);
     if (!c) return;
     pushConsoleLine(c, "you", text);
+    c.transcript = appendUserText(c.transcript, text);
     clearComposing(key);
     if (!c.id) return;
     bridge.local?.sendToAgent(c.id, text).then((r) => {
@@ -775,8 +797,10 @@ function ingressAgentEvent(evt: { id?: string; type: string; code?: number | nul
   if (evt.type === "exit") {
     c.running = false;
     pushConsoleLine(c, "meta", `agent exited (${evt.code === null ? "signal " + evt.signal : "code " + evt.code})`);
+    c.transcript = closeTranscript(c.transcript, { code: evt.code ?? null });
   } else if (evt.type === "stderr") {
     pushConsoleLine(c, "err", evt.text || "");
+    c.transcript = appendRaw(c.transcript, evt.text || "");
   } else if (evt.type === "agent") {
     const payload = (evt.payload || {}) as {
       type?: string;
@@ -791,8 +815,10 @@ function ingressAgentEvent(evt: { id?: string; type: string; code?: number | nul
     for (const [k, text] of classifyAgent(payload, localRoot)) {
       pushConsoleLine(c, k as ConsoleLine["kind"], text);
     }
+    c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: c.agent, localRoot });
   } else if (evt.type === "stdout-line") {
     pushConsoleLine(c, "out", evt.text || "");
+    c.transcript = appendRaw(c.transcript, evt.text || "");
   }
   signalConsolesChanged();
 }
@@ -1734,6 +1760,8 @@ export const selectStats = (s: BoardState) => s.stats;
 export const selectRoster = (s: BoardState) => s.roster;
 export const selectCollisions = (s: BoardState) => s.collisions;
 export const selectMyConsoles = (s: BoardState) => s.myConsoles;
+export const selectActiveConsole = (s: BoardState) =>
+  s.myConsoles.find((c) => c.key === s.activeConsole) ?? s.myConsoles[s.myConsoles.length - 1];
 export const selectPanes = (s: BoardState) => s.panes;
 export const selectStrip = (s: BoardState) => s.strip;
 export const selectTheme = (s: BoardState) => s.theme;

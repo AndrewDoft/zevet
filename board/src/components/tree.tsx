@@ -160,7 +160,7 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
               ) : conn === "down" ? (
                 <>
                   <h2>{"Can't reach the hub."}</h2>
-                  <p>Reconnecting\u2026 Check the hub if this continues.</p>
+                  <p>Reconnecting… Check the hub if this continues.</p>
                 </>
               ) : (
                 <>

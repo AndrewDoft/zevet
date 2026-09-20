@@ -4,6 +4,8 @@ import { WorkspacesPane } from "./components/workspaces";
 import { Strip } from "./components/strip";
 import { UpdateRow } from "./components/updaterow";
 import { Consoles } from "./components/consoles";
+import { Conversation } from "./components/conversation";
+import { ConsoleRuntimeProvider } from "./lib/runtime";
 import { TreeFill } from "./components/tree";
 import { DetailPane } from "./components/detail";
 import { SettingsSheet } from "./components/settings";
@@ -97,7 +99,7 @@ function App() {
   }, [sheetOpen, closeSettings]);
 
   return (
-    <>
+    <ConsoleRuntimeProvider>
       <div className="shell" inert={sheetOpen ? true : undefined}>
         <aside className="pane rail">
           <div className="pane-title">People</div>
@@ -132,7 +134,7 @@ function App() {
           <div className="chatcol">
             <div className="pane-title">Conversation</div>
             <div className="pane-body" id="chat">
-              <Consoles agentView />
+              <Conversation />
             </div>
           </div>
           <main className="detail">
@@ -141,7 +143,7 @@ function App() {
         </div>
       </div>
       <SettingsSheet />
-    </>
+    </ConsoleRuntimeProvider>
   );
 }
 

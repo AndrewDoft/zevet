@@ -1,3 +1,5 @@
+import type { TranscriptState } from "./transcript.d.mts";
+
 export type Conn = "init" | "live" | "down";
 export type ViewMode = "ide" | "agent";
 export type Theme = "light" | "dark";
@@ -62,7 +64,12 @@ export interface ConsoleEntry {
   key: number;
   id: string | null;
   agent: string;
+  /** The flat view: what classifyAgentPayloadLine produced, still rendered by
+   *  the raw terminal block. A transcript nobody can read as plain text would
+   *  be a regression for debugging an agent that has gone wrong. */
   lines: ConsoleLine[];
+  /** The structured view: the same stream as assistant-ui messages. */
+  transcript: TranscriptState;
   running: boolean;
   error: string | null;
   mode: LaunchMode;

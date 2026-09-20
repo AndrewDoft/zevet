@@ -48,7 +48,7 @@ export function WorkspacesPane() {
           </WsItem>
         ))}
         <button className="ws-add" type="button" onClick={() => addWorkspace()}>
-          Open a folder\u2026
+          Open a folder…
         </button>
         {localError ? <div className="ws-note">{localError}</div> : null}
       </div>

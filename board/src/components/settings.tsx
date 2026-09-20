@@ -158,7 +158,7 @@ function AccountSection() {
   if (!whoState) {
     return (
       <SSection title="Account">
-        <SNote>Loading account\u2026</SNote>
+        <SNote>Loading account…</SNote>
       </SSection>
     );
   }
@@ -237,7 +237,7 @@ function AccountSection() {
           Invite
         </button>
       </form>,
-      <SNote key="howto">Send them this hub\u2019s address. They can sign in with GitHub after installing zevet.</SNote>,
+      <SNote key="howto">Send them this hub’s address. They can sign in with GitHub after installing zevet.</SNote>,
     );
   }
 
@@ -270,7 +270,7 @@ function IndexSection() {
       <SSection title="Code index">
         <SRow k="Status" v="external index running" />
         <SNote>
-          External index on port {String(m.cindexPort || 8080)}. Stop it to use zevet\u2019s built-in index.
+          External index on port {String(m.cindexPort || 8080)}. Stop it to use zevet’s built-in index.
         </SNote>
       </SSection>
     );
@@ -286,7 +286,7 @@ function IndexSection() {
   if (!st) {
     return (
       <SSection title="Code index">
-        <SNote>Checking this machine\u2026</SNote>
+        <SNote>Checking this machine…</SNote>
       </SSection>
     );
   }
@@ -557,7 +557,7 @@ export function SettingsSheet() {
                 </div>
               ))}
               <button className={MAKE_BTN} type="button" style={{ marginTop: "10px" }} onClick={() => useBoard.getState().addWorkspace()}>
-                Add a folder\u2026
+                Add a folder…
               </button>
               <SNote>Identifies your account. Folder access stays limited to the list above.</SNote>
             </>
