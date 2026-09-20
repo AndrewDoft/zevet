@@ -62,10 +62,13 @@ function textOf(message: AppendMessage): string {
     .join("")
     .trim();
 
+  // SimpleTextAttachmentAdapter already wraps each one as
+  // <attachment name="...">...</attachment>, verified against the adapter, so
+  // it is passed through rather than labelled a second time.
   const attached = (message.attachments ?? []).flatMap((a) =>
     (a.content ?? [])
       .filter((p): p is { type: "text"; text: string } => p.type === "text")
-      .map((p) => `--- ${a.name} ---\n${p.text}`),
+      .map((p) => p.text),
   );
 
   return attached.length ? `${attached.join("\n\n")}\n\n${typed}`.trim() : typed;
