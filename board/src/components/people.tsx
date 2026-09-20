@@ -3,6 +3,7 @@ import { hueOf, isIdle, selectRoster, serverNow, useBoard } from "../lib/board";
 import type { RosterEntry } from "../lib/types";
 import { agoText, currentOf, folderOf, missionOf, turnOf, verbFor } from "../lib/text";
 import { agentBadge } from "./marks";
+import { AgentStatus, type AgentState } from "./assistant-ui/elements/agent-status";
 
 function expandedStored(): string[] {
   try {
@@ -11,6 +12,14 @@ function expandedStored(): string[] {
   } catch {
     return [];
   }
+}
+
+/** A teammate's state in the element's vocabulary. "failed" is deliberately
+ *  never produced: the hub sees that somebody stopped, never why, and calling
+ *  an idle teammate failed would be an invention. */
+function stateOf(r: RosterEntry, idle: boolean): AgentState {
+  if (idle) return "waiting";
+  return r.lastEvent && r.lastEvent.kind === "turn_end" ? "done" : "working";
 }
 
 function PersonDetail({ r, now }: { r: RosterEntry; now: number }) {
@@ -90,15 +99,15 @@ export function PeoplePane() {
               <span>
                 <span className="nm">{r.actor}</span>
                 <span className="sub">
-                  {idle ? (
-                    agoText(now, r.lastTs)
-                  ) : last ? (
-                    <>
-                      <span className="verb">{verbFor(last)}</span>
-                      {"  "}
-                      {folderOf(last)}
-                    </>
-                  ) : null}
+                  {/* The same working / waiting / done vocabulary the rail's
+                      own consoles use, so one person's state reads the same
+                      whether they are on this machine or another. */}
+                  <AgentStatus
+                    className="person-status"
+                    state={stateOf(r, idle)}
+                    label={last ? verbFor(last) : "idle"}
+                    elapsed={idle ? agoText(now, r.lastTs) : folderOf(last) || undefined}
+                  />
                 </span>
               </span>
             </button>

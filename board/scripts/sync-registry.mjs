@@ -32,7 +32,9 @@ const STYLE = JSON.parse(readFileSync(path.join(HERE, "..", "components.json"), 
  *  actually imports; an item listed here that nothing imports is dead weight
  *  in the bundle. */
 export const ITEMS = [
-  "thread", "thread-list", "markdown-text", "syntax-highlighter",
+  // syntax-highlighter is deliberately NOT installed: it brings a second
+  // highlighting engine. components/highlight.tsx serves the same role.
+  "thread", "thread-list", "markdown-text",
   "attachment", "file", "image", "reasoning", "tool-fallback", "tool-group",
   "follow-up-suggestions", "tooltip-icon-button", "model-selector",
   "elements-surfaces", "elements-range", "elements-task",

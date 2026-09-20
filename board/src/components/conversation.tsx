@@ -15,6 +15,7 @@ import { EmptyState, EmptyStateGreeting } from "./assistant-ui/elements/empty-st
 import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { Launcher } from "./launcher";
+import { RunMeters } from "./runmeters";
 
 function Blank({ title, note }: { title: string; note: string }) {
   return (
@@ -56,8 +57,13 @@ export function Conversation() {
   }
 
   return (
-    <div className="chat-thread h-full">
-      <Thread autoFocus={false} />
+    <div className="chat-thread">
+      <div className="chat-thread-body">
+        <Thread autoFocus={false} />
+      </div>
+      {/* Under the transcript, in the column that has room for it. The rail's
+          strip keeps the same numbers at a glance. */}
+      <RunMeters />
     </div>
   );
 }

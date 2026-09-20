@@ -94,3 +94,54 @@ describe("the dev fixture does not ship", () => {
     assert.match(main, /if \(import\.meta\.env\.DEV\) \{/);
   });
 });
+
+describe("the build emits one bundle, not a chunk farm", () => {
+  // ⚠️ NEARLY SHIPPED. The hub serves an exact-name allowlist — board.js,
+  // board.js.map, board.css — with no directory listing anywhere, on purpose.
+  // Adding react-syntax-highlighter's async Prism made the build emit 486
+  // chunk files that the page then asked for by <link rel=modulepreload>. The
+  // hub would have 404'd every one: a board that loads and does nothing.
+  //
+  // `build.codeSplitting: false` was already set and is not the option that
+  // governs it. `output.inlineDynamicImports` is.
+  const served = new Set(["board.js", "board.js.map", "board.css", "board.js.srchash"]);
+
+  test("hub/public has no extra board chunks", () => {
+    const strays = readdirSync(PUBLIC).filter((n) => /^board.+\.js(\.map)?$/.test(n) && !served.has(n));
+    assert.deepEqual(strays, [], `the build emitted chunks the hub does not serve:\n        ${strays.join("\n        ")}`);
+  });
+
+  test("index.html preloads nothing the hub cannot serve", () => {
+    const html = readFileSync(path.join(PUBLIC, "index.html"), "utf8");
+    for (const href of [...html.matchAll(/href="\/([^"]+)"/g)].map((m) => m[1])) {
+      const known = served.has(href) || ["board.css", "highlight.js", "agent-sprites.js", "editor.js"].includes(href);
+      assert.ok(known, `index.html references /${href}, which is not in the hub's allowlist`);
+    }
+  });
+
+  test("the config still forces a single bundle", () => {
+    const cfg = readFileSync(path.join(ROOT, "board", "vite.config.ts"), "utf8");
+    assert.match(cfg, /inlineDynamicImports:\s*true/);
+  });
+});
+
+describe("only one syntax highlighter ships", () => {
+  // The board already loads hub/public/highlight.js, a committed side bundle
+  // with its own gate test. Wiring the registry's Prism component in brought a
+  // SECOND engine: 1,339 kB of highlight.js plus 939 kB of refractor, taking
+  // the bundle to 2.77 MB. components/highlight.tsx fills the same slot with
+  // the engine that was already on the page.
+  test("react-syntax-highlighter is not a dependency", () => {
+    const pkg = JSON.parse(readFileSync(path.join(ROOT, "board", "package.json"), "utf8"));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    for (const name of ["react-syntax-highlighter", "@assistant-ui/react-syntax-highlighter"]) {
+      assert.ok(!deps[name], `${name} is back in board/package.json`);
+    }
+  });
+
+  test("refractor did not come back in through something else", () => {
+    const map = JSON.parse(readFileSync(`${BUNDLE}.map`, "utf8"));
+    const engines = (map.sources || []).filter((s) => /node_modules[\/](refractor|highlight\.js)[\/]/.test(s));
+    assert.deepEqual(engines.slice(0, 3), [], `a second highlighting engine is in the bundle (${engines.length} modules)`);
+  });
+});

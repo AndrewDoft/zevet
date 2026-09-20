@@ -1,4 +1,7 @@
 import { type CSSProperties, type ReactNode } from "react";
+import { ChevronDownIcon, ChevronRightIcon, FileIcon, FolderIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { mono } from "./assistant-ui/elements/surfaces";
 import {
   buildTree,
   collisionSet,
@@ -12,7 +15,6 @@ import {
 import type { TreeNode } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { ago } from "../lib/text";
-import { FILE_SVG } from "./marks";
 
 function StatBadge({ path }: { path: string }) {
   const stats = useBoard(selectStats);
@@ -23,6 +25,9 @@ function StatBadge({ path }: { path: string }) {
   const d = stats.diff && stats.diff[path];
   if (lines == null && !d) return null;
 
+  // The diff-stat treatment is elements/file-tree's: tabular numerals, its
+  // emerald/red pair, and the same order. zevet adds the two things that
+  // element has no notion of — an untracked file, and a line count.
   const parts: ReactNode[] = [];
   if (d && d.status === "untracked") {
     parts.push(
@@ -38,8 +43,18 @@ function StatBadge({ path }: { path: string }) {
         </span>,
       );
     } else {
-      if (d.added) parts.push(<span className="add" key="a">+{d.added}</span>);
-      if (d.removed) parts.push(<span className="del" key="d">{"\u2212" + d.removed}</span>);
+      if (d.added)
+        parts.push(
+          <span className="text-emerald-600 dark:text-emerald-400" key="a">
+            +{d.added}
+          </span>,
+        );
+      if (d.removed)
+        parts.push(
+          <span className="text-red-600 dark:text-red-400" key="d">
+            {"\u2212" + d.removed}
+          </span>,
+        );
     }
   }
   if (lines != null) parts.push(
@@ -48,7 +63,7 @@ function StatBadge({ path }: { path: string }) {
     </span>,
   );
   if (!parts.length) return null;
-  return <span className="stat">{parts}</span>;
+  return <span className={cn(mono, "stat shrink-0 tabular-nums")}>{parts}</span>;
 }
 
 function NodeRow({ node, path, depth, now }: { node: TreeNode; path: string; depth: number; now: number }) {
@@ -73,15 +88,26 @@ function NodeRow({ node, path, depth, now }: { node: TreeNode; path: string; dep
         data-collide={String(Boolean(collisionSet()[path]))}
         data-touched={String(addicts.length > 0)}
         data-sel={String(!isDir && selectedPath === path)}
-        style={{ paddingLeft: 16 + depth * 14 + "px" }}
+        // The element's own indent formula, in the units it uses.
+        style={{ paddingInlineStart: `${0.85 + depth * 0.85}rem` }}
         onClick={() => {
           if (isDir) setCollapsed(path, !open);
           else toggleSelection(path);
         }}
       >
         <span className="label">
-          <span className="caret">{isDir ? (open ? "\u25be" : "\u25b8") : ""}</span>
-          {!isDir ? <span className="ficon-wrap" dangerouslySetInnerHTML={{ __html: FILE_SVG }} /> : null}
+          {isDir ? (
+            open ? (
+              <ChevronDownIcon className="text-foreground/25 size-3 shrink-0" />
+            ) : (
+              <ChevronRightIcon className="text-foreground/25 size-3 shrink-0" />
+            )
+          ) : null}
+          {isDir ? (
+            <FolderIcon className="text-foreground/35 size-3.5 shrink-0" />
+          ) : (
+            <FileIcon className="text-foreground/30 size-3.5 shrink-0" />
+          )}
           <span className="name">{node.name}</span>
         </span>
         {!isDir ? <StatBadge path={path} /> : null}
@@ -120,6 +146,32 @@ function TreeChildren({ node, depth, prefix, now }: { node: TreeNode; depth: num
   );
 }
 
+/** elements/file-tree's header line: how much changed, in one row. The data
+ *  was already in the store and the old tree never said it. */
+function TreeSummary() {
+  const stats = useBoard(selectStats);
+  const diff = stats.diff || {};
+  const paths = Object.keys(diff);
+  if (!paths.length) return null;
+  let added = 0;
+  let removed = 0;
+  for (const p of paths) {
+    const d = diff[p];
+    if (!d) continue;
+    added += typeof d.added === "number" ? d.added : 0;
+    removed += typeof d.removed === "number" ? d.removed : 0;
+  }
+  return (
+    <div className="flex items-baseline justify-between px-4 pt-1 pb-2">
+      <span className="text-[12.5px] font-medium">{paths.length} files changed</span>
+      <span className={cn(mono, "tabular-nums")}>
+        <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>{" "}
+        <span className="text-red-600 dark:text-red-400">{"\u2212"}{removed}</span>
+      </span>
+    </div>
+  );
+}
+
 export function TreeFill({ blanked }: { blanked?: boolean }) {
   const selectedRepo = useBoard((s) => s.selectedRepo);
   const needsToken = useBoard((s) => s.needsToken);
@@ -150,6 +202,7 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
       </div>
       <div className="pane-body" id="treeBody">
         <div className="tree" id="tree">
+          {!blanked && any ? <TreeSummary /> : null}
           {blanked ? (
             <div className="blank">
               {needsToken ? (

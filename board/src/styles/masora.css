@@ -655,7 +655,8 @@
   .console-new[aria-pressed="true"] { background: var(--raise); }
 
   /* The conversation column: the Thread fills it, the launcher scrolls. */
-  .chat-thread { height: 100%; min-height: 0; }
+  .chat-thread { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+  .chat-thread-body { flex: 1 1 auto; min-height: 0; }
   .chat-launch { height: 100%; overflow-y: auto; padding: 0 16px; }
 
 
@@ -752,3 +753,16 @@
   }
 
   .conn-banner { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+
+  .run-meters {
+    display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start;
+    padding: 10px 22px 16px; border-top: 1px solid var(--line);
+  }
+  .run-meters > * { flex: 1 1 200px; min-width: 0; }
+
+  .person .person-status { padding: 2px 4px 2px 8px; font-size: 11px; background: none; border: 0; }
+
+  /* ToolError ships Skip and Retry. zevet drives no agent's loop — it cannot
+     retry a tool call any more than it can end a turn — and a control that
+     does nothing is worse than no control. The card keeps everything else. */
+  .tool-error-inert > div:last-child { display: none; }

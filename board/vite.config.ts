@@ -57,10 +57,19 @@ export default defineConfig({
     outDir: "../hub/public",
     emptyOutDir: false,
     sourcemap: true,
-    codeSplitting: false,
     rollupOptions: {
       input: "index.html",
       output: {
+        /* ONE FILE, ALWAYS. The hub serves an exact-name allowlist —
+         * board.js, board.js.map, board.css and nothing else, deliberately,
+         * with no directory listing anywhere. react-syntax-highlighter's
+         * PrismAsyncLight imports each language dynamically, and the moment it
+         * arrived the build emitted 486 chunks that the hub would have 404d:
+         * a board that loads and then does nothing.
+         *
+         * `build.codeSplitting: false` was already here and is not the key
+         * that governs this. This is. */
+        inlineDynamicImports: true,
         entryFileNames: "board.js",
         chunkFileNames: "board.js",
         assetFileNames: (info) => {

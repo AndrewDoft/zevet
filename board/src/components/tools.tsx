@@ -127,7 +127,7 @@ function Shell({
   if (failed(tool)) {
     return (
       <ToolError
-        className="my-1"
+        className="my-1 tool-error-inert"
         name={name}
         target={shortPath(target)}
         message={resultText(result).slice(0, 400) || "The tool reported a failure."}
