@@ -98,8 +98,16 @@ export function tempDir(prefix = "zevet-test-") {
     // maxRetries, because Windows. A child that has only just exited can still
     // hold a handle on its cwd for a few milliseconds, and rmSync then throws
     // ENOTEMPTY -- a cleanup failure that fails the test around it and reads
-    // exactly like a real defect. Retrying is the documented remedy.
-    cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }),
+    // exactly like a real defect. Retrying is the documented remedy. The window
+    // here is deliberately wide: runner AV software has held a tempdir for more
+    // than the previous 30x100ms budget (observed on the build runner, 2026-09).
+    cleanup: () =>
+      rmSync(dir, {
+        recursive: true,
+        force: true,
+        maxRetries: 120,
+        retryDelay: 250,
+      }),
   };
 }
 
