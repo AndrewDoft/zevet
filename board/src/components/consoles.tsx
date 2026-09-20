@@ -7,9 +7,9 @@ import {
 } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import type { ConsoleEntry, LaunchMode } from "../lib/types";
-import { ModelSelectorContent, ModelSelectorRoot, ModelSelectorTrigger } from "./model-selector";
+import { ModelSelectorContent, ModelSelectorRoot, ModelSelectorTrigger } from "./assistant-ui/elements/model-selector";
 import { Prose } from "./prose";
-import { TerminalBlock } from "./terminal-block";
+import { TerminalBlock } from "./assistant-ui/elements/terminal-block";
 
 function ChatEmpty({ local }: { local: boolean }) {
   return (
@@ -176,7 +176,7 @@ function NewAgent() {
         <ModelSelectorRoot
           models={pool}
           value={launchModel || undefined}
-          onValueChange={(v) => setLaunchModel(v)}
+          onValueChange={(v: string) => setLaunchModel(v)}
         >
           <ModelSelectorTrigger variant="outline" size="default" />
           <ModelSelectorContent />

@@ -4,25 +4,25 @@ import {
   ComposerAddAttachment,
   ComposerAttachments,
   UserMessageAttachments,
-} from "@/components/attachment.aui";
-import { File } from "@/components/file";
-import { ThreadFollowupSuggestions } from "@/components/follow-up-suggestions.aui";
-import { Image } from "@/components/image";
-import { MarkdownText } from "@/components/markdown-text";
+} from "@/components/assistant-ui/elements/attachment.aui";
+import { File } from "@/components/assistant-ui/elements/file";
+import { ThreadFollowupSuggestions } from "@/components/assistant-ui/elements/follow-up-suggestions.aui";
+import { Image } from "@/components/assistant-ui/elements/image";
+import { MarkdownText } from "@/components/assistant-ui/elements/markdown-text";
 import {
   Reasoning,
   ReasoningContent,
   ReasoningRoot,
   ReasoningText,
   ReasoningTrigger,
-} from "@/components/reasoning.aui";
-import { ToolFallback } from "@/components/tool-fallback.aui";
+} from "@/components/assistant-ui/elements/reasoning.aui";
+import { ToolFallback } from "@/components/assistant-ui/elements/tool-fallback.aui";
 import {
   ToolGroupContent,
   ToolGroupRoot,
   ToolGroupTrigger,
-} from "@/components/tool-group.aui";
-import { TooltipIconButton } from "@/components/tooltip-icon-button";
+} from "@/components/assistant-ui/elements/tool-group.aui";
+import { TooltipIconButton } from "@/components/assistant-ui/elements/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
