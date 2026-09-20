@@ -48,12 +48,15 @@ function ConsoleRow({ c }: { c: ConsoleEntry }) {
         aria-current={isActive ? "true" : undefined}
         onClick={() => setActiveConsole(c.key)}
       >
-        <AgentStatus
-          className="console-row-status"
-          state={state}
-          label={c.agent}
-          elapsed={c.model || undefined}
-        />
+        {/* No `elapsed`: that slot renders a 23px trailing icon even when it
+            is empty, which in a 180px rail left the name 38px and printed
+            "clau…". The model is on the thread title and in the strip. */}
+        {/* `trailing={null}` suppresses the element's default, which is a
+            Pause icon while working and a Retry icon when done. zevet can stop
+            a console — the button to the right of this does — but it cannot
+            pause or re-run one, and an affordance that does nothing is the
+            same mistake as ToolError's Retry. */}
+        <AgentStatus className="console-row-status" state={state} label={c.agent} trailing={null} />
         <span className={cn(mono, "console-row-mode")} data-danger={String(c.mode === "dangerous")}>
           {MODE_LABEL[c.mode] || c.mode}
         </span>

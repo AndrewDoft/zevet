@@ -107,6 +107,9 @@ export function PeoplePane() {
                     state={stateOf(r, idle)}
                     label={last ? verbFor(last) : "idle"}
                     elapsed={idle ? agoText(now, r.lastTs) : folderOf(last) || undefined}
+                    // No pause or retry affordance: zevet cannot do either to
+                    // somebody else's agent on somebody else's machine.
+                    trailing={null}
                   />
                 </span>
               </span>

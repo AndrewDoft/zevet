@@ -35,7 +35,7 @@ function ModeSelector() {
   const setLaunchMode = useBoard((s) => s.setLaunchMode);
 
   return (
-    <div className="flex w-full max-w-sm flex-col gap-2.5">
+    <div className="flex w-full flex-col gap-2.5">
       <div className="flex items-baseline justify-between">
         <span className="text-[13.5px] font-medium">Posture</span>
         <span className={cn(mono, "text-foreground/35")}>{launchMode}</span>
@@ -146,7 +146,7 @@ export function Launcher() {
   const selectedId = models.find((m) => aliasOf(m.id) === launchModel)?.id ?? models[0]?.id ?? "";
 
   return (
-    <div className="mx-auto flex w-full max-w-sm flex-col items-stretch gap-6 py-4">
+    <div className="mx-auto flex w-full max-w-lg flex-col items-stretch gap-6 py-4">
       <ModeSelector />
 
       <div className="flex flex-col gap-2.5">

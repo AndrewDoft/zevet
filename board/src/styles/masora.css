@@ -321,7 +321,10 @@
      element comes second in the markup. Moving an element inside .middle
      means re-reading this line. */
   body[data-view="agent"] .middle {
-    grid-template-columns: var(--tree) minmax(0, 1fr);
+    /* The tree is navigation here, not the subject. It keeps its own width
+       only while there is room for it; below that it gives width back to the
+       conversation rather than the conversation shrinking around it. */
+    grid-template-columns: minmax(0, var(--tree)) minmax(0, 1fr);
   }
   body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr; }
   /* The chat column is the page's main surface here, so its right edge needs a
@@ -656,6 +659,18 @@
 
   /* The conversation column: the Thread fills it, the launcher scrolls. */
   .chat-thread { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+  /* The registry Thread caps its content at --thread-max-width (44rem) and
+     centres it. That is right for a chat that owns the page and wrong for a
+     column inside a three-pane app: it left the conversation ending well
+     short of its own right edge at every window size worth using. The cap is
+     kept, generously, so a very wide monitor still gets a readable measure. */
+  .chat-thread [data-slot="aui_thread-root"],
+  .chat-thread .aui-thread-root {
+    /* !important because ThreadPrimitive.Root sets this as an INLINE style,
+       which a stylesheet rule cannot beat. Without it the conversation stayed
+       at 44rem — 672px of a 1042px column, 64% — on any wide window. */
+    --thread-max-width: min(100%, 68rem) !important;
+  }
   .chat-thread-body { flex: 1 1 auto; min-height: 0; }
   .chat-launch { height: 100%; overflow-y: auto; padding: 0 16px; }
 
@@ -738,7 +753,7 @@
   @media (max-width: 1000px) {
     body[data-view="agent"] .middle,
     body[data-view="agent"][data-picked="true"] .middle {
-      grid-template-columns: minmax(150px, 0.38fr) minmax(0, 1fr);
+      grid-template-columns: minmax(172px, 0.28fr) minmax(0, 1fr);
     }
     body[data-view="agent"][data-picked="true"] .middle {
       grid-template-rows: minmax(0, 1.15fr) minmax(0, 1fr);
@@ -754,11 +769,31 @@
 
   .conn-banner { padding: 10px 12px; border-bottom: 1px solid var(--line); }
 
-  .run-meters {
-    display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start;
-    padding: 10px 22px 16px; border-top: 1px solid var(--line);
+  /* ⚠️ CLOSED BY DEFAULT, and that is the whole point.
+     These started as three cards always open under the transcript. On a real
+     window that took two thirds of the pane's height and left the conversation
+     — the thing the view exists for — a strip at the top. The numbers are
+     already in the rail at a glance; this is the detailed read, on request. */
+  .run-meters { border-top: 1px solid var(--line); flex: none; }
+  .run-meters-toggle {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 7px 22px; background: none; border: 0; cursor: pointer;
+    font: inherit; font-size: 12px; color: var(--ink-muted); text-align: left;
   }
-  .run-meters > * { flex: 1 1 200px; min-width: 0; }
+  .run-meters-toggle:hover { color: var(--ink); background: var(--raise-soft); }
+  .run-meters-toggle .chev { transition: transform 150ms; }
+  .run-meters-toggle[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  .run-meters-toggle .spacer { flex: 1 1 auto; }
+  .run-meters-body {
+    display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start;
+    padding: 4px 22px 16px;
+    max-height: 42vh; overflow-y: auto;
+  }
+  .run-meters-body > * { flex: 1 1 260px; min-width: 0; }
+  @media (max-width: 760px) {
+    .run-meters-body { flex-direction: column; }
+    .run-meters-body > * { flex: 1 1 auto; width: 100%; }
+  }
 
   .person .person-status { padding: 2px 4px 2px 8px; font-size: 11px; background: none; border: 0; }
 
@@ -767,3 +802,13 @@
      does nothing is worse than no control. The card keeps everything else. */
   .tool-error-inert > div:last-child { display: none; }
 
+
+  /* The rail is 180px at its narrowest; the pill keeps its shape but not its
+     chat-width padding. */
+  .console-row-status { padding-inline: 8px; }
+  .console-row-status .max-w-44 { max-width: none; }
+
+  /* The trailing slot is empty by design (see consoles.tsx); it would still
+     reserve 24px in a 180px rail. */
+  .console-row-status [data-slot="agent-status-trailing"],
+  .person-status [data-slot="agent-status-trailing"] { display: none; }

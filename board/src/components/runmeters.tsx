@@ -12,6 +12,8 @@
  * number here is already in the store, put there by `usageOf` off the agent's
  * own usage payloads.
  */
+import { useState } from "react";
+import { ChevronRightIcon } from "lucide-react";
 import { ContextBreakdown, type ContextSegment } from "./assistant-ui/elements/context-breakdown";
 import { CostMeter } from "./assistant-ui/elements/cost-meter";
 import { MessageTiming } from "./assistant-ui/elements/message-timing";
@@ -27,6 +29,7 @@ const money = (n: number | null) => (n == null ? "$0.00" : `$${n.toFixed(4).repl
 export function RunMeters() {
   const { live } = useBoard(selectStrip);
   const active = useBoard(selectActiveConsole);
+  const [open, setOpen] = useState(false);
 
   // Nothing has reported usage yet. An empty meter is worse than no meter —
   // it reads as "zero tokens", which is never true of a running agent.
@@ -51,6 +54,22 @@ export function RunMeters() {
 
   return (
     <div className="run-meters">
+      <button
+        type="button"
+        className="run-meters-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <ChevronRightIcon className="chev size-3.5 shrink-0 opacity-60" />
+        <span>Context, cost and timing</span>
+        <span className="spacer" />
+        {/* The one number worth carrying on the closed row: how full the
+            window is, which is what makes a long session go wrong. */}
+        <span className="tabular-nums">{Math.round((context / CONTEXT_LIMIT) * 100)}% of 200k</span>
+      </button>
+
+      {!open ? null : (
+      <div className="run-meters-body">
       <ContextBreakdown className="max-w-none" segments={segments} limit={CONTEXT_LIMIT} />
 
       <CostMeter
@@ -80,6 +99,8 @@ export function RunMeters() {
           { label: "posture", value: active.mode },
         ]}
       />
+      </div>
+      )}
     </div>
   );
 }

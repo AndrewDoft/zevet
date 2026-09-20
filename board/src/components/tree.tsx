@@ -1,5 +1,6 @@
 import { type CSSProperties, type ReactNode } from "react";
 import { ChevronDownIcon, ChevronRightIcon, FileIcon, FolderIcon } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { cn } from "@/lib/utils";
 import { mono } from "./assistant-ui/elements/surfaces";
 import {
@@ -172,6 +173,12 @@ function TreeSummary() {
   );
 }
 
+const FOLLOW_LABEL: Record<string, string> = {
+  mine: "Follow mine",
+  all: "Follow all",
+  off: "Follow off",
+};
+
 export function TreeFill({ blanked }: { blanked?: boolean }) {
   const selectedRepo = useBoard((s) => s.selectedRepo);
   const needsToken = useBoard((s) => s.needsToken);
@@ -186,18 +193,25 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
     <div className="treecol">
       <div className="pane-title row">
         <span id="filesTitle">{selectedRepo ? "Files \u2014 " + selectedRepo : "Files"}</span>
+        {/* Was a native <select>. On Windows the OS draws that popup in its own
+            colours, so in dark mode it opened as a white menu — the one piece
+            of the board that never followed the theme. */}
         {!blanked ? (
-          <select
-            id="followSel"
-            className="follow"
-            aria-label="Follow agent activity"
+          <Select
             value={followMode}
-            onChange={(ev) => setFollowMode(ev.target.value as "mine" | "all" | "off")}
+            onValueChange={(v: string | null) => { if (v) setFollowMode(v as "mine" | "all" | "off"); }}
           >
-            <option value="mine">Follow mine</option>
-            <option value="all">Follow all</option>
-            <option value="off">Follow off</option>
-          </select>
+            <SelectTrigger id="followSel" className="follow" size="sm" aria-label="Follow agent activity">
+              <SelectValue>{(v: string) => FOLLOW_LABEL[v] ?? v}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(FOLLOW_LABEL).map(([value, label]) => (
+                <SelectItem value={value} key={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : null}
       </div>
       <div className="pane-body" id="treeBody">
