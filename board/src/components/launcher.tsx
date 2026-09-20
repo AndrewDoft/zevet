@@ -55,7 +55,7 @@ function ModeSelector() {
               aria-checked={active}
               onClick={() => setLaunchMode(m.id)}
               className={cn(
-                "flex-1 rounded-full py-1 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.97]",
+                "flex-1 whitespace-nowrap rounded-full px-2 py-1 text-[11.5px] font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.97]",
                 active ? "bg-background text-foreground/90" : "text-foreground/45 hover:text-foreground/70",
                 m.id === "dangerous" && active && "text-destructive",
               )}

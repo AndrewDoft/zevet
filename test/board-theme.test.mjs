@@ -67,8 +67,16 @@ describe("readable text", () => {
       }
       // Muted copy appears on the paper and raised surfaces. Selected rows,
       // inline code and filled controls use ink/subtle instead.
+      //
+      // It is --ink-muted rather than --muted because index.css now defines
+      // the shadcn contract in terms of these tokens, and there --muted is a
+      // background fill with --muted-foreground as its text. Two different
+      // meanings under one name rendered grey on grey.
       for (const background of ["paper", "raise-soft", "raise"]) {
-        assert.ok(contrast(colors.muted, colors[background]) >= 4.5, `${theme} muted on ${background}`);
+        assert.ok(
+          contrast(colors["ink-muted"], colors[background]) >= 4.5,
+          `${theme} ink-muted on ${background}`,
+        );
       }
     });
   }
@@ -129,5 +137,48 @@ describe("theme behaviours", () => {
     const app = src("App.tsx");
     assert.ok(app.includes('if (ev.key === "Escape") closeSettings();'), "Escape no longer closes the sheet from the shell");
     assert.ok(settings.includes('id="sheetBack"'), "clicking outside the sheet no longer closes it");
+  });
+});
+// ---------------------------------------------------------------------------
+// THE TWO PALETTES ARE ONE PALETTE NOW.
+//
+// index.css used to declare its own oklch neutrals and flip them on `.dark`,
+// which nothing ever set — so every shadcn and assistant-ui component stayed
+// in light colours while the board went dark. The shadcn contract is defined
+// in terms of masora's tokens now. That only works while every alias points at
+// a token masora actually declares, and while the dark variant reads the
+// attribute masora flips.
+describe("the shadcn contract is wired to masora", () => {
+  const index = readFileSync(path.join(ROOT, "board", "src", "index.css"), "utf8");
+
+  test("the Tailwind dark variant follows data-theme, not a .dark class", () => {
+    const variant = /@custom-variant dark \(([^)]*)\)/.exec(index);
+    assert.ok(variant, "no dark variant is declared");
+    assert.match(variant[1], /data-theme="dark"/);
+    assert.ok(
+      !/\.dark\b/.test(variant[1]),
+      "the dark variant still keys off a .dark class, which nothing sets",
+    );
+  });
+
+  test("every alias resolves to a token masora declares", () => {
+    const root = index.slice(index.indexOf(":root {"), index.indexOf("@layer base"));
+    const aliases = [...root.matchAll(/--([a-z0-9-]+):\s*var\(--([a-z0-9-]+)\)/g)];
+    assert.ok(aliases.length > 20, "the shadcn aliases are gone from index.css");
+    for (const [, alias, token] of aliases) {
+      assert.ok(
+        palettes.light[token] !== undefined,
+        `--${alias} points at --${token}, which masora does not declare`,
+      );
+    }
+  });
+
+  test("the aliases cover what an installed component reads", () => {
+    for (const required of [
+      "background", "foreground", "card", "popover", "primary", "secondary",
+      "muted", "muted-foreground", "accent", "destructive", "border", "input", "ring",
+    ]) {
+      assert.match(index, new RegExp(`--${required}:`), `--${required} is not defined`);
+    }
   });
 });

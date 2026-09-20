@@ -39,3 +39,6 @@ editor/node_modules/
 # Per-repo agent wiring and release artifacts: local state, never committed.
 .opencode/plugins/zevet.js
 zevet-*.tar.gz
+
+# Playwright MCP scratch: page snapshots and screenshots taken while working.
+.playwright-mcp/

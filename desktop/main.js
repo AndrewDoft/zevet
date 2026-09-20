@@ -108,14 +108,95 @@ const PAPER_DARK = "#24252c";
  * lever is `frame: false`. NOT VERIFIED either way — the border cannot be seen
  * in a page screenshot, which is the only kind taken here.
  */
-function chromeFor(theme) {
+/* ---------------------------------------------------------------------------
+ * ZOOM
+ *
+ * There was none. buildMenu() registered appMenu, a custom zevet menu, editMenu
+ * and windowMenu, and Electron's zoom accelerators come from the viewMenu role
+ * — so Ctrl+=, Ctrl+- and Ctrl+0 were never bound to anything. Ctrl+wheel is
+ * off by default and nothing turned it on. The board also could not survive
+ * being zoomed, because #root had no height and the shell collapsed; that half
+ * is fixed in masora.css.
+ *
+ * Electron's zoomLevel is logarithmic: each step is a factor of 1.2, so level 3
+ * is 1.2^3 = 1.73x. The range below is the same one Chrome offers (25%..500%),
+ * clamped so a stray Ctrl+wheel cannot leave the window unreadable.
+ * ------------------------------------------------------------------------- */
+const ZOOM_MIN = -7;
+const ZOOM_MAX = 9;
+const ZOOM_STEP = 0.5;
+
+const TITLE_BAR_HEIGHT = 46;
+
+function clampZoom(level) {
+  if (!Number.isFinite(level)) return 0;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level));
+}
+
+/** zoomLevel -> the multiplier Chrome applies. */
+const zoomFactor = (level) => Math.pow(1.2, level);
+
+function chromeFor(theme, level = 0) {
   const dark = theme === "dark";
   return {
     color: dark ? PAPER_DARK : PAPER,
     symbolColor: dark ? "#eae7e2" : INK,
-    height: 46,
+    // THE OVERLAY DOES NOT SCALE. On Windows the title bar overlay is drawn by
+    // the OS in device pixels while the page beneath it is scaled by
+    // zoomFactor, so a zoomed-in board grows its own .pane-title past the
+    // window controls and the drag region stops lining up with the buttons.
+    // Scaling the height back keeps the two in agreement.
+    height: Math.round(TITLE_BAR_HEIGHT * zoomFactor(level)),
   };
 }
+
+/** The remembered zoom level, or 0. Kept in the config beside the hub. */
+function storedZoom() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
+    return clampZoom(typeof cfg.zoom === "number" ? cfg.zoom : 0);
+  } catch {
+    return 0;
+  }
+}
+
+/** Remember it. Best effort: a window that cannot persist its zoom is still a
+ *  window, and this must never be able to take the app down. */
+function rememberZoom(level) {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
+    if (!cfg || typeof cfg !== "object") return;
+    if (cfg.zoom === level) return;
+    cfg.zoom = level;
+    writeConfig(cfg);
+  } catch {
+    // No config yet, or unwritable. Zoom is a preference, not state.
+  }
+}
+
+/** Apply a level to a window, persist it, and re-colour the overlay to match. */
+function applyZoom(win, level) {
+  if (!win || win.isDestroyed()) return;
+  const next = clampZoom(level);
+  win.webContents.setZoomLevel(next);
+  rememberZoom(next);
+  if (process.platform !== "darwin" && typeof win.setTitleBarOverlay === "function") {
+    try {
+      win.setTitleBarOverlay(chromeFor(lastChromeTheme, next));
+    } catch {
+      // Only valid on a window created with titleBarStyle: hidden + overlay.
+    }
+  }
+}
+
+function stepZoom(win, delta) {
+  if (!win || win.isDestroyed()) return;
+  applyZoom(win, win.webContents.getZoomLevel() + delta);
+}
+
+/** The theme the overlay was last painted for, so a zoom change does not
+ *  repaint it in the wrong colours. */
+let lastChromeTheme = "light";
 
 let boardWindow = null;
 let setupWindow = null;
@@ -264,7 +345,7 @@ function openBoard(cfg) {
     titleBarStyle: "hidden",
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset" }
-      : { titleBarOverlay: chromeFor("light") }),
+      : { titleBarOverlay: chromeFor("light", storedZoom()) }),
     autoHideMenuBar: true,
     webPreferences: {
       // THE BOARD NOW GETS A PRELOAD, and that is a real decision rather than
@@ -287,6 +368,19 @@ function openBoard(cfg) {
       contextIsolation: true,
       sandbox: false,
     },
+  });
+
+  // Restore the remembered zoom. It has to be set per load, not once: a reload
+  // or a navigation resets zoomLevel to 0, and a board that silently springs
+  // back to 100% every time you refresh is the same bug reported differently.
+  boardWindow.webContents.on("did-finish-load", () => {
+    applyZoom(boardWindow, storedZoom());
+  });
+
+  // Ctrl/Cmd + wheel. Electron reports the gesture and leaves the decision to
+  // the app; without this handler the event fires and nothing moves.
+  boardWindow.webContents.on("zoom-changed", (_event, direction) => {
+    stepZoom(boardWindow, direction === "in" ? ZOOM_STEP : -ZOOM_STEP);
   });
 
   const hubOrigin = new URL(cfg.hub).origin;
@@ -541,6 +635,41 @@ function buildMenu() {
       ],
     },
     { role: "editMenu" },
+    // THE MISSING MENU. Its roles are where Ctrl+=, Ctrl+- and Ctrl+0 come
+    // from; zevet had no viewMenu, so none of them were bound. The items are
+    // spelled out rather than taking { role: "viewMenu" } wholesale because
+    // that role also carries reload and devtools, which the zevet menu above
+    // already has, and because the zoom items have to go through applyZoom so
+    // the level is remembered and the title bar overlay follows.
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Zoom In",
+          accelerator: "CommandOrControl+Plus",
+          click: () => stepZoom(BrowserWindow.getFocusedWindow(), ZOOM_STEP),
+        },
+        {
+          // Chrome binds both; a keyboard without a numpad sends the second.
+          label: "Zoom In",
+          accelerator: "CommandOrControl+=",
+          visible: false,
+          click: () => stepZoom(BrowserWindow.getFocusedWindow(), ZOOM_STEP),
+        },
+        {
+          label: "Zoom Out",
+          accelerator: "CommandOrControl+-",
+          click: () => stepZoom(BrowserWindow.getFocusedWindow(), -ZOOM_STEP),
+        },
+        {
+          label: "Actual Size",
+          accelerator: "CommandOrControl+0",
+          click: () => applyZoom(BrowserWindow.getFocusedWindow(), 0),
+        },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
     { role: "windowMenu" },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -1131,6 +1260,7 @@ async function ensureEmbedder() {
  */
 ipcMain.handle("ui:chrome", (_e, arg) => {
   const theme = arg && arg.theme === "dark" ? "dark" : "light";
+  lastChromeTheme = theme;
   const w = boardWindow;
   if (!w || w.isDestroyed()) return { ok: false };
   const paper = typeof arg.paper === "string" && /^#[0-9a-f]{3,8}$/i.test(arg.paper.trim())
@@ -1145,7 +1275,13 @@ ipcMain.handle("ui:chrome", (_e, arg) => {
       const ink = typeof arg.ink === "string" && /^#[0-9a-f]{3,8}$/i.test(arg.ink.trim())
         ? arg.ink.trim()
         : chromeFor(theme).symbolColor;
-      w.setTitleBarOverlay({ color: paper, symbolColor: ink, height: 46 });
+      // The height tracks the zoom for the same reason applyZoom sets it: the
+      // OS draws this overlay unscaled over a page that is scaled.
+      w.setTitleBarOverlay({
+        color: paper,
+        symbolColor: ink,
+        height: Math.round(TITLE_BAR_HEIGHT * zoomFactor(w.webContents.getZoomLevel())),
+      });
     }
   } catch {
     // setTitleBarOverlay throws on a window that was not created with an

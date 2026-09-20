@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { PeoplePane } from "./components/people";
 import { WorkspacesPane } from "./components/workspaces";
 import { Strip } from "./components/strip";
+import { ConnBanner } from "./components/conn";
 import { UpdateRow } from "./components/updaterow";
 import { Consoles } from "./components/consoles";
 import { Conversation } from "./components/conversation";
@@ -116,6 +117,7 @@ function App() {
               </>
             ) : null}
           </div>
+          <ConnBanner />
           <Strip />
           <UpdateRow />
           <div className="railfoot">

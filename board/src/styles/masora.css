@@ -360,50 +360,6 @@
      page font at a size meant for reading, and the mono box around it goes:
      a scrolling bordered well inside a column that is already a scrolling
      bordered well is one frame too many. */
-  .chatcol .console {
-    background: none; border-left: 0; border-bottom: 0;
-    padding: 6px 26px 18px;
-    max-width: 78ch; margin: 0 auto; width: 100%;
-  }
-  .chatcol .console-out {
-    max-height: none; overflow: visible;
-    background: none; border: 0; padding: 0;
-    font-family: var(--font-sans); font-size: 14.5px; line-height: 1.72;
-  }
-  /* What the agent said: prose, with space between paragraphs. */
-  .chatcol .cline[data-kind="out"] {
-    margin: 0 0 11px; color: var(--ink);
-  }
-  /* What you said: set apart, not indented into a chat bubble. A bubble would
-     imply a messaging app and a per-message identity neither side has here. */
-  .chatcol .cline[data-kind="you"] {
-    margin: 18px 0 13px; padding: 9px 13px;
-    background: var(--cerulean-soft); border-left: 2px solid var(--who);
-    color: var(--ink); font-size: 14px;
-  }
-  /* What it DID: still monospace, still small. These are the lines you skim
-     past when the prose is what you want, and they should read as machinery. */
-  .chatcol .cline[data-kind="tool"],
-  .chatcol .cline[data-kind="meta"],
-  .chatcol .cline[data-kind="err"] {
-    font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55;
-    padding: 1px 0;
-  }
-  .chatcol .console-head { margin-bottom: 14px; }
-  .chatcol .newagent { padding: 10px 26px 18px; max-width: 78ch; margin: 0 auto; }
-  /* The composer sticks to the bottom of the column, where the hands are. */
-  .chatcol .console-form {
-    position: sticky; bottom: 0;
-    margin-top: 14px; padding-top: 10px;
-    background: linear-gradient(to bottom, transparent, var(--paper) 22%);
-  }
-  .chatcol .console-input { font-size: 14px; padding: 11px 13px; }
-
-  .chat-empty {
-    padding: 34px 26px; max-width: 60ch; margin: 0 auto;
-    color: var(--ink-muted); font-size: 14px; line-height: 1.65;
-  }
-  .chat-empty h2 { font-size: 17px; font-weight: 400; color: var(--ink); margin-bottom: 9px; }
 
   /* (The changed-file list lived here and is gone: one way to reach a file,
      kept in the tree. Its churn sort now only exists as tree-badge order.) */
@@ -659,100 +615,49 @@
   .idle-note { font-size: 12px; color: var(--subtle); }
 
   /* ---- your own agent, running here ------------------------------------ */
-  .newagent { display: flex; flex-direction: column; gap: 9px; padding: 4px 16px 16px; }
-  .launch-controls { display: flex; gap: 8px; }
-  .launch-row { display: flex; gap: 8px; flex-wrap: wrap; }
-  /* ΓÜá∩╕Å `appearance: none` IS THE POINT OF THIS RULE. Without it a <select> is
-     drawn by the operating system: Segoe UI on Windows, a grey gradient, a
-     blue focus ring and a chevron nobody chose -- three of which contradict
-     the one-family, one-colour rule the rest of this page is built on, and
-     none of which follow the theme. The chevron is drawn back as an inline SVG
-     with `currentColor` so it takes --muted in both modes; a background-image
-     with a hardcoded fill would be invisible in one of them. */
-  .launch-select, .launch-model {
-    font: inherit; font-size: 12px; font-weight: 400; letter-spacing: 0.01em;
-    padding: 6px 9px; border-radius: 2px;
-    border: 1px solid var(--line); background: var(--fill); color: var(--ink);
-    appearance: none; -webkit-appearance: none;
-    transition: border-color 200ms, background-color 200ms;
+  /* ---- rail: one row per running agent --------------------------------
+     The conversation column is the assistant-ui Thread; this is navigation.
+     Registry elements bring their own look, so what is left here is the part
+     that is zevet's: the per-collaborator hue on the left edge, and the
+     posture, which is the one thing you want to see without clicking. */
+  .console-row {
+    border-bottom: 1px solid var(--line);
+    border-left: 2px solid var(--who);
+    background: var(--raise-soft);
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 10px 8px 12px;
   }
-  .launch-select:hover, .launch-model:hover { border-color: var(--ink-muted); }
-  .launch-select:focus-visible, .launch-model:focus-visible {
-    outline: 2px solid var(--cerulean); outline-offset: 1px; border-color: var(--cerulean);
+  .console-row[data-active="true"] { background: var(--raise); }
+  .console-row-pick {
+    flex: 1 1 auto; min-width: 0;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    text-align: left; background: none; border: 0; padding: 0; cursor: pointer;
   }
-  .launch-model::placeholder { color: var(--subtle); }
-  .launch-select {
-    padding-right: 26px;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='currentColor' stroke-width='1.2'/></svg>");
-    background-repeat: no-repeat;
-    background-position: right 9px center;
-    background-size: 9px 6px;
+  .console-row-status { flex: 0 1 auto; min-width: 0; }
+  .console-row-mode { color: var(--subtle); }
+  .console-row-mode[data-danger="true"] { color: var(--alert); }
+  .console-row-close {
+    flex: none; font-size: 11px; padding: 3px 7px; border-radius: 2px;
+    color: var(--subtle); background: none; border: 1px solid transparent;
+    cursor: pointer;
   }
-  /* The popup list itself is the OS's and cannot be styled; giving the OPTIONS
-     the theme's colours is the most that can be done, and on Windows it is
-     honoured. */
-  .launch-select option { background: var(--paper); color: var(--ink); }
-  .launch-select { flex: 0 0 auto; }
-  .launch-model { flex: 1 1 auto; min-width: 0; }
-  .launch-warn { font-size: 11.5px; color: var(--alert); }
-  .newagent-btn[data-danger="true"] { border-color: var(--alert); color: var(--alert); }
-  .newagent-btn[data-danger="true"]:hover { background: var(--alert); color: var(--paper); }
-  .posture { margin-left: 8px; font-size: 11px; color: var(--subtle); }
-  .posture[data-danger="true"] { color: var(--alert); }
-  .newagent-btn {
-    padding: 6px 13px; border: 1px solid var(--cerulean);
-    color: var(--cerulean); font-size: 12.5px; border-radius: 4px;
+  .console-row-close:hover { color: var(--alert); border-color: var(--alert); }
+  .console-row-err {
+    flex: 1 0 100%; font-size: 11.5px; color: var(--alert); padding-top: 4px;
   }
-  .newagent-btn:hover { background: var(--cerulean); color: var(--paper); }
-  .newagent-none { font-size: 12px; color: var(--subtle); }
-  .signin-dot {
-    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-    background: var(--who-4); margin-left: 7px; vertical-align: middle;
+  .console-new {
+    display: block; width: 100%; text-align: left;
+    padding: 9px 16px; font-size: 12.5px; color: var(--cerulean);
+    background: none; border: 0; border-bottom: 1px solid var(--line);
+    cursor: pointer;
   }
+  .console-new:hover { background: var(--raise-soft); }
+  .console-new[aria-pressed="true"] { background: var(--raise); }
 
-  .console { border-bottom: 1px solid var(--line); padding: 12px 16px 14px; background: var(--raise-soft); }
-  .console-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; }
-  .console-head .bead { width: 8px; height: 8px; border-radius: 50%; background: var(--who); flex: none; }
-  .console-head .nm { font-size: 13px; letter-spacing: 0.02em; }
-  .console { border-left: 2px solid var(--who); }
-  .console-head .where { font-size: 11px; color: var(--subtle); }
-  .console-stop {
-    margin-left: auto; font-size: 11.5px; color: var(--ink-muted);
-    border: 1px solid var(--line); border-radius: 4px; padding: 3px 10px;
-  }
-  .console-stop:hover { color: var(--alert); border-color: var(--alert); }
-  .console-err { font-size: 12px; color: var(--alert); margin-bottom: 8px; }
-  .console-out {
-    max-height: 300px; overflow-y: auto;
-    font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
-    background: var(--raise); border: 0; padding: 8px 10px;
-  }
-  .cline { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .cline b { font-weight: 500; color: var(--ink); }
-  /* Inline code keeps the mono face even where the surrounding line is prose,
-     which is the only reason it is worth marking up at all. */
-  .cline code {
-    font-family: var(--font-mono); font-size: 0.88em; color: var(--ink);
-    background: var(--fill); border: 0;
-    border-radius: 2px; padding: 0 4px;
-  }
-  .cline[data-kind="you"]   { color: var(--cerulean); }
-  .cline[data-kind="tool"]  { color: var(--ink-muted); }
-  .cline[data-kind="err"]   { color: var(--alert); }
-  .cline[data-kind="meta"]  { color: var(--subtle); }
-  .console-form { margin-top: 8px; }
-  .console-input {
-    display: block; width: 100%; padding: 7px 10px;
-    border: 1px solid var(--line); background: var(--paper);
-    font: inherit; font-size: 12.5px; line-height: 1.5; color: var(--ink);
-    /* A textarea, made to behave. `resize: none` because it sizes itself to
-       its content (see fit()), and a drag handle in the corner would fight
-       that. `overflow: auto` matters: `hidden` would swallow the scrollbar
-       once a prompt passes the height ceiling. */
-    resize: none; overflow: auto; min-height: 34px;
-  }
-  .console-input::placeholder { color: var(--subtle); }
-  .console-input:focus { outline: 2px solid var(--cerulean); outline-offset: -1px; border-color: transparent; }
+  /* The conversation column: the Thread fills it, the launcher scrolls. */
+  .chat-thread { height: 100%; min-height: 0; }
+  .chat-launch { height: 100%; overflow-y: auto; padding: 0 16px; }
+
 
   /* ---- collisions ------------------------------------------------------ */
   .collide-bar {
@@ -845,3 +750,5 @@
     .shell, body[data-view="agent"] .shell { grid-template-columns: 1fr; }
     .rail { display: none; }
   }
+
+  .conn-banner { padding: 10px 12px; border-bottom: 1px solid var(--line); }

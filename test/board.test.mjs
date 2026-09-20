@@ -107,21 +107,39 @@ describe("the board page", () => {
     });
   }
 
-  test("the console has exactly one host per view", () => {
-    // ⚠️ THE CONTRACT AGENT VIEW RESTS ON. The conversation moves between the
-    // middle column (#chat) and the rail (#consolesSlot); it is never in both.
-    // A second #consolesSlot definition, or a rail host that renders even when
-    // the agent view has taken the consoles, is how that rule gets broken —
-    // and the symptom, two live transcripts of one agent with two composers
-    // that disagree about the draft, is the same confusion it was in the old
-    // page.
+  test("exactly one composer exists, and it is not in the rail", () => {
+    // ⚠️ THE CONTRACT THE CONVERSATION RESTS ON, restated. It used to be that
+    // ONE console component moved between the rail and #chat and must never be
+    // in both, because two mounts meant two composers disagreeing about the
+    // draft. They are two different components now — the rail is navigation,
+    // #chat is the assistant-ui Thread — so the rule that carries the same
+    // weight is this one: the rail must not grow a composer back.
     const app = readFileSync(path.join(SRC, "App.tsx"), "utf8");
     assert.equal((app.match(/id="consolesSlot"/g) || []).length, 1, "there must be exactly one rail host");
     assert.ok(app.includes('viewMode === "ide"'), "the rail host must be gated on the ide view");
-    assert.equal((app.match(/<Consoles/g) || []).length, 2, "one mount in the rail, one in #chat");
+    assert.equal((app.match(/<Consoles/g) || []).length, 1, "the rail is the only place Consoles mounts");
+    assert.equal((app.match(/<Conversation/g) || []).length, 1, "the chat column is the only place Conversation mounts");
+
+    const rail = readFileSync(path.join(SRC, "components", "consoles.tsx"), "utf8");
+    assert.ok(!rail.includes("<textarea"), "the rail grew a composer back");
+    assert.ok(!/sendPrompt/.test(rail), "the rail must not send prompts; the Thread does");
+
     const css = readFileSync(path.join(ROOT, "hub", "public", "board.css"), "utf8");
     assert.ok(/\.chatcol\{[^}]*display:none\}/.test(css), "the chat column must be hidden in ide view");
     assert.ok(css.includes("data-view=agent] .chatcol{display:flex"), "only the agent view may show the chat column");
+  });
+
+  test("one runtime provider wraps the whole shell", () => {
+    // The rail's rows and the strip read thread state too, so the provider
+    // cannot be scoped to the chat column. Two providers would give the rail
+    // and the conversation separate runtimes and separate ideas of which
+    // thread is in front.
+    const app = readFileSync(path.join(SRC, "App.tsx"), "utf8");
+    assert.equal((app.match(/<ConsoleRuntimeProvider>/g) || []).length, 1);
+    assert.ok(
+      app.indexOf("<ConsoleRuntimeProvider>") < app.indexOf('className="shell"'),
+      "the provider must wrap the shell, not sit inside it",
+    );
   });
 
   test("the tree and follow-mode open files the same way", () => {
@@ -133,11 +151,17 @@ describe("the board page", () => {
   });
 
   test("the composer is a textarea, so a prompt can have newlines in it", () => {
-    const consoles = readFileSync(path.join(SRC, "components", "consoles.tsx"), "utf8");
-    assert.ok(consoles.includes("<textarea"), "the composer went back to a single-line input");
-    // Enter sends. Losing this makes the field behave like a form nobody
-    // expects, and it was the whole reason the input was single-line.
-    assert.ok(/ev\.key === "Enter" && !ev\.shiftKey/.test(consoles));
+    // The composer is the registry's now rather than a hand-rolled textarea,
+    // so the claim is checked where it lives. ComposerPrimitive.Input renders
+    // a textarea and handles Enter/Shift+Enter itself; what is pinned here is
+    // that the Thread still uses it, because a Thread rebuilt around a plain
+    // <input> would silently lose multi-line prompts.
+    const thread = readFileSync(
+      path.join(SRC, "components", "assistant-ui", "elements", "thread.aui.tsx"),
+      "utf8",
+    );
+    assert.ok(thread.includes("<ComposerPrimitive.Input"), "the Thread lost its composer input");
+    assert.ok(!/<input\b[^>]*aui_composer/.test(thread), "the composer became a single-line input");
   });
 
   test("prose() renders bold and code and nothing else", async () => {
