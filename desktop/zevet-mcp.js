@@ -26,7 +26,52 @@ const computer = require("./computer.js");
 const PROTOCOL_VERSION = "2025-06-18";
 const SERVER_INFO = { name: "zevet-computer-use", version: "0.1.0" };
 
-const TOOLS = [
+/**
+ * The one tool EVERY agent gets.
+ *
+ * ⚠️ IT IS NOT BEHIND THE COMPUTER-USE GATE, and the four tools below still
+ * are. Andrew asked for questions from any agent he starts — "rather than
+ * needing me to write out responses in chat all the time" — but handing every
+ * agent the mouse to get there would be a capability nobody asked for. So this
+ * server now exposes two sets, and main.js decides which by setting
+ * ZEVET_MCP_COMPUTER. Asking a person to choose between options somebody wrote
+ * down is not in the same class of power as moving their cursor.
+ */
+const ASK_TOOLS = [
+  {
+    name: "ask_user",
+    description:
+      "Ask the person a multiple-choice question and wait for their answer. Use this " +
+      "instead of asking in prose when the decision is yours to hand over and the " +
+      "options are known. Blocks until they choose or the question times out.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        question: { type: "string", description: "The whole question, ending in a question mark." },
+        header: { type: "string", description: "Two or three words naming the decision, for the chip above it." },
+        multi: { type: "boolean", description: "True when more than one option may be chosen.", default: false },
+        options: {
+          type: "array",
+          minItems: 2,
+          maxItems: 4,
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", description: "The choice itself, in a few words." },
+              description: { type: "string", description: "What picking it means or costs." },
+            },
+            required: ["label"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["question", "options"],
+      additionalProperties: false,
+    },
+  },
+];
+
+const COMPUTER_TOOLS = [
   {
     name: "screenshot",
     description: "Capture the full screen as a PNG image, plus the screen size.",
@@ -95,6 +140,68 @@ const TOOLS = [
     },
   },
 ];
+
+/** What this server offers this run. See ASK_TOOLS on why it is two sets. */
+function toolsFor(env = process.env) {
+  return env.ZEVET_MCP_COMPUTER === "1" ? ASK_TOOLS.concat(COMPUTER_TOOLS) : ASK_TOOLS.slice();
+}
+
+/**
+ * A question, checked before a person is ever shown it.
+ *
+ * ⚠️ THE AGENT WROTE THIS, so it is input at a trust boundary even though the
+ * agent is one we started. Everything is bounded and coerced to a string here
+ * rather than in the renderer, so the board is never handed a shape it has to
+ * defend against — and the caps are what stop a question from being a wall of
+ * text in a card that blocks until it is answered.
+ */
+function cleanQuestion(args) {
+  const a = args && typeof args === "object" ? args : {};
+  const text = (v, max) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
+  const question = text(a.question, 400);
+  if (!question) return { error: "question is required and must be a non-empty string" };
+  const raw = Array.isArray(a.options) ? a.options : [];
+  const options = [];
+  for (const o of raw) {
+    const label = text(o && o.label, 60);
+    if (!label) continue;
+    // One label, one option: a picker with two identical buttons cannot be
+    // answered unambiguously, and the answer goes back as the LABEL.
+    if (options.some((p) => p.label === label)) continue;
+    options.push({ label, description: text(o && o.description, 160) });
+    if (options.length === 4) break;
+  }
+  if (options.length < 2) return { error: "options must contain at least 2 entries with distinct labels" };
+  return { question, header: text(a.header, 24), multi: a.multi === true, options };
+}
+
+/** Put a question to the person and wait. Same gate, different route. */
+async function askUser(args) {
+  const url = process.env.ZEVET_MCP_URL;
+  const token = process.env.ZEVET_MCP_TOKEN;
+  if (!url || !token) return textResult("the desktop app is not reachable, so there is nobody to ask", true);
+  const clean = cleanQuestion(args);
+  if (clean.error) return textResult(clean.error, true);
+  try {
+    const res = await fetch(`${url.replace(/\/+$/, "")}/ask`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify(clean),
+      signal: AbortSignal.timeout(150_000),
+    });
+    if (!res.ok) return textResult(`could not ask: HTTP ${res.status}`, true);
+    const data = await res.json();
+    if (data && data.ok === true && Array.isArray(data.picked) && data.picked.length) {
+      return textResult(`They chose: ${data.picked.join(", ")}`);
+    }
+    /* ⚠️ NOT AN ERROR. Nobody answered, which is an answer about their
+       attention rather than a fault in the run — tell it plainly and let the
+       agent decide for itself rather than making it handle a tool failure. */
+    return textResult(`No answer: ${(data && data.reason) || "the question was not answered"}. Decide without it, and say what you assumed.`);
+  } catch (err) {
+    return textResult(`could not ask: ${err.message}`, true);
+  }
+}
 
 function textResult(text, isError = false) {
   return { content: [{ type: "text", text }], isError };
@@ -224,7 +331,21 @@ const HANDLERS = { screenshot: doScreenshot, click: doClick, type_text: doType, 
 async function callTool(name, rawArgs) {
   const args = rawArgs && typeof rawArgs === "object" ? rawArgs : {};
 
+  /* ⚠️ ASKING IS NOT PERMITTED, IT IS THE PERMISSION. Every other tool here
+     goes through requestPermit first because it is about to DO something; a
+     question does nothing but wait for a person, and putting it behind a
+     second approval would mean approving a dialog in order to be shown a
+     dialog. Its own route is the gate. */
+  if (name === "ask_user") return askUser(args);
+
   if (name === "permission_prompt") return doPermissionPrompt(args);
+
+  /* ⚠️ THE COMPUTER TOOLS REFUSE BY NAME when this run did not get them.
+     tools/list already leaves them out, but a model that remembers them from
+     another run would otherwise reach a handler the gate never approved. */
+  if (!toolsFor().some((t) => t.name === name)) {
+    return textResult(`"${name}" is not available in this run`, true);
+  }
 
   const handler = HANDLERS[name];
   if (!handler) return textResult(`unknown tool "${name}"`, true);
@@ -269,7 +390,7 @@ async function handleMessage(msg) {
   if (method === "notifications/initialized") return; // notification: no response
 
   if (method === "tools/list") {
-    reply(id, { tools: TOOLS });
+    reply(id, { tools: toolsFor() });
     return;
   }
 
@@ -306,4 +427,4 @@ if (require.main === module) {
   startStdioLoop();
 }
 
-module.exports = { PROTOCOL_VERSION, SERVER_INFO, TOOLS, handleMessage, callTool, startStdioLoop };
+module.exports = { PROTOCOL_VERSION, SERVER_INFO, ASK_TOOLS, COMPUTER_TOOLS, toolsFor, cleanQuestion, handleMessage, callTool, startStdioLoop };

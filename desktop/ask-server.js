@@ -82,6 +82,22 @@ function normalizePermitResult(result) {
 }
 
 /**
+ * An answer to a question, reduced to the one shape the MCP server reads.
+ *
+ * ⚠️ A REFUSAL IS NOT AN ERROR HERE. An unanswered question means the person
+ * was not there or closed it, and the agent should be told that in words and
+ * carry on — the permit gate denies on silence because acting without consent
+ * is the failure, but a question nobody answered is just an absent answer.
+ */
+function normalizeAskResult(result) {
+  if (result && result.ok === true) {
+    const picked = Array.isArray(result.picked) ? result.picked : [];
+    return { ok: true, picked: picked.filter((p) => typeof p === "string" && p).slice(0, 16) };
+  }
+  return { ok: false, picked: [], reason: (result && result.reason) || "no answer" };
+}
+
+/**
  * Start the gate. Returns a Promise (the port is only known once bound) of
  * `{ url, token, close }`.
  *
@@ -90,10 +106,14 @@ function normalizePermitResult(result) {
  * or a plain boolean. It races against `timeoutMs` and loses to a deny if it
  * takes too long; a permit handler that throws also denies.
  */
-function start({ onPermit, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+function start({ onPermit, onAsk, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   if (typeof onPermit !== "function") {
     throw new Error("ask-server: start() requires an onPermit(request) function");
   }
+  /* ⚠️ OPTIONAL, AND ITS ABSENCE IS A 404 RATHER THAN A CRASH. An older main
+     process paired with a newer MCP server must refuse the route, not throw
+     inside a request handler on the same port the permit gate depends on. */
+  const asker = typeof onAsk === "function" ? onAsk : null;
   const token = randomBytes(24).toString("hex");
 
   const server = http.createServer((req, res) => {
@@ -111,7 +131,8 @@ function start({ onPermit, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
           return;
         }
 
-        if (req.method !== "POST" || req.url !== "/permit") {
+        const route = req.method === "POST" ? req.url : "";
+        if (route !== "/permit" && !(route === "/ask" && asker)) {
           json(res, 404, { ok: false, reason: "not found" });
           return;
         }
@@ -132,21 +153,31 @@ function start({ onPermit, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
           return;
         }
 
+        const asking = route === "/ask";
         let timer;
         const timeout = new Promise((resolve) => {
-          timer = setTimeout(() => resolve({ ok: false, reason: "timed out waiting for approval" }), timeoutMs);
+          timer = setTimeout(
+            () =>
+              resolve(
+                asking
+                  ? { ok: false, reason: "nobody answered in time" }
+                  : { ok: false, reason: "timed out waiting for approval" },
+              ),
+            timeoutMs,
+          );
         });
 
         let result;
         try {
-          result = await Promise.race([Promise.resolve(onPermit(payload)), timeout]);
+          const handler = asking ? asker : onPermit;
+          result = await Promise.race([Promise.resolve(handler(payload)), timeout]);
         } catch (err) {
-          result = { ok: false, reason: `permission handler failed: ${err.message}` };
+          result = { ok: false, reason: `${asking ? "question" : "permission"} handler failed: ${err.message}` };
         } finally {
           clearTimeout(timer);
         }
 
-        json(res, 200, normalizePermitResult(result));
+        json(res, 200, asking ? normalizeAskResult(result) : normalizePermitResult(result));
       })
       .catch((err) => {
         try {
