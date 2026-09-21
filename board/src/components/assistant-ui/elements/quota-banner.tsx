@@ -82,16 +82,19 @@ export function QuotaBanner({
         <span className={cn(mono, "text-foreground/30 tabular-nums")}>
           {used} of {limit} used
         </span>
-        <button
-          type="button"
-          onClick={onUpgrade}
-          className={cn(
-            inkButton,
-            "ms-auto flex h-7 items-center rounded-full px-3 text-xs font-medium",
-          )}
-        >
-          {upgradeLabel}
-        </button>
+        {/* Only when there is somewhere to go. See sync-registry.mjs. */}
+        {onUpgrade ? (
+          <button
+            type="button"
+            onClick={onUpgrade}
+            className={cn(
+              inkButton,
+              "ms-auto flex h-7 items-center rounded-full px-3 text-xs font-medium",
+            )}
+          >
+            {upgradeLabel}
+          </button>
+        ) : null}
       </div>
     </div>
   );

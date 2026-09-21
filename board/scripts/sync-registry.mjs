@@ -185,6 +185,26 @@ if (fixed) console.log(`repaired ${fixed} file(s) whose imports disagreed with t
  * rewrites the file. */
 const COPY = [
   {
+    file: "components/assistant-ui/elements/quota-banner.tsx",
+    // The "Upgrade" button rendered whether or not it was handed a handler,
+    // and zevet has no upgrade flow to hand it — so the most prominent,
+    // filled, keyboard-reachable control in the banner did nothing at all
+    // when you pressed it. quota.tsx had a comment saying the handler was
+    // "left unset, same reasoning moreviews.tsx gives", and that reasoning
+    // assumed the element hides an affordance it cannot perform. Its siblings
+    // do; this one did not.
+    //
+    // zevet states the rule elsewhere in its own words, in consoles.tsx: an
+    // affordance that does nothing is the same mistake as ToolError's Retry.
+    from: "        <button\n          type=\"button\"\n          onClick={onUpgrade}",
+    to: "        {onUpgrade ? (\n        <button\n          type=\"button\"\n          onClick={onUpgrade}",
+  },
+  {
+    file: "components/assistant-ui/elements/quota-banner.tsx",
+    from: "          {upgradeLabel}\n        </button>",
+    to: "          {upgradeLabel}\n        </button>\n        ) : null}",
+  },
+  {
     file: "components/assistant-ui/elements/command-palette.tsx",
     // Enter did nothing until you had pressed an arrow key. `activeId` is a
     // prop, and the parent only ever changes it from ArrowUp/ArrowDown - so it

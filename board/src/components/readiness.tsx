@@ -122,7 +122,10 @@ function indexCriterion(
       note: (st.reasons && st.reasons.join("; ")) || "not capable on this machine",
     };
   }
-  if (st.stats && st.stats.files) {
+  // `files` can honestly be 0 — an index that built and found nothing to
+  // index. Truthiness sent that case to the "not built yet" branch below and
+  // reported a score of 3 for work that was actually done.
+  if (st.stats && st.stats.files != null) {
     return {
       label: "Semantic index",
       score: 10,
@@ -171,12 +174,15 @@ export function Readiness() {
 
   // Same trigger settings.tsx's IndexSection uses: don't bother asking when
   // an external index already answers for `cindex`, otherwise ask once.
+  /* `machine` is read here and arrives from a poll AFTER mount, so with
+     [hasIndexStatus] alone the external-index guard was always evaluated
+     against null on the single run this effect ever had. Same fix, same
+     reason, as settings.tsx § IndexSection. */
   useEffect(() => {
     if (!hasIndexStatus) return;
     if (machine && (machine as { cindex?: boolean }).cindex === true) return;
     refreshIndexStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasIndexStatus]);
+  }, [hasIndexStatus, machine, refreshIndexStatus]);
 
   if (!bridge.local) return null;
 

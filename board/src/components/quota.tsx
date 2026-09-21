@@ -41,8 +41,11 @@ export function QuotaChip() {
   const limits = active?.limits ?? [];
   if (!limits.length) return null;
   const fullest = limits.reduce((a, b) => (b.utilization > a.utilization ? b : a));
+  /* ⚠️ A MISSING RESET TIME IS NOT A MISSING QUOTA. This returned null when
+     `whenText` had nothing to say, so a window sitting at 99% with no
+     resetsAt rendered no chip at all — the number is the warning, and the
+     reset is the footnote. Only the footnote is conditional now. */
   const resetsIn = whenText(fullest.resetsAt);
-  if (!resetsIn) return null;
   const used = Math.round(fullest.utilization * 100);
   const label = WINDOW_LABEL[fullest.key] ?? fullest.key;
   return (
@@ -51,7 +54,11 @@ export function QuotaChip() {
       /* Coloured only when it is close enough to matter. A permanently amber
          number is a number nobody reads. */
       data-hot={String(used >= 80)}
-      title={`${used}% of the ${label} window used, resets ${resetsIn}`}
+      title={
+        resetsIn
+          ? `${used}% of the ${label} window used, resets ${resetsIn}`
+          : `${used}% of the ${label} window used`
+      }
     >
       {label} {used}%
     </span>
