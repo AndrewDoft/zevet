@@ -99,12 +99,18 @@ export function PermitPrompt() {
         // grant — there is no "once" scope to wire and no memory behind
         // "always". "This session" is repurposed as the one real Allow
         // (answers just this request, same as every other answer would);
-        // "Always" is left unhandled on purpose — a button that looks like
-        // it remembers and doesn't is worse than no button. It also happens
-        // to be the ONE button styled as the prominent/filled action here,
-        // so leaving it inert means the accidental, eye-catching click does
-        // nothing — Deny and the real Allow are both plain-styled, equal
-        // weight, neither an accidental default.
+        // "Always" is left unhandled because PermissionGrant HAS NO SUCH
+        // BUTTON: elements/permission-grant.tsx renders exactly two, calling
+        // onGrant("denied") and onGrant("session"). The scope is in its type
+        // and not in its UI.
+        //
+        // ⚠️ THE NOTE HERE USED TO SAY "Always" WAS THE PROMINENT, FILLED
+        // BUTTON, and that leaving it inert defused an accidental click. That
+        // was stale, and on 2026-09-21 a reviewer reading this file alone
+        // reported the dead branch as a live bug — reasonably, because the
+        // comment said the button was on screen. Kept as a branch rather than
+        // deleted so that the day the element grows one, this fails loudly
+        // here instead of silently granting something zevet cannot remember.
         if (scope === "denied") void answerPermit(permit.id, false);
         else if (scope === "session") void answerPermit(permit.id, true);
       }}

@@ -260,11 +260,16 @@ function IndexSection() {
   const index = useBoard((s) => s.index);
   const localRoot = useBoard((s) => s.localRoot);
 
+  /* ⚠️ THE DEPS WERE EMPTY, and two things this reads arrive after mount.
+     `localRoot` is the one that mattered: the index status is a fact about a
+     FOLDER, and opening a different one never re-asked, so the Code index
+     section went on describing the repo you had left. `stripMachine` is
+     fetched too, so the guard above it was always evaluated against null on
+     the one run this effect ever had. */
   useEffect(() => {
     if (stripMachine && stripMachine.cindex === true) return;
     if (bridge.local && typeof bridge.local.indexStatus === "function") refreshIndexStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [localRoot, stripMachine, refreshIndexStatus]);
 
   const m = stripMachine as (StatusResultView & { cindex?: boolean; cindexPort?: number }) | null;
   if (m && m.cindex === true) {

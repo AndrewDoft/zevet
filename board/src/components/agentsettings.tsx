@@ -38,13 +38,38 @@ export function AgentSettings() {
   const [draft, setDraft] = useState(agentSettings?.systemPrompt ?? "");
   const savedRef = useRef(agentSettings?.systemPrompt ?? "");
   const timerRef = useRef<number | undefined>(undefined);
+  // What the debounce still owes the disk, for the flush on unmount below.
+  const pendingRef = useRef<string | null>(null);
 
   useEffect(() => {
-    setDraft(agentSettings?.systemPrompt ?? "");
-    savedRef.current = agentSettings?.systemPrompt ?? "";
+    const incoming = agentSettings?.systemPrompt ?? "";
+    /* ⚠️ OUR OWN SAVE ECHOES BACK THROUGH HERE. This used to adopt the store
+       value unconditionally, so a save that landed after later keystrokes
+       reset the textarea to the older saved text and ate what you had typed
+       in the meantime. `savedRef` is what we last sent, so a value equal to
+       it is the round trip coming home and there is nothing to adopt. A value
+       DIFFERENT from it came from somewhere else — a different repo opened —
+       and should replace the draft. */
+    if (incoming === savedRef.current) return;
+    setDraft(incoming);
+    savedRef.current = incoming;
   }, [agentSettings?.systemPrompt]);
 
-  useEffect(() => () => window.clearTimeout(timerRef.current), []);
+  useEffect(
+    () => () => {
+      /* ⚠️ FLUSH, DO NOT JUST CANCEL. The cleanup cleared the timer and
+         stopped, so anything typed within the 500ms before the panel closed
+         was silently dropped — and closing the panel right after typing is
+         the ordinary way to finish editing standing instructions. */
+      window.clearTimeout(timerRef.current);
+      const pending = pendingRef.current;
+      if (pending != null && pending !== savedRef.current) {
+        savedRef.current = pending;
+        void saveAgentSettings({ systemPrompt: pending });
+      }
+    },
+    [],
+  );
 
   if (!bridge.local || !localRoot || !agentSettings) return null;
 
@@ -52,6 +77,7 @@ export function AgentSettings() {
   // one field. Revisit if agentSettings grows more free text that needs it.
   function onSystemPromptChange(next: string) {
     setDraft(next);
+    pendingRef.current = next;
     window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => {
       if (next !== savedRef.current) {

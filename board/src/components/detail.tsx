@@ -105,9 +105,25 @@ function ViewPane({ selectedPath }: { selectedPath: string }) {
     );
   }
   const lang = w && w.languageFor ? w.languageFor(selectedPath) : "plain";
+  /* ⚠️ NO HIGHLIGHTER IS NOT NO FILE. The fallback here was `""`, so whenever
+     the highlighter had not loaded — a build without it, a slow chunk, a
+     failed import — clicking a file gave you an empty code block with no
+     error and nothing to suggest the text had in fact been read.
+
+     And the fallback is rendered as TEXT, not through dangerouslySetInnerHTML.
+     File contents are not ours: dropping them into innerHTML unescaped would
+     make any repo containing a <script> tag an injection into the board. */
+  if (!w || !w.highlight) {
+    return (
+      <div className="viewer">
+        <pre className="code">{text}</pre>
+        {localFile.truncated ? <div className="viewer-note">truncated {"— "}showing the first part of the file</div> : null}
+      </div>
+    );
+  }
   return (
     <div className="viewer">
-      <pre className="code" dangerouslySetInnerHTML={{ __html: w && w.highlight ? w.highlight(text, lang) : "" }} />
+      <pre className="code" dangerouslySetInnerHTML={{ __html: w.highlight(text, lang) }} />
       {localFile.truncated ? <div className="viewer-note">truncated {"\u2014 "}showing the first part of the file</div> : null}
     </div>
   );
