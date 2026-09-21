@@ -15,7 +15,7 @@
  * keywords, and has reasoning effort built in. Ten free opencode ids with
  * provider-qualified names are a list you search, not one you scroll.
  */
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import {
   ModelSelectorContent,
   ModelSelectorEffort,
@@ -83,8 +83,26 @@ export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
   );
 
   const all = useMemo(() => groups.flatMap((g) => g.models), [groups]);
-  const selected =
-    all.find((m) => aliasOf(m.id) === launchModel)?.id ?? all[0]?.id ?? "";
+  const match = all.find((m) => aliasOf(m.id) === launchModel);
+  const selected = match?.id ?? all[0]?.id ?? "";
+
+  /* ⚠️ THE FALLBACK WAS DISPLAY-ONLY, so the picker showed one model and the
+     run started on another. `launchModel` is what board.ts § startConsole
+     reads, and this component fell back to `all[0]` for the trigger without
+     ever writing that back — so whenever the stored model was not in the list
+     (a first run before anything was chosen, or a model the CLI has since
+     dropped from its catalogue) you read one name and got a different one,
+     with nothing on screen disagreeing.
+
+     Write-back, not a different fallback: the displayed model becomes the real
+     one. Guarded on there being no match AND a list to pick from, so this
+     settles in a single pass and cannot ping-pong. */
+  useEffect(() => {
+    if (match || !selected) return;
+    setLaunchModel(aliasOf(selected));
+    const cut = selected.indexOf(":");
+    if (cut > 0) setLaunchAgent(selected.slice(0, cut));
+  }, [match, selected, setLaunchModel, setLaunchAgent]);
 
   return (
     <ModelSelectorRoot
