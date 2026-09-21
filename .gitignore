@@ -11,6 +11,11 @@ desktop/build/icon.png
 # Local install artifacts: install.mjs writes these into whatever repo you wire,
 # including this one. They carry absolute paths from one machine.
 .claude/settings.json
+# Claude Code puts an agent's isolated git worktree here. A worktree inside the
+# repo it is a worktree OF is committed as a gitlink the moment `git add -A`
+# runs, which is exactly what happened on 2026-09-21 — the 0.2.26 commit
+# carried a submodule pointer to a scratch branch.
+.claude/worktrees/
 *.bak.*
 
 # The editor bundle's build tree. `editor/` is the only place in this repository
