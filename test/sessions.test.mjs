@@ -215,6 +215,23 @@ describe("row helpers", () => {
     );
     // Ordinary prompts are untouched, including ones that merely mention a tag.
     assert.equal(sessionLabel({ prompt: "why does <div> collapse?" }), "why does <div> collapse?");
+    // ...and one that OPENS with a plain HTML tag. Only hyphenated or
+    // underscored names are treated as an envelope, so this is a question
+    // about markup, not a wrapper.
+    assert.equal(sessionLabel({ prompt: "<div> keeps collapsing" }), "<div> keeps collapsing");
+
+    // A live prompt event carries a truncated `detail`, so the envelope that
+    // wraps everything arrives with no closing tag at all. Measured on the
+    // deployed board 2026-09-21 — this exact string was on the People rail.
+    const cut =
+      "<task-notification>\n<task-id>bkp0qq54x</task-id>\n" +
+      "<tool-use-id>toolu_01Fe2jumHKv5</tool-use-id>\n<status>completed</status>\nrebuild the tree";
+    assert.equal(sessionLabel({ prompt: cut }), "rebuild the tree");
+    // With nothing human after the machine blocks, there is nothing to show.
+    assert.equal(
+      sessionLabel({ prompt: "<task-notification>\n<task-id>b1</task-id>", id: "zz" }),
+      "zz",
+    );
   });
 
   test("the project is the last segment, of a path or of a slug", () => {

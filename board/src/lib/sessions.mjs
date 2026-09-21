@@ -335,10 +335,26 @@ export function unwrapEnvelope(prompt) {
   let out = String(prompt || "").trim();
   // Bounded rather than `while (true)`: a handful of envelopes is the real
   // shape, and a pathological prompt must not spin the render.
-  for (let i = 0; i < 8; i++) {
-    const m = /^<([a-zA-Z][\w-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>\s*/.exec(out);
-    if (!m) break;
-    out = out.slice(m[0].length).trim();
+  for (let i = 0; i < 12; i++) {
+    const closed = /^<([a-zA-Z][\w-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>\s*/.exec(out);
+    if (closed) {
+      out = out.slice(closed[0].length).trim();
+      continue;
+    }
+    /* ⚠️ AN ENVELOPE IS OFTEN NOT CLOSED, BECAUSE IT WAS CUT OFF. A live
+       prompt event carries a TRUNCATED `detail`, so a long block arrives with
+       its opening tag and no `</…>` anywhere — which is why peeling closed
+       blocks alone left "<task-notification>\n<task-id>bkp0qq54x…" on the rail
+       after the first attempt at this. Peel the lone opening tag and go round
+       again; the tags nested inside it are closed and fall to the branch above.
+       ONLY FOR A HYPHENATED OR UNDERSCORED NAME. `task-notification`,
+       `local-command-caveat`, `system-reminder`, `pasted_content` — every
+       envelope any harness sends is spelled that way, and it is the same rule
+       that makes a custom element a custom element. A prompt that opens with
+       `<div>` or `<p>` is somebody asking about HTML, and it is left alone. */
+    const opener = /^<[a-zA-Z]+[\w]*[-_][\w-]*(?:\s[^>]*)?>\s*/.exec(out);
+    if (!opener) break;
+    out = out.slice(opener[0].length).trim();
   }
   return out;
 }
