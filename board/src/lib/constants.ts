@@ -1,5 +1,6 @@
 import type { LaunchMode } from "./types";
 import { OPENCODE_FREE_MODELS } from "./models.generated.mjs";
+import { CLAUDE_MODELS, CODEX_MODELS } from "./agent-models.generated.mjs";
 
 export const ID: unique symbol = Symbol("id");
 
@@ -14,17 +15,23 @@ export const MODE_LABEL: Record<string, string> = Object.fromEntries(
   MODES.map((m) => [m.id, m.label]),
 );
 
-/** Model aliases each CLI accepts. Free text wins; these are a shortcut.
+/** Model ids each CLI accepts. Free text wins; these are a shortcut.
  *
- *  claude and codex take short aliases their own CLI resolves, so they stay
- *  written out here. opencode takes a full provider-qualified id, and the free
- *  ids churn weekly — those are generated rather than typed, by
- *  `node scripts/sync-models.mjs`. See models.generated.mjs for the rules. */
+ *  ⚠️ NONE OF THESE ARE TYPED BY HAND ANY MORE. They were, and all three lists
+ *  rotted in place: claude offered "opus/sonnet/haiku" with no Fable, and codex
+ *  "gpt-5/gpt-5-codex/o3", none of which that CLI still accepts. Andrew, on the
+ *  picker: "the available model names are wrong".
+ *
+ *  claude and codex are read from the catalogues those CLIs cache on disk
+ *  (`node scripts/sync-agent-models.mjs`), which is also where the display
+ *  names come from — see lib/models.mjs. opencode has no local catalogue and
+ *  its free ids churn weekly, so those come from `node scripts/sync-models.mjs`
+ *  and its allowlist rules. */
 export const MODELS: Record<string, string[]> = {
-  claude: ["", "opus", "sonnet", "haiku"],
-  codex: ["", "gpt-5", "gpt-5-codex", "o3"],
-  // "" first: "whatever the CLI defaults to" is a real choice and the launcher
-  // labels it as one.
+  // "" first, everywhere: letting the CLI choose is a real choice, and the
+  // picker labels it "CLI Choice" rather than hiding it.
+  claude: ["", ...CLAUDE_MODELS.map((m) => m.id)],
+  codex: ["", ...CODEX_MODELS.map((m) => m.id)],
   opencode: ["", ...OPENCODE_FREE_MODELS],
 };
 

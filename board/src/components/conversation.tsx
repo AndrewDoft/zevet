@@ -95,6 +95,7 @@ function Thinking() {
 export function Conversation() {
   const local = Boolean(bridge.local);
   const active = useBoard(selectActiveConsole);
+  const localRoot = useBoard((s) => s.localRoot);
 
   if (!local) {
     return (
@@ -116,11 +117,21 @@ export function Conversation() {
    * The column is the chat now, always. The thread is there (empty, which is
    * what an empty conversation looks like), the composer is live, and pressing
    * Send starts the agent the picker names and asks it — see `onNew` in
-   * lib/runtime.tsx. The launcher stays, above the transcript, as what it
-   * actually is: the model, posture and effort this run will start with. */
+   * lib/runtime.tsx. The pickers themselves went into the composer's action
+   * row rather than a strip above it; see the note on that below. */
   return (
     <div className="chat-thread">
-      {!active ? (
+      {/* ⚠️ THE PICKERS ARE IN THE COMPOSER NOW, not in a strip above the
+          transcript. Andrew's words about that strip: "not above in that weird
+          way" — it read as a settings screen the conversation happened to sit
+          under. components/composercontrols.tsx puts the model, the posture
+          and the run's context in the composer's own action row, which is
+          where you are already looking when you decide any of them.
+
+          What is left here is the one thing that cannot go in a composer: with
+          no folder open there is nowhere for an agent to run at all, and the
+          answer to that is a folder picker, not a control. */}
+      {!active && !localRoot ? (
         <div className="chat-setup">
           <Launcher />
         </div>

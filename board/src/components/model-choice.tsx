@@ -61,11 +61,13 @@ export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
       agents.map((a) => ({
         agent: a,
         models: (MODELS[a.name] ?? []).map((alias): ModelOption => {
-          const { label, from, trains } = describeModel(alias);
-          const notes = [from, trains ? "may train on prompts" : null].filter(Boolean);
+          const { label, from, note, trains } = describeModel(alias);
+          const notes = [from, note, trains ? "may train on prompts" : null].filter(Boolean);
           return {
             id: `${a.name}:${alias}`,
-            name: alias ? label : "whatever the CLI picks",
+            // Including "" — describeModel calls that one "CLI Choice", so the
+            // name comes from one place for every row and every surface.
+            name: label,
             description: notes.join(" · ") || undefined,
             // The raw id is what someone types when they are looking for
             // `inkling` inside `openrouter/thinkingmachines/inkling:free`.

@@ -185,6 +185,30 @@ if (fixed) console.log(`repaired ${fixed} file(s) whose imports disagreed with t
  * rewrites the file. */
 const COPY = [
   {
+    file: "components/assistant-ui/elements/thread.aui.tsx",
+    // Andrew, on 0.2.20: "there needs to be the model selector, the effort
+    // selector, context, etc. in the chatbox, not above in that weird way."
+    // They were a strip sitting above the transcript, which read as a settings
+    // screen the conversation happened to be under. The composer's own action
+    // row is where they belong — beside the attachment and mic buttons.
+    //
+    // Everything is kept in components/composercontrols.tsx so this patch
+    // stays two lines: the vendored file is re-fetched on every re-install,
+    // and the more of it we rewrite the more of it we have to re-check.
+    from: 'import { File } from "@/components/assistant-ui/elements/file";',
+    to: 'import { File } from "@/components/assistant-ui/elements/file";\nimport { ComposerControls } from "@/components/composercontrols";',
+  },
+  {
+    file: "components/assistant-ui/elements/thread.aui.tsx",
+    from: `      <ComposerAddAttachment />
+      <div className="flex items-center gap-1.5">`,
+    to: `      <div className="flex min-w-0 items-center gap-1.5">
+        <ComposerAddAttachment />
+        <ComposerControls />
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">`,
+  },
+  {
     file: "components/assistant-ui/elements/permission-grant.tsx",
     // ⚠️ TWO BUTTONS PROMISING A STANDING GRANT zevet does not have. The
     // element offers "This session" and "Always", and nothing here records a

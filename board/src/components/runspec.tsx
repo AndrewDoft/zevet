@@ -9,12 +9,17 @@ import { ComparisonCard, type ComparisonOption } from "./assistant-ui/elements/c
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { MODE_LABEL, MULTI_TURN } from "../lib/constants";
 import { whenText } from "../lib/when.mjs";
+import { describeModel } from "../lib/models.mjs";
 
 export function RunSpec() {
   const active = useBoard(selectActiveConsole);
   if (!active) return null;
 
-  const model = active.usage.model || active.model || "default";
+  // One naming of a model, everywhere: describeModel reads the CLIs' own
+  // catalogues, so this says "Opus 5" like the picker does rather than the
+  // raw id — and "CLI Choice" when nothing was pinned.
+  const raw = active.usage.model || active.model;
+  const model = describeModel(raw).label || raw;
   const repo = String(active.root).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || active.root;
 
   const rows: SpecRow[] = [

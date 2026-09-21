@@ -12,6 +12,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { SettingsPanel, type SettingToggle } from "./assistant-ui/elements/settings-panel";
+import { describeModel } from "../lib/models.mjs";
 import { bridge } from "../lib/bridge";
 import {
   saveAgentSettings,
@@ -68,7 +69,8 @@ export function AgentSettings() {
   // divergent picker rather than an honest one. So it shows the one true
   // fact — what's actually running here, or what the launcher will use next —
   // with nothing to click.
-  const model = (active && (active.usage.model || active.model)) || launchModel || "default";
+  const rawModel = (active && (active.usage.model || active.model)) || launchModel;
+  const model = describeModel(rawModel).label || rawModel;
 
   // followMode ("mine" | "all" | "off") is a real, persisted setting too, but
   // it is three-way. A switch has two positions; showing it as one would mean

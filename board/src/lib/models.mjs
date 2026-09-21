@@ -10,7 +10,20 @@
  *
  * Pure string work, deliberately kept out of the component so the suite can
  * test it — same arrangement as roster.mjs and prose.mjs.
+ *
+ * ⚠️ THE NAMES ARE NOT INVENTED HERE. claude and codex publish their own
+ * display names in the catalogues they cache on disk, and zevet reads them
+ * (scripts/sync-agent-models.mjs). Deriving a name from the id instead is what
+ * produced "claude-opus-5" and "gpt-5.6-sol" in a picker whose CLIs call those
+ * "Opus 5" and "GPT-5.6-Sol". opencode has no such catalogue, so its ids still
+ * fall through to the string work below.
  */
+import { CLAUDE_MODELS, CODEX_MODELS } from "./agent-models.generated.mjs";
+
+/** id -> what that CLI's own picker calls it. */
+const CATALOGUE = new Map(
+  [...CLAUDE_MODELS, ...CODEX_MODELS].map((m) => [m.id, m]),
+);
 
 /**
  * The model string a picker row stands for, recovered from its `<family>:<alias>` id.
@@ -31,10 +44,16 @@ export function aliasOf(id) {
  * using it feeds a training set.
  *
  * @param {string} alias
- * @returns {{ label: string, from: string, trains: boolean }}
+ * @returns {{ label: string, from: string, note: string, trains: boolean }}
  */
 export function describeModel(alias) {
-  if (!alias) return { label: "default", from: "", trains: false };
+  /* "" is not "no model" — it is the real, and usual, choice of letting the
+     CLI pick. It said "default", which reads as a placeholder for something
+     missing. Andrew: "you can retitle whatever the cli picks to just 'CLI
+     Choice' across the board". */
+  if (!alias) return { label: "CLI Choice", from: "", note: "", trains: false };
+  const known = CATALOGUE.get(alias);
+  if (known) return { label: known.name, from: "", note: known.note, trains: false };
   const parts = alias.split("/");
   const tail = parts[parts.length - 1]
     .replace(/(:free|-free)$/, "")
@@ -42,6 +61,7 @@ export function describeModel(alias) {
   return {
     label: tail || alias,
     from: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
+    note: "",
     // The contributor builds are free because the prompt may be used for
     // training. Someone pointing one at their own repo should be told.
     trains: /-contributor(-|$)/.test(alias),

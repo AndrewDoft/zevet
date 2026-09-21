@@ -20,6 +20,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OPENCODE_FREE_MODELS as MODELS } from "../board/src/lib/models.generated.mjs";
 import { aliasOf, describeModel } from "../board/src/lib/models.mjs";
+import { CLAUDE_MODELS, CODEX_MODELS } from "../board/src/lib/agent-models.generated.mjs";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const CONSTANTS = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "board", "src", "lib", "constants.ts"),
+  "utf8",
+);
 
 /** Origins this project does not ship. opencode re-hosts models under its own
  *  prefix, so a vendor-prefix check alone waves `opencode/ling-3.0-flash-fin-free`
@@ -133,13 +142,55 @@ test("every generated id survives the id round trip", () => {
 
 test("describeModel names the model, not the path to it", () => {
   assert.deepEqual(describeModel("openrouter/thinkingmachines/inkling:free"),
-    { label: "inkling", from: "openrouter/thinkingmachines", trains: false });
+    { label: "inkling", from: "openrouter/thinkingmachines", note: "", trains: false });
   assert.deepEqual(describeModel("openrouter/thinkingmachines/inkling-small:free"),
-    { label: "inkling-small", from: "openrouter/thinkingmachines", trains: false });
+    { label: "inkling-small", from: "openrouter/thinkingmachines", note: "", trains: false });
   assert.deepEqual(describeModel("opencode/muse-spark-1.3-contributor-free"),
-    { label: "muse-spark-1.3", from: "opencode", trains: true });
-  assert.deepEqual(describeModel("opus"), { label: "opus", from: "", trains: false });
-  assert.deepEqual(describeModel(""), { label: "default", from: "", trains: false });
+    { label: "muse-spark-1.3", from: "opencode", note: "", trains: true });
+  assert.deepEqual(describeModel("an-id-no-catalogue-knows"),
+    { label: "an-id-no-catalogue-knows", from: "", note: "", trains: false });
+});
+
+test("claude and codex models are named the way their own CLIs name them", () => {
+  // The bug this closes: the picker listed raw ids, and the hand-written list
+  // it drew them from had gone stale in both directions — claude with no Fable
+  // at all, codex offering three ids that no longer exist. The names come from
+  // the CLIs' cached catalogues now (scripts/sync-agent-models.mjs).
+  assert.ok(CLAUDE_MODELS.length > 0 && CODEX_MODELS.length > 0);
+  for (const m of [...CLAUDE_MODELS, ...CODEX_MODELS]) {
+    assert.equal(describeModel(m.id).label, m.name, `${m.id} is not named ${m.name}`);
+    // A name that is just the id back again means the catalogue read failed
+    // and the generator fell through to its own fallback.
+    assert.notEqual(m.name, m.id, `${m.id} has no display name`);
+  }
+});
+
+test("no model list is typed by hand any more", () => {
+  // constants.ts is TypeScript, so this reads it rather than importing it —
+  // same arrangement as composer.test.mjs. What it is guarding is the thing
+  // that actually rotted: a literal list of ids sitting in the source, going
+  // quietly wrong as the CLIs moved on. All three now come from a generator.
+  const block = CONSTANTS.match(/export const MODELS[^;]+;/s);
+  assert.ok(block, "MODELS is gone from constants.ts");
+  for (const src of ["CLAUDE_MODELS", "CODEX_MODELS", "OPENCODE_FREE_MODELS"]) {
+    assert.match(block[0], new RegExp(src), `MODELS no longer reads ${src}`);
+  }
+  // Any quoted string in there other than "" is a hand-typed id. Comments go
+  // first — this block's own prose quotes model names, which is not the same
+  // as offering one.
+  const code = block[0].replace(/\/\/.*/g, "").replaceAll('""', "");
+  const literals = code.match(/"[^"]*"/g) ?? [];
+  assert.deepEqual(literals, [], `hand-written model ids are back: ${literals.join(", ")}`);
+});
+
+test("letting the CLI choose is named, not left blank", () => {
+  // "" is the usual choice, not a missing one. It read as "default", which
+  // looks like a placeholder for something that failed to load.
+  assert.deepEqual(describeModel(""), { label: "CLI Choice", from: "", note: "", trains: false });
+  // Every agent leads with it, so it is never the option you scroll to find.
+  const block = CONSTANTS.match(/export const MODELS[^;]+;/s)[0];
+  const leads = block.match(/\[\s*""\s*,/g) ?? [];
+  assert.equal(leads.length, 3, "an agent does not offer the CLI's own choice first");
 });
 
 test("no two generated models render the same label", () => {

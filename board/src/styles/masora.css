@@ -118,7 +118,39 @@
   }
   .mono { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
   button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
-  :focus-visible { outline: 2px solid var(--cerulean); outline-offset: 2px; }
+  /* ⚠️ THE FOCUS RING SKIPS ANYTHING THAT BRINGS ITS OWN.
+   *
+   * This was a bare `:focus-visible`, and in dark mode --cerulean is #eae7e2 —
+   * so every focusable thing on screen drew a near-white rectangle round
+   * itself. Andrew saw it twice, on two different controls: "when i hit the
+   * chatbox to start typing there's this weird white outline", then "in the
+   * model selecotr, there is that white box".
+   *
+   * It was patched the first time on `.aui-composer-input` alone, which was
+   * the symptom. The cause is that this rule is a SECOND focus indicator: the
+   * registry controls all set `outline-none` and draw their own
+   * `focus-visible:ring-1` in --ring (#b6b5bf at half opacity), and this was
+   * painting over the top of it at twice the width in near-white. Two rings,
+   * and the louder one was not the designed one.
+   *
+   * So it is scoped rather than deleted — a focusable control with no focus
+   * indicator is an accessibility regression, and zevet's own plain buttons
+   * (.themer, the rail rows, the pane grips) have no ring of their own and
+   * still need this. The three exclusions are exactly the registry's markers:
+   * `data-slot` on every shadcn/assistant-ui part, `data-aui` on the element
+   * primitives, and the `aui-` class prefix on the Thread's own nodes (the
+   * composer textarea carries only that one). */
+  :focus-visible:not([data-slot]):not([data-aui]):not([class*="aui-"]) {
+    outline: 2px solid var(--cerulean);
+    outline-offset: 2px;
+  }
+
+  /* The composer shell already says it has focus — the registry gives it
+     `focus-within:border-foreground/25`. Strengthened a little now that it
+     carries the job alone. */
+  [data-slot="aui_composer-shell"]:focus-within {
+    border-color: color-mix(in oklab, var(--ink) 38%, transparent);
+  }
 
   /* ---- title bar ---------------------------------------------------- */
   /* ΓÜá∩╕Å THE COLUMN HEADERS ARE THE WINDOW'S DRAG HANDLE.
@@ -212,6 +244,10 @@
   .person .sub .verb { color: var(--ink); }
 
   .ws { padding: 6px 16px 10px; }
+  /* The folder picker takes the rail's width rather than the follow control's
+     content width — it is the only thing in its section. */
+  .ws-pick { width: 100%; justify-content: space-between; }
+  .ws-pick-row { display: inline-flex; align-items: center; gap: 6px; }
   .ws-item {
     display: block; width: 100%; text-align: left;
     padding: 6px 0; font-size: 13px; color: var(--ink-muted);
