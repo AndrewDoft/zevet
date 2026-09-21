@@ -15,6 +15,7 @@ import { DetailPane } from "./components/detail";
 import { SettingsSheet } from "./components/settings";
 import { UpdateDialog } from "./components/updatedialog";
 import { VoiceDialog } from "./components/voicedialog";
+import { SessionsPane } from "./components/sessions";
 import {
   applyPanes,
   applyTheme,
@@ -148,6 +149,10 @@ function App() {
               <Consoles />
             </div>
           </div>
+          {/* What has run on this machine, not only what zevet started:
+              claude and codex, terminal, desktop app and editor alike. Read
+              only — see components/sessions.tsx. */}
+          <SessionsPane />
           <BackgroundInbox />
           <ConnBanner />
           <Strip />

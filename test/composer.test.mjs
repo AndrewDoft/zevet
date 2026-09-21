@@ -129,7 +129,7 @@ describe("sending is refused only where it would go nowhere", () => {
     // The queue is the whole point: the composer used to make you wait with a
     // thought you had already had.
     const runtime = readFileSync(path.join(BOARD, "lib", "runtime.tsx"), "utf8");
-    assert.match(runtime, /queue: !active \|\| oneShot \? undefined : queue\.adapter/);
+    assert.match(runtime, /queue: reading \|\| !active \|\| oneShot \? undefined : queue\.adapter/);
   });
 
   test("with nothing running there is no queue, because Send must START a run", () => {

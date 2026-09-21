@@ -28,6 +28,7 @@ import { ThreadMap } from "./mapviews";
 import { RunMeters } from "./runmeters";
 import { TurnDetail } from "./turndetail";
 import { PromptShelf } from "./promptshelf";
+import { SessionBanner } from "./sessions";
 
 function Blank({ title, note }: { title: string; note: string }) {
   return (
@@ -96,6 +97,11 @@ export function Conversation() {
   const local = Boolean(bridge.local);
   const active = useBoard(selectActiveConsole);
   const localRoot = useBoard((s) => s.localRoot);
+  /** A session read off disk is in front of the live console. Everything that
+   *  belongs to a RUN is hidden while it is: a posture notice, a quota window
+   *  and a permit prompt all describe a process, and this conversation does
+   *  not have one. */
+  const reading = Boolean(useBoard((s) => s.sessions.open));
 
   if (!local) {
     return (
@@ -131,7 +137,8 @@ export function Conversation() {
           What is left here is the one thing that cannot go in a composer: with
           no folder open there is nowhere for an agent to run at all, and the
           answer to that is a folder picker, not a control. */}
-      {!active && !localRoot ? (
+      <SessionBanner />
+      {!reading && !active && !localRoot ? (
         <div className="chat-setup">
           <Launcher />
         </div>
@@ -140,16 +147,16 @@ export function Conversation() {
           than discovered when an edit does not land. The posture is a flag
           fixed at launch, so this is a standing fact about the run, not a
           state that changes under you. */}
-      <PostureNotice />
+      {reading ? null : <PostureNotice />}
       {/* The provider's own rate-limit windows, when the agent reports them.
           It is the one number that decides whether to start another run, so it
           is at the top rather than behind a row. */}
-      <QuotaNotice />
+      {reading ? null : <QuotaNotice />}
       {/* An agent is BLOCKED on this. It goes above the transcript, not behind
           a row, because the run does not continue until it is answered — and
           the ask-server denies on timeout, so ignoring it is a refusal. */}
-      <PermitPrompt />
-      <PermitQueue />
+      {reading ? null : <PermitPrompt />}
+      {reading ? null : <PermitQueue />}
       <div className="chat-thread-body">
         <Thread autoFocus={false} />
         {/* A tick per message down the right edge. It is the one thing that
@@ -166,13 +173,13 @@ export function Conversation() {
           in its own process, over every window. What IS left is one line
           saying which key to hold, because the mic starts the app and cannot
           start the recording. */}
-      <VoiceHint />
+      {reading ? null : <VoiceHint />}
       {/* Appears only while text is selected in the transcript. */}
       <QuoteToComposer />
       {/* A half-written prompt survives a reload now. Offered only while the
           composer is empty, so it never overwrites what you are typing. */}
       <DraftRestore />
-      <Thinking />
+      {reading ? null : <Thinking />}
       {/* Under the transcript, in the column that has room for it. The rail's
           strip keeps the same numbers at a glance. */}
       {/* Three collapsed rows, all closed. Everything here is derived from the

@@ -1,0 +1,353 @@
+/**
+ * A session file on disk -> the same transcript a live console renders.
+ *
+ * WHY THERE IS SO LITTLE RENDERING HERE. Both CLIs write their session files
+ * in a dialect of the stream they already emit live, and transcript.mjs has
+ * consumed those streams since zevet's console existed. So reading a session
+ * that was typed into a terminal — or into one of the desktop apps — is not a
+ * second renderer. It is a translation onto the event list
+ * `assembleTranscript` already takes, and every tool UI, reasoning panel and
+ * markdown block comes along for free.
+ *
+ * claude needs almost none. `~/.claude/projects/<slug>/<id>.jsonl` records
+ * `user` and `assistant` in the SAME shape `--output-format stream-json`
+ * emits. The one thing the file adds is that a `user` record is TWO different
+ * things: with a string `content` it is a person typing, with an array
+ * `content` it is usually the transcript's own record of what a tool
+ * returned — which must attach to the call that made it and must never render
+ * as a prompt. transcript.mjs already draws that line (`fromClaude`, the
+ * `user` branch); this hands it each half the way it expects.
+ *
+ * codex needs a table. Its rollout file wraps everything as
+ * `{type, payload}`, and inside `event_msg`/`item_completed` the items are
+ * PascalCase (`CommandExecution`) where the live `codex exec --json` stream
+ * uses snake_case (`command_execution`). `codexItem` below is that table, and
+ * it deliberately translates INTO the live vocabulary rather than teaching
+ * transcript.mjs a second one — `fromCodex` is tested, and two spellings of
+ * the same event in one reducer is how they drift apart.
+ *
+ * WHY .mjs: the gate runs `node --test` straight against the source tree and
+ * cannot import TypeScript — the same reason transcript.mjs, roster.mjs and
+ * update.mjs are .mjs with a .d.mts beside them.
+ */
+
+import { assembleTranscript } from "./transcript.mjs";
+
+/** @typedef {import("./sessions.d.mts").SessionRecord} SessionRecord */
+/** @typedef {import("./transcript.d.mts").TranscriptEvent} TranscriptEvent */
+
+const text = (v) => (typeof v === "string" ? v : "");
+
+/** Content parts, for every spelling the two CLIs use. claude writes
+ *  `{type:"text"}`, codex writes `{type:"Text"}` in an AgentMessage and
+ *  `{type:"text"}` in a UserMessage. Only `text` is read, so the tag does not
+ *  have to be guessed. */
+function partsText(parts) {
+  if (!Array.isArray(parts)) return "";
+  const out = [];
+  for (const p of parts) {
+    if (p && typeof p.text === "string") out.push(p.text);
+  }
+  return out.join("\n");
+}
+
+/* ---------------------------------------------------------------------------
+ * codex — a rollout item, as the live stream would have said it
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One `item_completed` item -> a `codex exec --json` event, or null to drop it.
+ *
+ * Every branch is a shape MEASURED in `~/.codex/sessions` on 2026-09-21, not
+ * one taken from documentation. An item type not listed here returns null and
+ * is dropped rather than rendered as a mystery: unlike a live stream, a
+ * session file is complete, so a gap is visible next to what surrounds it.
+ *
+ * @returns {TranscriptEvent | null}
+ */
+export function codexItem(item) {
+  if (!item || typeof item !== "object") return null;
+  const id = text(item.id) || undefined;
+
+  switch (item.type) {
+    case "UserMessage": {
+      const t = partsText(item.content).trim();
+      return t ? { type: "you", text: t } : null;
+    }
+    case "AgentMessage": {
+      const t = partsText(item.content);
+      return t ? agent({ type: "item.completed", item: { type: "agent_message", text: t } }) : null;
+    }
+    case "Reasoning": {
+      // `summary_text` is an array of strings — codex's own summary of the
+      // reasoning. `raw_content` is normally empty and is not relied on.
+      const t = (Array.isArray(item.summary_text) ? item.summary_text : [])
+        .map((s) => text(s))
+        .filter(Boolean)
+        .join("\n\n");
+      return t ? agent({ type: "item.completed", item: { type: "reasoning", text: t } }) : null;
+    }
+    case "CommandExecution": {
+      // The command is an ARGV ARRAY here, and the card wants a command line.
+      const command = Array.isArray(item.command)
+        ? item.command.join(" ")
+        : text(item.command);
+      return agent({
+        type: "item.completed",
+        item: {
+          type: "command_execution",
+          id,
+          command,
+          aggregated_output: item.aggregated_output ?? item.formatted_output ?? item.stdout ?? "",
+          status: item.status,
+        },
+      });
+    }
+    case "FileChange": {
+      /* ⚠️ `changes` IS AN OBJECT KEYED BY PATH in a rollout file, and an
+         ARRAY of {path, kind} in the live stream — which is the shape
+         `fromCodex` reads. Handing the object straight over leaves the Edit
+         card with no path in its title and no diff under it. */
+      const raw = item.changes && typeof item.changes === "object" ? item.changes : {};
+      const changes = Object.entries(raw).map(([p, v]) => ({
+        path: p,
+        kind: (v && v.type) || "update",
+        unified_diff: (v && v.unified_diff) || "",
+      }));
+      if (!changes.length) return null;
+      return agent({
+        type: "item.completed",
+        item: { type: "file_change", id, changes, status: item.status },
+      });
+    }
+    case "McpToolCall": {
+      const server = text(item.server);
+      const tool = text(item.tool) || "tool";
+      return agent({
+        type: "item.completed",
+        item: {
+          type: "mcp_tool_call",
+          id,
+          tool: server ? `${server}.${tool}` : tool,
+          arguments: item.arguments || {},
+          output: item.result ?? "",
+          status: item.status,
+        },
+      });
+    }
+    case "WebSearch": {
+      // No live equivalent, and a search is a tool call in every way that
+      // matters to a reader. The action carries the url for an open_page.
+      const action = item.action && typeof item.action === "object" ? item.action : {};
+      return agent({
+        type: "item.completed",
+        item: {
+          type: "mcp_tool_call",
+          id,
+          tool: "web_search",
+          arguments: { query: text(item.query), ...(action.url ? { url: action.url } : {}) },
+          output: "",
+          status: "completed",
+        },
+      });
+    }
+    case "ContextCompaction":
+      return { type: "stdout-line", line: "codex: context compacted" };
+    /* SubAgentActivity is a start/finish marker with no content of its own —
+       the subagent's work is in its own thread. Dropped rather than rendered
+       as an empty card. */
+    default:
+      return null;
+  }
+}
+
+/** @returns {TranscriptEvent} */
+function agent(payload) {
+  return { type: "agent", payload };
+}
+
+/* ---------------------------------------------------------------------------
+ * claude
+ * ------------------------------------------------------------------------- */
+
+/** @param {any} r @param {TranscriptEvent[]} out */
+function claudeRecord(r, out) {
+  const content = r.message && r.message.content;
+
+  if (r.type === "assistant") {
+    // Handed over whole: transcript.mjs reads `p.message.content` itself and
+    // knows text from thinking from tool_use.
+    if (content) out.push({ type: "agent", payload: r });
+    return;
+  }
+  if (r.type !== "user") return;
+
+  if (typeof content === "string") {
+    const t = content.trim();
+    if (t) out.push({ type: "you", text: t });
+    return;
+  }
+  if (!Array.isArray(content)) return;
+
+  /* ⚠️ ORDER WITHIN THE RECORD MATTERS, and the two kinds of part cannot be
+   * sent together. A tool_result has to reach `fromClaude` as a `user`
+   * payload so it lands on the call it belongs to; typed text has to reach
+   * `appendUserText`, which OPENS A NEW TURN. Splitting them into two events
+   * is the whole trick — but a record carrying both must keep the order it
+   * had, or the prompt closes the turn the result was about to attach to. */
+  let pending = [];
+  const flush = () => {
+    if (!pending.length) return;
+    out.push({ type: "agent", payload: { type: "user", message: { content: pending } } });
+    pending = [];
+  };
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    if (part.type === "tool_result") {
+      pending.push(part);
+      continue;
+    }
+    if (part.type === "text") {
+      const t = text(part.text).trim();
+      if (!t) continue;
+      flush();
+      out.push({ type: "you", text: t });
+    }
+    // An image or a document in a prompt has no representation in a CLI
+    // transcript and is not invented here.
+  }
+  flush();
+}
+
+/* ---------------------------------------------------------------------------
+ * Public
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Records -> transcript events, in order. Mixed sources are fine; each record
+ * says which it is.
+ *
+ * @param {readonly SessionRecord[] | null | undefined} records
+ * @returns {TranscriptEvent[]}
+ */
+export function sessionEvents(records) {
+  /** @type {TranscriptEvent[]} */
+  const out = [];
+  for (const r of records ?? []) {
+    if (!r || typeof r !== "object") continue;
+    if (r.source === "codex") {
+      const ev = codexItem(r.item);
+      if (ev) out.push(ev);
+      continue;
+    }
+    claudeRecord(r, out);
+  }
+  return out;
+}
+
+/**
+ * A whole session, as a TranscriptState the Thread can render.
+ *
+ * `cwd` trims absolute paths out of tool-call headers exactly as `localRoot`
+ * does for a live console — for a session the repo is the session's OWN
+ * directory, not whatever folder happens to be open in zevet.
+ *
+ * @param {readonly SessionRecord[] | null | undefined} records
+ * @param {{ cwd?: string | null; source?: string }} [opts]
+ */
+export function sessionTranscript(records, opts = {}) {
+  const state = assembleTranscript(sessionEvents(records), {
+    agent: opts.source === "codex" ? "codex" : "claude",
+    localRoot: opts.cwd || null,
+  });
+  /* A session read from disk is FINISHED as far as this view is concerned,
+   * even if the CLI still has the file open. Leaving `openIndex` set renders
+   * the last turn as streaming — a spinner that never resolves, on a
+   * conversation that ended last Tuesday. */
+  return closeOpenTurn(state);
+}
+
+function closeOpenTurn(state) {
+  if (state.openIndex < 0) return state;
+  const messages = state.messages.slice();
+  const at = state.openIndex;
+  messages[at] = { ...messages[at], status: { type: "complete", reason: "stop" } };
+  return { ...state, messages, openIndex: -1, running: false };
+}
+
+/**
+ * How a session row reads.
+ *
+ * The CLI's own title when it wrote one (claude's `ai-title`, codex's
+ * `thread_name`), the first prompt when it did not, and the id only when
+ * there is nothing else. This exists so the rule is testable and so a title
+ * that is a wall of pasted text cannot break the row.
+ *
+ * @param {{ title?: string; prompt?: string; id?: string }} session
+ */
+export function sessionLabel(session) {
+  const s = session || {};
+  const raw = text(s.title) || text(s.prompt) || text(s.id) || "session";
+  const one = raw.replace(/\s+/g, " ").trim();
+  return one.length > 72 ? `${one.slice(0, 71)}…` : one;
+}
+
+/**
+ * Where a session was typed, in one word, or "" when the file did not say.
+ *
+ * This is the whole of "detect from the desktop": neither CLI offers a flag,
+ * each records a provenance string, and the desktop side buckets them. An
+ * unrecognised value arrives as itself rather than as a guess — which is why
+ * this falls back to `origin` instead of to "cli".
+ *
+ * @param {{ surface?: string; origin?: string }} session
+ */
+export function sessionWhere(session) {
+  const s = session || {};
+  return text(s.surface) || text(s.origin) || "";
+}
+
+/**
+ * The project a session belongs to, as a person would name it.
+ *
+ * claude's directory name is the absolute path with every non-alphanumeric
+ * character replaced by a dash, so it cannot be turned back into a path — but
+ * the records carry the real `cwd` and the desktop side prefers it. Either way
+ * what a list needs is the last segment.
+ *
+ * @param {{ cwd?: string; slug?: string }} session
+ */
+export function sessionProject(session) {
+  const s = session || {};
+  const cwd = text(s.cwd) || text(s.slug);
+  if (!cwd) return "";
+  const parts = cwd.split(/[\\/]+/).filter(Boolean);
+  const last = parts[parts.length - 1] || cwd;
+  // An un-slugged name still ends in the folder, just dash-joined:
+  // "C--dev-GitHub-zevet" -> "zevet".
+  if (parts.length === 1 && last.includes("-")) {
+    const bits = last.split("-").filter(Boolean);
+    return bits[bits.length - 1] || last;
+  }
+  return last;
+}
+
+/**
+ * Does this session match what was typed in the filter box?
+ *
+ * Title, project, branch and surface, case-insensitively, every word having to
+ * match something — so "zevet voice" finds a zevet session about voice rather
+ * than every session in either, and "desktop" narrows to the desktop apps.
+ *
+ * @param {Record<string, unknown>} session
+ * @param {string} query
+ */
+export function sessionMatches(session, query) {
+  const q = text(query).trim().toLowerCase();
+  if (!q) return true;
+  const s = session || {};
+  const hay = [s.title, s.prompt, s.cwd, s.slug, s.branch, s.id, s.source, s.surface, s.origin]
+    .map((v) => text(v).toLowerCase())
+    .join(" ");
+  return q.split(/\s+/).every((word) => hay.includes(word));
+}

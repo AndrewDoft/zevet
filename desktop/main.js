@@ -40,6 +40,7 @@ const runtime = require("./runtime.js");
 const askServer = require("./ask-server.js");
 const { GithubSignIn } = require("./github-signin.js");
 const masoraVoice = require("./zevet-voice.js");
+const agentSessions = require("./agent-sessions.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -2278,6 +2279,15 @@ const appUpdater = new AppUpdater({
  * for is whether it is installed, and to start it so its flow bar is up.
  * The whole of why it cannot ask for more is in desktop/zevet-voice.js.
  * ==================================================================== */
+/* EVERY agent session on this machine, not only the ones zevet started.
+ * Read only; see desktop/agent-sessions.js. `cwd` scopes to one project and
+ * is not a path the handler opens — it is matched as a string against the slug
+ * and compared, so an unknown one simply matches nothing. */
+ipcMain.handle("local:sessions", (_e, arg) => agentSessions.list(arg || {}));
+ipcMain.handle("local:session", (_e, arg) =>
+  agentSessions.read((arg && arg.source) || "", (arg && arg.slug) || "", (arg && arg.id) || ""),
+);
+
 ipcMain.handle("local:voiceStatus", () => masoraVoice.status());
 ipcMain.handle("local:voiceStart", () => masoraVoice.start());
 ipcMain.handle("local:voiceMic", () => masoraVoice.mic());

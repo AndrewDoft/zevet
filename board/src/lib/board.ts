@@ -8,6 +8,9 @@ import {
   closeTranscript,
   emptyTranscript,
 } from "./transcript.mjs";
+import { sessionTranscript } from "./sessions.mjs";
+import type { SessionSummary } from "./sessions.d.mts";
+import type { TranscriptState } from "./transcript.d.mts";
 import {
   canInstallState,
   createUpdateControl,
@@ -228,6 +231,24 @@ interface BoardState {
    *  bug lib/voice.ts exists to remove. */
   voiceHotkey: string | null;
 
+  /** Every agent session on this machine — claude and codex, terminal,
+   *  desktop app and IDE alike. Read only; see desktop/agent-sessions.js.
+   *  `open` is the one being read instead of a live console. */
+  sessions: {
+    list: SessionSummary[];
+    total: number;
+    loading: boolean;
+    loaded: boolean;
+    query: string;
+    /** "repo" scopes to the open folder, "all" to the machine. */
+    scope: "repo" | "all";
+    open: SessionSummary | null;
+    openTranscript: TranscriptState | null;
+    openTruncated: boolean;
+    openLoading: boolean;
+    error: string;
+  };
+
   myActor: string | null;
 
   /* --- actions --- */
@@ -282,6 +303,12 @@ interface BoardState {
   setVoiceAsk: (url: string | null) => void;
   setVoiceHotkey: (k: string) => void;
   closeSettings: () => void;
+
+  refreshSessions: (force?: boolean) => void;
+  setSessionQuery: (q: string) => void;
+  setSessionScope: (v: "repo" | "all") => void;
+  openSession: (s: SessionSummary) => void;
+  closeSession: () => void;
 
   setMyActor: (a: string | null) => void;
   setEdView: (v: EditorViewState | null) => void;
@@ -438,6 +465,19 @@ export const useBoard = create<BoardState>((set, get) => ({
   sheetOpen: false,
   voiceAsk: null,
   voiceHotkey: null,
+  sessions: {
+    list: [],
+    total: 0,
+    loading: false,
+    loaded: false,
+    query: "",
+    scope: "repo",
+    open: null,
+    openTranscript: null,
+    openTruncated: false,
+    openLoading: false,
+    error: "",
+  },
 
   myActor: (bridge.cfg && bridge.cfg.actor) || null,
 
@@ -800,6 +840,108 @@ export const useBoard = create<BoardState>((set, get) => ({
       /* defaults next time */
     }
   },
+
+  /* SESSIONS — everything the two CLIs have written on this machine.
+   *
+   * Scoped to the open folder by default. 127 sessions here and 625 MB of
+   * transcript: "all" is a deliberate second step rather than the landing
+   * state, and the desktop side caps what it describes either way. */
+  refreshSessions: (force = false) => {
+    const g = get();
+    if (!bridge.local || typeof bridge.local.sessions !== "function") return;
+    if (g.sessions.loading) return;
+    if (g.sessions.loaded && !force) return;
+    set((st) => ({ sessions: { ...st.sessions, loading: true, error: "" } }));
+    const scoped = g.sessions.scope === "repo" ? g.localRoot : null;
+    bridge.local
+      .sessions({ cwd: scoped || null })
+      .then((r) =>
+        set((st) => ({
+          sessions: {
+            ...st.sessions,
+            list: (r && r.sessions) || [],
+            total: (r && r.total) || 0,
+            loading: false,
+            loaded: true,
+          },
+        })),
+      )
+      .catch((err: unknown) =>
+        set((st) => ({
+          sessions: { ...st.sessions, loading: false, loaded: true, error: String(err) },
+        })),
+      );
+  },
+
+  setSessionQuery: (q) => set((st) => ({ sessions: { ...st.sessions, query: q } })),
+
+  setSessionScope: (v) => {
+    // The scope changes WHAT THE DESKTOP SIDE READS, not just what is shown,
+    // so the list has to be fetched again rather than filtered.
+    set((st) => ({ sessions: { ...st.sessions, scope: v, loaded: false } }));
+    get().refreshSessions(true);
+  },
+
+  /** Read one session and render it in the conversation column.
+   *
+   *  It replaces the live thread rather than opening beside it: there is one
+   *  conversation column, and a read-only transcript is what it is for while
+   *  a session is open. `closeSession` puts the live console back. */
+  openSession: (summary) => {
+    if (!bridge.local || typeof bridge.local.session !== "function") return;
+    set((st) => ({
+      sessions: {
+        ...st.sessions,
+        open: summary,
+        openTranscript: null,
+        openTruncated: false,
+        openLoading: true,
+        error: "",
+      },
+    }));
+    bridge.local
+      .session(summary.source, summary.slug, summary.id)
+      .then((r) => {
+        if (get().sessions.open?.id !== summary.id) return; // a later click won
+        if (!r || !r.ok) {
+          set((st) => ({
+            sessions: {
+              ...st.sessions,
+              openLoading: false,
+              error: (r && r.error) || "could not read that session",
+            },
+          }));
+          return;
+        }
+        set((st) => ({
+          sessions: {
+            ...st.sessions,
+            openLoading: false,
+            openTruncated: Boolean(r.truncated),
+            openTranscript: sessionTranscript(r.records, {
+              cwd: summary.cwd,
+              source: summary.source,
+            }),
+          },
+        }));
+      })
+      .catch((err: unknown) =>
+        set((st) => ({
+          sessions: { ...st.sessions, openLoading: false, error: String(err) },
+        })),
+      );
+  },
+
+  closeSession: () =>
+    set((st) => ({
+      sessions: {
+        ...st.sessions,
+        open: null,
+        openTranscript: null,
+        openTruncated: false,
+        openLoading: false,
+      },
+    })),
 
   setVoiceAsk: (url) => set({ voiceAsk: url }),
   setVoiceHotkey: (k) => set({ voiceHotkey: k }),

@@ -164,7 +164,11 @@ describe("voice and queuing", () => {
     // `queue` before `onNew` and returns, so with no console open the first
     // prompt went into a queue nothing would ever drain and no agent started.
     // See composer.test.mjs for the full account.
-    assert.match(runtime, /queue: !active \|\| oneShot \? undefined : queue\.adapter/);
+    //
+    // `reading` joined it later for the same class of reason: a session read
+    // off disk has no process to send to, so the queue must be absent there
+    // too or Send would swallow a prompt into nothing.
+    assert.match(runtime, /queue: reading \|\| !active \|\| oneShot \? undefined : queue\.adapter/);
   });
 
   test("the queue is driven from the run's edges", () => {

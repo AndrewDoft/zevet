@@ -49,6 +49,7 @@
       "code-index.js",
       "app-update.js",
       "zevet-voice.js",
+      "agent-sessions.js",
       "github-signin.js",
       "setup.html",
       "fonts/**",

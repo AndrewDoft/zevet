@@ -33,6 +33,7 @@ import { selectActiveConsole, selectMyConsoles, useBoard } from "./board";
 import { bridge } from "./bridge";
 import { MasoraVoiceDictationAdapter } from "./voice";
 import { MULTI_TURN } from "./constants";
+import { groupTurnTools } from "./turngroup.mjs";
 import { ToolUIs } from "../components/tools";
 import type { ConsoleEntry } from "./types";
 
@@ -128,7 +129,32 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     [setVoiceAsk, setVoiceHotkey],
   );
 
-  const messages = active?.transcript.messages ?? NO_MESSAGES;
+  /* A SESSION BEING READ REPLACES THE LIVE THREAD.
+   *
+   * It goes through the same runtime rather than a second renderer, because
+   * every tool card, reasoning panel and markdown block is registered here —
+   * a parallel read-only Thread would have none of them. What the session
+   * turns OFF is everything that writes: no queue, no send, no cancel. The
+   * composer stays visible and disabled rather than disappearing, so the
+   * column does not change shape when you open a recording. */
+  const openSession = useBoard((s) => s.sessions.open);
+  const sessionMessages = useBoard((s) => s.sessions.openTranscript?.messages);
+  const reading = Boolean(openSession);
+
+  const raw = reading
+    ? (sessionMessages ?? NO_MESSAGES)
+    : (active?.transcript.messages ?? NO_MESSAGES);
+
+  /* ONE TOOL-CALL DROPDOWN PER TURN, not ten. assistant-ui groups ADJACENT
+   * tool calls, and an agent breaks adjacency constantly — measured on a real
+   * session, 2,342 calls in 32 turns made 341 separate collapsed rows. See
+   * lib/turngroup.mjs for what this trades away and why it is a view
+   * transform rather than a change to the transcript itself.
+   *
+   * Memoised on `raw` because the runtime re-renders on every token and the
+   * transform must not hand assistant-ui new message objects each time: it
+   * memoises by reference, and re-mounting a dropdown closes it under you. */
+  const messages = useMemo(() => groupTurnTools(raw) as ThreadMessageLike[], [raw]);
   /** An assistant message is open, so the agent is mid-answer. */
   const streaming = (active?.transcript.openIndex ?? -1) >= 0;
   const oneShot = Boolean(active) && !MULTI_TURN.has(active!.agent);
@@ -202,7 +228,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     // The transcript already knows: `openIndex >= 0` means an assistant message
     // is open and being streamed into. Stopping the PROCESS is still offered —
     // on the console row, whose button already says Stop while it runs.
-    isRunning: streaming,
+    isRunning: reading ? false : streaming,
 
     // codex and opencode take one prompt per run and close their stdin (see
     // agent-console.js § send, facts 4 and 5). Typing into a console that
@@ -222,11 +248,13 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
      * model picker names and asks it, which is the only reading of Send that
      * is true here. The one thing still required is somewhere to run: no open
      * repo means no cwd, and that is a real refusal rather than a UI one. */
-    isDisabled: !active && !canStart,
+    isDisabled: reading ? true : !active && !canStart,
     // `streaming` is no longer a refusal for a multi-turn agent: the queue
     // takes the prompt and sends it when the turn settles. A one-shot agent
     // keeps it, because for that one there is no later.
-    isSendDisabled: active
+    isSendDisabled: reading
+      ? true
+      : active
       ? // A finished run that can be resumed is not a dead end; a running turn
         // still refuses a one-shot agent, because that process IS mid-prompt.
         (!active.running && !canContinue) ||
@@ -250,9 +278,13 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
      * looked correct on their own.
      *
      * A queue only means anything when there is a run to queue FOR. */
-    queue: !active || oneShot ? undefined : queue.adapter,
+    queue: reading || !active || oneShot ? undefined : queue.adapter,
 
     onNew: async (message) => {
+      // A recording cannot be typed into. isDisabled already says so; this is
+      // the second half of the same rule, for anything that calls append
+      // without going through the composer.
+      if (reading) return;
       const text = textOf(message);
       if (!text) return;
       if (active) {
@@ -266,7 +298,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     },
 
     onCancel: async () => {
-      if (active) stopConsole(active.key);
+      if (!reading && active) stopConsole(active.key);
     },
 
     adapters: {

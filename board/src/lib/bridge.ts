@@ -1,3 +1,4 @@
+import type { SessionsResult, SessionResult } from "./sessions.d.mts";
 import type { LocalWorkspace, LocalEntry, UsableAgent, ColorThemeSpec } from "./types";
 
 export interface ReadResult {
@@ -176,6 +177,13 @@ export interface LocalBridge {
   /** What the agent has written down about this repo, if it writes memories
    *  at all. Read only: there is no bridge call that deletes one. */
   memories?: (root: string) => Promise<MemoriesResult>;
+  /** Every agent session on this machine — claude and codex, terminal, desktop
+   *  app and IDE alike. Read only: there is no bridge call that writes or
+   *  deletes one, and a session the CLI still has open is being appended to.
+   *  Optional: an older desktop build has neither, and the pane that lists
+   *  them renders nothing without them. */
+  sessions?: (opts?: { cwd?: string | null; limit?: number }) => Promise<SessionsResult>;
+  session?: (source: string, slug: string, id: string) => Promise<SessionResult>;
   /** Standing instructions for this repo, and which optional capabilities an
    *  agent started here is given. Optional: an older desktop build has none,
    *  and the panel that edits them renders nothing without it. */

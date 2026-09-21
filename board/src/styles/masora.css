@@ -722,6 +722,83 @@
   .console-new:hover { background: var(--raise-soft); }
   .console-new[aria-pressed="true"] { background: var(--raise); }
 
+  /* SESSIONS — what has run on this machine, not what is running.
+     Denser than a console row on purpose: there are 127 of these and 3 of
+     those, and this list is read by scanning rather than by acting on. */
+  .session-filter {
+    display: block; width: 100%; box-sizing: border-box;
+    padding: 6px 16px; font: inherit; font-size: 12px;
+    color: var(--ink); background: var(--raise-soft);
+    border: 0; border-bottom: 1px solid var(--line); outline: none;
+  }
+  .session-filter::placeholder { color: var(--subtle); }
+  .session-filter:focus { background: var(--raise); }
+  .session-row {
+    display: flex; align-items: baseline; gap: 6px;
+    width: 100%; text-align: left; cursor: pointer;
+    padding: 6px 10px 6px 12px;
+    background: none; border: 0; border-bottom: 1px solid var(--line);
+    border-left: 2px solid transparent;
+  }
+  .session-row:hover { background: var(--raise-soft); }
+  .session-row[data-active="true"] {
+    background: var(--raise); border-left-color: var(--cerulean);
+  }
+  /* The logo sits on the text baseline rather than centred: the row is two
+     lines when the meta wraps, and a centred mark drifts into the gap. */
+  .session-row-logo { flex: none; position: relative; top: 2px; }
+  .session-row-title {
+    flex: 1 1 auto; min-width: 0;
+    font-size: 12.5px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .session-row-meta {
+    flex: 0 0 100%; display: flex; gap: 6px; align-items: baseline;
+    font-size: 10.5px; color: var(--subtle); padding-left: 18px;
+  }
+  .session-row-project { color: var(--ink-muted); }
+  .session-row-project, .session-row-where {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Where it was typed. The desktop apps are the reason this badge exists, so
+     they are the one value that is coloured rather than grey. */
+  .session-row-where[data-where="desktop"] { color: var(--cerulean); }
+  .session-row-ago { margin-left: auto; flex: none; }
+  .session-empty {
+    padding: 8px 16px; font-size: 11.5px; color: var(--subtle);
+  }
+  .session-scope { display: inline-flex; gap: 4px; margin-left: auto; }
+  .session-scope button {
+    font: inherit; font-size: 11px; color: var(--ink-muted);
+    background: transparent; border: 0; padding: 0; cursor: pointer;
+  }
+  .session-scope button:hover:not(:disabled) { color: var(--ink); }
+  .session-scope button[aria-pressed="true"] { color: var(--cerulean); }
+  .session-scope button:disabled { color: var(--subtle); cursor: default; }
+
+  /* The bar above a session in the conversation column. It is the only thing
+     saying this is a recording rather than a run, so it does not scroll with
+     the transcript. */
+  .session-banner {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; border-bottom: 1px solid var(--line);
+    background: var(--raise-soft);
+  }
+  .session-banner-title {
+    flex: 0 1 auto; min-width: 0; font-size: 12.5px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .session-banner-meta {
+    flex: 1 1 auto; min-width: 0; font-size: 10.5px; color: var(--subtle);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .session-banner-close {
+    flex: none; font-size: 11px; padding: 3px 7px; border-radius: 2px;
+    color: var(--cerulean); background: none;
+    border: 1px solid var(--line); cursor: pointer;
+  }
+  .session-banner-close:hover { border-color: var(--cerulean); }
+
   /* The conversation column: the Thread fills it, the launcher scrolls. */
   .chat-thread { height: 100%; min-height: 0; display: flex; flex-direction: column; }
   /* The registry Thread caps its content at --thread-max-width (44rem) and
