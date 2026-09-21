@@ -356,7 +356,14 @@ export function unwrapEnvelope(prompt) {
     if (!opener) break;
     out = out.slice(opener[0].length).trim();
   }
-  return out;
+  /* ⚠️ WHAT IS LEFT CAN STILL BE NOTHING BUT TAG SYNTAX, and truncation is
+     again the reason: a `detail` cut inside the envelope's own closing tag
+     peeled down to the four characters "</ta" and the rail dutifully showed
+     them. This is a TEST, not another peel — the residue is thrown away only
+     when removing every tag and tag fragment from it leaves no words at all,
+     so a prompt that merely contains markup is returned exactly as it came. */
+  const words = out.replace(/<\/?[\w-]*(?:\s[^>]*)?>?/g, "").trim();
+  return words ? out : "";
 }
 
 /**

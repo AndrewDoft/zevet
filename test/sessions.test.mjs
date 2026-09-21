@@ -232,6 +232,17 @@ describe("row helpers", () => {
       sessionLabel({ prompt: "<task-notification>\n<task-id>b1</task-id>", id: "zz" }),
       "zz",
     );
+    // Cut INSIDE the envelope's own closing tag, which is what the rail
+    // actually showed after the first truncation fix: "</task-notifi".
+    assert.equal(
+      sessionLabel({ prompt: "<task-notification>\n<task-id>b1</task-id>\n</task-notifi", id: "zz" }),
+      "zz",
+    );
+    // But markup with words around it is somebody's question, not an envelope.
+    assert.equal(
+      sessionLabel({ prompt: "<task-notification>\n<task-id>b1</task-id>\nwhy is </div> here" }),
+      "why is </div> here",
+    );
   });
 
   test("the project is the last segment, of a path or of a slug", () => {
