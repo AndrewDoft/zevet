@@ -89,7 +89,7 @@ export function AgentSettings() {
     {
       key: "agentView",
       label: "Agent view",
-      detail: "Agent conversations with a compact editor, instead of files and the IDE layout.",
+      detail: "Agent conversations with a compact editor.",
       on: viewMode === "agent",
     },
     {

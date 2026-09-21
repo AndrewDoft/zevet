@@ -3,7 +3,6 @@ import { bridge } from "../lib/bridge";
 import { connectPhaseLabel, connectValue, disconnectValue } from "../lib/connect.mjs";
 import {
   selectUpdates,
-  selectViewMode,
   useBoard,
 } from "../lib/board";
 import { updateCommand, updatePercent, updateStatusText } from "../lib/update.mjs";
@@ -448,10 +447,6 @@ function credentialLabel() {
 export function SettingsSheet() {
   const sheetOpen = useBoard((s) => s.sheetOpen);
   const closeSettings = useBoard((s) => s.closeSettings);
-  const theme = useBoard((s) => s.theme);
-  const viewMode = useBoard(selectViewMode);
-  const setTheme = useBoard((s) => s.setTheme);
-  const setView = useBoard((s) => s.setView);
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
   const myActor = useBoard((s) => s.myActor);
 
@@ -508,41 +503,10 @@ export function SettingsSheet() {
           </button>
         </div>
 
-        <SSection title="Appearance">
-          <SRow
-            k="Theme"
-            v={
-              <button className={MAKE_BTN} id="settingsTheme" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-                {theme === "dark" ? "Switch to light" : "Switch to dark"}
-              </button>
-            }
-          />
-        </SSection>
-
-        <SSection title="View">
-          {(
-            [
-              ["ide", "IDE", "Files, editor and shared cursors."],
-              ["agent", "Agent", "Agent conversations with a compact editor."],
-            ] as const
-          ).map(([id, label, note]) => (
-            <div className="srow" key={id}>
-              <button
-                className={MAKE_BTN}
-                id={"settingsView-" + id}
-                type="button"
-                style={{ marginRight: "8px" }}
-                disabled={viewMode === id}
-                onClick={() => setView(id)}
-              >
-                {label + (viewMode === id ? " \u00b7 on" : "")}
-              </button>
-              <span className="v" style={{ color: "var(--ink-muted)", fontSize: "11.5px" }}>
-                {note}
-              </span>
-            </div>
-          ))}
-        </SSection>
+        {/* Theme and view mode moved to the rail footer, next to the gear -
+            see App.tsx's RailFoot. Both used to have a row here too, which
+            meant two controls for the same one piece of state; this sheet
+            keeps the settings that have nowhere else to live. */}
 
         <SSection title="Folders">
           {!local ? (

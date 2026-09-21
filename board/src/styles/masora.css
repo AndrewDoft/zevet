@@ -202,7 +202,13 @@
     grid-template-columns: var(--rail) 1fr;
     min-height: 0;
   }
-  .middle { display: grid; grid-template-columns: var(--tree) 1fr; min-height: 0; min-width: 0; }
+  /* ide view's default shape: files, the conversation, then the editor - see
+     the "agent view" section below for why the chat column is a permanent
+     third track here now rather than display:none. The editor gets a little
+     more of the row than the chat does, since "files and the editor" is
+     still the point of this view; agent view overrides this rule entirely
+     to flip that emphasis. */
+  .middle { display: grid; grid-template-columns: var(--tree) minmax(0, 0.85fr) minmax(0, 1.15fr); min-height: 0; min-width: 0; }
   .treecol { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
   .detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -350,38 +356,39 @@
   /* ---- agent view --------------------------------------------------------
      The same board, rearranged for driving agents instead of typing.
 
-     ΓÜá∩╕Å IT IS A LAYOUT, NOT A SECOND APP. Every pane below is the same element
-     with the same state and the same sockets; only the grid and the type
-     change. A second view that forked the data would be two boards to keep in
-     step, and they would drift within a week. This is also why the console
-     MOVES between columns rather than being drawn twice: one `#chat` host in
-     agent view, one `#consoles` host in ide view, and renderConsoles picks.
+     WARNING: IT IS A LAYOUT, NOT A SECOND APP. Every pane below is the same
+     element with the same state and the same sockets; only the grid and the
+     type change. A second view that forked the data would be two boards to
+     keep in step, and they would drift within a week.
 
      The shape, and why:
 
        rail | CONVERSATION | editor
 
      The conversation is the widest thing on screen because in this mode
-     reading what the agent said is the work. The editor stays ΓÇö a vibe coder
+     reading what the agent said is the work. The editor stays - a vibe coder
      still lands in a file eventually, and taking it away would mean switching
      views to read one function. The file tree stays too: it is the only way
-     to reach the files the conversation is about.
-
-     `display: none` on the tree is deliberate rather than a narrower width: a
-     vestigial 80px of file list would be worse than none. Switching back
-     restores it with its selection intact, because nothing was torn down. */
+     to reach the files the conversation is about. */
   .chatcol {
-    display: none; flex-direction: column;
+    display: flex; flex-direction: column;
     min-height: 0; min-width: 0;
     border-right: 1px solid var(--line);
   }
-  body[data-view="agent"] .chatcol { display: flex; }
+  /* WARNING: THIS USED TO BE display:none OUTSIDE AGENT VIEW. assistant-ui's
+     Thread only ever mounts once, in this column (see conversation.tsx and
+     the "exactly one composer" contract in test/board.test.mjs) - there is no
+     second host inside ide view for it to move into any more, and the rail's
+     Consoles list is read-only navigation, not a composer. So with the chat
+     column hidden, a console started from ide view could be watched but never
+     talked to: no textarea existed anywhere on screen. The column shows in
+     both views now; only its width and neighbours change below. */
   /* The tree stays in both views now that the changed-file list is gone:
      hiding it in agent view would leave no way to reach a file. */
-  /* ΓÜá∩╕Å THESE TRACKS ARE MATCHED TO DOM ORDER, WHICH IS treecol, chatcol,
-     detail. There is no `grid-area` here, so the second track is whichever
-     element comes second in the markup. Moving an element inside .middle
-     means re-reading this line. */
+  /* WARNING: THESE TRACKS ARE MATCHED TO DOM ORDER, WHICH IS treecol, chatcol,
+     detail. There is no `grid-area` here, so each track is whichever element
+     comes next in the markup - both here and in ide view's own .middle rule
+     above. Moving an element inside .middle means re-reading both. */
   body[data-view="agent"] .middle {
     /* The tree is navigation here, not the subject. It keeps its own width
        only while there is room for it; below that it gives width back to the
@@ -389,9 +396,6 @@
     grid-template-columns: minmax(0, var(--tree)) minmax(0, 1fr);
   }
   body[data-view="agent"] .shell { grid-template-columns: var(--rail) 1fr; }
-  /* The chat column is the page's main surface here, so its right edge needs a
-     rule: without one the conversation and the editor run together. */
-  body[data-view="agent"] .chatcol { border-right: 1px solid var(--line); }
 
   /* THREE COLUMNS NEED ROOM, and they are dropped in order of what is repeated
      elsewhere on screen. The editor goes first: a vibe coder can switch to ide
@@ -432,9 +436,15 @@
   /* ---- the rail's footer: theme, and a way into settings ------------------
       Above the Repos header, where Andrew asked for it. */
   .railfoot {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    display: flex; align-items: center; gap: 14px;
     padding: 7px 16px; border-top: 1px solid var(--line);
   }
+  /* Was `justify-content: space-between`, which only ever had two children to
+     split apart. A third control (the ide/agent toggle) landed dead center
+     between them instead of beside the theme switch it was asked to sit next
+     to. The gear alone gets pushed to the row's far edge now; everything
+     else reads left to right in the order it is written. */
+  .railfoot .settings-link { margin-left: auto; }
 
   /* ---- the update row ----------------------------------------------------
      Above the theme toggle, at the bottom of the rail: present enough to be
@@ -941,6 +951,18 @@
     body[data-view="agent"][data-picked="true"] .treecol { grid-row: 1 / 3; }
     body[data-view="agent"][data-picked="true"] .chatcol { grid-column: 2; grid-row: 1; border-right: 0; }
     body[data-view="agent"][data-picked="true"] .detail { grid-column: 2; grid-row: 2; border-top: 1px solid var(--line); }
+
+    /* ide view's chat and editor are both on screen at all times (there is
+       no "picked" gate here), so below 1000px it takes the same stack agent
+       view only needs once a file is picked: the tree keeps a floored
+       fraction on the left, and chat sits over the editor on the right. */
+    body[data-view="ide"] .middle {
+      grid-template-columns: minmax(172px, 0.28fr) minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1.15fr) minmax(0, 1fr);
+    }
+    body[data-view="ide"] .treecol { grid-row: 1 / 3; }
+    body[data-view="ide"] .chatcol { grid-column: 2; grid-row: 1; border-right: 0; }
+    body[data-view="ide"] .detail { grid-column: 2; grid-row: 2; border-top: 1px solid var(--line); }
   }
   @media (max-width: 700px) {
     .shell, body[data-view="agent"] .shell { grid-template-columns: 1fr; }

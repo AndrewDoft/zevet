@@ -131,8 +131,17 @@ describe("the board page", () => {
     assert.ok(!/sendPrompt/.test(rail), "the rail must not send prompts; the Thread does");
 
     const css = readFileSync(path.join(ROOT, "hub", "public", "board.css"), "utf8");
-    assert.ok(/\.chatcol\{[^}]*display:none\}/.test(css), "the chat column must be hidden in ide view");
-    assert.ok(css.includes("data-view=agent] .chatcol{display:flex"), "only the agent view may show the chat column");
+    // ⚠️ THIS USED TO ASSERT `.chatcol{display:none}` OUTSIDE AGENT VIEW, on
+    // the theory that ide view is files-and-editor only. That was ide view's
+    // actual defect: the rail is read-only navigation (checked two lines
+    // above) and there is no second host for the composer to move into any
+    // more, so with the chat column hidden a console started from ide view
+    // could be watched but never talked to. Andrew asked for the heat map
+    // "on top of the chat box in both agent and ide view", which only makes
+    // sense once ide view has one — so the column is visible in both now;
+    // it is still the ONLY composer (checked above), just no longer hidden
+    // half the time.
+    assert.ok(!/\.chatcol\{[^}]*display:none\}/.test(css), "the chat column is visible in both views now");
   });
 
   test("one runtime provider wraps the whole shell", () => {
