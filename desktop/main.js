@@ -1380,6 +1380,14 @@ ipcMain.handle("local:indexEnable", async (_e, arg) => {
   }
 });
 
+/** A caller-supplied path filter, as a literal. See its use below for why it
+ *  is never compiled as a pattern. */
+function pathFilter(raw) {
+  if (typeof raw !== "string" || !raw) return undefined;
+  const text = raw.slice(0, 200);
+  return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+}
+
 ipcMain.handle("local:indexSearch", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
@@ -1391,7 +1399,19 @@ ipcMain.handle("local:indexSearch", async (_e, arg) => {
   try {
     const hits = await idx.search(q, {
       k: Number(arg.k) || 8,
-      filter: typeof arg.filter === "string" && arg.filter ? arg.filter : undefined,
+      /* ⚠️ A PATH FILTER, NOT A REGEX. This forwarded the renderer's string
+         straight through, and code-index.js compiles a string with
+         `new RegExp(...)` and runs it against every chunk in the index —
+         thousands of `.test()` calls, synchronously, on the main process. A
+         catastrophically backtracking pattern such as `^(\w+\/)+\.x$`
+         against a deep path therefore hangs the entire app, with no timeout
+         to end it and no way back: Node cannot interrupt a regex.
+
+         Nothing has ever passed this, so narrowing it costs nothing. It is
+         escaped to a literal now, which is what "filter by path" means
+         anyway, and capped. `search()` still takes a real RegExp object for
+         callers inside the main process, which are ours. */
+      filter: pathFilter(arg.filter),
     });
     return { ok: true, hits };
   } catch (err) {
@@ -1746,11 +1766,20 @@ ipcMain.handle("local:watch", (_e, { root, relPath, initialText }) => {
 
 ipcMain.handle("local:unwatch", (_e, { root, relPath }) => {
   const dir = knownRoot(root);
-  // An unwatch for a root that is no longer known is not an error: the
-  // workspace list can change under a renderer that is closing a tab, and
-  // there is nothing to protect — unwatch only ever removes.
-  if (!dir) return { ok: true };
-  return fileWatch.unwatch(dir, String(relPath || ""));
+  /* ⚠️ AN UNKNOWN ROOT STILL HAS TO BE UNWATCHED. The old line was
+     `if (!dir) return { ok: true }`, and the reasoning above it was right —
+     unwatch only ever removes, so there is nothing to protect — but the code
+     acted on it backwards: it reported success and removed NOTHING. A renderer
+     closing a tab after its workspace had been dropped from the list therefore
+     leaked the watch for the life of the app, and file-watch.js says what that
+     costs in its own words: an fs.watch handle is a real OS resource and
+     "leaking one per file ever opened is how a long session runs out of them".
+
+     The allowlist is still consulted first, as it is in every handler here,
+     because `watch` and `stats` genuinely need it. This one falls back to the
+     same resolve `knownRoot` would have done, so the key matches the one
+     `watch` registered. The worst a bad root can do is fail to match a key. */
+  return fileWatch.unwatch(dir || path.resolve(String(root || "")), String(relPath || ""));
 });
 
 // ---- the shared document ---------------------------------------------------

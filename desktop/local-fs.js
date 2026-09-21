@@ -103,6 +103,23 @@ function foldCase(p) {
   return CASE_FOLD ? p.toLowerCase() : p;
 }
 
+/**
+ * Does any segment of `abs`, relative to `root`, name something this app
+ * will not write into?
+ *
+ * Shared by the two calls in writeTextFile ON PURPOSE. They check DIFFERENT
+ * paths -- the spelling handed in, and the one resolved through symlinks --
+ * and the bug this guards against was the second never being checked at all.
+ * One function so they cannot drift apart again.
+ */
+function hasSkippedSegment(root, abs, folded) {
+  return path
+    .relative(root, abs)
+    .split(/[\\/]+/)
+    .filter((seg) => seg.length > 0)
+    .some((seg) => folded.has(foldCase(seg)));
+}
+
 function skipSet(opts) {
   const extra = Array.isArray(opts.exclude) ? opts.exclude : [];
   return new Set([...DEFAULT_SKIP, ...extra.filter((n) => typeof n === "string" && n.length > 0)]);
@@ -532,8 +549,10 @@ function writeTextFile(rootDir, relPath, text, opts = {}) {
 
   const skip = skipSet(options);
   const folded = new Set([...skip].map(foldCase));
-  const segments = path.relative(root, abs).split(/[\\/]+/).filter((seg) => seg.length > 0);
-  if (segments.some((seg) => folded.has(foldCase(seg)))) {
+  /* Cheap, lexical, and NOT the one that matters -- it refuses the obvious
+     spelling before anything touches the disk. The authoritative check is
+     the second call below, against the RESOLVED target. */
+  if (hasSkippedSegment(root, abs, folded)) {
     return { ok: false, error: "not a file this app will write" };
   }
 
@@ -583,6 +602,28 @@ function writeTextFile(rootDir, relPath, text, opts = {}) {
   // lstat, the temp file, the rename — is aimed at the directory that was
   // actually checked and not at the spelling that was handed in.
   const target = path.join(realParent, base);
+
+  /* ⚠️ THE SKIP LIST MUST BE CHECKED ON THE PATH THAT WILL BE WRITTEN.
+     It was checked only on `abs`, the spelling handed in, while the bytes
+     land on `target`, rebuilt from the RESOLVED parent -- and a symlinked
+     directory inside the workspace makes those two different paths with
+     different segments.
+
+     `ws/docs -> .git/hooks`, which a repository can carry and git will
+     check out, turns a write to "docs/pre-commit" into a write to
+     `.git/hooks/pre-commit`: the segments are "docs" and "pre-commit",
+     neither of which is in the skip list, and `within(root, realParent)`
+     passes because `.git/hooks` really is inside the root. The file lands,
+     keeps its mode, and runs on the next commit.
+
+     main.js refuses to forward a caller-supplied `exclude` for exactly this
+     reason -- "a shorter skip list is a path into .git/hooks". This was a
+     second path into the same place, and the only one reachable without
+     changing the skip list at all. Found by an agent running inside zevet,
+     2026-09-21. */
+  if (hasSkippedSegment(root, target, folded)) {
+    return { ok: false, error: "not a file this app will write" };
+  }
 
   let existing = null;
   try {

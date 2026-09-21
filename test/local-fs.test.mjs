@@ -476,6 +476,40 @@ describe("readTextFile", () => {
 // What was NOT mutation-tested: the fsync and the temp-file cleanup, neither of
 // which any test can observe without crashing the process mid-write.
 describe("writeTextFile", () => {
+  test("a symlinked directory cannot smuggle a write into .git", (t2) => {
+    /* ⚠️ THE SKIP LIST USED TO BE CHECKED ON THE SPELLING HANDED IN,
+       while the bytes land on the path resolved through symlinks. A repository
+       can carry `ws/docs -> .git/hooks` and git will check it out, so a write
+       to "docs/pre-commit" reached `.git/hooks/pre-commit` with a mode and an
+       execute bit, to run on the next commit: the segments are "docs" and
+       "pre-commit", neither in the skip list, and the resolved parent really
+       is inside the root so containment had nothing to object to. */
+    const t = tempRoot();
+    try {
+      mkdirSync(path.join(t.dir, ".git", "hooks"), { recursive: true });
+      const link = path.join(t.dir, "docs");
+      try {
+        symlinkSync(path.join(t.dir, ".git", "hooks"), link, "junction");
+      } catch (err) {
+        // Windows needs Developer Mode or elevation. Skipped LOUDLY: an unrun
+        // case is not a green one.
+        t2.skip(`cannot create a symlink here (${err.code}); the .git smuggling case is NOT verified`);
+        return;
+      }
+
+      const r = writeTextFile(t.dir, "docs/pre-commit", "#!/bin/sh\nexit 1\n");
+      assert.equal(r.ok, false, "a write through a symlink into .git was allowed");
+      assert.match(r.error, /not a file this app will write/);
+      assert.equal(
+        existsSync(path.join(t.dir, ".git", "hooks", "pre-commit")),
+        false,
+        "the hook was written despite the refusal",
+      );
+    } finally {
+      t.cleanup();
+    }
+  });
+
   test("writes a new file, and reads back exactly what went in", () => {
     const t = tempRoot();
     try {

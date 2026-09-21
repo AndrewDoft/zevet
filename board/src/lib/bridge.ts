@@ -181,6 +181,10 @@ export interface LocalBridge {
   /** Semantic search over the workspace index. The scores are real cosines —
    *  `code-index.js` clamps them to [-1, 1] — which is why a retrieval panel
    *  can print one. Optional: a build without the index capability has none. */
+  /** `filter` narrows by PATH and is matched as a literal, case-insensitively
+   *  — it is not a pattern. See main.js § pathFilter: a regex from here runs
+   *  against every chunk on the main process, where one that backtracks takes
+   *  the whole app with it. */
   indexSearch?: (root: string | null, query: string, opts?: { k?: number; filter?: string }) => Promise<IndexSearchResult>;
   /** What the agent has written down about this repo, if it writes memories
    *  at all. Read only: there is no bridge call that deletes one. */

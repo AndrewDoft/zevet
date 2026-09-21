@@ -459,10 +459,18 @@ describe("the file watcher is wired to the window, not to the app", () => {
     assert.match(body, /fileWatch\.watch\(dir,/, "the renderer's own spelling of the root is passed through");
   });
 
-  test("unwatch for a root that is no longer known is not an error", () => {
-    // A workspace list can change under a renderer that is closing a tab, and
-    // unwatch only ever removes — there is nothing to protect.
+  test("unwatch for a root that is no longer known still unwatches", () => {
+    /* ⚠️ THIS USED TO ASSERT `if (!dir) return { ok: true }`, which is the
+       shape of the bug rather than the behaviour in the name. A workspace list
+       can change under a renderer that is closing a tab, and unwatch only ever
+       removes — so it must not FAIL, and equally it must not silently skip the
+       removal. It did skip it, and leaked an fs.watch handle for the life of
+       the app every time.
+
+       So: no early return, and fileWatch.unwatch is reached on both paths. */
     const body = stripComments(handlerBody("local:unwatch"));
-    assert.match(body, /if \(!dir\) return \{ ok: true \}/);
+    assert.doesNotMatch(body, /if \(!dir\) return/, "an unknown root still skips the removal");
+    assert.match(body, /fileWatch\.unwatch\(/, "nothing is ever unwatched");
+    assert.match(body, /dir \|\|/, "there is no fallback for a root that left the allowlist");
   });
 });
