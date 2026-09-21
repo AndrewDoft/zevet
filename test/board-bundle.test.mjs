@@ -171,20 +171,6 @@ describe("only one syntax highlighter ships", () => {
     };
     walk(board);
   });
-
-  test("the mermaid engine is a side bundle, not part of board.js", () => {
-    // Same argument, measured: statically importing the registry's mermaid
-    // element took board.js from 1.27 MB to 2.81 MB, on a route the hub serves
-    // with `cache-control: no-store`. hub/public/mermaid.js is fetched only
-    // when a ```mermaid block actually appears.
-    const map = JSON.parse(readFileSync(`${BUNDLE}.map`, "utf8"));
-    const inBundle = (map.sources || []).filter((s) => /node_modules[\/]beautiful-mermaid[\/]/.test(s));
-    assert.deepEqual(inBundle, [], "beautiful-mermaid is in board.js; it belongs in hub/public/mermaid.js");
-    assert.ok(
-      statSync(path.join(ROOT, "hub", "public", "mermaid.js"), { throwIfNoEntry: false })?.isFile(),
-      "hub/public/mermaid.js is missing — run `node build.mjs` in board/ and commit it",
-    );
-  });
 });
 
 describe("no shipped sentence claims something untrue about zevet", () => {

@@ -97,6 +97,31 @@ export interface MemoriesResult {
   memories?: MemoryNote[];
 }
 
+/** One thing an agent has asked to do, which has not been answered yet. */
+export interface PermitRequest {
+  id: string;
+  /** The MCP tool it wants to call: "click", "type_text", "screenshot"… */
+  tool?: string;
+  /** Its arguments, as the agent sent them. Untrusted — it is model output. */
+  args?: Record<string, unknown>;
+  /** claude's own description of what it wants, when it sends one. */
+  detail?: string;
+}
+
+export interface AgentSettings {
+  /** Appended to the agent's system prompt. claude only — `--append-system-prompt`
+   *  is its flag and the other two CLIs have no equivalent. */
+  systemPrompt: string;
+  /** Whether an agent started in this repo is handed zevet's own MCP server,
+   *  which gives it the screen and the mouse. Off unless explicitly turned on. */
+  computerUse: boolean;
+}
+
+export interface AgentSettingsResult {
+  ok: boolean;
+  settings?: AgentSettings | null;
+}
+
 export interface StatusResult {
   ok: boolean;
   repo?: { branch?: string; sha?: string; ahead?: number | null; behind?: number | null };
@@ -117,6 +142,10 @@ export interface LocalBridge {
   diffHunks?: (root: string, rel: string) => Promise<{ ok: boolean; hunks?: Array<{ start?: number }> }>;
   onFileChanged: (cb: (p: { root: string; relPath: string; text?: string; bom?: boolean; eol?: string }) => void) => () => void;
   onAgentEvent: (cb: (evt: { id?: string; type: string; code?: number | null; signal?: string | null; text?: string; payload?: unknown }) => void) => () => void;
+  /** An agent is asking permission and is waiting on the answer. Optional: a
+   *  build without computer use never sends one. */
+  onPermitRequest?: (cb: (req: PermitRequest) => void) => () => void;
+  permitAnswer?: (id: string, allow: boolean, reason?: string) => Promise<{ ok: boolean; error?: string }>;
   stats: (root: string, paths: string[]) => Promise<StatsResult>;
   /** The last few commits, newest first. Read only — there is no restore. */
   commits?: (root: string, limit?: number) => Promise<CommitsResult>;
@@ -137,6 +166,11 @@ export interface LocalBridge {
   /** What the agent has written down about this repo, if it writes memories
    *  at all. Read only: there is no bridge call that deletes one. */
   memories?: (root: string) => Promise<MemoriesResult>;
+  /** Standing instructions for this repo, and which optional capabilities an
+   *  agent started here is given. Optional: an older desktop build has none,
+   *  and the panel that edits them renders nothing without it. */
+  agentSettings?: (root: string) => Promise<AgentSettingsResult>;
+  saveAgentSettings?: (root: string, patch: Partial<AgentSettings>) => Promise<AgentSettingsResult>;
   indexEnable?: (root: string | null) => Promise<{ ok?: boolean; indexed?: number; skipped?: number; error?: string } | null | undefined>;
   updateCheck: () => Promise<unknown>;
   updateStatus: () => Promise<unknown>;
@@ -170,9 +204,6 @@ declare global {
     zevetEditor?: Record<string, unknown>;
     zevetHighlight?: { highlight?: (t: string, l: string) => string; languageFor?: (p: string) => string };
     zevetSprites?: { spriteFor?: (o: { tool?: string | null; width: number; height: number }) => string };
-    // hub/public/mermaid.js — beautiful-mermaid, loaded on demand only when a
-    // transcript actually contains a ```mermaid block. See mermaid.tsx.
-    zevetMermaid?: { renderMermaidSVG?: (code: string, options?: Record<string, unknown>) => string };
     zevet?: Partial<ZevetBridge>;
     __zevetCfg?: ZevetConfig;
     __zevetHub?: string;

@@ -194,10 +194,10 @@ const CLAUDE_SCRIPT: unknown[] = [
     },
   },
   /* From here on, the parts of a turn the KNOWLEDGE panels read: a web search
-   * with real-shaped results, a fetched page, and a diagram in the prose. None
-   * of it is new vocabulary — it is the same tool_use/tool_result shape as
-   * everything above, exercising the readers that turn it into citations, a
-   * page preview and a rendered mermaid figure. */
+   * with real-shaped results, a fetched page, and a fenced code block in the
+   * prose. None of it is new vocabulary — it is the same tool_use/tool_result
+   * shape as everything above, exercising the readers that turn it into
+   * citations, a page preview and a highlighted source block. */
   {
     type: "assistant",
     message: {

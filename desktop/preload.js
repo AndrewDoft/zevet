@@ -183,6 +183,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   stats: (root, relPaths) => ipcRenderer.invoke("local:stats", { root, relPaths }),
   commits: (root, limit) => ipcRenderer.invoke("local:commits", { root, limit }),
   memories: (root) => ipcRenderer.invoke("local:memories", { root }),
+  agentSettings: (root) => ipcRenderer.invoke("local:agentSettings", { root }),
+  saveAgentSettings: (root, patch) => ipcRenderer.invoke("local:saveAgentSettings", { root, patch }),
   schedules: () => ipcRenderer.invoke("local:schedules"),
   scheduleSave: (s) => ipcRenderer.invoke("local:scheduleSave", { schedule: s }),
   scheduleRemove: (id) => ipcRenderer.invoke("local:scheduleRemove", { id }),
@@ -222,6 +224,16 @@ contextBridge.exposeInMainWorld("zevetLocal", {
     ipcRenderer.on("local:agentEvent", handler);
     return () => ipcRenderer.removeListener("local:agentEvent", handler);
   },
+  /* An agent is asking to do something and is BLOCKED until the answer comes
+     back — see the computer-use block in main.js. The board is the only place
+     a person can be asked, so this is not a notification. */
+  onPermitRequest: (fn) => {
+    const handler = (_e, payload) => fn(payload);
+    ipcRenderer.on("local:permitRequest", handler);
+    return () => ipcRenderer.removeListener("local:permitRequest", handler);
+  },
+  permitAnswer: (id, allow, reason) =>
+    ipcRenderer.invoke("local:permitAnswer", { id, allow, reason }),
 });
 
 /**

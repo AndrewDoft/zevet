@@ -86,6 +86,31 @@ export interface ConsoleEntry {
   usage: ConsoleUsage;
   startedAt: number;
   exitCode: number | null;
+  /** The provider's own rate-limit windows, when the agent reports them.
+   *  Empty for an agent that does not — see `limitsOf` in lib/board.ts. */
+  limits: RateWindow[];
+  /** The agent's session id, when it announces one. It is what `--resume`
+   *  takes, so it is the difference between being able to ask again from here
+   *  and not. */
+  sessionId: string | null;
+  /** The console this one was forked from, by `key`.
+   *
+   *  ⚠️ IT HAS TO BE RECORDED HERE, because it cannot be recovered. Both CLIs
+   *  mint a BRAND-NEW session id for a fork, so two branches of one question
+   *  share nothing the agent reports — grouping them by session id finds
+   *  nothing, always. Null for a console that was started rather than
+   *  branched. */
+  forkedFrom: number | null;
+}
+
+/** One rate-limit window, exactly as the agent reported it. */
+export interface RateWindow {
+  /** The agent's own name for it: "five_hour", "seven_day". */
+  key: string;
+  /** 0..1. Reported, never estimated. */
+  utilization: number;
+  /** ms since epoch, or 0 when the agent gave no reset time. */
+  resetsAt: number;
 }
 
 export interface ConsoleUsage {
@@ -99,6 +124,15 @@ export interface ConsoleUsage {
   input: number | null;
   cachedInput: number | null;
   output: number | null;
+  /** The model's REAL context window, when the agent says what it is.
+   *
+   *  Everything drawing a "% of the window" bar used a 200k constant, chosen
+   *  as the smallest common window because the agents were believed not to
+   *  report theirs. claude's result payload carries
+   *  `modelUsage[<model>].contextWindow`, and on opus-5[1m] that is 1,000,000
+   *  — so the bar was reading five times fuller than the truth. Null until the
+   *  agent says, and the 200k floor is the fallback rather than the answer. */
+  window: number | null;
   /** Context after each usage payload, oldest first. A run's context only
    *  grows, and watching it approach the window is the thing that explains a
    *  session going wrong. Capped, because a long run reports hundreds. */

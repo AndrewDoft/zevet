@@ -126,7 +126,17 @@ describe("the bridge surface the renderer is written against", () => {
       //   userData and is not a path the hub could not already guess; it
       //   carries no credential and nothing about the user's repos. The board
       //   cannot start an install with it — that is an invoke, from a click.
-      ["app:update", "doc:message", "doc:status", "local:agentEvent", "local:fileChanged", "local:indexEvent"],
+      //   local:permitRequest — an agent has asked to click, type or take a
+      //   screenshot and is BLOCKED until a person answers (see the COMPUTER
+      //   USE block in main.js). It has to be pushed, because the agent did
+      //   not ask the board for anything — the board is being asked. It
+      //   carries the MCP tool name and the arguments the model sent, which is
+      //   strictly LESS than local:agentEvent above already pushes for every
+      //   tool call in the transcript, and the answer travels back the other
+      //   way as an invoke, from a click. Denial is the default: the
+      //   ask-server times out into a refusal, so a board that never answers
+      //   costs the agent an action rather than granting one.
+      ["app:update", "doc:message", "doc:status", "local:agentEvent", "local:fileChanged", "local:indexEvent", "local:permitRequest"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {
@@ -379,6 +389,49 @@ describe("every module main.js requires is actually in the installer", () => {
     assert.ok(required.length >= 4, `only found ${required.length} local requires — did the scrape break?`);
     for (const file of new Set(required)) {
       assert.ok(packaged.has(file), `main.js requires ./${file} and build.files does not ship it`);
+    }
+  });
+
+  test("and nothing it reaches by path, or through another module, is either", () => {
+    // ⚠️ THE SCRAPE ABOVE HAS A BLIND SPOT, and computer use walked straight
+    // into it. `zevet-mcp.js` is never required — it is SPAWNED, by
+    // `path.join(__dirname, "zevet-mcp.js")`, as the MCP server claude is
+    // handed. And it requires `computer.js`, which main.js never mentions at
+    // all. Neither would have been packaged, and neither absence shows up
+    // anywhere but an installed build, where computer use would simply do
+    // nothing and say nothing.
+    //
+    // So: follow both edges the first test cannot see — files named as a path
+    // from __dirname, and the requires of every local module that is packaged,
+    // transitively.
+    const pkg = JSON.parse(readFileSync(path.join(DESKTOP, "package.json"), "utf8"));
+    const packaged = new Set(pkg.build.files);
+
+    const byPath = [...stripComments(main).matchAll(/__dirname,\s*"([^"]+\.(?:js|mjs|cjs|json|html))"/g)].map((m) => m[1]);
+    for (const file of new Set(byPath)) {
+      assert.ok(packaged.has(file), `main.js reaches ./${file} by path and build.files does not ship it`);
+    }
+
+    // Transitive: what the shipped modules themselves pull in.
+    const seen = new Set();
+    const queue = [...packaged].filter((f) => /\.(js|mjs|cjs)$/.test(f));
+    while (queue.length) {
+      const file = queue.pop();
+      if (seen.has(file)) continue;
+      seen.add(file);
+      let src;
+      try {
+        src = readFileSync(path.join(DESKTOP, file), "utf8");
+      } catch {
+        continue; // a glob or a directory entry, not a file we can read
+      }
+      for (const [, dep] of stripComments(src).matchAll(/require\("\.\/([^"]+)"\)/g)) {
+        assert.ok(
+          packaged.has(dep),
+          `${file} requires ./${dep} and build.files does not ship it`,
+        );
+        if (!seen.has(dep)) queue.push(dep);
+      }
     }
   });
 

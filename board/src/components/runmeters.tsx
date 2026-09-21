@@ -20,10 +20,13 @@ import { MessageTiming } from "./assistant-ui/elements/message-timing";
 import { selectActiveConsole, selectStrip, useBoard } from "../lib/board";
 import { ContextChart, ContextTicker, RunUsageTable } from "./usageviews";
 import { ContextGauge } from "./mapviews";
+import { tokens } from "../lib/fmt";
 
-/** A context window we can draw a bar against. The agents do not report their
- *  own limit, so this is the smallest common one — being honest that the bar
- *  is "of 200k" rather than inventing a per-model number we were not told. */
+/** The fallback context window, used only when the agent hasn't said what its
+ *  real one is (ConsoleUsage.window, lib/types.ts — claude's result payload
+ *  carries `modelUsage[<model>].contextWindow`, which is 1,000,000 on
+ *  opus-5[1m], not this). Smallest common window across agents, so a bar
+ *  drawn against it undersells rather than oversells how full it is. */
 const CONTEXT_LIMIT = 200_000;
 
 const money = (n: number | null) => (n == null ? "$0.00" : `$${n.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`);
@@ -38,6 +41,9 @@ export function RunMeters() {
   if (!active || live.context == null) return null;
 
   const context = live.context;
+  // The console's own reported window, when it said — see the CONTEXT_LIMIT
+  // comment above.
+  const window = active.usage.window ?? CONTEXT_LIMIT;
   const cached = live.cacheHit != null ? Math.round(context * (live.cacheHit / 100)) : 0;
   const fresh = Math.max(0, context - cached);
 
@@ -67,12 +73,12 @@ export function RunMeters() {
         <span className="spacer" />
         {/* The one number worth carrying on the closed row: how full the
             window is, which is what makes a long session go wrong. */}
-        <span className="tabular-nums">{Math.round((context / CONTEXT_LIMIT) * 100)}% of 200k</span>
+        <span className="tabular-nums">{Math.round((context / window) * 100)}% of {tokens(window)}</span>
       </button>
 
       {!open ? null : (
       <div className="run-meters-body">
-      <ContextBreakdown className="max-w-none" segments={segments} limit={CONTEXT_LIMIT} />
+      <ContextBreakdown className="max-w-none" segments={segments} limit={window} />
 
       {/* The same window, three ways, because they answer different questions:
           the gauge is "how close to full", the chart is "how fast did it get

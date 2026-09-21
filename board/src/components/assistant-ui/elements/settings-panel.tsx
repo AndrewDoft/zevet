@@ -40,7 +40,7 @@ export function SettingsPanel({
   model: string;
   models: readonly string[];
   systemPrompt: string;
-  temperature: number;
+  temperature?: number;
   toggles: readonly SettingToggle[];
   onModelChange?: (model: string) => void;
   onSystemPromptChange?: (prompt: string) => void;
@@ -96,7 +96,7 @@ export function SettingsPanel({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <span className={cn(mono, "text-foreground/30")}>system prompt</span>
+        <span className={cn(mono, "text-foreground/30")}>system prompt · claude only</span>
         <textarea
           value={systemPrompt}
           onChange={(event) => onSystemPromptChange?.(event.target.value)}
@@ -109,26 +109,28 @@ export function SettingsPanel({
         />
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <span className="flex items-baseline justify-between">
-          <span className={cn(mono, "text-foreground/30")}>temperature</span>
-          <span className={cn(mono, "text-foreground/55 tabular-nums")}>
-            {clamp(temperature, 0, 2).toFixed(1)}
+      {temperature !== undefined && (
+        <div className="flex flex-col gap-1.5">
+          <span className="flex items-baseline justify-between">
+            <span className={cn(mono, "text-foreground/30")}>temperature</span>
+            <span className={cn(mono, "text-foreground/55 tabular-nums")}>
+              {clamp(temperature, 0, 2).toFixed(1)}
+            </span>
           </span>
-        </span>
-        <input
-          type="range"
-          min={0}
-          max={2}
-          step={0.1}
-          value={clamp(temperature, 0, 2)}
-          aria-label="Temperature"
-          onChange={(event) =>
-            onTemperatureChange?.(Number(event.target.value))
-          }
-          className="accent-foreground/80 h-1 w-full cursor-pointer"
-        />
-      </div>
+          <input
+            type="range"
+            min={0}
+            max={2}
+            step={0.1}
+            value={clamp(temperature, 0, 2)}
+            aria-label="Temperature"
+            onChange={(event) =>
+              onTemperatureChange?.(Number(event.target.value))
+            }
+            className="accent-foreground/80 h-1 w-full cursor-pointer"
+          />
+        </div>
+      )}
 
       <div className="flex flex-col gap-2.5">
         {toggles.map((toggle) => (

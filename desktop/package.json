@@ -1,6 +1,6 @@
 {
   "name": "zevet-desktop",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "private": true,
   "description": "zevet — watch your team's coding agents",
   "main": "main.js",
@@ -41,6 +41,9 @@
       "schedule.js",
       "file-watch.js",
       "status-sources.js",
+      "ask-server.js",
+      "computer.js",
+      "zevet-mcp.js",
       "embedder.js",
       "index-capability.js",
       "code-index.js",

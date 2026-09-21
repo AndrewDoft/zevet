@@ -16,12 +16,24 @@
 //   SOURCEABLE FROM THE MACHINE — the vault graph's health file, and whether
 //   the code index is listening. Both are a few lines, below.
 //
-//   NOT SOURCEABLE AT ALL — the 5h and 7d rate-limit windows. Those reach
-//   statusline.py because Claude Code hands them to the status line command in
-//   its payload. A headless agent's stream-json does NOT carry them; there is
-//   no `five_hour` in that stream. So this file does NOT report Anthropic's
-//   rate-limit windows, and must not start pretending to: a number labelled
-//   "5h 42%" that is not the 5h window is worse than a blank space.
+//   ⚠️ NO LONGER TRUE, AND KEPT HERE BECAUSE IT WAS. This block used to say
+//   the 5h and 7d windows were NOT SOURCEABLE AT ALL — that they reached
+//   statusline.py only because Claude Code hands them to the status line
+//   command, and that a headless agent's stream-json carried no `five_hour`.
+//   That was correct when written and is wrong now. Measured 2026-09-21
+//   against claude 2.1.278, a headless run emits:
+//
+//     {"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{
+//        "five_hour":{"utilization":0.11,"resetsAt":1789972800},
+//        "seven_day":{"utilization":0.11,"resetsAt":1790514000}}}}
+//
+//   The board reads it — `limitsOf` in board/src/lib/board.ts puts it on the
+//   console that reported it, and components/quota.tsx shows the fullest
+//   window. THIS FILE still does not, because it accounts for what zevet's own
+//   agents spent and that remains a different measurement; the rule it was
+//   protecting stands unchanged. A number labelled "5h 42%" that is not the 5h
+//   window is worse than a blank space — the fix was to find the real one, not
+//   to relax the rule.
 //
 //   What it offers instead is `BurnWindows`, which is zevet's OWN rolling
 //   accounting of what the agents it launched have spent. That is a different

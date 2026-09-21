@@ -37,6 +37,7 @@ const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
 const { AppUpdater } = require("./app-update.js");
 const runtime = require("./runtime.js");
+const askServer = require("./ask-server.js");
 const { GithubSignIn } = require("./github-signin.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
@@ -1436,6 +1437,72 @@ ipcMain.handle("local:status", async (_e, arg) => {
 
 const SCHEDULES = path.join(HOME, "schedules.json");
 
+/* ---------------------------------------------------------------------------
+ * PER-REPO AGENT SETTINGS
+ *
+ * Standing instructions for a repo, and which optional capabilities an agent
+ * started here is given. Keyed by the workspace path, in the same store as the
+ * schedules, because both are "what this machine does on your behalf".
+ *
+ * `systemPrompt` becomes `--append-system-prompt` (claude's flag; the other two
+ * CLIs have no equivalent and the panel says so). `computerUse` is off by
+ * default and is the ONLY thing that hands an agent zevet's MCP server — see
+ * the comment on that wiring below.
+ * ------------------------------------------------------------------------- */
+const AGENT_SETTINGS = path.join(HOME, "agent-settings.json");
+
+/** Everything, by workspace path. */
+function readAllAgentSettings() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(AGENT_SETTINGS, "utf8"));
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+/** One repo's, with every field defaulted, so a caller never sees undefined. */
+function agentSettingsFor(dir) {
+  const raw = (readAllAgentSettings()[path.resolve(dir)] || {});
+  return {
+    systemPrompt: typeof raw.systemPrompt === "string" ? raw.systemPrompt.slice(0, 8000) : "",
+    // ⚠️ DEFAULT FALSE, AND IT HAS TO STAY FALSE. This is the switch that lets
+    // an agent see the screen and move the mouse. Absent file, unreadable
+    // file, unknown repo, a field somebody hand-edited to nonsense — every one
+    // of those has to land on "no".
+    computerUse: raw.computerUse === true,
+  };
+}
+
+function writeAgentSettingsFor(dir, patch) {
+  const all = readAllAgentSettings();
+  const key = path.resolve(dir);
+  const next = { ...agentSettingsFor(dir), ...(patch || {}) };
+  all[key] = {
+    systemPrompt: typeof next.systemPrompt === "string" ? next.systemPrompt.slice(0, 8000) : "",
+    computerUse: next.computerUse === true,
+  };
+  try {
+    fs.mkdirSync(HOME, { recursive: true });
+    fs.writeFileSync(AGENT_SETTINGS, `${JSON.stringify(all, null, 2)}\n`, "utf8");
+  } catch (err) {
+    console.error(`zevet: could not save agent settings: ${err.message}`);
+  }
+  return all[key];
+}
+
+ipcMain.handle("local:agentSettings", (_e, arg) => {
+  const dir = knownRoot(arg && arg.root);
+  if (!dir) return { ok: false, settings: null };
+  return { ok: true, settings: agentSettingsFor(dir) };
+});
+
+ipcMain.handle("local:saveAgentSettings", (_e, arg) => {
+  const dir = knownRoot(arg && arg.root);
+  if (!dir) return { ok: false, settings: null };
+  return { ok: true, settings: writeAgentSettingsFor(dir, arg && arg.patch) };
+});
+
 function readSchedules() {
   try {
     const raw = JSON.parse(fs.readFileSync(SCHEDULES, "utf8"));
@@ -1931,10 +1998,116 @@ ipcMain.handle("local:agents", async () => {
   });
 });
 
+/* ---------------------------------------------------------------------------
+ * COMPUTER USE — zevet's own MCP server, and the gate in front of it
+ *
+ * claude takes `--mcp-config <file>` and `--permission-prompt-tool <name>`
+ * (both measured 2026-09-21 on 2.1.278), so zevet can hand an agent a server of
+ * its own and be the thing that answers when the agent asks permission. That is
+ * how the board gains a capability the CLI does not have: `desktop/zevet-mcp.js`
+ * offers `screenshot`, `click`, `type_text` and `press_key`.
+ *
+ * ⚠️ THIS IS THE MOST DANGEROUS THING IN THE APPLICATION, so read the shape of
+ * the guard rather than the list of tools:
+ *
+ *   1. OFF BY DEFAULT, per repo, by explicit choice. `agentSettingsFor`
+ *      defaults `computerUse` to false and every unreadable, missing or
+ *      hand-mangled setting lands there too.
+ *   2. The MCP server ACTS ON NOTHING without a permit. It POSTs every call to
+ *      the loopback server below and obeys the answer; with no
+ *      ZEVET_MCP_URL/TOKEN in its environment it refuses everything, so a
+ *      stray copy of that file is not a remote control for somebody's desktop.
+ *   3. The loopback server is bound to 127.0.0.1, requires a per-run bearer
+ *      token, and DENIES on timeout rather than allowing.
+ *   4. The person answers. Every permit becomes a card in the board and the
+ *      agent blocks until it is answered — that is what
+ *      `--permission-prompt-tool` buys.
+ *
+ * One server for the app, started the first time a console needs it, because
+ * the port and token are per-process rather than per-console and a console
+ * that ends does not invalidate another's.
+ * ------------------------------------------------------------------------- */
+const MCP_SERVER = path.join(__dirname, "zevet-mcp.js");
+
+/** Requests waiting on a person, by id. */
+const pendingPermits = new Map();
+let permitSeq = 0;
+let askServerPromise = null;
+
+function ensureAskServer() {
+  if (!askServerPromise) {
+    askServerPromise = askServer.start({
+      onPermit: (request) =>
+        new Promise((resolve) => {
+          const id = `p${++permitSeq}`;
+          pendingPermits.set(id, resolve);
+          // The board decides. If no board is listening — the window is gone,
+          // or it is an older build that does not know this event — nothing
+          // resolves this and the ask-server's own timeout denies it, which is
+          // the correct end for a question nobody can be asked.
+          toBoard("local:permitRequest", { id, ...(request || {}) });
+        }),
+    });
+  }
+  return askServerPromise;
+}
+
+/** The person's answer to one permit. */
+ipcMain.handle("local:permitAnswer", (_e, arg) => {
+  const id = arg && typeof arg.id === "string" ? arg.id : "";
+  const resolve = pendingPermits.get(id);
+  if (!resolve) return { ok: false, error: "no such request" };
+  pendingPermits.delete(id);
+  resolve({ ok: arg && arg.allow === true, reason: (arg && arg.reason) || "refused" });
+  return { ok: true };
+});
+
+/**
+ * The `--mcp-config` file for one console, or null when this repo has not
+ * turned computer use on.
+ *
+ * ⚠️ `node` IS NOT ON THE PATH OF A PACKAGED APP. Electron's own binary is,
+ * and with ELECTRON_RUN_AS_NODE it runs a script as plain node — which is the
+ * only interpreter guaranteed to exist beside the app.
+ */
+async function mcpConfigFor(dir) {
+  if (!agentSettingsFor(dir).computerUse) return null;
+  if (!fs.existsSync(MCP_SERVER)) return null;
+  const { url, token } = await ensureAskServer();
+  const config = {
+    mcpServers: {
+      zevet: {
+        command: process.execPath,
+        args: [MCP_SERVER],
+        env: { ELECTRON_RUN_AS_NODE: "1", ZEVET_MCP_URL: url, ZEVET_MCP_TOKEN: token },
+      },
+    },
+  };
+  const file = path.join(app.getPath("temp"), `zevet-mcp-${process.pid}-${++permitSeq}.json`);
+  fs.writeFileSync(file, JSON.stringify(config), "utf8");
+  return file;
+}
+
 ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   await runtimeReady;
   const dir = knownRoot(cwd);
   if (!dir) return { ok: false, error: "not an opened workspace" };
+
+  // Standing instructions for this repo, if any were saved. Only claude has a
+  // flag for them (agent-console.js § invocationFor); the other two ignore the
+  // option rather than being handed something they cannot use.
+  const settings = agentSettingsFor(dir);
+  // And zevet's own MCP server, only if this repo turned computer use on, and
+  // only for the CLI that can be handed one. A failure to set it up must not
+  // stop the agent starting — it costs a capability, not the run.
+  let mcpConfig = null;
+  if (String(agent || "") === "claude") {
+    try {
+      mcpConfig = await mcpConfigFor(dir);
+    } catch (err) {
+      console.error(`zevet: could not set up computer use: ${err.message}`);
+    }
+  }
 
   // A mutable holder rather than closing over `started` directly: onEvent can
   // fire DURING startConsole (a spawn that fails immediately does exactly
@@ -1947,6 +2120,20 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
     cwd: dir,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
+    systemPrompt: settings.systemPrompt,
+    ...(mcpConfig
+      ? {
+          mcpConfig,
+          // claude names an MCP tool `mcp__<server>__<tool>`; the server is
+          // registered as `zevet` above.
+          permissionTool: "mcp__zevet__permission_prompt",
+        }
+      : {}),
+    /* ⚠️ ASKED FOR, AND ALLOWED, ARE TWO DIFFERENT THINGS. The renderer may
+       ask for a forked run; whether this repo may is decided here, against the
+       saved settings, because the renderer is the untrusted side of the
+       bridge. Same rule the workspace guard follows above. */
+    forkFrom: opts && typeof opts.forkFrom === "string" ? opts.forkFrom : "",
     onEvent: (evt) => {
       // The status strip's rolling windows are fed HERE, in the main process,
       // and not in the renderer. The renderer shows the live figures off the

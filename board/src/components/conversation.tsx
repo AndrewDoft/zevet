@@ -20,6 +20,8 @@ import { Launcher } from "./launcher";
 import { DictationOrb } from "./brand";
 import { ListenShelf } from "./speech";
 import { PostureNotice, QuoteToComposer } from "./guards";
+import { QuotaNotice } from "./quota";
+import { PermitPrompt, PermitQueue } from "./permits";
 import { DraftRestore } from "./findviews";
 import { FindShelf } from "./findshelf";
 import { ThreadMap } from "./mapviews";
@@ -127,6 +129,15 @@ export function Conversation() {
           fixed at launch, so this is a standing fact about the run, not a
           state that changes under you. */}
       <PostureNotice />
+      {/* The provider's own rate-limit windows, when the agent reports them.
+          It is the one number that decides whether to start another run, so it
+          is at the top rather than behind a row. */}
+      <QuotaNotice />
+      {/* An agent is BLOCKED on this. It goes above the transcript, not behind
+          a row, because the run does not continue until it is answered — and
+          the ask-server denies on timeout, so ignoring it is a refusal. */}
+      <PermitPrompt />
+      <PermitQueue />
       <div className="chat-thread-body">
         <Thread autoFocus={false} />
         {/* A tick per message down the right edge. It is the one thing that

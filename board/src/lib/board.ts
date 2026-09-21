@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { bridge, type AgentSchedule, type MemoryNote, type RepoCommit, type StatusResult } from "./bridge";
+import { bridge, type AgentSchedule, type AgentSettings, type MemoryNote, type PermitRequest, type RepoCommit, type StatusResult } from "./bridge";
 import { shortInput } from "./fmt";
 import {
   appendAgentPayload,
@@ -26,7 +26,7 @@ import {
 } from "./constants";
 import type {
   Collision, Conn, ConsoleEntry, ConsoleLine, HubEvent, LaunchMode, LocalEntry,
-  LocalFileData, LocalWorkspace, RosterEntry, Snapshot, Theme, UpdateState, ViewMode,
+  LocalFileData, LocalWorkspace, RateWindow, RosterEntry, Snapshot, Theme, UpdateState, ViewMode,
 } from "./types";
 
 /* ---------------------------------------------------------------------------
@@ -92,6 +92,30 @@ interface Strip {
   machine: StatusResult | null;
 }
 
+/**
+ * Starting a console as a BRANCH of one that already ran.
+ *
+ * claude takes `--resume <id> --fork-session`; codex takes `exec fork <id>`
+ * (both measured 2026-09-21). Forking rather than resuming is the whole point:
+ * resuming writes more history into the same session, so a second answer would
+ * replace the first and there would be nothing to compare. A fork leaves the
+ * original alone.
+ */
+export interface ForkLaunch {
+  /** The session id to branch from. */
+  forkFrom: string;
+  /** Asked as soon as the fork is up. */
+  prompt: string;
+  /** The model and posture of the run it came from, so the two answers differ
+   *  by the prompt and nothing else. */
+  model?: string;
+  mode?: LaunchMode;
+  /** The `key` of the console being branched. Recorded on the new console as
+   *  `forkedFrom`; a fork's own session id is new, so this is the only link
+   *  between two answers to the same question. */
+  fromKey?: number;
+}
+
 interface BoardState {
   conn: Conn;
   needsToken: boolean;
@@ -146,6 +170,12 @@ interface BoardState {
   /** What the agent has written down about this repo. Read from the agent's
    *  own memory directory; empty for an agent that keeps none. */
   memories: MemoryNote[];
+  /** Standing instructions and optional capabilities for the open repo. Null
+   *  until read, and on a desktop build that does not have them. */
+  agentSettings: AgentSettings | null;
+  /** Things an agent has asked to do and is waiting on. Oldest first; a
+   *  question that is answered leaves the list. */
+  permits: PermitRequest[];
   /** MCP servers the agent reported at startup, by console key. Read off
    *  claude's init payload; absent for a CLI that does not announce them. */
   mcpServers: Record<number, { name: string; status: string; tools: string[] }[]>;
@@ -199,7 +229,9 @@ interface BoardState {
   setLaunchMode: (m: LaunchMode) => void;
   setLaunchModel: (m: string) => void;
   setLaunchEffort: (e: string) => void;
-  startAgent: (name: string) => void;
+  /** Start an agent. `launch` is for a FORK: the session to branch from, the
+   *  prompt to ask it, and the model/posture of the run it came from. */
+  startAgent: (name: string, launch?: ForkLaunch) => void;
   closeConsole: (key: number) => void;
   setActiveConsole: (key: number | null) => void;
   markConsoleSeen: (key: number) => void;
@@ -350,6 +382,8 @@ export const useBoard = create<BoardState>((set, get) => ({
   repoCommits: [],
   schedules: [],
   memories: [],
+  agentSettings: null,
+  permits: [],
   mcpServers: {},
   launchModel: "",
   launchEffort: "",
@@ -457,10 +491,16 @@ export const useBoard = create<BoardState>((set, get) => ({
   setLaunchModel: (m) => set({ launchModel: m }),
   setLaunchEffort: (e) => set({ launchEffort: e }),
 
-  startAgent: (name) => {
+  startAgent: (name, launch) => {
     const br = bridge.local;
     const root = useBoard.getState().localRoot;
     if (!br || !root) return;
+    /* A fork carries the model and posture of the run it came from, not the
+       launcher's current pick — otherwise "ask that again" would quietly ask a
+       different model, and the two answers would not be comparable. */
+    const from = launch && launch.forkFrom ? launch : null;
+    const model = from && from.model !== undefined ? from.model : get().launchModel;
+    const mode = from && from.mode !== undefined ? from.mode : get().launchMode;
     const c: ConsoleEntry = {
       key: ++consoleSeq,
       id: null,
@@ -469,11 +509,16 @@ export const useBoard = create<BoardState>((set, get) => ({
       transcript: emptyTranscript(),
       running: true,
       error: null,
-      mode: get().launchMode,
-      model: get().launchModel,
+      mode,
+      model,
       root,
       hue: get().myConsoles.length % 5,
-      usage: { context: null, cacheHit: null, cost: null, model: null, input: null, cachedInput: null, output: null, series: [] },
+      usage: { context: null, cacheHit: null, cost: null, model: null, input: null, cachedInput: null, output: null, window: null, series: [] },
+      limits: [],
+      sessionId: null,
+      // Which console this is a branch of, if any — see `forkedFrom` in
+      // types.ts for why it cannot be worked out after the fact.
+      forkedFrom: launch && typeof launch.fromKey === "number" ? launch.fromKey : null,
       startedAt: Date.now(),
       exitCode: null,
     };
@@ -483,12 +528,20 @@ export const useBoard = create<BoardState>((set, get) => ({
       launching: false,
       seenConsole: { ...g.seenConsole, [c.key]: Date.now() },
     }));
-    br.startAgent(name, root, { model: get().launchModel, mode: get().launchMode }).then((r) => {
+    br.startAgent(name, root, {
+      model,
+      mode,
+      ...(launch && launch.forkFrom ? { forkFrom: launch.forkFrom } : {}),
+    }).then((r) => {
       if (!r || !r.ok) {
         c.running = false;
         c.error = (r && r.error) || "could not start";
       } else {
         c.id = r.id ? String(r.id) : null;
+        // The prompt a fork was started to ask. It goes only after the spawn
+        // succeeded, because a prompt sent to a console with no process is the
+        // one case where the composer's own guard cannot help.
+        if (launch && launch.prompt) get().sendPrompt(c.key, launch.prompt);
       }
       signalConsolesChanged();
     });
@@ -590,6 +643,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     void refreshCommits();
     void refreshSchedules();
     void refreshMemories();
+    void refreshAgentSettings();
     const g = get();
     if (!bridge.local || !g.localRoot || !g.localEntries) return;
     const now = Date.now();
@@ -853,6 +907,32 @@ function ingressAgentEvent(evt: { id?: string; type: string; code?: number | nul
         useBoard.setState((g) => ({ mcpServers: { ...g.mcpServers, [c0.key]: servers } }));
       }
     }
+    /* The session id, which every claude payload carries and codex announces
+       once as `thread_id`. It is what `--resume` / `exec resume` take, so it
+       is the difference between being able to ask again from here and not. */
+    const sid = sessionIdOf(payload);
+    if (sid) {
+      const cs = consoleById(evt.id);
+      if (cs && cs.sessionId !== sid) {
+        cs.sessionId = sid;
+        signalConsolesChanged();
+      }
+    }
+
+    /* The provider's own rate-limit windows and the model's real context
+       window. Both arrive on payloads nothing used to read: `rate_limit_event`
+       every turn, and `modelUsage` on the result. */
+    const limits = limitsOf(payload);
+    const window = windowOf(payload);
+    if (limits || window != null) {
+      const cl = consoleById(evt.id);
+      if (cl) {
+        if (limits) cl.limits = limits;
+        if (window != null) cl.usage = { ...cl.usage, window };
+        signalConsolesChanged();
+      }
+    }
+
     const u = usageOf(payload);
     const cost = typeof payload.total_cost_usd === "number" ? payload.total_cost_usd : null;
     if (u || cost != null) {
@@ -970,6 +1050,77 @@ function recordUsage(c: ConsoleEntry, u: UsageReading | null, cost: number | nul
   c.usage = next;
 }
 
+/**
+ * The agent's own id for this session.
+ *
+ * claude puts `session_id` on every payload; codex announces `thread_id` once
+ * on `thread.started`. opencode says neither, and an agent that does not name
+ * its session cannot be resumed — which is why the panels that fork a run
+ * check for this rather than assuming it.
+ */
+function sessionIdOf(payload: unknown): string | null {
+  const p = (payload || {}) as { session_id?: unknown; thread_id?: unknown };
+  const id = p.session_id ?? p.thread_id;
+  return typeof id === "string" && id ? id : null;
+}
+
+/**
+ * The provider's rate-limit windows, as the agent reported them.
+ *
+ * ⚠️ THE OLD NOTE SAID THESE DID NOT EXIST, AND IT WAS TRUE WHEN WRITTEN.
+ * `desktop/status-sources.js` states flatly that a headless agent's stream-json
+ * does not carry the 5h/7d numbers and that zevet must not start pretending to
+ * know them. Measured again 2026-09-21 against claude 2.1.278, it now does:
+ *
+ *   {"type":"rate_limit_event","rate_limit_info":{
+ *      "status":"allowed","resetsAt":1789972800,"rateLimitType":"five_hour",
+ *      "unifiedWindows":{"five_hour":{"utilization":0.11,"resetsAt":…},
+ *                        "seven_day":{"utilization":0.11,"resetsAt":…}}}}
+ *
+ * So this reads what is there and nothing else. `utilization` is a ratio the
+ * provider computed; `resetsAt` is in SECONDS in the payload and milliseconds
+ * everywhere in this store. An agent that reports none of it gets an empty
+ * list, which is the difference between "not reported" and "zero used".
+ */
+function limitsOf(payload: unknown): RateWindow[] | null {
+  const p = payload as { type?: string; rate_limit_info?: unknown } | null;
+  if (!p || p.type !== "rate_limit_event") return null;
+  const info = p.rate_limit_info as { unifiedWindows?: Record<string, unknown> } | undefined;
+  const windows = info && info.unifiedWindows;
+  if (!windows || typeof windows !== "object") return null;
+
+  const out: RateWindow[] = [];
+  for (const [key, raw] of Object.entries(windows)) {
+    const w = (raw || {}) as { utilization?: unknown; resetsAt?: unknown };
+    if (typeof w.utilization !== "number" || !isFinite(w.utilization)) continue;
+    out.push({
+      key,
+      utilization: w.utilization,
+      resetsAt: typeof w.resetsAt === "number" && isFinite(w.resetsAt) ? w.resetsAt * 1000 : 0,
+    });
+  }
+  return out.length ? out : null;
+}
+
+/**
+ * The model's real context window, off the result payload's `modelUsage`.
+ *
+ * There is one entry per model the run touched; a run that switched models has
+ * more than one, and the LARGEST is the window the conversation is being
+ * carried in. Absent for an agent that does not report it, and the 200k floor
+ * stays the fallback rather than becoming the answer.
+ */
+function windowOf(payload: unknown): number | null {
+  const mu = (payload as { modelUsage?: Record<string, unknown> } | null)?.modelUsage;
+  if (!mu || typeof mu !== "object") return null;
+  let best = 0;
+  for (const raw of Object.values(mu)) {
+    const n = (raw as { contextWindow?: unknown } | null)?.contextWindow;
+    if (typeof n === "number" && isFinite(n) && n > best) best = n;
+  }
+  return best > 0 ? best : null;
+}
+
 /** One usage reading, with the parts kept.
  *
  *  `context` and `cacheHit` are what the strip has always shown. The three
@@ -988,7 +1139,7 @@ interface UsageReading {
 
 function usageOf(payload: { message?: { usage?: unknown; model?: string }; usage?: unknown; part?: { tokens?: unknown }; model?: string }): UsageReading | null {
   if (!payload || typeof payload !== "object") return null;
-  const u = ((payload.message && payload.message.usage) || payload.usage) as { input_tokens?: unknown; cache_read_input_tokens?: unknown; cache_creation_input_tokens?: unknown; output_tokens?: unknown } | undefined;
+  const u = ((payload.message && payload.message.usage) || payload.usage) as { input_tokens?: unknown; cache_read_input_tokens?: unknown; cached_input_tokens?: unknown; cache_creation_input_tokens?: unknown; cache_write_input_tokens?: unknown; output_tokens?: unknown } | undefined;
   const tokens = payload.part && payload.part.tokens;
   if ((!u || typeof u !== "object") && tokens && typeof tokens === "object") {
     const ti = tokens as { input?: unknown; output?: unknown };
@@ -1001,14 +1152,27 @@ function usageOf(payload: { message?: { usage?: unknown; model?: string }; usage
   }
   if (!u || typeof u !== "object") return null;
   const n = (v: unknown): number => (typeof v === "number" && isFinite(v) ? v : 0);
-  const read = n(u.cache_read_input_tokens);
-  const context = n(u.input_tokens) + read + n(u.cache_creation_input_tokens);
+
+  /* ⚠️ TWO CLIs, TWO SPELLINGS, AND ONE OF THEM MEASURES DIFFERENTLY.
+   *
+   * claude reports `cache_read_input_tokens` ALONGSIDE `input_tokens`: the
+   * window is the sum of the three. codex reports `cached_input_tokens` as a
+   * SUBSET of its `input_tokens` (measured 2026-09-21: input 17,039 of which
+   * cached 9,984), so adding them would count the cache twice and report a
+   * context nearly 60% larger than the one the agent is actually carrying.
+   *
+   * Before this, codex matched neither spelling, so every codex turn read as a
+   * 0% cache hit — wrong, and wrong in the flattering direction. */
+  const codexStyle = u.cached_input_tokens !== undefined;
+  const read = codexStyle ? n(u.cached_input_tokens) : n(u.cache_read_input_tokens);
+  const written = codexStyle ? n(u.cache_write_input_tokens) : n(u.cache_creation_input_tokens);
+  const context = codexStyle ? n(u.input_tokens) + written : n(u.input_tokens) + read + written;
   if (!context && !n(u.output_tokens)) return null;
   return {
     context,
     cacheHit: context > 0 ? (read / context) * 100 : null,
     model: (payload.message && (payload.message as { model?: string }).model) || payload.model || null,
-    input: n(u.input_tokens) + n(u.cache_creation_input_tokens),
+    input: Math.max(0, context - read),
     cachedInput: read,
     output: n(u.output_tokens),
   };
@@ -1740,6 +1904,15 @@ export function boot(): void {
   }
 
   attachFileChanged();
+  if (bridge.local && typeof bridge.local.onPermitRequest === "function") {
+    /* An agent has asked to do something and is BLOCKED on the answer. There
+       is no "later" here: the ask-server denies on timeout, so an unanswered
+       question becomes a refusal rather than a hang. */
+    bridge.local.onPermitRequest((req) => {
+      if (!req || typeof req.id !== "string") return;
+      useBoard.setState((g) => ({ permits: [...g.permits, req] }));
+    });
+  }
   if (bridge.local && typeof bridge.local.onAgentEvent === "function") {
     bridge.local.onAgentEvent(ingressAgentEvent);
   }
@@ -1830,6 +2003,74 @@ export async function refreshCommits(): Promise<void> {
     // A folder that is not a repo, or a git that is not installed. Neither is
     // worth a message: the list simply does not appear.
   }
+}
+
+/**
+ * Read this repo's standing instructions, if this build has them.
+ *
+ * Optional in the same way `commits` is. A build without it shows no settings
+ * panel at all, rather than an empty one that appears to save and does not.
+ */
+export async function refreshAgentSettings(): Promise<void> {
+  const br = bridge.local;
+  const root = useBoard.getState().localRoot;
+  if (!br || !root || typeof br.agentSettings !== "function") return;
+  try {
+    const r = await br.agentSettings(root);
+    if (r && r.ok && r.settings) useBoard.setState({ agentSettings: r.settings });
+  } catch {
+    // No store yet. No settings, no message.
+  }
+}
+
+/** Save one or more of them. The desktop app's answer replaces ours rather
+ *  than the board guessing what the new state is — the same rule the schedule
+ *  toggle follows. */
+export async function saveAgentSettings(patch: Partial<AgentSettings>): Promise<void> {
+  const br = bridge.local;
+  const root = useBoard.getState().localRoot;
+  if (!br || !root || typeof br.saveAgentSettings !== "function") return;
+  try {
+    const r = await br.saveAgentSettings(root, patch);
+    if (r && r.ok && r.settings) useBoard.setState({ agentSettings: r.settings });
+  } catch {
+    // Left as it was; the next refresh corrects it.
+  }
+}
+
+/**
+ * Answer one of them.
+ *
+ * The desktop app is the one holding the agent's call open, so the answer goes
+ * there and the request leaves the list either way — a question that has been
+ * answered is not still being asked, whichever way it went.
+ */
+export async function answerPermit(id: string, allow: boolean, reason?: string): Promise<void> {
+  const br = bridge.local;
+  useBoard.setState((g) => ({ permits: g.permits.filter((p) => p.id !== id) }));
+  if (!br || typeof br.permitAnswer !== "function") return;
+  try {
+    await br.permitAnswer(id, allow, reason);
+  } catch {
+    // The agent's own timeout denies it. Failing to deliver a "yes" costs an
+    // action; failing to deliver a "no" costs nothing, because no is default.
+  }
+}
+
+/**
+ * Ask a finished run something else, without disturbing it.
+ *
+ * Starts a NEW console forked from this one's session — see `ForkLaunch`. The
+ * new console carries the same model and posture, so the only thing that
+ * differs between the two answers is the prompt. Does nothing for an agent
+ * that never announced a session id (opencode), which is why every caller
+ * checks `sessionId` before offering the button.
+ */
+export function forkConsole(key: number, prompt: string): void {
+  const g = useBoard.getState();
+  const c = g.myConsoles.find((x) => x.key === key);
+  if (!c || !c.sessionId || !prompt.trim()) return;
+  g.startAgent(c.agent, { forkFrom: c.sessionId, prompt, model: c.model, mode: c.mode, fromKey: c.key });
 }
 
 /**

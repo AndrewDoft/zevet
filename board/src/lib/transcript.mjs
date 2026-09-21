@@ -351,16 +351,44 @@ function fromOpencode(state, p, root) {
 /* ---------------------------------------------------------------------------
  * codex — `exec --json`
  *
- * ⚠️ UNVERIFIED. codex is not installed on the machine this was written on and
- * no recorded `exec --json` output exists anywhere in this repository, so
- * unlike the two above, this branch is read off codex's documented event names
- * and not off a measurement. That is exactly the kind of claim INSUFFICIENCIES
- * exists to track — see INSUF-005.
+ * ✅ MEASURED 2026-09-21 against codex-cli 0.155.0-alpha.2.6, closing INSUF-005.
+ * Two runs were captured: one trivial reply, and one that wrote a file and ran
+ * a command. Every line below is from that capture rather than from codex's
+ * documentation, which is what the previous version of this comment warned it
+ * was working from.
  *
- * It is written to fail VISIBLY: an event whose name is not below falls
+ * The whole vocabulary that appeared:
+ *
+ *   {"type":"thread.started","thread_id":"01a0c1e7-…"}
+ *   {"type":"turn.started"}
+ *   {"type":"item.started"  ,"item":{…}}      ← a tool call BEGINNING
+ *   {"type":"item.completed","item":{…}}
+ *   {"type":"turn.completed","usage":{…}}
+ *
+ * and the item types inside those, with the fields that carry the content:
+ *
+ *   agent_message      {text}
+ *   command_execution  {command, aggregated_output, exit_code, status}
+ *   file_change        {changes:[{path, kind}], status}
+ *   error              {message}
+ *
+ * Three things the documented guess had wrong, all now fixed here:
+ *
+ *   1. `error` ARRIVES AS AN ITEM, not as a top-level event, and it is not
+ *      necessarily fatal — the capture's was a notice about skill descriptions
+ *      being shortened, mid-turn, with the turn completing normally. The old
+ *      table fell through it to `return state`, which dropped it silently:
+ *      precisely the failure this file exists to prevent.
+ *   2. `file_change` carries `changes[].path`, and passing the array straight
+ *      through as `args` left the Edit card with no file name on it.
+ *   3. usage says `cached_input_tokens`, not claude's
+ *      `cache_read_input_tokens` — see `usageOf` in lib/board.ts, which read
+ *      zero and reported every codex turn as a 0% cache hit.
+ *
+ * It is still written to fail VISIBLY: an event whose name is not below falls
  * through to the `[codex: <type>]` line in appendAgentPayload rather than
- * disappearing, so the first person to run a codex turn sees the real
- * vocabulary in the transcript and can correct this table from it.
+ * disappearing, so a vocabulary change shows up in the transcript instead of
+ * going quiet.
  * ------------------------------------------------------------------------- */
 
 function fromCodex(state, p, root) {
@@ -382,10 +410,26 @@ function fromCodex(state, p, root) {
     if (item.type === "reasoning") {
       return appendStreamed(state, "reasoning", String(item.text ?? ""));
     }
+    /* A notice from codex itself, not from the model. Non-fatal — the one in
+       the capture was about skill descriptions being shortened and the turn
+       finished normally — so it is shown rather than used to end the turn. */
+    if (item.type === "error") {
+      const message = String(item.message ?? "");
+      return message ? appendRaw(state, `codex: ${message}`) : state;
+    }
     if (item.type === "command_execution" || item.type === "file_change" || item.type === "mcp_tool_call") {
       const callId = item.id || nextId();
       const name = item.type === "command_execution" ? "Bash" : item.type === "file_change" ? "Edit" : item.tool || "tool";
-      const args = item.command !== undefined ? { command: item.command } : item.changes || item.arguments || {};
+      // `changes` is an ARRAY of {path, kind}. Handing the array over as args
+      // left the Edit card with nothing to put in its title; the first path is
+      // what the card is about, and the rest stays for anything that wants it.
+      const changed = Array.isArray(item.changes) ? item.changes : null;
+      const args =
+        item.command !== undefined
+          ? { command: item.command }
+          : changed
+            ? { file_path: String(changed[0]?.path ?? ""), changes: changed }
+            : item.arguments || {};
       if (state.toolIndex[callId]) {
         const done = item.status === "completed" || p.type === "item.completed";
         return done ? setToolResult(state, callId, item.aggregated_output ?? item.output ?? "", item.status === "failed") : state;

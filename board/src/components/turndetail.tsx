@@ -22,8 +22,11 @@ import {
 } from "./agentviews";
 import { CommandRuns, NextStep, Pages, StoppedRuns } from "./moreviews";
 import { Citations, MathBlocks, Reads } from "./knowledge";
+import { Provenance } from "./provenance";
+import { ComputerUse } from "./permits";
 import { ResearchReportView, SubagentGraph } from "./graphviews";
 import { RunSpec } from "./runspec";
+import { AskAgain, Branches, EditAndAsk } from "./rewind";
 import { Speakers } from "./speech";
 import { McpServerPanel } from "./assistant-ui/elements/mcp-server-panel";
 import { selectActiveConsole, useBoard } from "../lib/board";
@@ -90,8 +93,15 @@ export function TurnDetail() {
           <TurnTrace />
           <CommandRuns />
           <Reads />
+          {/* What it saw, and where it clicked on it. Empty on every run with
+              computer use switched off, which is every run by default. */}
+          <ComputerUse />
           <Pages />
           <Citations />
+          {/* Which paths it named, and whether they exist. The one panel here
+              that can catch the agent being wrong rather than just show what
+              it did. */}
+          <Provenance />
           <MathBlocks />
           <TaskCards />
           <SubagentGraph />
@@ -99,6 +109,13 @@ export function TurnDetail() {
           <Artifacts />
           <McpServers />
           <Speakers />
+          {/* Asking again, from here. A fork leaves this run where it is and
+              starts a branch — see rewind.tsx, and note that it is not a
+              rewind into the middle of the conversation, which neither CLI
+              can do. */}
+          <Branches />
+          <AskAgain />
+          <EditAndAsk />
           <RunSpec />
         </div>
       ) : null}

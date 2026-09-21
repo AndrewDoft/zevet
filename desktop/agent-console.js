@@ -365,6 +365,25 @@ function modeFlags(agent, mode) {
   return { flags, note };
 }
 
+/**
+ * Asking again from a run that already happened.
+ *
+ * MEASURED 2026-09-21 against claude 2.1.278 and codex-cli 0.155.0-alpha.2.6:
+ *
+ *   claude --resume <session-id> --fork-session     (--fork-session needs --resume)
+ *   codex exec fork <session-id> [PROMPT]           (a subcommand, before the flags)
+ *   codex exec resume <session-id> [PROMPT]
+ *
+ * FORK, NOT RESUME, is what the board offers. Resuming writes more history
+ * into the same session, so a second answer would overwrite the first and
+ * there would be nothing to compare; forking leaves the original where it is
+ * and starts a branch, which is the only shape in which "ask again" and
+ * "step between the answers" are both honest.
+ *
+ * opencode has neither, and is not offered one.
+ */
+const CAN_FORK = new Set(["claude", "codex"]);
+
 function invocationFor(agent, opts) {
   const o = opts || {};
   const extra = [];
@@ -373,7 +392,27 @@ function invocationFor(agent, opts) {
   if (typeof o.model === "string" && o.model.trim()) extra.push(agent === "claude" ? "--model" : "-m", o.model.trim());
   extra.push(...modeFlags(agent, o.mode).flags);
 
+  const forkFrom =
+    typeof o.forkFrom === "string" && o.forkFrom.trim() && CAN_FORK.has(agent) ? o.forkFrom.trim() : null;
+
   if (agent === "claude") {
+    // Standing instructions for this repo, if the person set any. claude is
+    // the only one of the three with a flag for it; see desktop/main.js's
+    // `local:agentSettings`, which is where the text comes from.
+    if (typeof o.systemPrompt === "string" && o.systemPrompt.trim()) {
+      extra.push("--append-system-prompt", o.systemPrompt.trim());
+    }
+    // zevet's own MCP server, when the console was started with a capability
+    // that needs it. A path, written by main.js for this console only.
+    if (typeof o.mcpConfig === "string" && o.mcpConfig.trim()) {
+      extra.push("--mcp-config", o.mcpConfig.trim());
+    }
+    // The tool claude calls when it wants permission. Without it a headless
+    // run denies anything that would prompt; with it, the board is asked and
+    // the agent genuinely waits for the answer.
+    if (typeof o.permissionTool === "string" && o.permissionTool.trim()) {
+      extra.push("--permission-prompt-tool", o.permissionTool.trim());
+    }
     return [
       "-p",
       "--input-format",
@@ -383,6 +422,7 @@ function invocationFor(agent, opts) {
       "--verbose",
       "--include-partial-messages",
       "--replay-user-messages",
+      ...(forkFrom ? ["--resume", forkFrom, "--fork-session"] : []),
       ...extra,
     ];
   }
@@ -396,6 +436,11 @@ function invocationFor(agent, opts) {
     return ["run", "--format", "json", ...extra];
   }
   // codex. The trailing `-` must stay last: it is the positional PROMPT arg.
+  //
+  // `fork` is a SUBCOMMAND and takes the session id as its first positional,
+  // so it goes immediately after `exec` — before the flags and before the `-`,
+  // which is still the prompt and still last.
+  if (forkFrom) return ["exec", "fork", forkFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
   return ["exec", "--skip-git-repo-check", "--json", ...extra, "-"];
 }
 

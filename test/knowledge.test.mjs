@@ -109,14 +109,6 @@ test("collapsed-row panel bodies carry flex: none on their children", () => {
   );
 });
 
-// The mermaid SVG is fitted to its card. The emitted SVG is ~932px wide at
-// its natural size and hung out of both sides of the transcript column with
-// the end nodes clipped.
-test("the mermaid SVG is constrained to its card's width", () => {
-  const src = read("components", "mermaid.tsx");
-  assert.match(src, /\[&>svg\]:h-auto \[&>svg\]:max-w-full/);
-});
-
 // Nothing offers to forget a memory. runspec.tsx renders MemoryChips with no
 // onForget, and desktop/main.js's local:memories handler contains no
 // delete/unlink/rm call — it only reads. Comments are stripped before

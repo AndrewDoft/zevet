@@ -3,7 +3,7 @@
 import type { ComponentProps } from "react";
 import { KeyRoundIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { field, inkButton, mono, paper } from "./surfaces";
+import { field, mono, paper } from "./surfaces";
 
 export type GrantScope = "session" | "always" | "denied";
 
@@ -82,17 +82,7 @@ export function PermissionGrant({
                 onClick={() => onGrant("session")}
                 className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
               >
-                This session
-              </button>
-              <button
-                type="button"
-                onClick={() => onGrant("always")}
-                className={cn(
-                  inkButton,
-                  "flex h-8 items-center rounded-full px-3 text-xs font-medium",
-                )}
-              >
-                Always
+                Allow once
               </button>
             </>
           ) : (
@@ -116,7 +106,7 @@ export function PermissionGrant({
               "fade-in animate-in text-foreground/55 rounded-full px-2.5 py-1.5 duration-300",
             )}
           >
-            {scope === "denied" ? "denied" : `granted · ${scope}`}
+            {scope === "denied" ? "denied" : "allowed once"}
           </span>
         )}
       </div>

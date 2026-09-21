@@ -16,10 +16,11 @@ import {
 import { ContextDisplay, type TokenUsage } from "./assistant-ui/elements/context-display";
 import { selectActiveConsole, useBoard } from "../lib/board";
 
-/** Same 200k window runmeters.tsx bars context against — the agents do not
- *  report their own limit, so this is the smallest common window rather than
- *  an invented per-model number. Not exported from runmeters.tsx, duplicated
- *  here per house style (see moreviews.tsx's reader helpers). */
+/** Same fallback window runmeters.tsx bars context against, for a console
+ *  that hasn't reported its real one (ConsoleUsage.window, lib/types.ts) —
+ *  the smallest common window rather than an invented per-model number. Not
+ *  exported from runmeters.tsx, duplicated here per house style (see
+ *  moreviews.tsx's reader helpers). */
 const CONTEXT_LIMIT = 200_000;
 
 /* ---------------------------------------------------------------------------
@@ -170,7 +171,7 @@ export function ContextGauge({
   return (
     <ContextDisplay.Bar
       usage={usage}
-      modelContextWindow={CONTEXT_LIMIT}
+      modelContextWindow={active.usage.window ?? CONTEXT_LIMIT}
       resetKey={String(active.key)}
       side={side}
       className={className}

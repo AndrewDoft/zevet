@@ -14,6 +14,8 @@ import { Checkpoints, Schedules } from "./repoviews";
 import { CommitActivity, RepoTimeline } from "./historyviews";
 import { Memories } from "./runspec";
 import { IndexSearch } from "./search";
+import { Readiness } from "./readiness";
+import { AgentSettings } from "./agentsettings";
 import { agoText, hhmm, verbFor } from "../lib/text";
 
 function CollideBars() {
@@ -140,6 +142,12 @@ export function DetailPane({ blanked }: { blanked?: boolean }) {
           <CommitActivity />
           <Schedules />
           <Memories />
+          {/* Per-repo, like the schedules above it: standing instructions for
+              an agent started here, and which optional capabilities it gets. */}
+          <AgentSettings />
+          {/* Last, because it is about the machine rather than the repo, and
+              because on a machine that is set up it says the least. */}
+          <Readiness />
         </div>
       </div>
     );

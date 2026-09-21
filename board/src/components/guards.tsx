@@ -56,11 +56,15 @@ export function PostureNotice() {
 }
 
 /* ---------------------------------------------------------------------------
- * QuotaNotice — elements/quota-banner.tsx.
+ * QuotaNotice MOVED, and the reason it was not here is worth keeping.
  *
- * NOT BUILT. See the report for why: QuotaBanner's `used`, `limit`, `unit`
- * and `resetsIn` are all REQUIRED props, and nothing zevet has ever reports
- * them for Anthropic's actual 5h/7d usage limits.
+ * It was refused from this file because QuotaBanner's `used`, `limit`, `unit`
+ * and `resetsIn` are all required and nothing zevet had reported Anthropic's
+ * real 5h/7d windows. That was true. Measured again 2026-09-21 against claude
+ * 2.1.278, the headless stream carries a `rate_limit_event` with both windows
+ * and their reset times, so the panel is real and lives in components/quota.tsx.
+ *
+ * The refusal was right; what changed was the CLI, not the standard.
  * ------------------------------------------------------------------------- */
 
 /* ---------------------------------------------------------------------------

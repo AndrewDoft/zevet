@@ -42,40 +42,20 @@ const ELEMENTS = path.join(SRC, "components", "assistant-ui", "elements");
  * ------------------------------------------------------------------------- */
 const UNRENDERED = {
   /* --- no data ---------------------------------------------------------- */
-  "computer-use.tsx":
-    "no data: the element wants a screenshot and click coordinates on it. None of the three CLIs does computer use, so there is nothing to record.",
+  "approval-card.tsx":
+    "not the shape: it models ONE command awaiting approval — one state, one command string, one button row, with nowhere to put a second. zevet's permits arrive as a queue, so permission-grant shows the oldest and permits.tsx counts the rest. Rendering this card N times would just be that panel again, duplicated.",
+  "elicitation-form.tsx":
+    "no data: MCP elicitation, where a server asks the person a question mid-run. zevet now HAS an MCP server, so this is the closest of the unbuilt ones — what is missing is a reason for that server to ask anything. Its four tools take coordinates and text from the agent, not from the person. The day one of them needs an answer, the form is ready and the loopback gate already carries questions to the board.",
   "image-generation.tsx":
     "no data: no agent CLI here generates images. Reading a PNG off disk is not generating one, and the card says 'generating'.",
   "map-answer.tsx":
     "no data: pins need coordinates. Nothing zevet records is a place.",
-  "score-breakdown.tsx":
-    "no data: weighted criteria with scores. zevet scores nothing — the model catalogue's filter is pass/fail per rule, and dressing that as weights would invent the weights.",
-  "approval-card.tsx":
-    "no data: the agents run headless with a posture fixed at launch. There is no prompt to approve — the posture IS the answer, before the run starts.",
-  "permission-grant.tsx":
-    "no data: same. A grant dialog implies the run is waiting on it; none of these runs ever is.",
   "reviewable-diff.tsx":
     "no data: it offers accept/reject per hunk. zevet does not apply the agent's edits — the agent writes files itself — so both buttons would be decorations.",
-  "edit-message.tsx":
-    "no data: editing a past prompt means re-running from that point. No CLI here can rewind a session, so the edit could only be cosmetic.",
-  "regenerate-menu.tsx":
-    "no data: same rewind problem. Re-asking is sending a new prompt, which the composer already does honestly.",
-  "quota-banner.tsx":
-    "no data: used, limit, unit and resetsIn are all required and none of them is reported. desktop/status-sources.js says it outright — a headless agent's stream-json does not carry the 5h/7d numbers. The only real signal is a free-text rate-limit error with no number and no reset time in it.",
-  "settings-panel.tsx":
-    "no data: it requires a system prompt and a temperature. zevet sets neither — the CLIs take a model, a posture and a reasoning effort, and those are on the launcher where the choice is actually made.",
-  "message-branches.tsx":
-    "no data: it steps through variants of one message. A CLI session is one line of history — there is no second version of an answer to step to.",
-  "confidence-marker.tsx":
-    "no data: it underlines claims as grounded, inferred or uncertain. No agent here reports its own confidence, and assigning one by guessing would be the most misleading thing on the board.",
   "feedback-dialog.tsx":
     "no data: thumbs up or down, sent where? zevet has no feedback endpoint and no model provider to send one to. A submit button with nowhere to submit is the ToolError Retry mistake again.",
-  "elicitation-form.tsx":
-    "no data: MCP elicitation, where a server asks the person a question mid-run. The agents run headless with stdin closed or carrying prompts, so no elicitation ever reaches the board. If a CLI starts announcing them, this becomes buildable — the form itself is fine.",
   "voice-conversation.tsx":
     "no data: a live two-way voice session with turn-taking. zevet's voice is Web Speech dictation in and, with read-aloud, speech out — neither is a connected session, and drawing one would claim a channel that does not exist.",
-  "mermaid-diagram.tsx":
-    "superseded: statically importing it took board.js from 1.27 MB to 2.81 MB on a route the hub serves with no-store. components/mermaid.tsx renders the same diagrams from hub/public/mermaid.js, fetched only when a ```mermaid block actually appears.",
 
   /* --- not the shape ---------------------------------------------------- */
   "launcher-bubble.tsx":
@@ -159,8 +139,6 @@ const UNRENDERED = {
     "runtime-bound: it picks a model out of the runtime's model list. zevet's models come from three CLIs and a generated free-model catalogue, so model-choice.tsx drives the plain model-selector with those.",
   "context-display.aui.tsx":
     "runtime-bound: reads usage off the runtime. zevet's usage is recorded per console from each agent's own payloads, so mapviews.tsx drives the plain one with those.",
-  "mermaid-diagram.aui.tsx":
-    "runtime-bound: renders mermaid out of a message part. zevet renders it out of the markdown code block it actually arrives in — see components/highlight.tsx.",
   "shiki-highlighter.aui.tsx":
     "superseded: a third highlighting engine, bound to the runtime. See syntax-highlighter above.",
   "mcp-config.aui.tsx":

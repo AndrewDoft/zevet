@@ -124,7 +124,7 @@ coding have only ever been exercised with one participant on one machine.
 
 ---
 
-## INSUF-005 — codex's `exec --json` vocabulary has never been observed here — **OPEN**
+## INSUF-005 — codex's `exec --json` vocabulary has never been observed here — **CLOSED 2026-09-21**
 
 **Blast radius: MEDIUM — a codex user sees a degraded transcript, not a broken board.**
 
@@ -148,6 +148,36 @@ recognise as a `[codex: <type>]` line rather than dropping it. So a wrong table
 costs fidelity — a command shows as a line instead of a tool card — and never
 costs the event itself. The transcript still moves, and the real event names
 appear in it, which is the measurement.
+
+### How it closed
+
+codex WAS installed on this machine all along — at
+`%LOCALAPPDATA%/OpenAI/Codex/bin/<hash>/codex.exe`, which is not on the PATH,
+which is why `command -v codex` said nothing and why this note said the machine
+did not have one. zevet's own `client/detect.mjs` finds it (it globs that
+directory on purpose) and reported it installed and signed in the whole time.
+
+Two turns were captured 2026-09-21 against codex-cli 0.155.0-alpha.2.6: a
+trivial reply, and one that wrote a file and ran a command. The table in
+`transcript.mjs` was mostly right, and wrong in three ways that the capture
+found:
+
+1. **`error` arrives as an ITEM, not a top-level event**, and is not
+   necessarily fatal — the captured one was a mid-turn notice about skill
+   descriptions being shortened, with the turn completing normally. The table
+   fell through it to `return state`, which DROPPED it silently. That is the
+   one failure mode this whole file is organised around, and it was sitting in
+   the branch written to avoid it.
+2. **`file_change` carries `changes[].path`**, and passing the array straight
+   through as `args` left the Edit card with no file name on it.
+3. **usage says `cached_input_tokens`**, not claude's
+   `cache_read_input_tokens`, and it is a SUBSET of `input_tokens` rather than
+   a sibling of it. `usageOf` in board.ts matched neither spelling, so every
+   codex turn read as a 0% cache hit — wrong, and wrong in the flattering
+   direction. Adding them would have over-counted the window by 59%.
+
+The full observed vocabulary is now written into the header comment of
+`fromCodex`, with the note that it is a measurement and the date it was taken.
 
 **Smallest action that unblocks it.** On a machine with codex signed in: start a
 codex console from the board, run one turn, and read the `[codex: …]` lines. Each

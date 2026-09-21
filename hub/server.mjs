@@ -190,10 +190,6 @@ const PUBLIC_FILES = {
   "board.js": "text/javascript",
   "board.js.map": "application/json",
   "board.css": "text/css",
-  // beautiful-mermaid, alone. Same committed-side-bundle contract as
-  // editor.js — built by board/build.mjs's second vite config, fetched by
-  // board/src/components/mermaid.tsx only when a ```mermaid block appears.
-  "mermaid.js": "text/javascript",
 };
 
 /**

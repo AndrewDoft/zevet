@@ -70,7 +70,7 @@ export const ITEMS = [
   "elements-diagram", "elements-flow-graph", "elements-math-block",
   "elements-spec-sheet", "elements-comparison-card", "elements-score-breakdown",
   // 0.2.16 — renderers, primitives and the rest of the thread surfaces.
-  "syntax-highlighter", "shiki-highlighter", "mermaid-diagram", "generative-ui",
+  "syntax-highlighter", "shiki-highlighter", "generative-ui",
   "logos", "heat-graph", "assistant-modal", "assistant-sidebar",
   "threadlist-sidebar", "voice", "context-display", "mcp-config", "quote",
   "composer-trigger-popover", "directive-text", "elements-chat-panel",
@@ -185,6 +185,56 @@ if (fixed) console.log(`repaired ${fixed} file(s) whose imports disagreed with t
  * rewrites the file. */
 const COPY = [
   {
+    file: "components/assistant-ui/elements/permission-grant.tsx",
+    // ⚠️ TWO BUTTONS PROMISING A STANDING GRANT zevet does not have. The
+    // element offers "This session" and "Always", and nothing here records a
+    // grant of any duration — every request is asked, every time. So "Always"
+    // would silently ask again on the next call, and "This session" names a
+    // scope that does not exist. Deleting the one and renaming the other
+    // leaves exactly what is true: allow this, or deny it.
+    //
+    // Dropping "Always" also fixes the emphasis. It was the only filled
+    // button, so the loudest thing on a card asking to click somebody's
+    // desktop was the most permissive answer.
+    from: `              <button
+                type="button"
+                onClick={() => onGrant("session")}
+                className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
+              >
+                This session
+              </button>
+              <button
+                type="button"
+                onClick={() => onGrant("always")}
+                className={cn(
+                  inkButton,
+                  "flex h-8 items-center rounded-full px-3 text-xs font-medium",
+                )}
+              >
+                Always
+              </button>`,
+    to: `              <button
+                type="button"
+                onClick={() => onGrant("session")}
+                className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
+              >
+                Allow once
+              </button>`,
+  },
+  {
+    file: "components/assistant-ui/elements/permission-grant.tsx",
+    // And the receipt afterwards said "granted · session" for the same reason.
+    from: '{scope === "denied" ? "denied" : `granted · ${scope}`}',
+    to: '{scope === "denied" ? "denied" : "allowed once"}',
+  },
+  {
+    file: "components/assistant-ui/elements/permission-grant.tsx",
+    // `inkButton` was only on the deleted "Always" button, and tsc fails the
+    // build on an unused import. Removing the button has to remove it too.
+    from: 'import { field, inkButton, mono, paper } from "./surfaces";',
+    to: 'import { field, mono, paper } from "./surfaces";',
+  },
+  {
     file: "components/assistant-ui/elements/inline-citation.tsx",
     // The element ships as a DEMO: a hardcoded sentence about optimistic
     // updates, with exactly two citation slots baked into it. Its props say it
@@ -284,6 +334,73 @@ const COPY = [
     file: "components/assistant-ui/elements/document-reference.tsx",
     from: "p. {anchor.page}",
     to: "L{anchor.page}",
+  },
+  {
+    file: "components/assistant-ui/elements/settings-panel.tsx",
+    // `--append-system-prompt` is claude's flag; codex and opencode have no
+    // equivalent (desktop/agent-console.js's invocationFor only ever adds it
+    // for agent === "claude"). The registry's label doesn't say that, which
+    // reads as "applies to whichever agent you're running" — false two-thirds
+    // of the time. Said plainly instead of implied.
+    from: "        <span className={cn(mono, \"text-foreground/30\")}>system prompt</span>",
+    to: "        <span className={cn(mono, \"text-foreground/30\")}>system prompt · claude only</span>",
+  },
+  {
+    file: "components/assistant-ui/elements/settings-panel.tsx",
+    // None of zevet's three CLIs takes a temperature: not claude, not codex,
+    // not opencode. The registry's panel requires the prop and renders a
+    // slider bound to it unconditionally, so a caller with nothing to put
+    // there was left inventing a number nothing reads. Made optional instead,
+    // so `AgentSettings` (components/agentsettings.tsx) can leave it out and
+    // the control simply does not render — see the next entry for the render
+    // side of the same fix.
+    from: "  temperature: number;",
+    to: "  temperature?: number;",
+  },
+  {
+    file: "components/assistant-ui/elements/settings-panel.tsx",
+    from: `      <div className="flex flex-col gap-1.5">
+        <span className="flex items-baseline justify-between">
+          <span className={cn(mono, "text-foreground/30")}>temperature</span>
+          <span className={cn(mono, "text-foreground/55 tabular-nums")}>
+            {clamp(temperature, 0, 2).toFixed(1)}
+          </span>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={2}
+          step={0.1}
+          value={clamp(temperature, 0, 2)}
+          aria-label="Temperature"
+          onChange={(event) =>
+            onTemperatureChange?.(Number(event.target.value))
+          }
+          className="accent-foreground/80 h-1 w-full cursor-pointer"
+        />
+      </div>`,
+    to: `      {temperature !== undefined && (
+        <div className="flex flex-col gap-1.5">
+          <span className="flex items-baseline justify-between">
+            <span className={cn(mono, "text-foreground/30")}>temperature</span>
+            <span className={cn(mono, "text-foreground/55 tabular-nums")}>
+              {clamp(temperature, 0, 2).toFixed(1)}
+            </span>
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={2}
+            step={0.1}
+            value={clamp(temperature, 0, 2)}
+            aria-label="Temperature"
+            onChange={(event) =>
+              onTemperatureChange?.(Number(event.target.value))
+            }
+            className="accent-foreground/80 h-1 w-full cursor-pointer"
+          />
+        </div>
+      )}`,
   },
   {
     file: "components/assistant-ui/elements/checkpoint-history.tsx",

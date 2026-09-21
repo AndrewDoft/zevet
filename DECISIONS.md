@@ -357,3 +357,63 @@ OpenRouter model with no provider-specific reporting code.
 --remove` does it; `uninstall.mjs` does it everywhere) and opencode is
 unwatched. Nothing is written outside the wired repo — no global config, no
 trust records.
+
+---
+
+## D-009 — zevet ships its own MCP server, so an agent can see the screen, and every action is gated on a person
+
+**Status.** Built, off by default, per repo.
+
+**What it is.** `desktop/zevet-mcp.js` is a stdio MCP server that zevet hands
+to claude with `--mcp-config` (a real flag, measured on 2.1.278). It exposes
+`screenshot`, `click`, `type_text` and `press_key`, implemented by
+`desktop/computer.js` through PowerShell on Windows and `osascript` on macOS.
+Linux is refused rather than guessed at: no screenshot tool is reliably
+present across distributions and display servers, and picking one that is
+usually absent is a capability that silently does nothing.
+
+zevet also passes `--permission-prompt-tool`, so claude asks THAT server before
+any tool it would otherwise prompt about — not only the four above.
+
+**Why it came up.** Andrew asked for computer use by name. It had been refused
+twice, on the honest grounds that none of the three CLIs does computer use and
+the element needs a screenshot and click coordinates on it. That reasoning was
+about the agents. It stopped being true the moment zevet could BE the provider:
+the CLI does not need the capability if the thing spawning it supplies one.
+
+**The guard, which is the actual design.** In order, because any one of them
+failing open would be enough to lose somebody's desktop:
+
+1. **Off by default, per repo, by explicit choice.** `agentSettingsFor`
+   defaults `computerUse` to false, and every unreadable file, missing key and
+   hand-mangled value resolves there too.
+2. **The server acts on nothing without a permit.** Every tool call POSTs to a
+   loopback server first and obeys the answer. With no `ZEVET_MCP_URL` /
+   `ZEVET_MCP_TOKEN` in its environment it refuses everything — a stray copy of
+   that file is not a remote control for anybody's machine.
+3. **The loopback server is loopback.** Bound to 127.0.0.1, a per-run bearer
+   token, `Origin`/`Host` checked, and **it denies on timeout**. A question
+   nobody answers is a no.
+4. **A person answers.** The request becomes a card in the board and the agent
+   blocks on it, which is what `--permission-prompt-tool` buys.
+
+**Alternatives.**
+
+1. *A native input module (robotjs / nut.js).* Faster and cross-platform, and
+   it puts a compiled binary in the installer for both platforms. The whole
+   capability is a few hundred bytes of PowerShell; a native dependency is a
+   build, signing and update problem for the rest of the app's life. Rejected.
+2. *Driving only zevet's own window with `webContents.sendInputEvent`.* Safe,
+   and useless: the point is the machine, not the app.
+3. *No permission gate, relying on the posture.* The posture is chosen once, at
+   launch, for the whole run. "Allowed to edit files" and "allowed to click
+   anything on my screen" are not the same grant and must not be one choice.
+
+**What is deliberately NOT built.** No standing grants — nothing records "always
+allow", so every action is asked. That is a real cost in a long run, and it is
+the right cost: the alternative is a checkbox that hands over the machine.
+
+**Reversibility.** High. The switch is one boolean per repo; turning it off
+means no MCP config is written and the agent is spawned exactly as before.
+Deleting `zevet-mcp.js` disables it everywhere, and nothing else in the app
+requires it.
