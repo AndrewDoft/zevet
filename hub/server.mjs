@@ -11,11 +11,12 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { randomUUID, timingSafeEqual, createHash } from "node:crypto";
+import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Accounts, defaultAccountsFile, deriveAuthToken } from "./accounts.mjs";
 import { deviceStart, devicePoll, githubUser } from "./github-auth.mjs";
+import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -41,6 +42,32 @@ const PORT = Number(process.env.PORT || 8787);
 const GITHUB_CLIENT_ID = process.env.ZEVET_GITHUB_CLIENT_ID || "";
 const GITHUB_OWNER = process.env.ZEVET_GITHUB_OWNER || "";
 
+/* ── Google Workspace sign-in ────────────────────────────────────────────────
+ *
+ * The other door, and it is shaped differently on purpose: GitHub admits people
+ * from a LIST this hub keeps, Google admits anyone whose account is
+ * administered by `ZEVET_GOOGLE_DOMAIN`. That hands "who works here" to the
+ * Workspace admin, which is where that question is actually answered and kept
+ * up to date — somebody who leaves loses their Google account and stops being
+ * able to sign in, with nobody here having to remember anything.
+ *
+ * ⚠️ `ZEVET_GOOGLE_CLIENT_SECRET` IS A REAL SECRET, unlike its GitHub
+ * counterpart. It lives in `/srv/zevet/.env` at mode 600 and nowhere else; it
+ * is never served, never logged and never sent to a client.
+ *
+ * ⚠️ `ZEVET_GOOGLE_REDIRECT` MUST BE BYTE-IDENTICAL to the Authorised redirect
+ * URI on the OAuth client. Google compares the strings — a trailing slash, http
+ * for https, or a different host is `redirect_uri_mismatch` and nothing else.
+ * There is no default, because a wrong guess here fails at the END of the flow,
+ * after the person has already picked an account.
+ */
+const GOOGLE_CLIENT_ID = process.env.ZEVET_GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_SECRET = process.env.ZEVET_GOOGLE_CLIENT_SECRET || "";
+const GOOGLE_REDIRECT = process.env.ZEVET_GOOGLE_REDIRECT || "";
+const GOOGLE_DOMAIN = process.env.ZEVET_GOOGLE_DOMAIN || "";
+const GOOGLE_OWNER = process.env.ZEVET_GOOGLE_OWNER || "";
+const GOOGLE_ON = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REDIRECT);
+
 /**
  * ⚠️ A HUB WITH NO GITHUB APP KEEPS NO STATE ON DISK, exactly as before this
  * existed. `defaultAccountsFile` is only reached when there is something to
@@ -49,7 +76,7 @@ const GITHUB_OWNER = process.env.ZEVET_GITHUB_OWNER || "";
  * hubs with a plain `ZEVET_TOKEN`, would each write an account store into the
  * tree and then share it with the next run.
  */
-const ACCOUNTS_FILE = process.env.ZEVET_ACCOUNTS || (GITHUB_CLIENT_ID ? defaultAccountsFile(HERE) : null);
+const ACCOUNTS_FILE = process.env.ZEVET_ACCOUNTS || (GITHUB_CLIENT_ID || GOOGLE_CLIENT_ID ? defaultAccountsFile(HERE) : null);
 
 const accounts = new Accounts({ file: ACCOUNTS_FILE, secret: process.env.ZEVET_SECRET || "" });
 
@@ -105,9 +132,9 @@ const WRITING_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Up
  * good credential that NOBODY ON EARTH KNOWS, listening on a public port,
  * reporting itself healthy. That is worse than not starting, and it is
  * indistinguishable from working until the first teammate tries to connect. */
-if (!ENV_TOKEN && !process.env.ZEVET_SECRET && !GITHUB_CLIENT_ID) {
+if (!ENV_TOKEN && !process.env.ZEVET_SECRET && !GITHUB_CLIENT_ID && !GOOGLE_CLIENT_ID) {
   console.error("zevet: refusing to start with no way for anyone to authenticate.");
-  console.error("      Set ZEVET_GITHUB_CLIENT_ID for GitHub sign-in, or ZEVET_SECRET (or ZEVET_TOKEN) for the shared credential.");
+  console.error("      Set ZEVET_GITHUB_CLIENT_ID or ZEVET_GOOGLE_CLIENT_ID for sign-in, or ZEVET_SECRET (or ZEVET_TOKEN) for the shared credential.");
   process.exit(1);
 }
 
@@ -116,10 +143,32 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-if (!GITHUB_CLIENT_ID) {
-  console.warn("zevet: ZEVET_GITHUB_CLIENT_ID is not set — GitHub sign-in is off and the shared secret is the only way in.");
+/* ⚠️ A HALF-CONFIGURED GOOGLE CLIENT IS A REFUSAL, NOT A WARNING. The missing
+ * piece does not surface until the very end of the flow — after the person has
+ * opened a browser, picked an account and consented — and it surfaces there as
+ * `redirect_uri_mismatch` or a blank 503, neither of which names the env var
+ * that is absent. Saying so at boot is the only place it can be said usefully. */
+if (GOOGLE_CLIENT_ID && !GOOGLE_ON) {
+  const missing = [
+    !GOOGLE_CLIENT_SECRET && "ZEVET_GOOGLE_CLIENT_SECRET",
+    !GOOGLE_REDIRECT && "ZEVET_GOOGLE_REDIRECT",
+  ].filter(Boolean);
+  console.error(`zevet: ZEVET_GOOGLE_CLIENT_ID is set but ${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} not.`);
+  console.error("      Google's web flow needs all three. Refusing to start rather than fail at the end of somebody's sign-in.");
+  process.exit(1);
+}
+
+if (GOOGLE_ON && !GOOGLE_DOMAIN) {
+  // Not fatal — a hub CAN run Google sign-in off the allowlist alone — but it
+  // is almost never what was meant, and the symptom is a teammate being
+  // refused with "not on this hub's list" after a flawless sign-in.
+  console.warn("zevet: ZEVET_GOOGLE_DOMAIN is not set — Google sign-in admits only people already on the list, not a whole Workspace.");
+}
+
+if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
+  console.warn("zevet: no sign-in provider is configured — the shared secret is the only way in.");
 } else if (!accounts.owner) {
-  console.warn("zevet: nobody has claimed this hub yet. The FIRST GitHub sign-in becomes the owner.");
+  console.warn("zevet: nobody has claimed this hub yet. The FIRST sign-in becomes the owner.");
 }
 
 const CLIENT_DIR = path.join(HERE, "..", "client");
@@ -590,6 +639,98 @@ async function readBody(req, limit = 256 * 1024) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/* ── Google sign-ins in flight ───────────────────────────────────────────────
+ *
+ * Google's flow lands in a BROWSER, and the thing that needs the session is the
+ * desktop app. Something has to carry it across, and this map is it: `start`
+ * mints a pairing code, the browser comes back to `callback` carrying that code
+ * as the OAuth `state`, and the app claims the result from `finish`.
+ *
+ * The pairing code doing double duty as `state` is what makes this flow
+ * CSRF-proof without a cookie: it is 32 bytes this process minted for one
+ * attempt, so a callback carrying a state the hub does not hold is a callback
+ * the hub never started, and it is refused before anything is exchanged.
+ *
+ * ⚠️ IN MEMORY, NEVER ON DISK. A claimed-but-unwritten result holds the master
+ * secret for the few seconds between the browser landing and the app polling.
+ * Persisting it would put that secret in a second file for no reason, and a hub
+ * restart losing a sign-in in flight costs one button press.
+ *
+ * ⚠️ SINGLE USE, AND THAT MEANS TWICE OVER. `finish` deletes the entry it
+ * answers, so a leaked pairing code is worth nothing once the app has claimed
+ * it — and `callback` marks the entry `tried` the first time it attempts an
+ * exchange, so a code cannot be redeemed twice either.
+ *
+ * The second half is not symmetry for its own sake. Without it, anyone holding
+ * one valid state could hit `/auth/google/callback?state=…&code=garbage` over
+ * and over, and every call made this process open a real TLS connection to
+ * oauth2.googleapis.com and wait up to ten seconds for it. That is an
+ * unauthenticated caller spending OUR outbound requests, amplified once per
+ * pair code they hold.
+ */
+const GOOGLE_PAIR_TTL_MS = 10 * 60 * 1000;
+/** A ceiling, so an open endpoint that allocates cannot be made to allocate
+ *  forever. 200 concurrent sign-ins is far past any real team. */
+const GOOGLE_PAIRS_MAX = 200;
+const googlePairs = new Map(); // pairCode -> { at, result, error, tried }
+
+/**
+ * How many sign-ins one address may have in flight.
+ *
+ * ⚠️ THE FAILURE LIMITER DOES NOT COVER THIS ROUTE, ON PURPOSE. `rateLimited`
+ * counts AUTH FAILURES and nothing else — see `refuse` above for why that is
+ * right, and why gating every request on it would lock a whole office out over
+ * one typo. But `/auth/google/start` never fails authentication: it succeeds,
+ * and each success ALLOCATES A ROW IN A SHARED TABLE. So a clean address was
+ * never throttled there, and one anonymous caller could mint 200 pair codes in
+ * a burst, fill `googlePairs`, and hand every real teammate
+ * "too many sign-ins in flight" for the next ten minutes — refillable
+ * indefinitely as entries expire. A global ceiling is not a defence when one
+ * caller can occupy all of it.
+ *
+ * This is a COST budget rather than a failure budget, which is why it is a
+ * separate counter: eight concurrent sign-ins is far past anything a person
+ * does and nowhere near what filling the table needs.
+ */
+const GOOGLE_STARTS_PER_IP = 8;
+
+/** How many live pairs this address is currently holding. Counted rather than
+ *  tracked, so an expired or claimed pair frees the budget with no bookkeeping
+ *  that could itself drift. */
+function googleStartsBy(ip) {
+  let n = 0;
+  for (const p of googlePairs.values()) if (p.ip === ip) n += 1;
+  return n;
+}
+
+function sweepGooglePairs() {
+  const now = Date.now();
+  for (const [code, p] of googlePairs) if (now - p.at > GOOGLE_PAIR_TTL_MS) googlePairs.delete(code);
+}
+setInterval(sweepGooglePairs, 60 * 1000).unref();
+
+/** The one page on this hub a person reads with their eyes. Deliberately plain
+ *  text in a minimal document: it is shown in whatever browser Google redirected
+ *  to, it must never be cached, and it carries NOTHING — no token, no secret,
+ *  no name that was not already typed by the person reading it. */
+function googlePage(res, status, message) {
+  const body = `<!doctype html><meta charset="utf-8"><title>zevet</title>` +
+    `<style>body{font:16px/1.5 system-ui,sans-serif;margin:12vh auto;max-width:34rem;padding:0 1.5rem;color:#111}` +
+    `p{margin:0}</style><p>${escapeHtml(message)}</p>`;
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  res.end(body);
+}
+
+/** One row of the People list. Shared by `/auth/whoami` and `/auth/allow` so
+ *  the two cannot drift into describing the same person differently. */
+function person(a) {
+  return { login: a.display || a.login, provider: a.provider, owner: a.owner, pending: !a.id };
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
 
@@ -674,6 +815,150 @@ const server = createServer(async (req, res) => {
     });
   }
 
+  /* ── Signing in with Google ────────────────────────────────────────────────
+   *
+   * Three routes rather than GitHub's two, because the browser leaves and comes
+   * back: `start` (app asks where to send the browser), `callback` (Google
+   * sends the browser here), `finish` (app collects the session).
+   *
+   * ⚠️ ALL THREE ARE UNAUTHENTICATED, AND MUST BE — same reasoning as the
+   * GitHub pair above, and the same protection: none of them decides anything.
+   * `start` hands out a random code, `callback` believes nothing a caller sends
+   * (the identity comes from an id token this process fetched from Google
+   * itself), and `finish` returns only what `callback` already established.
+   */
+  if (url.pathname === "/auth/google/start" && req.method === "POST") {
+    if (!GOOGLE_ON) return json(res, 503, { error: "this hub has no Google sign-in configured" });
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+
+    sweepGooglePairs();
+    if (googlePairs.size >= GOOGLE_PAIRS_MAX) return json(res, 429, { error: "too many sign-ins in flight — try again in a minute" });
+    /* The per-address budget, checked BEFORE the global ceiling is reached, so
+       one caller cannot be the reason everyone else is refused. */
+    const ip = clientIp(req);
+    if (googleStartsBy(ip) >= GOOGLE_STARTS_PER_IP) {
+      return json(res, 429, { error: "too many sign-ins in flight from this address — finish one or wait" });
+    }
+
+    const pairCode = randomBytes(32).toString("hex");
+    googlePairs.set(pairCode, { at: Date.now(), ip, result: null, error: null, tried: false });
+    return json(res, 200, {
+      ok: true,
+      pairCode,
+      authUrl: authorizeUrl({ clientId: GOOGLE_CLIENT_ID, redirectUri: GOOGLE_REDIRECT, state: pairCode, domain: GOOGLE_DOMAIN }),
+      // Google has nothing to say about how fast to poll, unlike GitHub's
+      // device flow. Two seconds is the app waiting on a human in a browser.
+      interval: 2,
+      expiresIn: Math.floor(GOOGLE_PAIR_TTL_MS / 1000),
+      domain: GOOGLE_DOMAIN,
+    });
+  }
+
+  if (url.pathname === "/auth/google/callback" && req.method === "GET") {
+    if (!GOOGLE_ON) return googlePage(res, 503, "Google sign-in is not configured on this hub.");
+
+    const state = url.searchParams.get("state") || "";
+    const pair = googlePairs.get(state);
+    if (!pair) {
+      // Either expired, already used, or never minted here. All three read the
+      // same to the person and none of them is worth distinguishing for whoever
+      // is guessing.
+      authFailed(req, url);
+      return googlePage(res, 400, "That sign-in link has expired or was already used. Start again in zevet.");
+    }
+
+    /* ⚠️ ONE ATTEMPT. Marked before the exchange, not after, because the
+       point is to bound the OUTBOUND call — setting it afterwards would leave
+       the whole window between two concurrent requests unprotected. A person
+       whose exchange genuinely failed starts again from the app, which mints a
+       fresh code; that is one extra click for them and the end of the
+       amplification for everyone else. */
+    if (pair.tried) {
+      authFailed(req, url);
+      return googlePage(res, 400, "That sign-in link has already been used. Start again in zevet.");
+    }
+
+    const denied = url.searchParams.get("error");
+    if (denied) {
+      pair.error = denied === "access_denied" ? "the request was declined on Google" : `Google said: ${denied}`;
+      return googlePage(res, 200, "Sign-in was cancelled. You can close this tab.");
+    }
+
+    pair.tried = true;
+    const ex = await exchangeCode({
+      clientId: GOOGLE_CLIENT_ID,
+      clientSecret: GOOGLE_CLIENT_SECRET,
+      code: url.searchParams.get("code"),
+      redirectUri: GOOGLE_REDIRECT,
+    });
+    if (!ex.ok) {
+      pair.error = ex.error;
+      return googlePage(res, 502, ex.error);
+    }
+
+    /* ⚠️ THE IDENTITY COMES FROM HERE AND NOWHERE ELSE. Not from the query
+     * string, not from anything the browser carried — from an id token this
+     * process just fetched from Google over TLS. See google-auth.mjs for why
+     * that is also the reason its signature is not separately verified. */
+    const who = readIdToken(ex.idToken, { clientId: GOOGLE_CLIENT_ID, domain: GOOGLE_DOMAIN });
+    if (!who.ok) {
+      pair.error = who.error;
+      authFailed(req, url);
+      return googlePage(res, 403, who.error);
+    }
+
+    const may = accounts.mayEnter(who, { requiredOwner: GOOGLE_OWNER, domain: GOOGLE_DOMAIN });
+    if (!may.ok) {
+      pair.error = may.error;
+      authFailed(req, url);
+      return googlePage(res, 403, may.error);
+    }
+
+    const sess = accounts.signIn(who);
+    console.log(`zevet: ${sess.owner ? "OWNER " : ""}sign-in by ${sess.login}${may.byDomain ? ` (${GOOGLE_DOMAIN} Workspace)` : ""}`);
+
+    /* ⚠️ THIS HOLDS THE MASTER SECRET, in memory, until the app claims it or it
+     * expires. Same tradeoff as the GitHub finish route documents; the
+     * difference is only that it waits here for a few seconds first. It is not
+     * written to disk, not logged, and NOT PUT IN THIS PAGE — the browser that
+     * completes the sign-in never sees a credential. */
+    pair.result = { token: sess.token, secret: accounts.secret, login: sess.login, owner: sess.owner };
+    return googlePage(res, 200, `Signed in as ${sess.login}. You can close this tab and go back to zevet.`);
+  }
+
+  if (url.pathname === "/auth/google/finish" && req.method === "POST") {
+    if (!GOOGLE_ON) return json(res, 503, { error: "this hub has no Google sign-in configured" });
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+
+    const code = String((body && body.pairCode) || "");
+    const pair = googlePairs.get(code);
+    if (!pair || Date.now() - pair.at > GOOGLE_PAIR_TTL_MS) {
+      googlePairs.delete(code);
+      authFailed(req, url);
+      return json(res, 400, { error: "that sign-in expired — start again" });
+    }
+    if (pair.error) {
+      googlePairs.delete(code);
+      return json(res, 403, { error: pair.error });
+    }
+    // Still in the browser. A 200 with `pending`, for the same reason the
+    // GitHub route does it: the app polls this for minutes and a non-2xx would
+    // light up every error path it has.
+    if (!pair.result) return json(res, 200, { ok: true, pending: true });
+
+    // Single use. The result carries the master secret, so it is handed over
+    // exactly once and then is not in this process any more.
+    googlePairs.delete(code);
+    return json(res, 200, { ok: true, ...pair.result });
+  }
+
   /* Who am I, and who else is allowed? Session-gated like everything else. */
   if (url.pathname === "/auth/whoami") {
     const tok = tokenFrom(req, url);
@@ -688,7 +973,13 @@ const server = createServer(async (req, res) => {
       shared: !sess,
       owner: Boolean(sess && accounts.owner === sess.login),
       githubSignIn: Boolean(GITHUB_CLIENT_ID),
-      people: accounts.list().map((a) => ({ login: a.display || a.login, owner: a.owner, pending: !a.id })),
+      // Kept alongside `githubSignIn` rather than replacing it with a single
+      // `providers` list: a board cached before Google existed reads that exact
+      // field to decide whether to show its connect button, and it is served by
+      // this same hub on a slower refresh cycle than the hub itself.
+      googleSignIn: GOOGLE_ON,
+      googleDomain: GOOGLE_DOMAIN,
+      people: accounts.list().map(person),
     });
   }
 
@@ -727,7 +1018,7 @@ const server = createServer(async (req, res) => {
       return json(res, 403, {
         error: accounts.owner
           ? `only @${accounts.owner} can change this list`
-          : "nobody has claimed this hub yet — the first GitHub sign-in becomes its owner",
+          : "nobody has claimed this hub yet — the first sign-in becomes its owner",
       });
     }
     let body = null;
@@ -738,7 +1029,7 @@ const server = createServer(async (req, res) => {
     }
     const r = url.pathname === "/auth/allow" ? accounts.allow(body && body.login) : accounts.revoke(body && body.login);
     if (!r.ok) return json(res, 400, { error: r.error });
-    return json(res, 200, { ok: true, people: accounts.list().map((a) => ({ login: a.display || a.login, owner: a.owner, pending: !a.id })) });
+    return json(res, 200, { ok: true, people: accounts.list().map(person) });
   }
 
   if (url.pathname === "/healthz") {

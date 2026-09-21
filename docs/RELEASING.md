@@ -291,6 +291,61 @@ while 401-ing the whole team.
 The client id is not a secret. Device flow has none, which is exactly why a desktop app is
 allowed to use it.
 
+### Signing in with Google
+
+Unlike GitHub's device flow, Google's web flow needs a browser redirect to a fixed HTTPS
+callback — and only the hub has one. So the desktop app never talks to Google at all: it
+asks the hub to start a sign-in, opens the browser, and polls the hub for the result. The
+same shape as GitHub, one more route.
+
+⚠️ **This one has a real client secret**, which the GitHub device flow does not. It lives
+only in `/srv/zevet/.env`, mode 600, and never reaches the app or the browser.
+
+1. Google Cloud Console → **APIs & Services → Credentials → Create credentials → OAuth
+   client ID**, type **Web application**.
+2. Under **Authorized redirect URIs** add exactly, byte for byte:
+   `https://<hub-host>/auth/google/callback` — today that is
+   `https://34-74-69-129.sslip.io/auth/google/callback`.
+   ⚠️ A mismatch here does not fail until the very last step of a sign-in, as Google's
+   `redirect_uri_mismatch`. A trailing slash is a mismatch.
+3. Copy the **Client ID** and the **Client secret**.
+
+Then on the hub (see **Deploying the hub** above for how to reach the box):
+
+```
+sudo tee -a /srv/zevet/.env >/dev/null <<'ZEOF'
+ZEVET_GOOGLE_CLIENT_ID=<the client id>
+ZEVET_GOOGLE_CLIENT_SECRET=<the client secret>
+ZEVET_GOOGLE_REDIRECT=https://34-74-69-129.sslip.io/auth/google/callback
+ZEVET_GOOGLE_DOMAIN=<your Workspace domain, or leave the line out>
+ZEOF
+sudo chmod 600 /srv/zevet/.env
+sudo sh -c "cd /srv/masora && docker compose up -d --force-recreate zevet-hub"
+```
+
+⚠️ **`docker restart` will not do.** It does not re-read `env_file`; same trap as above.
+
+**`ZEVET_GOOGLE_DOMAIN` is a door, not a filter.** Anyone whose Google account carries that
+Workspace domain is admitted *without being invited* — that is the point of it, and it is
+why revoking somebody now writes them to a block list rather than only deleting the invite.
+Deleting alone would let the domain rule re-admit them on their next sign-in. Leave the
+variable unset and only invited accounts get in.
+
+`ZEVET_GOOGLE_OWNER=<login>` reserves first claim of the hub, exactly as
+`ZEVET_GITHUB_OWNER` does. The first successful sign-in by *either* provider becomes the
+owner if there is not one already.
+
+**A Google identity and a GitHub identity are different people to the hub**, even with the
+same name. Both records carry a `provider`, and matching requires provider *and* id —
+a GitHub numeric id and a Google `sub` are both strings of digits from unrelated
+namespaces, and treating them as comparable would be a way in. Invite a Google teammate by
+email address; invite a GitHub one by username. `accounts.allow()` tells them apart by the
+`@`.
+
+**Checking it works.** `curl -s https://<hub>/auth/whoami` reports `googleSignIn` once the
+client id is set; without it the sign-in routes answer 503 and the app says the hub has no
+Google sign-in configured, which is the honest answer rather than a broken button.
+
 ### Claiming the hub
 
 The **first** GitHub sign-in becomes the owner and can invite everyone else from
