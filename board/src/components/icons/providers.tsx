@@ -9,11 +9,11 @@
  * Source: github.com/homarr-labs/dashboard-icons (Apache License 2.0),
  * fetched 2026-09-20 and 2026-09-21. Marks covered: opencode, DeepSeek, Qwen,
  * Kimi (Moonshot AI), Mistral, MiniMax, Ollama, Meta, Nvidia, Google,
- * poolside, Cohere.
+ * poolside, Cohere, Zhipu.
  *
- * Cohere's is NOT from that set - dashboard-icons has no Cohere mark at any
- * spelling (checked live 2026-09-21), so Andrew supplied it from Cohere's own
- * brand assets.
+ * Cohere's and Zhipu's are NOT from that set - dashboard-icons has no Cohere
+ * mark at any spelling (checked live 2026-09-21), so Andrew supplied both from
+ * the labs' own brand assets.
  *
  * ONE FREE MODEL FAMILY STILL HAS NO MARK, deliberately: there is no Thinking
  * Machines icon anywhere upstream, so the `openrouter/thinkingmachines/
@@ -324,6 +324,25 @@ function CohereLogo(props: LogoProps) {
 }
 
 /* ---------------------------------------------------------------------------
+ * ZhipuLogo - the GLM models. Also not from dashboard-icons; supplied by
+ * Andrew from Zhipu's own brand assets.
+ *
+ * NOTE: no model in the CURRENT free list is Zhipu's. It is here because that
+ * list is regenerated weekly from what opencode and OpenRouter are actually
+ * giving away (scripts/sync-models.mjs), GLM has been on it before, and the
+ * cost of a mark that nothing renders today is one unused component - against
+ * a picker row that silently wears the wrong lab's logo the week it returns.
+ * ------------------------------------------------------------------------- */
+
+function ZhipuLogo(props: LogoProps) {
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" {...props}>
+      <path fill="#3859FF" fillRule="nonzero" d="M11.991 23.503a.24.24 0 00-.244.248.24.24 0 00.244.249.24.24 0 00.245-.249.24.24 0 00-.22-.247l-.025-.001zM9.671 5.365a1.697 1.697 0 011.099 2.132l-.071.172-.016.04-.018.054c-.07.16-.104.32-.104.498-.035.71.47 1.279 1.186 1.314h.366c1.309.053 2.338 1.173 2.286 2.523-.052 1.332-1.152 2.38-2.478 2.327h-.174c-.715.018-1.274.64-1.239 1.368 0 .124.018.23.053.337.209.373.54.658.96.8.75.23 1.517-.125 1.9-.782l.018-.035c.402-.64 1.17-.96 1.92-.711.854.284 1.378 1.226 1.099 2.167a1.661 1.661 0 01-2.077 1.102 1.711 1.711 0 01-.907-.711l-.017-.035c-.2-.323-.463-.58-.851-.711l-.056-.018a1.646 1.646 0 00-1.954.746 1.66 1.66 0 01-1.065.764 1.677 1.677 0 01-1.989-1.279c-.209-.906.332-1.83 1.257-2.043a1.51 1.51 0 01.296-.035h.018c.68-.071 1.151-.622 1.116-1.333a1.307 1.307 0 00-.227-.693 2.515 2.515 0 01-.366-1.403 2.39 2.39 0 01.366-1.208c.14-.195.21-.444.227-.693.018-.71-.506-1.261-1.186-1.332l-.07-.018a1.43 1.43 0 01-.299-.07l-.05-.019a1.7 1.7 0 01-1.047-2.114 1.68 1.68 0 012.094-1.101zm-5.575 10.11c.26-.264.639-.367.994-.27.355.096.633.379.728.74.095.362-.007.748-.267 1.013-.402.41-1.053.41-1.455 0a1.062 1.062 0 010-1.482zm14.845-.294c.359-.09.738.024.992.297.254.274.344.665.237 1.025-.107.36-.396.634-.756.718-.551.128-1.1-.22-1.23-.781a1.05 1.05 0 01.757-1.26zm-.064-4.39c.314.32.49.753.49 1.206 0 .452-.176.886-.49 1.206-.315.32-.74.5-1.185.5-.444 0-.87-.18-1.184-.5a1.727 1.727 0 010-2.412 1.654 1.654 0 012.369 0zm-11.243.163c.364.484.447 1.128.218 1.691a1.665 1.665 0 01-2.188.923c-.855-.36-1.26-1.358-.907-2.228a1.68 1.68 0 011.33-1.038c.593-.08 1.183.169 1.547.652zm11.545-4.221c.368 0 .708.2.892.524.184.324.184.724 0 1.048a1.026 1.026 0 01-.892.524c-.568 0-1.03-.47-1.03-1.048 0-.579.462-1.048 1.03-1.048zm-14.358 0c.368 0 .707.2.891.524.184.324.184.724 0 1.048a1.026 1.026 0 01-.891.524c-.569 0-1.03-.47-1.03-1.048 0-.579.461-1.048 1.03-1.048zm10.031-1.475c.925 0 1.675.764 1.675 1.706s-.75 1.705-1.675 1.705-1.674-.763-1.674-1.705c0-.942.75-1.706 1.674-1.706zm-2.626-.684c.362-.082.653-.356.761-.718a1.062 1.062 0 00-.238-1.028 1.017 1.017 0 00-.996-.294c-.547.14-.881.7-.752 1.257.13.558.675.907 1.225.783zm0 16.876c.359-.087.644-.36.75-.72a1.062 1.062 0 00-.237-1.019 1.018 1.018 0 00-.985-.301 1.037 1.037 0 00-.762.717c-.108.361-.017.754.239 1.028.245.263.606.377.953.305l.043-.01zM17.19 3.5a.631.631 0 00.628-.64c0-.355-.279-.64-.628-.64a.631.631 0 00-.628.64c0 .355.28.64.628.64zm-10.38 0a.631.631 0 00.628-.64c0-.355-.28-.64-.628-.64a.631.631 0 00-.628.64c0 .355.279.64.628.64zm-5.182 7.852a.631.631 0 00-.628.64c0 .354.28.639.628.639a.63.63 0 00.627-.606l.001-.034a.62.62 0 00-.628-.64zm5.182 9.13a.631.631 0 00-.628.64c0 .355.279.64.628.64a.631.631 0 00.628-.64c0-.355-.28-.64-.628-.64zm10.38.018a.631.631 0 00-.628.64c0 .355.28.64.628.64a.631.631 0 00.628-.64c0-.355-.279-.64-.628-.64zm5.182-9.148a.631.631 0 00-.628.64c0 .354.279.639.628.639a.631.631 0 00.628-.64c0-.355-.28-.64-.628-.64zm-.384-4.992a.24.24 0 00.244-.249.24.24 0 00-.244-.249.24.24 0 00-.244.249c0 .142.122.249.244.249zM11.991.497a.24.24 0 00.245-.248A.24.24 0 0011.99 0a.24.24 0 00-.244.249c0 .133.108.236.223.247l.021.001zM2.011 6.36a.24.24 0 00.245-.249.24.24 0 00-.244-.249.24.24 0 00-.244.249.24.24 0 00.244.249zm0 11.263a.24.24 0 00-.243.248.24.24 0 00.244.249.24.24 0 00.244-.249.252.252 0 00-.244-.248zm19.995-.018a.24.24 0 00-.245.248.24.24 0 00.245.25.24.24 0 00.244-.25.252.252 0 00-.244-.248z" />
+    </svg>
+  );
+}
+
+/* ---------------------------------------------------------------------------
  * providerFor — resolves a provider mark from either of the two spellings
  * zevet uses: an agent name ("opencode") or an opencode model id
  * ("openrouter/google/gemma-4-31b-it:free", "opencode/nemotron-3-ultra-free"
@@ -360,6 +379,11 @@ const VENDORS: Record<string, { Mark: (props: LogoProps) => ReactNode; name: str
   google: { Mark: GoogleLogo, name: "Google" },
   poolside: { Mark: PoolsideLogo, name: "poolside" },
   cohere: { Mark: CohereLogo, name: "Cohere" },
+  // Every spelling the two catalogues use for the same lab.
+  zhipu: { Mark: ZhipuLogo, name: "Zhipu" },
+  zhipuai: { Mark: ZhipuLogo, name: "Zhipu" },
+  "z-ai": { Mark: ZhipuLogo, name: "Zhipu" },
+  thudm: { Mark: ZhipuLogo, name: "Zhipu" },
 };
 
 /**
@@ -384,6 +408,7 @@ const FAMILIES: Record<string, string> = {
   nemotron: "nvidia",
   laguna: "poolside",
   gemma: "google",
+  glm: "zhipu",
 };
 
 /**
@@ -431,6 +456,7 @@ export {
   GoogleLogo,
   PoolsideLogo,
   CohereLogo,
+  ZhipuLogo,
   DeepSeekLogo,
   QwenLogo,
   KimiLogo,
