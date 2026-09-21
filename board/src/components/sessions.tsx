@@ -19,7 +19,7 @@
  * transcript on this machine; a list that opens on all of them is a list
  * nobody reads. "All" is one click away and is what the filter box is for.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { AgentLogo } from "./brand";
 import { mono } from "./assistant-ui/elements/surfaces";
@@ -128,7 +128,11 @@ export function SessionsPane() {
 
   if (!bridge.local || typeof bridge.local.sessions !== "function") return null;
 
-  const shown = sessions.list.filter((s) => sessionMatches(s, sessions.query));
+  // `sessionMatches` takes a bag of fields, not a SessionSummary — it is .mjs
+  // and is shared with the subagent rows, which have a different shape.
+  const shown = sessions.list.filter((s) =>
+    sessionMatches(s as unknown as Record<string, unknown>, sessions.query),
+  );
 
   return (
     <>
@@ -182,27 +186,74 @@ export function SessionsPane() {
  */
 export function SessionBanner() {
   const open = useBoard((st) => st.sessions.open);
+  const agents = useBoard((st) => st.sessions.agents);
+  const openAgent = useBoard((st) => st.sessions.openAgent);
+  const openSessionAgent = useBoard((st) => st.openSessionAgent);
   const truncated = useBoard((st) => st.sessions.openTruncated);
   const loading = useBoard((st) => st.sessions.openLoading);
   const closeSession = useBoard((st) => st.closeSession);
+  const [showAgents, setShowAgents] = useState(false);
   if (!open) return null;
 
   const where = sessionWhere(open);
   return (
-    <div className="session-banner">
-      <AgentLogo agent={open.source} className="size-3.5" />
-      <span className="session-banner-title">{sessionLabel(open)}</span>
-      <span className={cn(mono, "session-banner-meta")}>
-        {open.source}
-        {where ? ` · ${WHERE_LABEL[where] || where}` : ""}
-        {open.branch ? ` · ${open.branch}` : ""}
-        {open.version ? ` · ${open.version}` : ""}
-        {loading ? " · reading…" : ""}
-        {truncated ? " · earliest turns trimmed" : ""}
-      </span>
-      <button type="button" className="session-banner-close" onClick={closeSession}>
-        Back to live
-      </button>
-    </div>
+    <>
+      <div className="session-banner">
+        <AgentLogo agent={open.source} className="size-3.5" />
+        <span className="session-banner-title">
+          {openAgent ? openAgent.title : sessionLabel(open)}
+        </span>
+        <span className={cn(mono, "session-banner-meta")}>
+          {openAgent ? [openAgent.kind, openAgent.model].filter(Boolean).join(" · ") : open.source}
+          {!openAgent && where ? ` · ${WHERE_LABEL[where] || where}` : ""}
+          {!openAgent && open.branch ? ` · ${open.branch}` : ""}
+          {!openAgent && open.version ? ` · ${open.version}` : ""}
+          {loading ? " · reading…" : ""}
+          {truncated ? " · earliest turns trimmed" : ""}
+        </span>
+        {/* The subagents this session spawned. The count comes from a readdir
+            on the row; the names cost a file each and are fetched only when
+            the session is opened. Absent for codex, which records its
+            subagent activity inline in the parent rollout instead. */}
+        {open.children > 0 ? (
+          <button
+            type="button"
+            className="session-banner-close"
+            aria-expanded={showAgents}
+            onClick={() => setShowAgents((v) => !v)}
+          >
+            {open.children} agent{open.children === 1 ? "" : "s"}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="session-banner-close"
+          onClick={() => (openAgent ? openSessionAgent(null) : closeSession())}
+        >
+          {openAgent ? "Back to session" : "Back to live"}
+        </button>
+      </div>
+      {showAgents && agents.length ? (
+        <div className="session-agents">
+          {agents.map((a) => (
+            <button
+              type="button"
+              key={a.id}
+              className="session-agent-row"
+              data-active={String(openAgent?.id === a.id)}
+              onClick={() => {
+                setShowAgents(false);
+                openSessionAgent(a);
+              }}
+            >
+              <span className="session-agent-title">{a.title}</span>
+              <span className={cn(mono, "session-agent-meta")}>
+                {[a.kind, a.model].filter(Boolean).join(" · ")}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }

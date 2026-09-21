@@ -236,6 +236,32 @@ describe("desktop reader", () => {
     assert.equal(reader._fileFor("codex", "C--dev-GitHub-zevet", "abc"), null);
   });
 
+  test("a subagent handle is one segment too, and `subagents` is never the caller's", () => {
+    const slug = "C--dev-GitHub-zevet";
+    const id = "e8605c44-7714-4c03-9ef2-6a1672e304da";
+    const ok = reader._fileFor("claude", slug, id, "agent-a0e75d5ead52dc250");
+    assert.notEqual(ok, null);
+    // The path is BUILT, so the "subagents" directory cannot be redirected.
+    assert.equal(String(ok).split(/[\\/]/).at(-2), "subagents");
+    for (const child of ["../../x", "a/b", "..", "x\\y"]) {
+      assert.equal(reader._fileFor("claude", slug, id, child), null, child);
+      assert.equal(reader.read("claude", slug, id, child).ok, false, child);
+    }
+    // codex writes no per-subagent file; asking for one is a caller error.
+    assert.equal(reader._fileFor("codex", "2026/09/21", "rollout-x", "agent-1"), null);
+  });
+
+  test("the project filter ignores case, because Windows does", () => {
+    /* ⚠️ THIS IS THE BUG THIS TEST EXISTS FOR. Claude Code slugs the path it
+       was given, and on Windows one directory is reached under more than one
+       spelling — this machine's store holds both `C--dev-GitHub-zevet` and
+       `C--dev-Github-zevet` for one repo. A case-sensitive compare showed 10
+       of 45 sessions and looked exactly like a folder with fewer sessions. */
+    const a = reader.list({ cwd: "C:/dev/GitHub/zevet" }).sessions.length;
+    const b = reader.list({ cwd: "C:/dev/Github/zevet" }).sessions.length;
+    assert.equal(a, b);
+  });
+
   test("list answers on a machine with no session stores at all", () => {
     // Neither directory existing is not an error — it is a machine that has
     // never run either CLI, and the pane must render rather than throw.

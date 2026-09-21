@@ -314,7 +314,19 @@ function TodoUI(p: ToolProps) {
 }
 
 /* ---------------------------------------------------------------------------
- * Task — a subagent, which is its own agent worth watching.
+ * Subagents — an agent spawning and steering other agents.
+ *
+ * WARNING: THE TOOL IS CALLED `Agent`, AND THIS FILE DID NOT KNOW THAT.
+ * The registration below read ["Task", "task", "agent", "subagent"], and
+ * `makeAssistantToolUI` keys by EXACT tool name — "agent" does not match
+ * "Agent". Counted across the 25 most recent Claude Code sessions on this
+ * machine (2026-09-21): `Agent` 74 calls, `Task` zero. So every subagent an
+ * agent spawned inside zevet fell through to ToolFallback and rendered as a
+ * blob of JSON, which is the one thing this file exists to prevent — and it
+ * did so for the single most interesting thing an agent does.
+ *
+ * `Task` is kept: it is what opencode and older claude builds call it, and a
+ * name nobody sends costs nothing.
  * ------------------------------------------------------------------------- */
 
 function TaskUI(p: ToolProps) {
@@ -325,7 +337,7 @@ function TaskUI(p: ToolProps) {
   const agent = { name: kind, model: what.slice(0, 60) || kind };
 
   return (
-    <Shell name="Task" target={what} tool={p}>
+    <Shell name={kind === "agent" ? "Agent" : kind} target={what} tool={p}>
       <SubagentList
         className="max-w-none"
         agents={[agent]}
@@ -334,6 +346,38 @@ function TaskUI(p: ToolProps) {
         showSummary={done}
         summaryAgent={agent}
       />
+    </Shell>
+  );
+}
+
+/**
+ * Steering agents that are already running: waiting on one, stopping one,
+ * messaging one, listing them.
+ *
+ * These are not subagent SPAWNS, so they do not get a subagent card — a
+ * progress bar for "I sent it a message" would be a lie. What they need is
+ * the one line each actually carries: which agent, and what was said to it.
+ * Without this they are the same JSON blob `Agent` used to be, and an
+ * orchestration of six agents reads as six blobs.
+ */
+function AgentOpsUI({ name, ...p }: ToolProps & { name: string }) {
+  const { args, result } = p;
+  const who = pick(args, "to", "agentId", "agent_id", "id", "name", "target");
+  const said = pick(args, "message", "summary", "prompt", "until", "description", "query");
+  const target = [who, said].filter(Boolean).join(" · ");
+  const out = resultText(result).trim();
+
+  return (
+    <Shell name={name} target={target} tool={p}>
+      {out ? (
+        <TerminalBlock
+          className="max-w-none"
+          command={target || name}
+          lines={lines(out)}
+          visibleCount={lines(out).length}
+          done={!isRunning(p.status)}
+        />
+      ) : null}
     </Shell>
   );
 }
@@ -388,16 +432,45 @@ const ui = (names: string[], render: (p: ToolProps) => ReactNode): ToolUI[] =>
     }),
   );
 
-const BASH = ui(["Bash", "bash", "shell", "run_command", "command_execution"], (p) => <BashUI {...p} />);
+/* PowerShell is its own tool name, not a Bash spelling, and it is the second
+   most used tool on this machine (148 calls in the 25 most recent sessions,
+   against Bash's 5,491). It was rendering as JSON. */
+const BASH = ui(
+  ["Bash", "bash", "shell", "run_command", "command_execution", "PowerShell", "powershell", "pwsh"],
+  (p) => <BashUI {...p} />,
+);
 const EDIT = ui(["Edit", "edit", "Write", "write", "MultiEdit", "patch", "apply_patch", "file_change"], (p) => <EditUI {...p} />);
 const READ = ui(["Read", "read", "view", "cat"], (p) => <ReadUI {...p} />);
 const GLOB = ui(["Glob", "glob", "LS", "list", "ls"], (p) => <MatchesUI name="Glob" {...p} />);
 const GREP = ui(["Grep", "grep", "search", "ripgrep"], (p) => <MatchesUI name="Grep" {...p} />);
 const TODO = ui(["TodoWrite", "todowrite", "todo_write", "todo"], (p) => <TodoUI {...p} />);
-const TASK = ui(["Task", "task", "agent", "subagent"], (p) => <TaskUI {...p} />);
+/* "Agent" FIRST, because it is the one that is actually sent. See the warning
+   above TaskUI: this list had only the spellings nobody uses. */
+const TASK = ui(["Agent", "Task", "task", "agent", "subagent"], (p) => <TaskUI {...p} />);
+/* The rest of the orchestration surface, each under its own name so the card
+   can say which verb it was. These are real tool names, counted in the
+   sessions on this machine on 2026-09-21. */
+const AGENT_OPS: ToolUI[] = [
+  ["TaskOutput", "TaskOutput"],
+  ["TaskStop", "TaskStop"],
+  ["SendMessage", "SendMessage"],
+  ["ListAgents", "ListAgents"],
+  ["Monitor", "Monitor"],
+  ["Workflow", "Workflow"],
+].flatMap(([toolName, label]) => ui([toolName], (p) => <AgentOpsUI name={label} {...p} />));
 const WEB = ui(["WebSearch", "web_search", "websearch"], (p) => <WebSearchUI {...p} />);
 
-const ALL: ToolUI[] = [...BASH, ...EDIT, ...READ, ...GLOB, ...GREP, ...TODO, ...TASK, ...WEB];
+const ALL: ToolUI[] = [
+  ...BASH,
+  ...EDIT,
+  ...READ,
+  ...GLOB,
+  ...GREP,
+  ...TODO,
+  ...TASK,
+  ...AGENT_OPS,
+  ...WEB,
+];
 
 /**
  * Mounting a component is how assistant-ui registers a tool UI, so they have

@@ -1,4 +1,4 @@
-import type { SessionsResult, SessionResult } from "./sessions.d.mts";
+import type { SessionsResult, SessionResult, SessionAgentsResult } from "./sessions.d.mts";
 import type { LocalWorkspace, LocalEntry, UsableAgent, ColorThemeSpec } from "./types";
 
 export interface ReadResult {
@@ -183,7 +183,10 @@ export interface LocalBridge {
    *  Optional: an older desktop build has neither, and the pane that lists
    *  them renders nothing without them. */
   sessions?: (opts?: { cwd?: string | null; limit?: number }) => Promise<SessionsResult>;
-  session?: (source: string, slug: string, id: string) => Promise<SessionResult>;
+  session?: (source: string, slug: string, id: string, child?: string) => Promise<SessionResult>;
+  /** The subagents a claude session spawned. Open one by passing its id as
+   *  `session`'s fourth argument. */
+  sessionAgents?: (slug: string, id: string) => Promise<SessionAgentsResult>;
   /** Standing instructions for this repo, and which optional capabilities an
    *  agent started here is given. Optional: an older desktop build has none,
    *  and the panel that edits them renders nothing without it. */

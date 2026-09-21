@@ -173,6 +173,9 @@ export function Conversation() {
           in its own process, over every window. What IS left is one line
           saying which key to hold, because the mic starts the app and cannot
           start the recording. */}
+      {/* Out of flow: see `.voice-hint`. The mic must not change this column's
+          shape, because zevet Voice's flow bar is drawn over every window by
+          its own process and does not resize anything else either. */}
       {reading ? null : <VoiceHint />}
       {/* Appears only while text is selected in the transcript. */}
       <QuoteToComposer />

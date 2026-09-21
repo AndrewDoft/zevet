@@ -332,9 +332,20 @@
 
   /* One line under the composer, after the mic has raised Masora Voice's flow
      bar. Not a banner: it says which key to hold and gets out of the way. */
+  /* ⚠️ OUT OF FLOW, DELIBERATELY. This was a flex row in the conversation
+     column, so the moment the microphone said anything the composer was
+     pushed up by its height — Andrew: "it raises to accommodate the flow bar,
+     which it should not". zevet Voice draws its own flow bar over every
+     window and rearranges nothing; zevet must not either.
+     It is only ever shown now when the mic FAILED (lib/voice.ts § report), so
+     overlaying the last line of the transcript for a moment is the right
+     trade: there is nothing to read there until the dictation that did not
+     start, starts. */
   .voice-hint {
+    position: absolute; left: 0; right: 0; bottom: 100%; z-index: 5;
     display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-    padding: 6px 16px 2px; font-size: 11.5px; color: var(--ink-muted);
+    margin: 0 10px 6px; padding: 6px 12px; font-size: 11.5px; color: var(--ink-muted);
+    background: var(--raise); border: 1px solid var(--line); border-radius: 4px;
   }
   .voice-hint kbd {
     font-family: var(--font-mono); font-size: 11px; color: var(--ink);
@@ -792,6 +803,26 @@
     flex: 1 1 auto; min-width: 0; font-size: 10.5px; color: var(--subtle);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  /* The subagents one session spawned, under its banner. A separate row
+     rather than a dropdown over the transcript: opening one REPLACES what is
+     below, so the list has to stay where the thing it replaced was. */
+  .session-agents {
+    flex: none; max-height: 40vh; overflow: auto;
+    border-bottom: 1px solid var(--line); background: var(--raise-soft);
+  }
+  .session-agent-row {
+    display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+    padding: 5px 12px 5px 22px; cursor: pointer;
+    background: none; border: 0; border-left: 2px solid transparent;
+  }
+  .session-agent-row:hover { background: var(--raise); }
+  .session-agent-row[data-active="true"] { border-left-color: var(--cerulean); }
+  .session-agent-title {
+    flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .session-agent-meta { flex: none; font-size: 10.5px; color: var(--subtle); }
+
   .session-banner-close {
     flex: none; font-size: 11px; padding: 3px 7px; border-radius: 2px;
     color: var(--cerulean); background: none;
@@ -800,7 +831,12 @@
   .session-banner-close:hover { border-color: var(--cerulean); }
 
   /* The conversation column: the Thread fills it, the launcher scrolls. */
-  .chat-thread { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+  /* `relative` is what `.voice-hint` anchors to. Without it that overlay
+     escapes to the viewport and lands over the file tree. */
+  .chat-thread {
+    position: relative;
+    height: 100%; min-height: 0; display: flex; flex-direction: column;
+  }
   /* The registry Thread caps its content at --thread-max-width (44rem) and
      centres it. That is right for a chat that owns the page and wrong for a
      column inside a three-pane app: it left the conversation ending well

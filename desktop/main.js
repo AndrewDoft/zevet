@@ -2285,7 +2285,18 @@ const appUpdater = new AppUpdater({
  * and compared, so an unknown one simply matches nothing. */
 ipcMain.handle("local:sessions", (_e, arg) => agentSessions.list(arg || {}));
 ipcMain.handle("local:session", (_e, arg) =>
-  agentSessions.read((arg && arg.source) || "", (arg && arg.slug) || "", (arg && arg.id) || ""),
+  agentSessions.read(
+    (arg && arg.source) || "",
+    (arg && arg.slug) || "",
+    (arg && arg.id) || "",
+    (arg && arg.child) || "",
+  ),
+);
+/* The subagents one session spawned. Separate from `local:sessions` because
+ * it opens a metadata file per child, and a session can have ninety of them —
+ * paid for once, for the session actually opened. */
+ipcMain.handle("local:sessionAgents", (_e, arg) =>
+  agentSessions.children((arg && arg.slug) || "", (arg && arg.id) || ""),
 );
 
 ipcMain.handle("local:voiceStatus", () => masoraVoice.status());

@@ -9,7 +9,7 @@ import {
   emptyTranscript,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
-import type { SessionSummary } from "./sessions.d.mts";
+import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
 import type { TranscriptState } from "./transcript.d.mts";
 import {
   canInstallState,
@@ -246,6 +246,11 @@ interface BoardState {
     openTranscript: TranscriptState | null;
     openTruncated: boolean;
     openLoading: boolean;
+    /** The subagents the open session spawned, and which one is being read.
+     *  Fetched when a session opens, because the count on the row comes free
+     *  from a readdir but the descriptions cost a file each. */
+    agents: SessionAgent[];
+    openAgent: SessionAgent | null;
     error: string;
   };
 
@@ -308,6 +313,7 @@ interface BoardState {
   setSessionQuery: (q: string) => void;
   setSessionScope: (v: "repo" | "all") => void;
   openSession: (s: SessionSummary) => void;
+  openSessionAgent: (a: SessionAgent | null) => void;
   closeSession: () => void;
 
   setMyActor: (a: string | null) => void;
@@ -476,6 +482,8 @@ export const useBoard = create<BoardState>((set, get) => ({
     openTranscript: null,
     openTruncated: false,
     openLoading: false,
+    agents: [],
+    openAgent: null,
     error: "",
   },
 
@@ -896,9 +904,26 @@ export const useBoard = create<BoardState>((set, get) => ({
         openTranscript: null,
         openTruncated: false,
         openLoading: true,
+        agents: [],
+        openAgent: null,
         error: "",
       },
     }));
+    /* The subagents, in parallel with the transcript. Nothing depends on the
+     * order and the list is one readdir plus a small file per child, so a
+     * session with none pays a readdir that fails. */
+    if (summary.children > 0 && typeof bridge.local.sessionAgents === "function") {
+      bridge.local
+        .sessionAgents(summary.slug, summary.id)
+        .then((r) => {
+          if (get().sessions.open?.id !== summary.id) return;
+          set((st) => ({ sessions: { ...st.sessions, agents: (r && r.children) || [] } }));
+        })
+        .catch(() => {
+          /* the transcript is the point; a missing child list is not an error
+             worth putting in front of somebody */
+        });
+    }
     bridge.local
       .session(summary.source, summary.slug, summary.id)
       .then((r) => {
@@ -932,6 +957,49 @@ export const useBoard = create<BoardState>((set, get) => ({
       );
   },
 
+  /** Read one of the open session's subagents, or (null) go back to the
+   *  parent. The parent stays `open` throughout — a subagent is a view INTO a
+   *  session, not a session of its own, and leaving it would lose the list. */
+  openSessionAgent: (agent) => {
+    const parent = get().sessions.open;
+    if (!parent || !bridge.local || typeof bridge.local.session !== "function") return;
+    set((st) => ({
+      sessions: { ...st.sessions, openAgent: agent, openTranscript: null, openLoading: true },
+    }));
+    bridge.local
+      .session(parent.source, parent.slug, parent.id, agent ? agent.id : "")
+      .then((r) => {
+        const st0 = get().sessions;
+        if (st0.open?.id !== parent.id || st0.openAgent?.id !== (agent ? agent.id : undefined)) {
+          if (agent || st0.openAgent) return; // a later click won
+        }
+        if (!r || !r.ok) {
+          set((st) => ({
+            sessions: {
+              ...st.sessions,
+              openLoading: false,
+              error: (r && r.error) || "could not read that agent",
+            },
+          }));
+          return;
+        }
+        set((st) => ({
+          sessions: {
+            ...st.sessions,
+            openLoading: false,
+            openTruncated: Boolean(r.truncated),
+            openTranscript: sessionTranscript(r.records, {
+              cwd: parent.cwd,
+              source: parent.source,
+            }),
+          },
+        }));
+      })
+      .catch((err: unknown) =>
+        set((st) => ({ sessions: { ...st.sessions, openLoading: false, error: String(err) } })),
+      );
+  },
+
   closeSession: () =>
     set((st) => ({
       sessions: {
@@ -940,6 +1008,8 @@ export const useBoard = create<BoardState>((set, get) => ({
         openTranscript: null,
         openTruncated: false,
         openLoading: false,
+        agents: [],
+        openAgent: null,
       },
     })),
 

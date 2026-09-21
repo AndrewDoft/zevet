@@ -91,12 +91,30 @@ export class MasoraVoiceDictationAdapter implements DictationAdapter {
     return endedSession();
   }
 
-  /** One of four outcomes, each with its own sentence. The one thing none of
-   *  them may do is stay silent — the mic is a button, and a button that does
-   *  nothing visible is the bug this whole file exists to remove. */
+  /** One of four outcomes.
+   *
+   * ⚠️ THE SUCCESSFUL ONE IS SILENT, and that is the point. It used to say
+   * "Listening. Press the mic again when you are done." under the composer,
+   * and that line is a block in the flow — so pressing the mic RAISED the
+   * chat box to make room for it. Andrew: "when i hit the microphone on the
+   * chatbox, it raises to accommodate the flow bar, which it should not. the
+   * flow bar can go active without altering the zevet ui, just like it would
+   * with any other app."
+   *
+   * He is right about more than the layout. zevet Voice is a machine-wide
+   * dictation app: it draws its own flow bar over whatever has focus, and it
+   * does not rearrange Word or the browser either. The flow bar IS the
+   * feedback, so zevet showing its own is both redundant and wrong.
+   *
+   * The three FAILING outcomes still speak, because there the flow bar is the
+   * thing that did not appear and silence would be indistinguishable from a
+   * dead button. They speak as an overlay that takes no space in the flow —
+   * see `.voice-hint` in styles/masora.css. */
   private report(r: MicResult): void {
     if (!r || !r.installed) return this.onMissing((r && r.download) || DOWNLOAD);
-    if (r.ok) return this.onSaid("Listening. Press the mic again when you are done.");
+    // Clearing, not saying: a previous failure's line must not outlive the
+    // press that succeeded.
+    if (r.ok) return this.onSaid("");
     if (r.stale) {
       return this.onSaid(
         `This zevet Voice is too old to be started from here — update it, or hold ${r.hotkey || "the hotkey"}.`,

@@ -33,6 +33,9 @@ export interface SessionSummary {
   started: number;
   updated: number;
   bytes: number;
+  /** How many subagent transcripts this session has. claude only: codex keeps
+   *  its subagent activity inline in the parent rollout. */
+  children: number;
 }
 
 /** One record as the desktop side hands it over. */
@@ -45,6 +48,33 @@ export type SessionRecord =
       message: { role?: string; content?: unknown };
     }
   | { source: "codex"; timestamp: string; item: Record<string, unknown> };
+
+/** One subagent a session spawned. `id` is the read handle; `parent` is the
+ *  session that spawned it. */
+export interface SessionAgent {
+  source: "claude";
+  id: string;
+  slug: string;
+  parent: string;
+  /** The agent type the parent asked for: "general-purpose", "Explore"... */
+  kind: string;
+  /** The model it was given, when the parent named one. */
+  model: string;
+  /** The parent's own description of the task, else the id. */
+  title: string;
+  /** The Agent tool call in the parent that spawned it. */
+  toolUseId: string;
+  depth: number;
+  updated: number;
+  bytes: number;
+}
+
+export interface SessionAgentsResult {
+  ok: boolean;
+  dir?: string;
+  children?: SessionAgent[];
+  error?: string;
+}
 
 export interface SessionsResult {
   ok: boolean;

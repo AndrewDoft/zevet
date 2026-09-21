@@ -27,11 +27,16 @@
 //           ~/.codex/session_index.jsonl maps id -> thread_name, which is
 //           codex's own title for the thread.
 //
-// NESTED SUBAGENT TRANSCRIPTS ARE NOT LISTED. claude writes one per Agent
-// call under `<slug>/<session-id>/subagents/...` — 602 of the 696 files here
-// are those. They are a session's internals, not sessions, and a list that
-// mixed them in would be 87% noise. What a subagent was asked is already
-// visible in the Agent tool call that spawned it.
+// SUBAGENT TRANSCRIPTS ARE CHILDREN, NOT ROWS. claude writes one per Agent
+// call under `<slug>/<session-id>/subagents/agent-<id>.jsonl`, with an
+// `agent-<id>.meta.json` beside it naming the agent type, the model and the
+// description the parent gave it — 602 of the 696 files here are those. Mixed
+// into the top-level list they would be 87% noise, so `list` counts them and
+// `children` returns them only for the session you opened.
+//
+// `subagents/workflows/wf_*/` goes one level deeper still (a Workflow run's
+// own agents). Not walked: one level is what a reader can follow, and the
+// deeper ones are reachable from the workflow's own card.
 //
 // READ ONLY, and it must stay that way. These files are the CLIs' own state,
 // and a session that is still open is appending to one. There is deliberately
@@ -75,15 +80,38 @@ const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** codex's store is dated directories; this is the only shape accepted. */
 const DATE_PATH = /^\d{4}\/\d{2}\/\d{2}$/;
 
-function fileFor(source, slug, id) {
+function fileFor(source, slug, id, child = "") {
   if (typeof slug !== "string" || typeof id !== "string") return null;
   if (slug.includes("..") || id.includes("..") || !SEGMENT.test(id)) return null;
   if (source === "codex") {
+    // codex keeps no per-subagent file; its SubAgentActivity items live in the
+    // parent rollout. A child asked for here is a caller error, not a path.
+    if (child) return null;
     if (!DATE_PATH.test(slug)) return null;
     return path.join(codexDir(), ...slug.split("/"), `${id}.jsonl`);
   }
   if (!SEGMENT.test(slug)) return null;
+  if (child) {
+    if (typeof child !== "string" || child.includes("..") || !SEGMENT.test(child)) return null;
+    // The `subagents` segment is written here, never taken from the caller.
+    return path.join(claudeDir(), slug, id, "subagents", `${child}.jsonl`);
+  }
   return path.join(claudeDir(), slug, `${id}.jsonl`);
+}
+
+/** How many subagent transcripts a claude session has. A readdir, no reads —
+ *  `list` calls this once per session and the meta files are only opened by
+ *  `children`, for the one session that was actually opened. */
+function countChildren(slug, id) {
+  let names;
+  try {
+    names = fs.readdirSync(path.join(claudeDir(), slug, id, "subagents"));
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (const name of names) if (name.endsWith(".jsonl")) n += 1;
+  return n;
 }
 
 /** The first and last `ENDS` bytes, as text. A small file is read once. */
@@ -231,6 +259,7 @@ function describeClaude(slug, id, stat) {
     started: started || stat.mtimeMs,
     updated: updated || stat.mtimeMs,
     bytes: stat.size,
+    children: countChildren(slug, id),
   };
 }
 
@@ -347,6 +376,9 @@ function describeCodex(slug, id, stat, titles) {
     started: started || stat.mtimeMs,
     updated: updated || stat.mtimeMs,
     bytes: stat.size,
+    // codex records its subagents inline, as SubAgentActivity items in this
+    // same file. There is no child transcript to open.
+    children: 0,
   };
 }
 
@@ -427,7 +459,15 @@ function list({ cwd = null, limit = MAX_SESSIONS } = {}) {
   found.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
   const cap = Math.max(1, Math.min(MAX_SESSIONS, limit || MAX_SESSIONS));
 
-  const wantSlug = cwd ? path.resolve(cwd).replace(/[^A-Za-z0-9]/g, "-") : null;
+  /* ⚠️ COMPARED WITHOUT CASE, and that is not tidiness — it is correctness.
+   * Claude Code builds the slug from the path IT was given, and on Windows
+   * the same directory is reached under more than one spelling: this machine's
+   * store holds BOTH `C--dev-GitHub-zevet` and `C--dev-Github-zevet` for one
+   * repo (git resolves it as .../Github/..., the shell as .../GitHub/...).
+   * A case-sensitive compare therefore showed roughly half the sessions in a
+   * folder and looked exactly like a folder with half as many sessions.
+   * Measured 2026-09-21: 10 matched with case, 45 without. */
+  const wantSlug = cwd ? path.resolve(cwd).replace(/[^A-Za-z0-9]/g, "-").toLowerCase() : null;
   const wantCwd = cwd ? path.resolve(cwd).toLowerCase() : null;
   const titles = codexTitles();
 
@@ -435,7 +475,7 @@ function list({ cwd = null, limit = MAX_SESSIONS } = {}) {
   for (const f of found) {
     // The claude filter is on the slug and can be applied before reading;
     // codex records its cwd inside the file, so that one is filtered after.
-    if (wantSlug && f.source === "claude" && f.slug !== wantSlug) continue;
+    if (wantSlug && f.source === "claude" && f.slug.toLowerCase() !== wantSlug) continue;
     const s =
       f.source === "codex"
         ? describeCodex(f.slug, f.id, f.stat, titles)
@@ -453,6 +493,67 @@ function list({ cwd = null, limit = MAX_SESSIONS } = {}) {
     sessions,
     total: found.length,
   };
+}
+
+/**
+ * The subagents one claude session spawned, newest first.
+ *
+ * Each `agent-<id>.jsonl` has an `agent-<id>.meta.json` beside it carrying
+ * what the parent asked for — agentType, description, model, spawnDepth — so
+ * a row can say "general-purpose · sonnet · Fix IDE view" rather than an
+ * opaque id. A transcript whose meta file is missing is still listed: the
+ * work happened either way, and dropping it would hide an agent.
+ */
+function children(slug, id) {
+  if (!SEGMENT.test(String(slug)) || !SEGMENT.test(String(id))) {
+    return { ok: false, error: "not a session id", children: [] };
+  }
+  const dir = path.join(claudeDir(), slug, id, "subagents");
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    // A session that spawned nothing has no directory. Not an error.
+    return { ok: true, dir, children: [] };
+  }
+
+  const out = [];
+  for (const name of names) {
+    if (!name.endsWith(".jsonl")) continue;
+    const childId = name.slice(0, -".jsonl".length);
+    if (!SEGMENT.test(childId)) continue;
+    let stat;
+    try {
+      stat = fs.statSync(path.join(dir, name));
+    } catch {
+      continue;
+    }
+    if (!stat.isFile() || stat.size === 0) continue;
+
+    let meta = {};
+    try {
+      meta = JSON.parse(fs.readFileSync(path.join(dir, `${childId}.meta.json`), "utf8")) || {};
+    } catch {
+      /* no meta, or half-written while the agent was starting */
+    }
+    out.push({
+      source: "claude",
+      id: childId,
+      slug,
+      parent: id,
+      kind: str(meta.agentType),
+      model: str(meta.model),
+      title: oneLine(meta.description, 120) || childId,
+      /* Which Agent tool call in the parent spawned it. Kept so a card in the
+         transcript and a row in the list can be recognised as the same run. */
+      toolUseId: str(meta.toolUseId),
+      depth: Number(meta.spawnDepth) || 1,
+      updated: stat.mtimeMs,
+      bytes: stat.size,
+    });
+  }
+  out.sort((a, b) => b.updated - a.updated);
+  return { ok: true, dir, children: out };
 }
 
 /** Strings this long are a file somebody read, not a message. The transcript
@@ -490,9 +591,9 @@ function clamp(value) {
  * `response_item` for the model's own history — and keeping both renders
  * every message twice.
  */
-function read(source, slug, id) {
+function read(source, slug, id, child = "") {
   const src = source === "codex" ? "codex" : "claude";
-  const file = fileFor(src, slug, id);
+  const file = fileFor(src, slug, id, child);
   if (!file) return { ok: false, error: "not a session id", records: [] };
   let text;
   try {
@@ -520,7 +621,13 @@ function read(source, slug, id) {
       continue;
     }
 
-    if (o.isSidechain) continue;
+    /* ⚠️ A SUBAGENT TRANSCRIPT IS ENTIRELY isSidechain. Every record in
+       `subagents/agent-<id>.jsonl` carries `isSidechain: true`, because from
+       the PARENT's point of view that is exactly what it is. Skipping them
+       here — correct for the parent file, where they would interleave into a
+       conversation nobody typed — returns an empty transcript for the child
+       file, which reads as "this subagent did nothing". */
+    if (o.isSidechain && !child) continue;
     if (o.type !== "user" && o.type !== "assistant") continue;
     if (!o.message) continue;
     kept.push({
@@ -543,4 +650,4 @@ function read(source, slug, id) {
   };
 }
 
-module.exports = { list, read, claudeDir, codexDir, _fileFor: fileFor };
+module.exports = { list, read, children, claudeDir, codexDir, _fileFor: fileFor };

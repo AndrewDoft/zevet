@@ -61,14 +61,21 @@ export function VoiceDialog() {
 }
 
 /**
- * What the microphone just did, in one line under the composer.
+ * What the microphone just did — only when it did NOT work.
  *
- * ⚠️ EVERY PRESS SAYS SOMETHING. zevet Voice draws its own flow bar in its own
- * process, so nothing about a dictation is visible inside zevet — and the
- * gesture has real outcomes that differ ("listening", "press again in a
- * moment" on a cold start, "update zevet Voice" on an old build). A mic that
- * silently did one of four different things is the bug this removes.
- * lib/voice.ts picks the sentence; this only shows it.
+ * ⚠️ A SUCCESSFUL PRESS SAYS NOTHING AND MOVES NOTHING. This used to report
+ * all four outcomes, "Listening." among them, and being a block in the
+ * conversation column it pushed the chat box up every time the mic was
+ * pressed. Andrew: "the flow bar can go active without altering the zevet ui,
+ * just like it would with any other app" — which is also the honest model, as
+ * zevet voice draws its flow bar over whatever has focus and rearranges none
+ * of it.
+ *
+ * So the successful case is silent (lib/voice.ts § report clears the line),
+ * and what is left here is the three ways a press can FAIL, rendered as an
+ * overlay that occupies no space in the flow. Those still have to speak: the
+ * flow bar is precisely what did not appear, and silence there would read as
+ * a dead button.
  */
 export function VoiceHint() {
   const line = useBoard((s) => s.voiceHotkey);
