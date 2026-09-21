@@ -961,8 +961,18 @@ function ingressAgentEvent(evt: { id?: string; type: string; code?: number | nul
     pushConsoleLine(c, "meta", `agent exited (${evt.code === null ? "signal " + evt.signal : "code " + evt.code})`);
     c.transcript = closeTranscript(c.transcript, { code: evt.code ?? null });
   } else if (evt.type === "stderr") {
+    /* ⚠️ STDERR IS NOT THE AGENT SPEAKING, and it used to be rendered as if it
+       were. This called `appendRaw`, which appends to the OPEN ASSISTANT
+       MESSAGE — so a codex run whose unrelated MCP servers failed to
+       authenticate opened with a wall of
+       "ERROR rmcp::transport::worker: worker quit with fatal: Transport
+       channel closed" in the agent's own voice, as its answer. Found by
+       running a real codex turn through the board.
+
+       It goes to `lines` only, which components/rawoutput.tsx shows as what it
+       is: the process's stderr, labelled. Nothing is lost — that panel is why
+       `lines` exists. */
     pushConsoleLine(c, "err", evt.text || "");
-    c.transcript = appendRaw(c.transcript, evt.text || "");
   } else if (evt.type === "agent") {
     const payload = (evt.payload || {}) as {
       type?: string;

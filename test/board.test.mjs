@@ -116,7 +116,13 @@ describe("the board page", () => {
     // weight is this one: the rail must not grow a composer back.
     const app = readFileSync(path.join(SRC, "App.tsx"), "utf8");
     assert.equal((app.match(/id="consolesSlot"/g) || []).length, 1, "there must be exactly one rail host");
-    assert.ok(app.includes('viewMode === "ide"'), "the rail host must be gated on the ide view");
+    // ⚠️ THIS USED TO REQUIRE `viewMode === "ide"` ON THE RAIL HOST, and that
+    // was asserting an implementation detail as if it were the rule. In agent
+    // view it left no thread list: one console could be started and never
+    // switched away from, never joined by a second, and never closed back to
+    // the launcher. The rule this file actually exists to hold is the next
+    // three lines and the two after them — ONE composer, and not in the rail.
+    assert.ok(!/viewMode === "ide" \? \(\s*<>\s*<div className="pane-title">You/.test(app), "the rail host is gated on the ide view again");
     assert.equal((app.match(/<Consoles/g) || []).length, 1, "the rail is the only place Consoles mounts");
     assert.equal((app.match(/<Conversation/g) || []).length, 1, "the chat column is the only place Conversation mounts");
 

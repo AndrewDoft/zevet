@@ -847,8 +847,8 @@
 
   /* The collapsed detail rows under the conversation. Same shape as
      .run-meters, which they sit beside. */
-  .turn-detail, .prompt-shelf, .find-shelf, .listen-shelf { border-top: 1px solid var(--line); flex: none; }
-  .turn-detail-body, .prompt-shelf-body, .find-shelf-body, .listen-shelf-body {
+  .turn-detail, .prompt-shelf, .find-shelf, .listen-shelf, .raw-output { border-top: 1px solid var(--line); flex: none; }
+  .turn-detail-body, .prompt-shelf-body, .find-shelf-body, .listen-shelf-body, .raw-output-body {
     display: flex; flex-direction: column; gap: 14px;
     padding: 4px 22px 16px;
     max-height: 46vh; overflow-y: auto;
@@ -859,7 +859,7 @@
      canvas is `min-h-[10rem]` on a child, not on its root) shrank to a 1px
      line with its contents spilling out of it. Nothing here should ever be
      shorter than its content; the column scrolls instead. */
-  .turn-detail-body > *, .prompt-shelf-body > *, .find-shelf-body > *, .listen-shelf-body > * {
+  .turn-detail-body > *, .prompt-shelf-body > *, .find-shelf-body > *, .listen-shelf-body > *, .raw-output-body > * {
     max-width: none; width: 100%; flex: none;
   }
 

@@ -24,6 +24,7 @@ import { CommandRuns, NextStep, Pages, StoppedRuns } from "./moreviews";
 import { Citations, MathBlocks, Reads } from "./knowledge";
 import { Provenance } from "./provenance";
 import { ComputerUse } from "./permits";
+import { RawOutput } from "./rawoutput";
 import { ResearchReportView, SubagentGraph } from "./graphviews";
 import { RunSpec } from "./runspec";
 import { AskAgain, Branches, EditAndAsk } from "./rewind";
@@ -108,6 +109,7 @@ export function TurnDetail() {
           <Handoffs />
           <Artifacts />
           <McpServers />
+          <RawOutput />
           <Speakers />
           {/* Asking again, from here. A fork leaves this run where it is and
               starts a branch — see rewind.tsx, and note that it is not a

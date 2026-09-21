@@ -64,9 +64,14 @@ export interface ConsoleEntry {
   key: number;
   id: string | null;
   agent: string;
-  /** The flat view: what classifyAgentPayloadLine produced, still rendered by
-   *  the raw terminal block. A transcript nobody can read as plain text would
-   *  be a regression for debugging an agent that has gone wrong. */
+  /** The flat view: what classifyAgentPayloadLine produced, plus the process's
+   *  own stderr.
+   *
+   *  ⚠️ THE COMMENT HERE USED TO SAY "still rendered by the raw terminal
+   *  block", and that block had been gone for several releases — the console
+   *  view became the registry Thread. So this was recorded and shown nowhere,
+   *  and stderr reached the screen only by being appended to the assistant's
+   *  message, in its voice. components/rawoutput.tsx renders it now. */
   lines: ConsoleLine[];
   /** The structured view: the same stream as assistant-ui messages. */
   transcript: TranscriptState;

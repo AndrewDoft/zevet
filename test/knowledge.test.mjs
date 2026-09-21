@@ -102,11 +102,29 @@ test("the find shelf gates on character count, not message count", () => {
 // min-height further inside it — the Diagram's canvas — shrank to a 1px
 // line with its contents spilling out.
 test("collapsed-row panel bodies carry flex: none on their children", () => {
+  // ⚠️ THIS USED TO HARDCODE THE SELECTOR LIST, and adding a fifth collapsed
+  // row (process output) broke it while the rule it was protecting was still
+  // perfectly intact. A test that fails when the code is RIGHT teaches people
+  // to edit the test, which is how the next real break gets waved through.
+  // So it asserts the rule now: every body that scrolls inside a collapsed row
+  // is in the flex:none list, whichever bodies those turn out to be.
   const css = readFileSync(path.join(BOARD, "styles", "masora.css"), "utf8");
-  assert.match(
-    css,
-    /\.turn-detail-body > \*, \.prompt-shelf-body > \*, \.find-shelf-body > \*, \.listen-shelf-body > \* \{\s*\n\s*max-width: none; width: 100%; flex: none;/,
-  );
+
+  // The collapsed-row bodies are the ones sharing the capped-height block.
+  const capped = css.match(/([^{}]*)\{[^{}]*max-height: 46vh;[^{}]*\}/);
+  assert.ok(capped, "no capped-height rule for the collapsed rows");
+  const bodies = [...capped[1].matchAll(/\.([a-z-]+-body)\b/g)].map((m) => m[1]);
+  assert.ok(bodies.length >= 4, `only found ${bodies.length} collapsed-row bodies`);
+
+  const blocks = css.match(/[^{}]*\{[^{}]*flex: none;[^{}]*\}/g) || [];
+  const listing = blocks.find((block) => /max-width: none/.test(block));
+  assert.ok(listing, "no rule gives the panel children flex: none");
+  for (const body of bodies) {
+    assert.ok(
+      listing.includes(`.${body} > *`),
+      `.${body} scrolls inside a collapsed row but its children may still be crushed`,
+    );
+  }
 });
 
 // Nothing offers to forget a memory. runspec.tsx renders MemoryChips with no

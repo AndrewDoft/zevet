@@ -109,15 +109,24 @@ function App() {
           <div className="pane-body" id="people">
             <PeoplePane />
           </div>
+          {/* ⚠️ THIS USED TO BE GATED ON `viewMode === "ide"`, and in agent
+              view — the mode built for talking to agents — it left the rail
+              with no thread list at all. Found by using it: start one console
+              in agent view and there is no way to switch away from it, no way
+              to start a second, and no way back to the launcher, because the
+              conversation column only offers the launcher when NO console is
+              active and nothing in that view can make that true again.
+
+              The contract this gate was standing in for is a different one,
+              and it still holds: exactly one composer, and never in the rail.
+              test/board.test.mjs asserts that directly against consoles.tsx —
+              no textarea, no sendPrompt — which is the rule that actually
+              matters. The list is navigation in both views. */}
           <div id="consolesSlot">
-            {viewMode === "ide" ? (
-              <>
-                <div className="pane-title">You</div>
-                <div className="pane-body" id="consoles">
-                  <Consoles />
-                </div>
-              </>
-            ) : null}
+            <div className="pane-title">You</div>
+            <div className="pane-body" id="consoles">
+              <Consoles />
+            </div>
           </div>
           <BackgroundInbox />
           <ConnBanner />
