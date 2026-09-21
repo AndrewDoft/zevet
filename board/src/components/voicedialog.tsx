@@ -1,5 +1,5 @@
 /**
- * The pop-up that offers Masora Voice when the mic is pressed without it.
+ * The pop-up that offers zevet Voice when the mic is pressed without it.
  *
  * Andrew: "if masora voice is not downloaded, you get a pop up to download
  * it." Same shape as updatedialog.tsx, and for the same reason — this is a
@@ -33,11 +33,11 @@ export function VoiceDialog() {
     <Dialog open onOpenChange={(open: boolean) => { if (!open) setVoiceAsk(null); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Masora Voice isn&rsquo;t installed</DialogTitle>
+          <DialogTitle>zevet Voice isn&rsquo;t installed</DialogTitle>
           <DialogDescription>
             {/* What it IS, in one line, because "install this" with no account
                 of what it does is how people decline things they wanted. */}
-            zevet&rsquo;s microphone runs Masora Voice: hold a key anywhere on this
+            zevet&rsquo;s microphone runs zevet Voice: hold a key anywhere on this
             machine and what you say is transcribed on-device and typed into
             whatever you are looking at — including this composer.
           </DialogDescription>
@@ -52,7 +52,7 @@ export function VoiceDialog() {
               setVoiceAsk(null);
             }}
           >
-            Get Masora Voice
+            Get zevet Voice
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -63,10 +63,10 @@ export function VoiceDialog() {
 /**
  * What the microphone just did, in one line under the composer.
  *
- * ⚠️ EVERY PRESS SAYS SOMETHING. Masora Voice draws its own flow bar in its own
+ * ⚠️ EVERY PRESS SAYS SOMETHING. zevet Voice draws its own flow bar in its own
  * process, so nothing about a dictation is visible inside zevet — and the
  * gesture has real outcomes that differ ("listening", "press again in a
- * moment" on a cold start, "update Masora Voice" on an old build). A mic that
+ * moment" on a cold start, "update zevet Voice" on an old build). A mic that
  * silently did one of four different things is the bug this removes.
  * lib/voice.ts picks the sentence; this only shows it.
  */

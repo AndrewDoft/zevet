@@ -48,7 +48,7 @@
       "index-capability.js",
       "code-index.js",
       "app-update.js",
-      "masora-voice.js",
+      "zevet-voice.js",
       "github-signin.js",
       "setup.html",
       "fonts/**",

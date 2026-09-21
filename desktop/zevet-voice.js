@@ -1,7 +1,7 @@
 /**
- * Masora Voice, from zevet's side of the machine.
+ * zevet Voice, from zevet's side of the machine.
  *
- * Masora Voice is a SEPARATE desktop app — a Python tray app that registers a
+ * zevet Voice is a SEPARATE desktop app — a Python tray app that registers a
  * global hotkey, records while it is held, transcribes locally and types the
  * text into whatever field has focus. Its "flow bar" is a native Win32 layered
  * window drawn by that process (masora_dictation/ui/flowbar.py), not anything
@@ -31,21 +31,29 @@
  *
  * masora2-dictation D-DEPLOY-10 added `Local\MasoraDictation-<hash>-record`,
  * the sibling of the quit event, set by `masora_dictation.admin record`. It
- * posts Masora Voice's own `toggle`, so the same signal starts a hands-free
+ * posts zevet Voice's own `toggle`, so the same signal starts a hands-free
  * dictation and then finishes it.
  */
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn, execFile } = require("node:child_process");
 
+/** The product, and the name it shipped under before 2026-09-21.
+ *
+ *  ⚠️ BOTH ARE SEARCHED, and must be. The two apps update independently, so
+ *  there is a window — possibly a long one — where zevet has the new name and
+ *  the machine still has an install called "zevet Voice". Looking only for
+ *  the new one would report "not installed" to somebody who has it, and offer
+ *  them a download they do not need. See masora2-dictation D-BRAND-4. */
+const PRODUCTS = ["zevet Voice", "Masora Voice"];
 /** The GUI launcher inside an installed bundle. install.ps1 lays the versioned
  *  bundle out with a stable `launcher/` directory, which is why this is not
  *  version-dependent. */
-const EXE = "Masora Voice.exe";
+const EXE = (product) => `${product}.exe`;
 /** The same bundle's console launcher, which forwards argv to a module. Verified
- *  on a real install: `"Masora Voice Console.exe" -m masora_dictation.admin status`
+ *  on a real install: `"zevet Voice Console.exe" -m masora_dictation.admin status`
  *  printed "running (supervised)". */
-const CONSOLE_EXE = "Masora Voice Console.exe";
+const CONSOLE_EXE = (product) => `${product} Console.exe`;
 
 /**
  * Where install.ps1 puts it: per-user by default, all-users optionally.
@@ -57,8 +65,11 @@ function candidates(env) {
   const out = [];
   const local = env.LOCALAPPDATA;
   const machine = env["ProgramFiles"];
-  if (local) out.push(path.join(local, "Programs", "Masora Voice", "launcher", EXE));
-  if (machine) out.push(path.join(machine, "Masora Voice", "launcher", EXE));
+  // Current name first, so a machine carrying both (mid-migration) runs the new one.
+  for (const product of PRODUCTS) {
+    if (local) out.push(path.join(local, "Programs", product, "launcher", EXE(product)));
+    if (machine) out.push(path.join(machine, product, "launcher", EXE(product)));
+  }
   return out;
 }
 
@@ -79,14 +90,14 @@ function find(env = process.env) {
   return null;
 }
 
-/** What Masora Voice's own default is, when its config says nothing.
+/** What zevet Voice's own default is, when its config says nothing.
  *  masora_dictation/config.py: HotkeyConfig.hold = ["ctrl", "backquote"]. */
 const DEFAULT_HOLD = ["ctrl", "backquote"];
 
 const KEY_LABEL = { ctrl: "Ctrl", alt: "Alt", shift: "Shift", backquote: "`", space: "Space" };
 
 /**
- * The hold-to-talk chord, read from Masora Voice's own config so zevet never
+ * The hold-to-talk chord, read from zevet Voice's own config so zevet never
  * tells somebody to press a key they have rebound.
  *
  * @param {NodeJS.ProcessEnv} [env]
@@ -145,7 +156,7 @@ function status(env = process.env) {
  */
 function start(env = process.env, spawnImpl = spawn) {
   const exe = find(env);
-  if (!exe) return { ok: false, error: "Masora Voice is not installed", installed: false };
+  if (!exe) return { ok: false, error: "zevet Voice is not installed", installed: false };
   try {
     const child = spawnImpl(exe, [], {
       detached: true,
@@ -155,7 +166,7 @@ function start(env = process.env, spawnImpl = spawn) {
     });
     if (child && typeof child.unref === "function") child.unref();
   } catch (err) {
-    return { ok: false, error: `could not start Masora Voice: ${err.message}`, installed: true };
+    return { ok: false, error: `could not start zevet Voice: ${err.message}`, installed: true };
   }
   return { ok: true, installed: true, hotkey: hotkey(env) };
 }
@@ -164,17 +175,17 @@ function start(env = process.env, spawnImpl = spawn) {
  * Ask the running instance to start a dictation — or stop the one in progress.
  *
  * ⚠️ THIS IS A TOGGLE, not a start, because that is what the event does:
- * `admin record` posts Masora Voice's own `toggle`, the hands-free transition
+ * `admin record` posts zevet Voice's own `toggle`, the hands-free transition
  * its Ctrl+`+Space chord posts. So the second press stops and transcribes.
  * zevet gets that for free and must not pretend otherwise.
  *
- * The text does NOT come back through here. Masora Voice types into whatever
+ * The text does NOT come back through here. zevet Voice types into whatever
  * window has focus when the signal lands, which is zevet — that is the whole
  * design, and why this resolves with no transcript.
  *
- * An older Masora Voice has no `record` verb and exits non-zero with its usage
+ * An older zevet Voice has no `record` verb and exits non-zero with its usage
  * on stderr. That is reported as `{ ok: false, stale: true }` rather than as a
- * generic failure, because the answer to it is "update Masora Voice" and not
+ * generic failure, because the answer to it is "update zevet Voice" and not
  * "something went wrong".
  *
  * @param {NodeJS.ProcessEnv} [env]
@@ -182,8 +193,11 @@ function start(env = process.env, spawnImpl = spawn) {
  */
 function dictate(env = process.env, execFileImpl = execFile) {
   const exe = find(env);
-  if (!exe) return Promise.resolve({ ok: false, installed: false, error: "Masora Voice is not installed" });
-  const cli = path.join(path.dirname(exe), CONSOLE_EXE);
+  if (!exe) return Promise.resolve({ ok: false, installed: false, error: "zevet Voice is not installed" });
+  // The console launcher sits beside the GUI one and is named after the same
+  // product, so it is derived from the exe that was actually found rather than
+  // from a constant that might be the other name.
+  const cli = path.join(path.dirname(exe), path.basename(exe).replace(/\.exe$/i, " Console.exe"));
   return new Promise((resolve) => {
     execFileImpl(
       cli,
@@ -198,7 +212,7 @@ function dictate(env = process.env, execFileImpl = execFile) {
           ok: false,
           installed: true,
           stale,
-          error: stale ? "this Masora Voice is too old for the record trigger" : said.trim().split("\n")[0],
+          error: stale ? "this zevet Voice is too old for the record trigger" : said.trim().split("\n")[0],
         });
       },
     );
@@ -208,7 +222,7 @@ function dictate(env = process.env, execFileImpl = execFile) {
 /**
  * The whole microphone gesture, in one call, because it is one intent.
  *
- * Masora Voice has to be RUNNING to take a record signal — `admin record`
+ * zevet Voice has to be RUNNING to take a record signal — `admin record`
  * refuses otherwise rather than claiming success. So a cold machine needs two
  * steps, and they cannot be collapsed: the app takes seconds to come up, load
  * its model and arm its listener, and a signal sent into that gap is simply
@@ -240,4 +254,4 @@ async function mic(env = process.env, impls = {}) {
   };
 }
 
-module.exports = { candidates, find, hotkey, status, start, dictate, mic, EXE, CONSOLE_EXE, DEFAULT_HOLD };
+module.exports = { candidates, find, hotkey, status, start, dictate, mic, EXE, CONSOLE_EXE, PRODUCTS, DEFAULT_HOLD };
