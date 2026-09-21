@@ -144,7 +144,7 @@ export function ComposerControls() {
   if (!usable.length) return facts;
 
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       {/* Left of the chat box: the prompts you have written before. A button,
           not a collapsed row — see composercards.tsx for why the card is an
           overlay and not a dropdown.

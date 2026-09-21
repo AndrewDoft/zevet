@@ -12,6 +12,16 @@ export function clampPaneWidth(v: unknown, min: number, max: number): number;
 export function newestHunk(hunks: Array<{ start?: number }> | undefined): { start: number } | null;
 export function followAllows(mode: string, actor: string, myActor: string | null | undefined): boolean;
 export function lastToolFor(events: EventLike[], repoName: string, relPath: string): EventLike | null;
+export function spritesByPath(
+  events: EventLike[],
+  opts: {
+    repoName: string | null | undefined;
+    followMode: string;
+    myActor: string | null | undefined;
+    now: number;
+    idleAfterMs: number;
+  },
+): Record<string, { actor: string; tool: string | undefined; ts: number }>;
 export function turnTrace(events: EventLike[], actor: string): {
   prompt: EventLike | null;
   tools: EventLike[];

@@ -21,6 +21,7 @@ const {
   lastToolFor,
   liveActorsOf,
   newestHunk,
+  spritesByPath,
   turnSummary,
   agoText,
 } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "roster.mjs")).href);
@@ -162,6 +163,44 @@ describe("agent hunk seating", () => {
     assert.equal(lastToolFor(events, "zevet", "src/db.ts").tool, "Edit");
     assert.equal(lastToolFor(events, "zevet", "src/missing.ts"), null);
     assert.equal(lastToolFor(events, "other-repo", "src/db.ts"), null);
+  });
+});
+
+describe("file-tree sprite map", () => {
+  const opts = { repoName: "zevet", followMode: "all", myActor: "andrew", now: NOW, idleAfterMs: 60_000 };
+
+  test("the most recent actor wins when two people touch one path", () => {
+    const events = [
+      ev({ actor: "andrew", tool: "Read", target: "src/db.ts", ts: NOW - 5000 }),
+      ev({ actor: "kai", tool: "Edit", target: "src/db.ts", ts: NOW - 1000 }),
+    ];
+    const map = spritesByPath(events, opts);
+    assert.deepEqual(map["src/db.ts"], { actor: "kai", tool: "Edit", ts: NOW - 1000 });
+    assert.equal(Object.keys(map).length, 1);
+  });
+
+  test("an event past the idle threshold does not draw", () => {
+    const events = [ev({ target: "src/old.ts", ts: NOW - 90_000 })];
+    assert.deepEqual(spritesByPath(events, opts), {});
+  });
+
+  test("follow mode gates the map the same way the editor rider does", () => {
+    const events = [ev({ actor: "kai", target: "src/db.ts" })];
+    assert.deepEqual(spritesByPath(events, { ...opts, followMode: "off" }), {});
+    assert.deepEqual(spritesByPath(events, { ...opts, followMode: "mine", myActor: "andrew" }), {});
+    assert.equal(
+      spritesByPath(events, { ...opts, followMode: "mine", myActor: "kai" })["src/db.ts"].actor,
+      "kai",
+    );
+  });
+
+  test("a non-tool event, a wrong repo, and a prompt with no target are all ignored", () => {
+    const events = [
+      ev({ kind: "prompt", target: null }),
+      ev({ repo: "other-repo", target: "src/db.ts" }),
+      ev({ target: null }),
+    ];
+    assert.deepEqual(spritesByPath(events, opts), {});
   });
 });
 

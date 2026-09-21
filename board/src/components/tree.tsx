@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useMemo } from "react";
 import { ChevronDownIcon, ChevronRightIcon, FileIcon, FolderIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,7 @@ import {
   useBoard,
 } from "../lib/board";
 import type { TreeNode } from "../lib/board";
+import { spritesByPath } from "../lib/roster.mjs";
 import { bridge } from "../lib/bridge";
 import { ago } from "../lib/text";
 
@@ -67,7 +68,37 @@ function StatBadge({ path }: { path: string }) {
   return <span className={cn(mono, "stat shrink-0 tabular-nums")}>{parts}</span>;
 }
 
-function NodeRow({ node, path, depth, now }: { node: TreeNode; path: string; depth: number; now: number }) {
+type SpriteMap = ReturnType<typeof spritesByPath>;
+
+/**
+ * The agent-figure SVG from `window.zevetSprites`, tinted to the actor's
+ * colour. Decorative next to a filename that already says what it is, so
+ * it is `aria-hidden` with the explanation on `title` instead.
+ *
+ * ⚠️ THE ONE TRUSTED SOURCE. `spriteFor`'s return is first-party markup from
+ * our own bundle (agent-sprites.js), safe for `dangerouslySetInnerHTML` —
+ * but `actor`/`tool` are event-derived strings, so they go on `title`, a
+ * plain text prop, and nowhere near the HTML string.
+ */
+function AgentSprite({ actor, tool }: { actor: string; tool?: string }) {
+  const spriteFor = window.zevetSprites?.spriteFor;
+  if (!spriteFor) return null; // no bundle script, or a plain browser tab
+  const svg = spriteFor({ tool, width: 16, height: 14 });
+  if (!svg) return null;
+  return (
+    <span
+      className="fsprite"
+      aria-hidden="true"
+      title={actor + " · " + (tool || "working")}
+      style={{ color: hueOf(actor) } as CSSProperties}
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+}
+
+function NodeRow({
+  node, path, depth, now, sprites,
+}: { node: TreeNode; path: string; depth: number; now: number; sprites: SpriteMap }) {
   const collapsed = useBoard(selectCollapsed);
   const setCollapsed = useBoard((s) => s.setCollapsed);
   const selectedPath = useBoard((s) => s.selectedPath);
@@ -80,6 +111,7 @@ function NodeRow({ node, path, depth, now }: { node: TreeNode; path: string; dep
     .filter((a) => !selectedActor || a === selectedActor)
     .sort((a, b) => node.who[b] - node.who[a])
     .slice(0, 4);
+  const sprite = !isDir ? sprites[path] : undefined;
 
   return (
     <>
@@ -136,8 +168,11 @@ function NodeRow({ node, path, depth, now }: { node: TreeNode; path: string; dep
             />
           ))}
         </span>
+        {sprite ? <AgentSprite actor={sprite.actor} tool={sprite.tool} /> : null}
       </button>
-      {isDir && open ? <TreeChildren node={node} depth={depth + 1} prefix={path} now={now} /> : null}
+      {isDir && open ? (
+        <TreeChildren node={node} depth={depth + 1} prefix={path} now={now} sprites={sprites} />
+      ) : null}
     </>
   );
 }
@@ -198,7 +233,9 @@ function treeFocus(e: React.FocusEvent<HTMLDivElement>): void {
   (sel || first)?.focus();
 }
 
-function TreeChildren({ node, depth, prefix, now }: { node: TreeNode; depth: number; prefix: string; now: number }) {
+function TreeChildren({
+  node, depth, prefix, now, sprites,
+}: { node: TreeNode; depth: number; prefix: string; now: number; sprites: SpriteMap }) {
   const names = Object.keys(node.children).sort((a, b) => {
     const A = node.children[a];
     const B = node.children[b];
@@ -210,7 +247,7 @@ function TreeChildren({ node, depth, prefix, now }: { node: TreeNode; depth: num
       {names.map((name) => {
         const child = node.children[name];
         const path = prefix ? prefix + "/" + name : name;
-        return <NodeRow key={path} node={child} path={path} depth={depth} now={now} />;
+        return <NodeRow key={path} node={child} path={path} depth={depth} now={now} sprites={sprites} />;
       })}
     </>
   );
@@ -287,7 +324,11 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
   const needsToken = useBoard((s) => s.needsToken);
   const conn = useBoard((s) => s.conn);
   const localTruncated = useBoard((s) => s.localTruncated);
-  useBoard(selectEvents);
+  const events = useBoard(selectEvents);
+  const followMode = useBoard((s) => s.followMode);
+  const myActor = useBoard((s) => s.myActor);
+  const selectedRepo = useBoard((s) => s.selectedRepo);
+  const idleAfterMs = useBoard((s) => s.idleAfterMs);
   /* ⚠️ THE CLOCK, or `now` never moves. `built.now` is read once per render
      and drives both `data-stale` and every "… ago" title, and the only other
      subscription here is to events — so the marks stopped ageing at exactly
@@ -297,6 +338,16 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
   useBoard((s) => s.tick);
   const built = buildTree();
   const any = Object.keys(built.root.children).length > 0;
+
+  /* ⚠️ BUILT ONCE, NOT PER ROW. The tree can run to thousands of rows (4000
+     entries measured in this repo — see the tab-stop comment below), so a
+     per-row scan of `events` to find "who is on this file right now" would be
+     O(rows × events). `spritesByPath` walks `events` a single time; every row
+     below just looks its own path up in the result. */
+  const sprites = useMemo(
+    () => spritesByPath(events, { repoName: selectedRepo, followMode, myActor, now: built.now, idleAfterMs }),
+    [events, selectedRepo, followMode, myActor, built.now, idleAfterMs],
+  );
 
   return (
     <div className="treecol">
@@ -348,7 +399,7 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
               onKeyDown={treeKeys}
               onFocus={treeFocus}
             >
-              <TreeChildren node={built.root} depth={0} prefix="" now={built.now} />
+              <TreeChildren node={built.root} depth={0} prefix="" now={built.now} sprites={sprites} />
             </div>
           ) : (
             <div className="empty-tree">

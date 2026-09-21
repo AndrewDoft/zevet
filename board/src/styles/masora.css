@@ -243,6 +243,62 @@
   .person .sub .verb { margin-right: 6px; }
   .person .sub .verb { color: var(--ink); }
 
+  /* ---- a teammate who is not live ---------------------------------------
+     On the allowlist, no events yet. Two states and they are not the same
+     thing: "invited" is a link that has been sent, "active" is somebody who
+     signed in and simply is not running anything at this second. The dot is
+     hollow rather than dim — an empty ring reads as "not here", where a faded
+     dot reads as "here but quiet", which is what `data-idle` already means on
+     the row above. */
+  .person-away {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px;
+    border-left: 2px solid transparent;
+    font-size: 13.5px;
+  }
+  .person-away-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    flex: none; box-sizing: border-box;
+    border: 1.5px solid var(--who);
+  }
+  .person-away[data-invited="false"] .person-away-dot { background: var(--who); opacity: 0.55; }
+  .person-away-name {
+    flex: 1 1 auto; min-width: 0;
+    color: var(--ink-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .person-away-state {
+    flex: none;
+    font-family: var(--font-mono); font-size: 10.5px;
+    color: var(--subtle);
+  }
+  .person-away[data-invited="false"] .person-away-state { color: var(--ink-muted); }
+
+  /* ---- my sessions, under my own row ------------------------------------
+     SessionsPane still renders its own `.pane-title` and `.pane-body`, which
+     is right when it is a rail section and wrong inside one: a `pane-body`
+     nested in a `pane-body` gets its own `overflow: auto` and its own flex
+     share, so the list would scroll inside a box of a few dozen pixels while
+     the pane around it had room to spare. Flatten it and let `#people` do the
+     one scroll. */
+  .person-sessions { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  .person-sessions > .pane-title { padding-left: 26px; flex: none; }
+  .person-sessions > .pane-body { min-height: 0; }
+
+  /* ⚠️ THE ONE LIST THAT SCROLLS IS MINE, AND THE PEOPLE AROUND IT DO NOT MOVE.
+     There are three teammates and four hundred sessions. With `#people` as a
+     plain scrolling block the sessions pushed everybody below them off the
+     bottom of the pane — a teammate you had just invited was rendered and
+     unreachable. So `#people` becomes a column: every person row keeps its own
+     height, and my session list takes whatever is left and scrolls inside it.
+     Nothing here is a pixel value; it all follows the splitter. */
+  #people { display: flex; flex-direction: column; overflow: hidden; }
+  #people > * { flex: none; }
+  #people > .person-wrap:has(.person-sessions) {
+    display: flex; flex-direction: column;
+    flex: 1 1 auto; min-height: 0;
+  }
+
   /* The rail's last row. It had a "Repos" header above it and 10px under it;
      both are gone, so the folder picker sits right on the bottom edge with
      just enough room to breathe. */
@@ -310,8 +366,13 @@
   .node {
     display: flex; align-items: center; gap: 9px;
     width: 100%; text-align: left;
-    padding: 4px 16px 4px 0;
+    /* Right padding is 16px plus a fixed 18px reserved for the agent sprite
+       (see .fsprite) — reserved on EVERY row, sprite or not, so a row never
+       resizes when an agent starts or stops touching that file. A per-row
+       padding change would jump the name in exactly that moment. */
+    padding: 4px 34px 4px 0;
     font-size: 13.5px;
+    position: relative;
   }
   .node[data-sel="true"] { background: var(--cerulean-soft); }
   .node[data-sel="true"][data-kind] .name { color: var(--ink); }
@@ -335,6 +396,17 @@
   .marks { display: flex; align-items: center; gap: 3px; flex: none; }
   .mark { width: 7px; height: 7px; border-radius: 50%; background: var(--who); }
   .mark[data-stale="true"] { opacity: 0.28; }
+
+  /* The little walking figure from agent-sprites.js, hopping row to row as
+     an agent works — see drawRiders in board.ts for its editor-pane cousin.
+     Absolutely positioned into the row's reserved right padding (34px = 16px
+     original + 18px here) rather than laid out as a flex sibling, so its own
+     appearing and disappearing never reflows .label/.stat/.marks and never
+     jumps the filename. tinted via `color` on this span, which currentColor
+     inside the injected SVG then inherits. */
+  .fsprite { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+             width: 16px; height: 14px; pointer-events: none; }
+  .fsprite svg { width: 100%; height: 100%; }
   .node[data-collide="true"] { background: color-mix(in srgb, var(--alert) 9%, transparent); }
   .node[data-collide="true"] .name { color: var(--alert); }
 
@@ -569,6 +641,12 @@
     font-variant-numeric: tabular-nums;
     overflow: hidden;
   }
+  /* One row per group of segments (see components/strip.tsx), each row laid
+     out across. `.strip` itself stays a column so the rows stack. */
+  .strip-line {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: 4px 10px; max-width: 100%;
+  }
   .strip .sep { display: none; }
   .strip::-webkit-scrollbar { display: none; }
   /* Nothing to say, no bar. In a plain browser tab there is no agent stream and
@@ -763,7 +841,14 @@
   .session-filter::placeholder { color: var(--subtle); }
   .session-filter:focus { background: var(--raise); }
   .session-row {
-    display: flex; align-items: baseline; gap: 6px;
+    /* ⚠️ WRAP, because `.session-row-meta` below is `flex: 0 0 100%` — it is
+       written to take a line of its own. Without wrapping it is laid out on
+       the SAME line as the logo and title and overflows the row by exactly
+       logo + two gaps, at EVERY rail width: widening the rail widens the
+       basis by the same amount, so "3m ago" was clipped off the right edge no
+       matter where the splitter was put. The `.session-row-logo` rule below
+       already describes this row as two lines; only the wrap was missing. */
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px;
     width: 100%; text-align: left; cursor: pointer;
     padding: 6px 10px 6px 12px;
     background: none; border: 0; border-bottom: 1px solid var(--line);
@@ -777,7 +862,12 @@
      lines when the meta wraps, and a centred mark drifts into the gap. */
   .session-row-logo { flex: none; position: relative; top: 2px; }
   .session-row-title {
-    flex: 1 1 auto; min-width: 0;
+    /* ⚠️ BASIS 0, NOT auto. A flex line breaks on the HYPOTHETICAL size of its
+       items, so with `auto` a long title measured at its full nowrap width,
+       broke the line, and left the agent's mark sitting alone above it. At 0
+       the title never forces a break: logo and title share the first line and
+       ellipsise, and only `.session-row-meta` (basis 100%) takes the second. */
+    flex: 1 1 0; min-width: 0;
     font-size: 12.5px; color: var(--ink);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
@@ -793,6 +883,31 @@
      they are the one value that is coloured rather than grey. */
   .session-row-where[data-where="desktop"] { color: var(--cerulean); }
   .session-row-ago { margin-left: auto; flex: none; }
+  /* ---- one disclosure per project ---------------------------------------
+     The heading is the whole hit area, so the row and the triangle cannot
+     disagree about what a click does. `list-style` is cleared on both spellings
+     because WebKit still wants the pseudo-element. */
+  .session-group > summary.session-group-head {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 5px 10px 5px 12px; cursor: pointer;
+    list-style: none;
+    font-size: 11px; font-family: var(--font-mono);
+    color: var(--ink-muted); background: var(--raise-soft);
+    border-bottom: 1px solid var(--line);
+  }
+  .session-group > summary::-webkit-details-marker { display: none; }
+  .session-group > summary.session-group-head::before {
+    content: "▸"; flex: none; font-size: 9px; color: var(--subtle);
+    transition: transform 120ms ease;
+  }
+  .session-group[open] > summary.session-group-head::before { transform: rotate(90deg); }
+  .session-group > summary.session-group-head:hover { background: var(--raise); }
+  .session-group-name {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .session-group-count { flex: none; color: var(--subtle); }
+
   .session-empty {
     padding: 8px 16px; font-size: 11.5px; color: var(--subtle);
   }

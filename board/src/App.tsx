@@ -15,7 +15,6 @@ import { DetailPane } from "./components/detail";
 import { SettingsSheet } from "./components/settings";
 import { UpdateDialog } from "./components/updatedialog";
 import { VoiceDialog } from "./components/voicedialog";
-import { SessionsPane } from "./components/sessions";
 import {
   applyPanes,
   applyTheme,
@@ -149,10 +148,15 @@ function App() {
               <Consoles />
             </div>
           </div>
-          {/* What has run on this machine, not only what zevet started:
-              claude and codex, terminal, desktop app and editor alike. Read
-              only — see components/sessions.tsx. */}
-          <SessionsPane />
+          {/* ⚠️ THE SESSIONS LIST IS NOT A RAIL SECTION ANY MORE. What has run
+              on this machine is MY work — every file it reads comes out of
+              this machine's own ~/.claude and ~/.codex — so it now hangs under
+              my own row in People, in my hue, instead of sitting in a third
+              list with claude's orange mark and no owner. Andrew: "all of
+              these claude and codex sessions you ran are showing up in a
+              different view. they should be blue under me."
+              It also gives the People pane back the height this section was
+              using; see components/people.tsx. */}
           <BackgroundInbox />
           <ConnBanner />
           <Strip />
@@ -163,12 +167,17 @@ function App() {
               dropdown just start with open a repo". The rail's bottom corner
               is now three short rows (status, theme + gear, folder) instead
               of five, and the People list takes back what they were using. */}
+          {/* No wrapper: WorkspacesPane renders its own `.ws #workspaces`, and
+              this one duplicated both the class and the id.
+              ⚠️ ABOVE the theme/gear row, not below it. Andrew: "swap the
+              position of the repo selector block and the light/dark and
+              settings one." The repo picker is something you reach for while
+              working; theme and settings are set once and then left, so they
+              belong in the corner under it. */}
+          <WorkspacesPane />
           <div className="railfoot">
             <RailFoot />
           </div>
-          {/* No wrapper: WorkspacesPane renders its own `.ws #workspaces`, and
-              this one duplicated both the class and the id. */}
-          <WorkspacesPane />
         </aside>
 
         <div className="middle">

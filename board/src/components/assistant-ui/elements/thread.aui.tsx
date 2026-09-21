@@ -416,12 +416,25 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
 
 const ComposerAction: FC = () => {
   return (
-    <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      <div className="flex min-w-0 items-center gap-1.5">
+    /* ⚠️ THIS ROW WRAPS, AND THE RIGHT-HAND GROUP IS PUSHED RIGHT BY A MARGIN
+       rather than by `justify-between`.
+
+       Measured in the running app 2026-09-21 with a 360px conversation column:
+       the left group is `min-w-0` so it shrank to 182px, every child of it is
+       `shrink-0` so none of them did, and overflow was visible — so 357px of
+       controls painted straight over Context, the mic and Send. Everything was
+       still clickable and none of it was readable.
+
+       `justify-between` cannot survive wrapping: on a line holding one item it
+       puts that item at the START, so Send would jump to the left margin the
+       moment the row broke. `ml-auto` does the same job on a full line and
+       keeps doing it on a short one. */
+    <div className="aui-composer-action-wrapper relative flex flex-wrap items-center gap-y-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <ComposerAddAttachment />
         <ComposerControls />
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
         <ComposerExtras />
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>

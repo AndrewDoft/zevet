@@ -49,7 +49,7 @@ const WHERE_LABEL: Record<string, string> = {
   sdk: "sdk",
 };
 
-function SessionRow({ s }: { s: SessionSummary }) {
+function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
   const open = useBoard((st) => st.sessions.open);
   const openSession = useBoard((st) => st.openSession);
   const isOpen = open?.id === s.id && open?.source === s.source;
@@ -65,10 +65,14 @@ function SessionRow({ s }: { s: SessionSummary }) {
       onClick={() => openSession(s)}
       title={`${s.cwd || s.slug}${s.branch ? ` · ${s.branch}` : ""}`}
     >
-      {/* The CLI's own mark, same as a live console row uses. `hue` is not a
-          console colour here — a session has no seat in the roster — so the
-          logo takes the agent's own. */}
-      <AgentLogo agent={s.source} className="session-row-logo size-3" />
+      {/* ⚠️ THE OWNER'S COLOUR, NOT THE CLI'S. It used to take the agent's own
+          mark ("a session has no seat in the roster"), which was true of the
+          data and wrong about the meaning: every file this list reads comes
+          out of THIS machine's ~/.claude and ~/.codex, so every row in it is
+          mine. The list now hangs under my row in People and takes my hue
+          with it. `hue` is undefined for any other caller, which restores the
+          old behaviour exactly. */}
+      <AgentLogo agent={s.source} hue={hue} className="session-row-logo size-3" />
       <span className="session-row-title">{sessionLabel(s)}</span>
       <span className={cn(mono, "session-row-meta")}>
         {project ? <span className="session-row-project">{project}</span> : null}
@@ -113,11 +117,54 @@ function ScopeControl() {
   );
 }
 
-export function SessionsPane() {
+/**
+ * Sessions bucketed by the project they ran in, most recently touched first.
+ *
+ * ⚠️ FOUR HUNDRED ROWS IS NOT A LIST, IT IS A WALL. Andrew: "you need more
+ * dropdowns to make this way cleaner, since there are just so many agents."
+ * A disclosure per project turns it into ~20 headings you can read, with the
+ * folder you are actually in already open.
+ *
+ * `<details>` rather than a hand-rolled collapse: it is a real disclosure
+ * widget, it is keyboard-operable and announced correctly without a single
+ * aria attribute, and it costs no state until somebody clicks one.
+ */
+function byProject(list: SessionSummary[]) {
+  const groups = new Map<string, SessionSummary[]>();
+  for (const s of list) {
+    // Same helper the row uses, so a heading can never name a project
+    // differently from the sessions under it.
+    const key = sessionProject(s as unknown as Record<string, unknown>) || "elsewhere";
+    const g = groups.get(key);
+    if (g) g.push(s);
+    else groups.set(key, [s]);
+  }
+  return [...groups.entries()]
+    .map(([name, rows]) => ({
+      name,
+      rows,
+      updated: rows.reduce((m, r) => Math.max(m, Number(r.updated) || 0), 0),
+    }))
+    .sort((a, b) => b.updated - a.updated);
+}
+
+/** The folder name the rest of the rail calls "this repo". */
+function hereName(root: string | null | undefined) {
+  const parts = String(root || "").split(/[\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : "";
+}
+
+export function SessionsPane({ hue }: { hue?: number } = {}) {
   const sessions = useBoard((st) => st.sessions);
   const setSessionQuery = useBoard((st) => st.setSessionQuery);
   const refreshSessions = useBoard((st) => st.refreshSessions);
   const localRoot = useBoard((st) => st.localRoot);
+  /* ⚠️ OPEN STATE LIVES IN REACT, NOT IN THE DOM. `<details open={...}>` is an
+     attribute React re-applies on every render, and this component re-renders
+     on a timer from the pane above it — so a group you had opened by hand
+     snapped shut a second later. An entry here only appears once somebody has
+     actually toggled that group; everything else falls back to the default. */
+  const [opened, setOpened] = useState<Record<string, boolean>>({});
 
   // Fetched on first paint and again when the open folder changes under a
   // repo-scoped list — the scope is a query the desktop side runs, not a
@@ -133,6 +180,11 @@ export function SessionsPane() {
   const shown = sessions.list.filter((s) =>
     sessionMatches(s as unknown as Record<string, unknown>, sessions.query),
   );
+  const groups = byProject(shown);
+  const here = hereName(localRoot);
+  // A filter that hid its own matches inside collapsed groups would be a
+  // filter that does not work. While one is typed, everything is open.
+  const filtering = sessions.query.trim().length > 0;
 
   return (
     <>
@@ -162,8 +214,24 @@ export function SessionsPane() {
                 : "No claude or codex sessions on this machine."}
           </div>
         ) : null}
-        {shown.map((s) => (
-          <SessionRow key={`${s.source}:${s.id}`} s={s} />
+        {groups.map((g) => (
+          <details
+            className="session-group"
+            key={g.name}
+            open={filtering || (opened[g.name] ?? g.name === here)}
+            onToggle={(e) => {
+              const on = (e.currentTarget as HTMLDetailsElement).open;
+              setOpened((o) => (o[g.name] === on ? o : { ...o, [g.name]: on }));
+            }}
+          >
+            <summary className="session-group-head">
+              <span className="session-group-name">{g.name}</span>
+              <span className="session-group-count">{g.rows.length}</span>
+            </summary>
+            {g.rows.map((s) => (
+              <SessionRow key={`${s.source}:${s.id}`} s={s} hue={hue} />
+            ))}
+          </details>
         ))}
         {/* `total` counts every session file found, before the cap and before
             the filter — so a list that stops at 400 says so rather than

@@ -35,9 +35,19 @@ function Sp({ cls, text }: { cls?: string; text: string | number }) {
 export function Strip() {
   const { live, machine } = useBoard(selectStrip);
   const conn = useBoard((s) => s.conn);
-  const segs: ReactNode[] = [];
+  /* ⚠️ THREE LINES, NOT ONE SEGMENT PER LINE. `.strip` is a column, so every
+     segment used to take a row of its own and the rail's corner was four
+     stacked words. The grouping is by what a glance is actually asking:
+     `where` is the repo you are on and whether the hub can hear you;
+     `health` is the two local services and their numbers; `rest` is spend and
+     anything shouting. Andrew: "put the branch (main) the commit number, and
+     live (or not live) on one line. and put cindex and it's number and graph
+     and it's number on one line." */
+  const where: ReactNode[] = [];
+  const health: ReactNode[] = [];
+  const rest: ReactNode[] = [];
 
-  if (live.model) segs.push(<Seg key="model"><Sp cls="dim" text={live.model} /></Seg>);
+  if (live.model) rest.push(<Seg key="model"><Sp cls="dim" text={live.model} /></Seg>);
 
   const repo = machine && machine.repo;
   if (repo && repo.branch) {
@@ -45,7 +55,7 @@ export function Strip() {
     if (repo.sha) r.push(<Sp key="sh" cls="dim" text={"@" + repo.sha} />);
     if (repo.ahead) r.push(<Sp key="a" cls="warn" text={"\u2191" + repo.ahead} />);
     if (repo.behind) r.push(<Sp key="be" cls="warn" text={"\u2193" + repo.behind} />);
-    segs.push(<Seg key="repo">{r}</Seg>);
+    where.push(<Seg key="repo">{r}</Seg>);
   }
 
   /* ⚠️ ctx AND cache ARE GONE FROM HERE. Both are now on the composer's own
@@ -70,17 +80,17 @@ export function Strip() {
         b.push(<Sp key={w + "v"} cls="v" text={tokens(burn[w].tokens)} />);
       }
     });
-    if (b.length > 1) segs.push(<Seg key="spent">{b}</Seg>);
+    if (b.length > 1) rest.push(<Seg key="spent">{b}</Seg>);
   }
 
   const cost = burn && typeof burn.cost === "number" && burn.cost > 0 ? burn.cost : live.cost;
   if (typeof cost === "number" && cost > 0) {
-    segs.push(<Seg key="cost"><Sp cls="dim" text={"$" + cost.toFixed(2)} /></Seg>);
+    rest.push(<Seg key="cost"><Sp cls="dim" text={"$" + cost.toFixed(2)} /></Seg>);
   }
 
   if (conn) {
     const cls = conn === "live" ? "ok" : conn === "down" ? "bad" : "warn";
-    segs.push(
+    where.push(
       <Seg key="conn">
         <Sp cls={cls} text={connLabel(conn)} />
       </Seg>,
@@ -88,7 +98,7 @@ export function Strip() {
   }
 
   if (machine && typeof machine.cindex === "boolean") {
-    segs.push(
+    health.push(
       <Seg key="cindex">
         <Sp cls="k" text="cindex" />
         <Sp cls={machine.cindex ? "ok" : "warn"} text={machine.cindex ? "on" : "off"} />
@@ -106,12 +116,12 @@ export function Strip() {
     } else {
       gs.push(<Sp key="d" cls={cls} text={(g.count == null ? "" : g.count + " ") + (g.detail || "")} />);
     }
-    segs.push(<Seg key="graph">{gs}</Seg>);
+    health.push(<Seg key="graph">{gs}</Seg>);
   }
 
   const hook = machine && (machine.hook as { failedAgo?: number } | undefined);
   if (hook && hook.failedAgo != null) {
-    segs.push(
+    rest.push(
       <Seg key="hook">
         <Sp cls="bad" text="hook fail" />
         <Sp cls="dim" text={hook.failedAgo} />
@@ -119,14 +129,23 @@ export function Strip() {
     );
   }
 
+  const line = (key: string, segs: ReactNode[]) =>
+    segs.length ? (
+      <div className="strip-line" key={key}>
+        {segs.map((s, i) => (
+          <Fragment key={i}>
+            {i ? <span className="sep">|</span> : null}
+            {s}
+          </Fragment>
+        ))}
+      </div>
+    ) : null;
+
   return (
     <div className="strip" id="strip">
-      {segs.map((s, i) => (
-        <Fragment key={i}>
-          {i ? <span className="sep">|</span> : null}
-          {s}
-        </Fragment>
-      ))}
+      {line("where", where)}
+      {line("health", health)}
+      {line("rest", rest)}
     </div>
   );
 }

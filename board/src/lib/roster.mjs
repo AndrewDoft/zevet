@@ -33,6 +33,34 @@ export function lastToolFor(events, repoName, relPath) {
   return null;
 }
 
+/**
+ * `lastToolFor`, but for every touched path at once — the map the file-tree
+ * sprite needs. Built once per render (the tree can run to thousands of
+ * rows), so this walks `events` a single time rather than having each row
+ * call `lastToolFor` for its own path.
+ *
+ * Reuses `followAllows` rather than re-deriving "off shows nothing / mine
+ * shows only me" here, so the tree's follow-mode gate cannot drift from the
+ * one the editor rider already applies.
+ *
+ * ⚠️ LATEST WINS BY TIMESTAMP, not by array position. `events` is normally
+ * append-ordered, but comparing `ev.ts` directly means a caller that hands in
+ * an unordered slice still gets the right answer instead of a silently wrong
+ * one.
+ */
+export function spritesByPath(events, { repoName, followMode, myActor, now, idleAfterMs }) {
+  const out = {};
+  (events || []).forEach((ev) => {
+    if (!ev || ev.kind !== "tool" || !ev.target) return;
+    if (repoName && ev.repo !== repoName) return;
+    if (!followAllows(followMode, ev.actor, myActor)) return;
+    if (now - ev.ts > idleAfterMs) return;
+    const prev = out[ev.target];
+    if (!prev || ev.ts >= prev.ts) out[ev.target] = { actor: ev.actor, tool: ev.tool, ts: ev.ts };
+  });
+  return out;
+}
+
 /** Everything of an actor's since their most recent prompt. */
 export function turnTrace(events, actor) {
   const mine = (events || []).filter((e) => e && e.actor === actor);

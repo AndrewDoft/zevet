@@ -299,9 +299,38 @@ function closeOpenTurn(state) {
  */
 export function sessionLabel(session) {
   const s = session || {};
-  const raw = text(s.title) || text(s.prompt) || text(s.id) || "session";
+  const raw = unwrap(text(s.title) || text(s.prompt)) || text(s.id) || "session";
   const one = raw.replace(/\s+/g, " ").trim();
   return one.length > 72 ? `${one.slice(0, 71)}…` : one;
+}
+
+/**
+ * The person's own words, with the harness's envelope taken off the front.
+ *
+ * ⚠️ A RECORDED PROMPT IS NOT ONLY WHAT WAS TYPED. Both CLIs prepend machine
+ * blocks to the first user message — `<local-command-caveat>`, `<command-name>`,
+ * `<system-reminder>`, `<pasted_content>` — and the rail was titling whole
+ * sessions "<local-command-caveat>Caveat: Th…", which names the wrapper and
+ * never the work. Leading, fully-closed blocks are peeled off one at a time.
+ *
+ * Nothing is invented and nothing is dropped: if peeling leaves nothing, the
+ * original is returned, because a session whose prompt really is only a
+ * machine block should say so rather than say "session".
+ *
+ * @param {string} prompt
+ */
+function unwrap(prompt) {
+  let out = String(prompt || "").trim();
+  // Bounded rather than `while (true)`: a handful of envelopes is the real
+  // shape, and a pathological prompt must not spin the render.
+  for (let i = 0; i < 8; i++) {
+    const m = /^<([a-zA-Z][\w-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>\s*/.exec(out);
+    if (!m) break;
+    const rest = out.slice(m[0].length).trim();
+    if (!rest) break;
+    out = rest;
+  }
+  return out;
 }
 
 /**
