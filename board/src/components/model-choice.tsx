@@ -49,6 +49,7 @@ function agentNote(a: UsableAgent): string {
 
 export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
   const launchModel = useBoard((s) => s.launchModel);
+  const setLaunchAgent = useBoard((s) => s.setLaunchAgent);
   const setLaunchModel = useBoard((s) => s.setLaunchModel);
   const launchEffort = useBoard((s) => s.launchEffort);
   const setLaunchEffort = useBoard((s) => s.setLaunchEffort);
@@ -69,6 +70,9 @@ export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
             // The raw id is what someone types when they are looking for
             // `inkling` inside `openrouter/thinkingmachines/inkling:free`.
             keywords: alias ? [alias, a.name] : [a.name, "default"],
+            // The provider's own mark, where one is honest. opencode fronts a
+            // dozen providers, so the MODEL is what identifies it, not the CLI.
+            icon: <AgentLogo agent={a.name} model={alias} className="size-3.5" />,
             efforts: HAS_EFFORT.has(a.name) && alias ? true : undefined,
           };
         }),
@@ -84,7 +88,14 @@ export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
     <ModelSelectorRoot
       models={all}
       value={selected}
-      onValueChange={(id) => setLaunchModel(aliasOf(id))}
+      onValueChange={(id) => {
+        // A ModelOption id is `<agent>:<alias>`, so picking a model picks the
+        // CLI as well — which is what the composer starts when it is the first
+        // thing anybody touches.
+        setLaunchModel(aliasOf(id));
+        const cut = id.indexOf(":");
+        if (cut > 0) setLaunchAgent(id.slice(0, cut));
+      }}
       effort={launchEffort || undefined}
       onEffortChange={(e) => setLaunchEffort(e)}
     >

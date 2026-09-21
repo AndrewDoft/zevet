@@ -10,33 +10,50 @@ import { useAuiState } from "@assistant-ui/react";
 import { cn } from "@/lib/utils";
 import { HUES } from "../lib/constants";
 import { ClaudeLogo, OpenAILogo } from "./assistant-ui/elements/logos";
+import { normalizeAgentKey, providerFor } from "./icons/providers";
 import { VoiceOrb } from "./assistant-ui/elements/voice";
 
 /* ---------------------------------------------------------------------------
  * AgentLogo — the provider mark for the CLI actually running, not a generic
  * brand. codex resolves gpt-5 / gpt-5-codex / o3 (lib/constants.ts MODELS),
- * all OpenAI, so the OpenAI mark is honest for it. opencode is a front end
- * for many labs at once (lib/models.generated.mjs: poolside, cohere, google,
- * nvidia, thinkingmachines, opencode's own contributor builds) — none of
- * logos.tsx's three marks belongs to all of them, so opencode renders no
- * logo rather than borrow one lab's mark for the rest. An unknown agent name
- * renders nothing too.
+ * all OpenAI, so the OpenAI mark is honest for it. claude and codex are
+ * matched directly below and never go through providerFor: their marks
+ * (logos.tsx) live outside icons/providers.tsx, which only knows the labs
+ * opencode fronts.
+ *
+ * opencode itself is a front end for many labs at once (lib/models.generated
+ * .mjs: poolside, cohere, google, nvidia, thinkingmachines, opencode's own
+ * contributor builds), so the bare agent name "opencode" is ambiguous on its
+ * own UNLESS the model id says more — icons/providers.tsx's providerFor()
+ * resolves both the agent name and, as a fallback, the model id (agent
+ * first, since it is the more specific signal when it alone is enough, e.g.
+ * agent "opencode" now resolves to opencode's own mark; model second, for
+ * when the model id names a lab the agent name can't, e.g. an opencode run
+ * on "openrouter/deepseek/deepseek-chat:free"). Two names reach here for the
+ * same three agents — see normalizeAgentKey's comment in icons/providers.tsx
+ * for both vocabularies and why. An unidentifiable agent/model pair renders
+ * nothing rather than guess.
  * ------------------------------------------------------------------------- */
 
 export interface AgentLogoProps {
   agent: string;
+  /** The model the agent ran, when known. Only consulted when the agent name
+   *  alone doesn't identify a provider (opencode fronts a dozen). */
+  model?: string;
   hue?: number;
   className?: string;
 }
 
-export function AgentLogo({ agent, hue, className }: AgentLogoProps) {
+export function AgentLogo({ agent, model, hue, className }: AgentLogoProps) {
   // Same index space as board.ts's hueOf: --who-N is defined for N in
   // [0, HUES). A teammate's colour, not a literal hue angle.
   const who =
     hue == null ? undefined : `var(--who-${((hue % HUES) + HUES) % HUES})`;
   const style = who ? ({ "--who": who, color: who } as CSSProperties) : undefined;
 
-  if (agent === "claude") {
+  const a = normalizeAgentKey(agent);
+
+  if (a === "claude") {
     return (
       <ClaudeLogo
         className={cn(
@@ -54,7 +71,7 @@ export function AgentLogo({ agent, hue, className }: AgentLogoProps) {
     );
   }
 
-  if (agent === "codex") {
+  if (a === "codex") {
     // OpenAILogo already draws with fill="currentColor" on the <svg> root,
     // so the wrapper's `color` is enough — no override needed.
     return (
@@ -62,7 +79,15 @@ export function AgentLogo({ agent, hue, className }: AgentLogoProps) {
     );
   }
 
-  return null;
+  const provider = providerFor(a) ?? (model ? providerFor(model) : null);
+  if (!provider) return null;
+  const { Mark } = provider;
+  return (
+    <Mark
+      className={cn("size-4 shrink-0", who && "[&_path]:fill-current", className)}
+      style={style}
+    />
+  );
 }
 
 /* ---------------------------------------------------------------------------

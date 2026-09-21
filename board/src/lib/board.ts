@@ -102,8 +102,10 @@ interface Strip {
  * original alone.
  */
 export interface ForkLaunch {
-  /** The session id to branch from. */
-  forkFrom: string;
+  /** The session id to branch from. Absent for an ordinary start: the same
+   *  shape carries "start this agent and ask it X", which is what the
+   *  composer does when no console is running yet. */
+  forkFrom?: string;
   /** Asked as soon as the fork is up. */
   prompt: string;
   /** The model and posture of the run it came from, so the two answers differ
@@ -183,6 +185,12 @@ interface BoardState {
    *  BECAUSE null there already means "the newest one" — overloading it made
    *  the launcher unreachable the moment a console existed. */
   launching: boolean;
+  /** Which CLI the composer will start when there is no console yet.
+   *
+   *  The model picker sets it, because a ModelOption's id is
+   *  `<agent>:<alias>` — picking a model IS picking an agent. Empty until
+   *  something has been picked or the agents have been read. */
+  launchAgent: string;
   launchModel: string;
   /** Reasoning effort, for the one CLI that takes the flag (codex). Sticky
    *  across model switches; the selector only shows it for a model that
@@ -229,6 +237,8 @@ interface BoardState {
   setLaunchMode: (m: LaunchMode) => void;
   setLaunchModel: (m: string) => void;
   setLaunchEffort: (e: string) => void;
+  setLaunchAgent: (a: string) => void;
+  adoptDefaultAgent: () => void;
   /** Start an agent. `launch` is for a FORK: the session to branch from, the
    *  prompt to ask it, and the model/posture of the run it came from. */
   startAgent: (name: string, launch?: ForkLaunch) => void;
@@ -385,6 +395,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   agentSettings: null,
   permits: [],
   mcpServers: {},
+  launchAgent: "",
   launchModel: "",
   launchEffort: "",
   launchMode: "auto",
@@ -490,6 +501,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   setLaunchMode: (m) => set({ launchMode: m }),
   setLaunchModel: (m) => set({ launchModel: m }),
   setLaunchEffort: (e) => set({ launchEffort: e }),
+  setLaunchAgent: (a) => set({ launchAgent: a }),
 
   startAgent: (name, launch) => {
     const br = bridge.local;
@@ -499,6 +511,8 @@ export const useBoard = create<BoardState>((set, get) => ({
        launcher's current pick — otherwise "ask that again" would quietly ask a
        different model, and the two answers would not be comparable. */
     const from = launch && launch.forkFrom ? launch : null;
+    // A start with no fork still carries a prompt: that is the composer
+    // starting a run because somebody pressed Send with nothing running.
     const model = from && from.model !== undefined ? from.model : get().launchModel;
     const mode = from && from.mode !== undefined ? from.mode : get().launchMode;
     const c: ConsoleEntry = {
@@ -631,7 +645,26 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   refreshLocalAgents: () => {
     if (!bridge.local) return;
-    bridge.local.agents().then((list) => set({ localAgents: list || [] }));
+    bridge.local.agents().then((list) => {
+      set({ localAgents: list || [] });
+      // The composer can start a run, so it needs to know what to start
+      // before anybody has opened the picker.
+      get().adoptDefaultAgent();
+    });
+  },
+
+  /** Pick a default agent as soon as we know which ones exist.
+   *
+   *  The composer has to be able to start SOMETHING the moment it is typed
+   *  into, and "whichever is installed and signed in" is the only answer that
+   *  does not make somebody choose before they have said anything. Preference
+   *  order is the one the launcher shows: the first usable, signed-in agent. */
+  adoptDefaultAgent: (): void => {
+    const g = get();
+    if (g.launchAgent) return;
+    const usable = g.localAgents.filter((a) => a.ok);
+    const pick = usable.find((a) => a.signedIn) || usable[0];
+    if (pick) set({ launchAgent: pick.name });
   },
 
   refreshLocalWorkspaces: (): Promise<void> => {

@@ -64,7 +64,7 @@ function ConsoleRow({ c }: { c: ConsoleEntry }) {
             narrowest and the elapsed slot was removed for exactly that
             reason, so this is deliberately smaller than the icon that cost
             the name its last five characters. */}
-        <AgentLogo agent={c.agent} hue={c.hue} className="console-row-logo size-3" />
+        <AgentLogo agent={c.agent} model={c.model} hue={c.hue} className="console-row-logo size-3" />
         <AgentStatus className="console-row-status" state={state} label={c.agent} trailing={null} />
         <span className={cn(mono, "console-row-mode")} data-danger={String(c.mode === "dangerous")}>
           {MODE_LABEL[c.mode] || c.mode}

@@ -76,11 +76,32 @@ export function Launcher() {
   const localAgents = useBoard((s) => s.localAgents);
   const launchMode = useBoard((s) => s.launchMode);
   const startAgent = useBoard((s) => s.startAgent);
+  const addWorkspace = useBoard((s) => s.addWorkspace);
   const started = useBoard(selectMyConsoles).length;
 
   const usable = useMemo(() => localAgents.filter((a) => a.ok), [localAgents]);
 
-  if (!localRoot) return null;
+  /* ⚠️ THIS USED TO `return null`, and that was the dead end Andrew hit:
+     open the agent view before a folder has been opened and the column showed
+     a sentence saying to pick an agent, with no picker under it and no way
+     forward. An agent needs somewhere to run, so the honest answer is not
+     nothing — it is the one action that fixes it. */
+  if (!localRoot) {
+    return (
+      <div className={cn(paper, "mx-auto flex w-full max-w-sm flex-col items-center gap-3 rounded-2xl p-4 text-center")}>
+        <p className="text-[13px] text-muted-foreground">
+          No folder open. An agent runs in a repo, on this machine.
+        </p>
+        <button
+          type="button"
+          onClick={() => addWorkspace()}
+          className={cn(inkButton, "rounded-full px-4 py-2 text-[13px] transition-transform active:scale-[0.97]")}
+        >
+          Open a folder…
+        </button>
+      </div>
+    );
+  }
 
   if (!usable.length) {
     return (

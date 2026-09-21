@@ -14,7 +14,7 @@ import { Thread } from "./assistant-ui/elements/thread.aui";
 import { ThinkingIndicator } from "./assistant-ui/elements/thinking-indicator";
 import { EmptyState, EmptyStateGreeting } from "./assistant-ui/elements/empty-state";
 import { useEffect, useState } from "react";
-import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
+import { selectActiveConsole, useBoard } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { Launcher } from "./launcher";
 import { DictationOrb } from "./brand";
@@ -94,7 +94,6 @@ function Thinking() {
 
 export function Conversation() {
   const local = Boolean(bridge.local);
-  const consoles = useBoard(selectMyConsoles);
   const active = useBoard(selectActiveConsole);
 
   if (!local) {
@@ -106,24 +105,26 @@ export function Conversation() {
     );
   }
 
-  // No console selected — either none has been started, or "new thread" was
-  // pressed. Either way the next thing to do is pick an agent.
-  if (!active) {
-    return (
-      <div className="chat-launch">
-        {consoles.length ? null : (
-          <Blank
-            title="Nothing running yet."
-            note="Pick an agent and a posture. It runs on this machine, in the open repo."
-          />
-        )}
-        <Launcher />
-      </div>
-    );
-  }
-
+  /* ⚠️ NO SEPARATE "PICK AN AGENT" SCREEN.
+   *
+   * This used to swap the whole column for a blank sentence plus the launcher
+   * whenever no console was active. Andrew's words: "there is no way to start
+   * right now" — because the sentence said to pick an agent and a posture, the
+   * launcher under it rendered NOTHING when no folder was open, and the
+   * composer was not on screen at all.
+   *
+   * The column is the chat now, always. The thread is there (empty, which is
+   * what an empty conversation looks like), the composer is live, and pressing
+   * Send starts the agent the picker names and asks it — see `onNew` in
+   * lib/runtime.tsx. The launcher stays, above the transcript, as what it
+   * actually is: the model, posture and effort this run will start with. */
   return (
     <div className="chat-thread">
+      {!active ? (
+        <div className="chat-setup">
+          <Launcher />
+        </div>
+      ) : null}
       {/* What this console may and may not do, said once at the top rather
           than discovered when an edit does not land. The posture is a flag
           fixed at launch, so this is a standing fact about the run, not a

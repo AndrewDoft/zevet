@@ -83,6 +83,11 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
   const stopConsole = useBoard((s) => s.stopConsole);
   const setActiveConsole = useBoard((s) => s.setActiveConsole);
   const openLauncher = useBoard((s) => s.openLauncher);
+  const startAgent = useBoard((s) => s.startAgent);
+  const launchAgent = useBoard((s) => s.launchAgent);
+  const localRoot = useBoard((s) => s.localRoot);
+  /** Everything a first prompt needs: a CLI to run and a folder to run it in. */
+  const canStart = Boolean(launchAgent && localRoot);
 
   const threads = useMemo<readonly ExternalStoreThreadData<"regular">[]>(
     () =>
@@ -179,18 +184,39 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     // than silently dropping the text. That is why `sent` is counted: for a
     // one-prompt agent the second prompt is the one that goes nowhere, and the
     // first must still be allowed through.
-    isDisabled: !active,
+    /* ⚠️ THE COMPOSER IS LIVE BEFORE THERE IS A CONSOLE.
+     *
+     * It used to be `!active`, and Andrew hit the dead end that produces: open
+     * the agent view with nothing running and you got a sentence telling you
+     * to pick an agent, with no picker on screen if no repo was open yet — "no
+     * way to start right now". A chat window whose composer is dead until you
+     * have found a button somewhere else is not a chat window.
+     *
+     * So the first prompt STARTS the run. `onNew` below spawns the agent the
+     * model picker names and asks it, which is the only reading of Send that
+     * is true here. The one thing still required is somewhere to run: no open
+     * repo means no cwd, and that is a real refusal rather than a UI one. */
+    isDisabled: !active && !canStart,
     // `streaming` is no longer a refusal for a multi-turn agent: the queue
     // takes the prompt and sends it when the turn settles. A one-shot agent
     // keeps it, because for that one there is no later.
-    isSendDisabled: !active?.running || (oneShot && (streaming || sent > 0)),
+    isSendDisabled: active
+      ? !active.running || (oneShot && (streaming || sent > 0))
+      : !canStart,
 
     queue: oneShot ? undefined : queue.adapter,
 
     onNew: async (message) => {
-      if (!active) return;
       const text = textOf(message);
-      if (text) sendPrompt(active.key, text);
+      if (!text) return;
+      if (active) {
+        sendPrompt(active.key, text);
+        return;
+      }
+      // Nothing running: start what the picker names and ask it. The agent,
+      // model and posture all come from the launcher state, so pressing Send
+      // is the same launch the Start buttons do, with a first prompt attached.
+      if (canStart) startAgent(launchAgent, { prompt: text });
     },
 
     onCancel: async () => {

@@ -73,7 +73,25 @@ describe("sending is refused only where it would go nowhere", () => {
   const value = /isSendDisabled:\s*([\s\S]*?),\n\n/.exec(runtime)?.[1] ?? "";
 
   test("a dead process refuses", () => {
-    assert.match(value, /!active\?\.running/);
+    // ⚠️ THE SPELLING MOVED, THE RULE DID NOT. This read `!active?.running`
+    // when a console was the only thing the composer could talk to. It is a
+    // ternary now, because with NO console the composer starts one — so the
+    // process check lives in the branch where there is a process. Assert the
+    // rule inside that branch rather than the old one-liner.
+    assert.match(value, /active\s*\?[\s\S]*!active\.running/);
+  });
+
+  test("with nothing running, Send starts the run instead of refusing", () => {
+    // Andrew's words on the screen this replaces: "there is no way to start
+    // right now". The old agent view swapped the whole column for a sentence
+    // telling you to pick an agent, and the launcher under it rendered nothing
+    // at all when no folder was open. A composer that cannot be typed into
+    // until you have found a button elsewhere is not a chat window.
+    assert.match(value, /:\s*!canStart/);
+    // And it still refuses when there is genuinely nowhere to run: an agent to
+    // spawn and a folder to spawn it in are both required.
+    assert.match(runtime, /const canStart = Boolean\(launchAgent && localRoot\)/);
+    assert.match(runtime, /if \(canStart\) startAgent\(launchAgent, \{ prompt: text \}\)/);
   });
 
   test("a turn in flight refuses", () => {

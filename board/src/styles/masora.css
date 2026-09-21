@@ -684,6 +684,10 @@
     .chat-thread-body [data-slot="conversation-map"] { display: none; }
   }
   .chat-launch { height: 100%; overflow-y: auto; padding: 0 16px; }
+  /* The launcher, above the transcript, while nothing is running. `flex: none`
+     so it keeps its height and the empty thread takes the rest — the same rule
+     the collapsed rows need, for the same reason. */
+  .chat-setup { flex: none; padding: 10px 16px 4px; max-height: 42vh; overflow-y: auto; }
 
 
   /* ---- collisions ------------------------------------------------------ */
