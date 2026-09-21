@@ -12,6 +12,7 @@ import { ConsoleRuntimeProvider } from "./lib/runtime";
 import { TreeFill } from "./components/tree";
 import { DetailPane } from "./components/detail";
 import { SettingsSheet } from "./components/settings";
+import { UpdateDialog } from "./components/updatedialog";
 import {
   applyPanes,
   applyTheme,
@@ -158,6 +159,7 @@ function App() {
       </div>
       <SettingsSheet />
       <Palette />
+      <UpdateDialog />
     </ConsoleRuntimeProvider>
   );
 }

@@ -91,10 +91,30 @@ curl -s https://usemasora.com/download/zevet-latest.json
 curl -sI https://usemasora.com/download/zevet-0.2.0-windows-x64-setup.exe | head -3
 ```
 
-## 5. Point the landing page at it
+## 5. The landing page points itself
 
-`masora-landing/src/app/zevet/page.tsx`, the `RELEASE` constant: version and
-both hrefs. Commit and push to `main`.
+⚠️ **THIS STEP IS GONE, and the paragraph below is kept because it was the
+source of a recurring bug.** It used to say: edit the `RELEASE` constant in
+`masora-landing/src/app/zevet/page.tsx`, then rebuild and redeploy the
+container. That made a release two separate acts, and the second one drifted
+from the first every time — the live page sat a version behind the feed more
+than once, and at one point linked an installer from three releases earlier
+while installed copies had already updated past it.
+
+The page reads `zevet-latest.json` now, with ISR at 5 minutes. **Publishing the
+feed in step 4 IS publishing the site**, within five minutes, with no deploy.
+Check it, because "nothing to do" and "silently broken" look identical:
+
+```
+curl -s https://usemasora.com/zevet | grep -o 'zevet-[0-9.]*-windows-x64-setup.exe'
+```
+
+It should name the version you just published. If it names the fallback in
+`page.tsx` instead, the container could not reach the feed — that is a real
+fault worth chasing rather than a reason to go back to hand-editing.
+
+The rest of this section applies only when the PAGE ITSELF changes — new copy,
+a new screenshot, a new section — which is now the only reason to rebuild it.
 
 ⚠️ **THE PUSH IS NOT THE DEPLOY.** `usemasora.com/zevet` is served by the
 `landing` container on the same GCE box — `/srv/masora/Caddyfile` proxies it to

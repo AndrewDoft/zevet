@@ -186,3 +186,38 @@ record the shapes in `docs/contracts/`. Ten minutes.
 
 **What it blocks.** Nothing ships on it — it is fidelity for one of three agents.
 It should be closed before codex is described anywhere as fully supported.
+
+---
+
+## INSUF-006 — the gate flakes on Windows under its own parallelism — **OPEN**
+
+**Blast radius: LOW for the product, REAL for trust in the gate.**
+
+**What happens.** `npm test` runs every file concurrently. Roughly one run in
+three, one of the tests that SPAWNS a Node subprocess fails with an exit code
+of `3221226505` — `0xC0000409`, Windows' `STATUS_STACK_BUFFER_OVERRUN`, which
+is what a process reports when it is killed by `__fastfail` rather than
+exiting. Seen on `test/client.test.mjs` ("writes nothing and exits 0 when the
+hub rejects the token") and on `test/outbox.test.mjs`. Every one of them passes
+when its file is run alone.
+
+**Why it is not a product bug.** The assertion that fails is `exit code === 0`
+on a spawned `client/hook.mjs`. The hook is doing nothing unusual at that
+moment, and the same invocation succeeds in isolation, repeatedly. The suite
+spawns dozens of Node processes at once; this is the machine under that load,
+not zevet's code.
+
+**Why it is not fixed.** The honest options are all worse than the flake.
+Weakening the assertion would give up the property the test exists for — the
+hook must never affect a turn, which is D-001's whole point. Serialising the
+suite would turn 40 seconds into minutes. Retrying a failed test is how a real
+regression gets waved through.
+
+**What to do when it fires.** Re-run the one file. If it passes alone, this is
+what happened. If it fails alone, it is not.
+
+**What would close it.** A measurement, not a patch: run the suite in a loop
+and capture which process dies and why — Windows Error Reporting, or a
+`--trace-uncaught` on the child. Nobody has done that yet, and until somebody
+does, the cause above is an inference from the exit code and the isolation
+behaviour rather than an observation.
