@@ -9,9 +9,12 @@ import type { Conn } from "../lib/types";
    a bar helper with no caller is the kind of thing that gets re-used badly
    later. Deleted rather than left behind. */
 
+/** Same rounding as lib/fmt.ts § tokens, and for the same reason — see the
+ *  warning there. This copy takes a nullable, which that one does not. */
 function tokens(n: number | null | undefined) {
   if (n == null) return "";
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 999500) return (n / 1000000).toFixed(1) + "M";
+  if (n < 1000) return String(Math.round(n));
   return (n / 1000).toFixed(0) + "k";
 }
 

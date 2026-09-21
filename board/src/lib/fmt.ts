@@ -61,8 +61,18 @@ export function shortInput(input: unknown, localRoot: string | null): string {
   return text.slice(0, 90);
 }
 
+/**
+ * A token count, short enough for a status line.
+ *
+ * ⚠️ IT USED TO ROUND EVERYTHING UNDER A MILLION TO WHOLE THOUSANDS, which got
+ * both ends wrong: 400 tokens printed "0k" and 500 printed "1k", so a run that
+ * had just started read as having spent nothing or twice what it had; and
+ * 999,500 printed "1000k" rather than "1.0M", which is both wrong-looking and
+ * four characters wider than the 258px strip budgets for.
+ */
 export function tokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 999_500) return (n / 1_000_000).toFixed(1) + "M";
+  if (n < 1_000) return String(Math.round(n));
   return (n / 1_000).toFixed(0) + "k";
 }
 

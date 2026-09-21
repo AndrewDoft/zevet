@@ -42,7 +42,43 @@ function ModeSelector() {
         <span className={cn(mono, "text-foreground/35")}>{launchMode}</span>
       </div>
 
-      <div className={cn(field, "flex gap-0.5 rounded-full p-0.5")} role="radiogroup" aria-label="Permission posture">
+      {/* ⚠️ role="radiogroup" IS A PROMISE ABOUT THE ARROW KEYS. It was made
+          and not kept: each option was a plain onClick button in the tab
+          order, so a keyboard user Tabbed through all three and the arrows did
+          nothing — while a screen reader, told this was a radio group,
+          announced "1 of 3" and waited for a Left/Right that never worked.
+
+          So: roving tabindex (only the checked option is tabbable, which is
+          what makes a group one tab stop) plus the four arrows, Home and End.
+          APG "Radio Group Pattern". */}
+      <div
+        className={cn(field, "flex gap-0.5 rounded-full p-0.5")}
+        role="radiogroup"
+        aria-label="Permission posture"
+        onKeyDown={(e) => {
+          const i = MODES.findIndex((m) => m.id === launchMode);
+          const step =
+            e.key === "ArrowRight" || e.key === "ArrowDown"
+              ? 1
+              : e.key === "ArrowLeft" || e.key === "ArrowUp"
+                ? -1
+                : 0;
+          let next = -1;
+          if (step) next = (i + step + MODES.length) % MODES.length;
+          else if (e.key === "Home") next = 0;
+          else if (e.key === "End") next = MODES.length - 1;
+          if (next < 0) return;
+          e.preventDefault();
+          setLaunchMode(MODES[next].id);
+          // The newly checked option is the only tabbable one, so focus has to
+          // follow the selection or it lands outside the group.
+          const group = e.currentTarget;
+          requestAnimationFrame(() => {
+            const btn = group.children[next];
+            if (btn instanceof HTMLElement) btn.focus();
+          });
+        }}
+      >
         {MODES.map((m) => {
           const active = m.id === launchMode;
           return (
@@ -51,6 +87,7 @@ function ModeSelector() {
               type="button"
               role="radio"
               aria-checked={active}
+              tabIndex={active ? 0 : -1}
               onClick={() => setLaunchMode(m.id)}
               className={cn(
                 "flex-1 whitespace-nowrap rounded-full px-2 py-1 text-[11.5px] font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.97]",

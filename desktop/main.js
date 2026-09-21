@@ -1788,6 +1788,23 @@ function releaseBoardResources() {
     docSync = null;
   }
   fileWatch.closeAll();
+  /* ⚠️ THE RUNNING AGENTS GO TOO, and they are the reason this matters more
+     than the watchers above. `myConsoles` is renderer state, built up from the
+     events of runs this window started, and it is initialised to [] — so a
+     reload gives you a fresh board with an empty rail while the child
+     processes it was showing keep running as children of this one.
+
+     Measured 2026-09-21: three `claude.exe` still spawned from zevet.exe with
+     the rail showing nothing. Invisible, unstoppable from the UI, and still
+     spending. That is precisely what before-quit already refuses to allow —
+     "an agent outliving the window that started it is a process nobody can see
+     and nobody asked for" — and a reload replaces the window just as surely as
+     a quit does.
+
+     Reaping rather than re-announcing: the transcript is renderer state too,
+     so a rehydrated console would be a running agent with no history above it,
+     which is a worse thing to hand someone than a clean rail. */
+  stopAllConsoles();
 }
 
 /**
@@ -2225,8 +2242,9 @@ ipcMain.handle("local:stopAgent", (_e, id) => {
 });
 
 // An agent outliving the window that started it is a process nobody can see
-// and nobody asked for.
-app.on("before-quit", () => {
+// and nobody asked for. Called on quit, and on every reload — see
+// releaseBoardResources.
+function stopAllConsoles() {
   for (const c of consoles.values()) {
     try {
       c.stop();
@@ -2235,7 +2253,9 @@ app.on("before-quit", () => {
     }
   }
   consoles.clear();
-});
+}
+
+app.on("before-quit", stopAllConsoles);
 
 // ---- lifecycle -------------------------------------------------------------
 

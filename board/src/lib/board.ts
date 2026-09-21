@@ -700,6 +700,14 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   openLocalRoot: (dir) => {
     closeEditor();
+    // Which repo you had open, so the next launch can put it back. See
+    // `restoreLastRoot` for why this is the renderer's job and not main's.
+    try {
+      localStorage.setItem(LAST_ROOT_KEY, dir);
+    } catch {
+      // Private mode, cleared site data, a quota that is full: the app works
+      // without this and re-picking a folder is not a failure worth reporting.
+    }
     set((g) => ({
       stats: { lines: Object.create(null) as Stats["lines"], diff: null, root: null },
       localRoot: dir,
@@ -742,6 +750,11 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   unsetLocalRoot: () => {
     closeEditor();
+    try {
+      localStorage.removeItem(LAST_ROOT_KEY);
+    } catch {
+      // See openLocalRoot.
+    }
     set({ localRoot: null, localEntries: null, localFile: null, selectedPath: null });
   },
 
@@ -2211,6 +2224,42 @@ export function connect(): void {
  * BOOT
  * ------------------------------------------------------------------------- */
 
+const LAST_ROOT_KEY = "zevet.lastRoot.v1";
+
+/**
+ * Put back the repo you had open.
+ *
+ * ⚠️ EVERY LAUNCH USED TO START AT "Open a folder…". `localRoot` is renderer
+ * state initialised to null and nothing ever restored it, so opening zevet —
+ * or merely reloading it — dropped the workspace, the tree, and the composer's
+ * ability to start anything, and you picked the same repo again. The app
+ * already knew: `workspaces.json` has held the list the whole time.
+ *
+ * The LAST OPENED one, not `workspaces[0]`. That list is ordered by when a
+ * folder was ADDED (main.js § local:addWorkspace unshifts on pick), which is
+ * not the same thing and is wrong for anyone who added a second repo once and
+ * works in the first. Recording it here rather than in main keeps this a
+ * renderer change, which reaches every install over the hub instead of waiting
+ * for an installer.
+ *
+ * Still checked against the workspace list, because that list is what
+ * `knownRoot` in main will accept — a folder removed since is a path every
+ * subsequent IPC would refuse, and the greeting is a better outcome than a
+ * tree that will not load.
+ */
+function restoreLastRoot(): void {
+  const g = useBoard.getState();
+  if (g.localRoot || !g.localWorkspaces.length) return;
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(LAST_ROOT_KEY);
+  } catch {
+    saved = null;
+  }
+  const pick = (saved && g.localWorkspaces.find((w) => w.dir === saved)) || null;
+  if (pick) g.openLocalRoot(pick.dir);
+}
+
 export function boot(): void {
   const g = useBoard.getState();
 
@@ -2237,7 +2286,7 @@ export function boot(): void {
   if (bridge.local && typeof bridge.local.onAgentEvent === "function") {
     bridge.local.onAgentEvent(ingressAgentEvent);
   }
-  void g.refreshLocalWorkspaces();
+  void g.refreshLocalWorkspaces().then(restoreLastRoot);
   void g.refreshLocalAgents();
 
   // The updater: one state machine drives the rail and Settings, subscribes

@@ -97,12 +97,15 @@ function ConsoleRow({ c }: { c: ConsoleEntry }) {
         </span>
         {/* `title` and not a tooltip component: the row is 180px at its
             narrowest, so the line is always truncated and the full prompt has
-            to be readable somehow. */}
-        {task ? (
-          <span className="console-row-task" title={task}>
-            {task}
-          </span>
-        ) : null}
+            to be readable somehow.
+
+            Always rendered, empty or not: a console started from the launcher
+            has no prompt yet, and letting the line appear when the first one
+            arrives would grow the row under the pointer. Reserving it is the
+            same trick .chat-underline uses. */}
+        <span className="console-row-task" title={task || undefined}>
+          {task}
+        </span>
       </button>
       <button
         type="button"
@@ -130,11 +133,16 @@ export function Consoles() {
       {consoles.map((c) => (
         <ConsoleRow c={c} key={c.key} />
       ))}
+      {/* ⚠️ aria-expanded, NOT aria-pressed. `launching` is whether the
+          launcher panel is open, and this button opens it — a disclosure.
+          aria-pressed told a screen reader it was a toggle that was on or
+          off, which is a control zevet does not have. */}
       {localRoot ? (
         <button
           type="button"
           className="console-new"
-          aria-pressed={launching}
+          aria-expanded={launching}
+          aria-haspopup="dialog"
           onClick={openLauncher}
         >
           {consoles.length ? "Start another…" : "Start an agent…"}
