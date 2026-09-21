@@ -299,7 +299,13 @@ function closeOpenTurn(state) {
  */
 export function sessionLabel(session) {
   const s = session || {};
-  const raw = unwrapEnvelope(text(s.title) || text(s.prompt)) || text(s.id) || "session";
+  // Each candidate is peeled on its own, so a title that is ALL envelope falls
+  // through to the prompt rather than taking the whole chain down with it.
+  const raw =
+    unwrapEnvelope(text(s.title)) ||
+    unwrapEnvelope(text(s.prompt)) ||
+    text(s.id) ||
+    "session";
   const one = raw.replace(/\s+/g, " ").trim();
   return one.length > 72 ? `${one.slice(0, 71)}…` : one;
 }
@@ -313,11 +319,17 @@ export function sessionLabel(session) {
  * sessions "<local-command-caveat>Caveat: Th…", which names the wrapper and
  * never the work. Leading, fully-closed blocks are peeled off one at a time.
  *
- * Nothing is invented and nothing is dropped: if peeling leaves nothing, the
- * original is returned, because a session whose prompt really is only a
- * machine block should say so rather than say "session".
+ * ⚠️ A PROMPT THAT IS NOTHING BUT AN ENVELOPE RETURNS "". This function first
+ * kept the original in that case, on the reasoning that dropping it would be
+ * inventing an absence. Seeing it in the deployed app settled it: the People
+ * rail announced that somebody was working on
+ * "<task-notification>\n<task-id>bkp0qq54x…", which is not a fact about their
+ * work, it is our own plumbing read out loud. Nobody typed anything, so there
+ * is nothing to show, and every caller already has a fallback for "" — a
+ * session falls through to its id, a mission renders no line at all.
  *
  * @param {string} prompt
+ * @returns {string} what a person typed, or "" if they typed nothing.
  */
 export function unwrapEnvelope(prompt) {
   let out = String(prompt || "").trim();
@@ -326,9 +338,7 @@ export function unwrapEnvelope(prompt) {
   for (let i = 0; i < 8; i++) {
     const m = /^<([a-zA-Z][\w-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>\s*/.exec(out);
     if (!m) break;
-    const rest = out.slice(m[0].length).trim();
-    if (!rest) break;
-    out = rest;
+    out = out.slice(m[0].length).trim();
   }
   return out;
 }

@@ -205,10 +205,14 @@ describe("row helpers", () => {
     assert.equal(sessionLabel({ title: caveat }), "keep the tests green");
     // An attribute on the wrapper is still a wrapper.
     assert.equal(sessionLabel({ prompt: '<pasted_content id="7">junk</pasted_content>\nreal ask' }), "real ask");
-    // Nothing invented: a prompt that is ONLY an envelope keeps it, rather
-    // than becoming the word "session".
-    assert.equal(sessionLabel({ prompt: "<system-reminder>be nice</system-reminder>" }),
-      "<system-reminder>be nice</system-reminder>");
+    // A prompt that is ONLY an envelope means nobody typed anything, so the
+    // label falls through to the id rather than reading our plumbing out loud.
+    assert.equal(sessionLabel({ prompt: "<system-reminder>be nice</system-reminder>", id: "abc" }), "abc");
+    // And a title that is all envelope does not take the prompt down with it.
+    assert.equal(
+      sessionLabel({ title: "<task-notification><task-id>b1</task-id></task-notification>", prompt: "ship it" }),
+      "ship it",
+    );
     // Ordinary prompts are untouched, including ones that merely mention a tag.
     assert.equal(sessionLabel({ prompt: "why does <div> collapse?" }), "why does <div> collapse?");
   });
