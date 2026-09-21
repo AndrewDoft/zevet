@@ -223,8 +223,9 @@ interface BoardState {
   /** Masora Voice is missing and the mic was pressed: the download URL to
    *  offer, or null. See lib/voice.ts. */
   voiceAsk: string | null;
-  /** The hold-to-talk chord Masora Voice is bound to, once it has been
-   *  started at least once this run. Its own config decides it. */
+  /** What the microphone last did, as one sentence to show under the
+   *  composer. The mic is a button; a button that does nothing visible is the
+   *  bug lib/voice.ts exists to remove. */
   voiceHotkey: string | null;
 
   myActor: string | null;

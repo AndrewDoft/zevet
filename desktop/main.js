@@ -2280,6 +2280,7 @@ const appUpdater = new AppUpdater({
  * ==================================================================== */
 ipcMain.handle("local:voiceStatus", () => masoraVoice.status());
 ipcMain.handle("local:voiceStart", () => masoraVoice.start());
+ipcMain.handle("local:voiceMic", () => masoraVoice.mic());
 
 ipcMain.handle("app:updateStatus", () => appUpdater.status());
 ipcMain.handle("app:updateCheck", () => appUpdater.check());

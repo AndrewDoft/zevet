@@ -123,7 +123,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     () =>
       new MasoraVoiceDictationAdapter({
         onMissing: (url) => setVoiceAsk(url),
-        onStarted: (key) => setVoiceHotkey(key),
+        onSaid: (line) => setVoiceHotkey(line),
       }),
     [setVoiceAsk, setVoiceHotkey],
   );

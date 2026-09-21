@@ -61,24 +61,22 @@ export function VoiceDialog() {
 }
 
 /**
- * What to do now that the flow bar is up — shown once per run, under the
- * composer, after the mic has actually started Masora Voice.
+ * What the microphone just did, in one line under the composer.
  *
- * ⚠️ THIS EXISTS BECAUSE THE MIC CANNOT START THE RECORDING. Masora Voice has
- * no trigger a separate process can pull (desktop/masora-voice.js lists what
- * was checked), so pressing the mic raises the bar and nothing else happens
- * until a key is held. Without this line that reads as a broken button.
+ * ⚠️ EVERY PRESS SAYS SOMETHING. Masora Voice draws its own flow bar in its own
+ * process, so nothing about a dictation is visible inside zevet — and the
+ * gesture has real outcomes that differ ("listening", "press again in a
+ * moment" on a cold start, "update Masora Voice" on an old build). A mic that
+ * silently did one of four different things is the bug this removes.
+ * lib/voice.ts picks the sentence; this only shows it.
  */
 export function VoiceHint() {
-  const voiceHotkey = useBoard((s) => s.voiceHotkey);
+  const line = useBoard((s) => s.voiceHotkey);
   const setVoiceHotkey = useBoard((s) => s.setVoiceHotkey);
-  if (!voiceHotkey) return null;
+  if (!line) return null;
   return (
     <div className="voice-hint" role="status">
-      <span>
-        Masora Voice is on. Hold <kbd>{voiceHotkey}</kbd> and talk — it types into
-        whatever has focus.
-      </span>
+      <span>{line}</span>
       <button type="button" onClick={() => setVoiceHotkey("")} aria-label="Dismiss">
         ×
       </button>

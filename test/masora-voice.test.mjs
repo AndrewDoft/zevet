@@ -102,3 +102,53 @@ describe("masora voice", () => {
     assert.equal(s.download, "https://usemasora.com/voice");
   });
 });
+
+describe("the microphone gesture", () => {
+  test("a machine without Masora Voice is offered the download, not an error", async (t) => {
+    const env = fakeHome(t, { installed: false });
+    const r = await voice.mic(env, { dictateImpl: async () => { throw new Error("must not run"); } });
+    assert.equal(r.installed, false);
+    assert.equal(r.download, "https://usemasora.com/voice");
+  });
+
+  test("a running instance dictates on the first press", async (t) => {
+    const env = fakeHome(t, { installed: true });
+    let started = 0;
+    const r = await voice.mic(env, {
+      dictateImpl: async () => ({ ok: true, installed: true }),
+      startImpl: () => { started++; return { ok: true }; },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.dictating, true);
+    // Already running: starting it again would be noise, and on a slow machine
+    // a second window of nothing happening.
+    assert.equal(started, 0);
+  });
+
+  test("a cold machine is raised and says so, rather than losing the signal", async (t) => {
+    const env = fakeHome(t, { installed: true });
+    let started = 0;
+    const r = await voice.mic(env, {
+      // What `admin record` answers when no instance is listening.
+      dictateImpl: async () => ({ ok: false, installed: true, error: "Masora Voice is not running" }),
+      startImpl: () => { started++; return { ok: true }; },
+    });
+    assert.equal(started, 1);
+    assert.equal(r.starting, true);
+    assert.equal(r.ok, false, "it must not claim a dictation nothing heard");
+  });
+
+  test("an old build is named as old, and is not restarted on top of itself", async (t) => {
+    const env = fakeHome(t, { installed: true });
+    let started = 0;
+    const r = await voice.mic(env, {
+      dictateImpl: async () => ({ ok: false, installed: true, stale: true }),
+      startImpl: () => { started++; return { ok: true }; },
+    });
+    assert.equal(r.stale, true);
+    // It IS running — it just cannot take the trigger. Launching a second copy
+    // would do nothing but log EXIT_ALREADY_RUNNING.
+    assert.equal(started, 0);
+    assert.equal(r.hotkey, "Ctrl+`", "the fallback instruction needs the real chord");
+  });
+});

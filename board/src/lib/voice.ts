@@ -16,11 +16,14 @@
  * emit and the session ends as soon as the app is up. Emitting a fake
  * "listening" state that never resolves would be the lie; ending is the truth.
  *
- * ⚠️ AND IT CANNOT START THE RECORDING. Masora Voice has no IPC surface for it
- * — see desktop/masora-voice.js, which lists what was actually checked in its
- * source. Clicking the mic starts the APP, whose flow bar then appears; the
- * person holds the hotkey to talk, and `hotkey` is read from Masora Voice's
- * own config so zevet never names a key somebody has rebound.
+ * ⚠️ IT IS A TOGGLE, not a start. The trigger posts Masora Voice's own
+ * `toggle` — the hands-free transition its Ctrl+`+Space chord posts — so the
+ * second press is what stops the dictation and transcribes it. zevet says so
+ * rather than leaving somebody holding a mic that looks stuck on.
+ *
+ * On a cold machine it takes two presses for a different reason: Masora Voice
+ * must be RUNNING to take a record signal, and one sent while it is still
+ * coming up is lost. The first press raises it, the second dictates.
  */
 import type { DictationAdapter } from "@assistant-ui/react";
 import { bridge } from "./bridge";
@@ -31,6 +34,20 @@ export type VoiceStatus = {
   hotkey: string;
   download: string;
 };
+
+/** What `local:voiceMic` answers. See desktop/masora-voice.js's `mic()`. */
+export type MicResult = {
+  ok: boolean;
+  installed: boolean;
+  dictating?: boolean;
+  starting?: boolean;
+  stale?: boolean;
+  hotkey?: string;
+  error?: string | null;
+  download?: string;
+};
+
+const DOWNLOAD = "https://usemasora.com/voice";
 
 /** Ended before it began, with the reason the caller asked for. A session is
  *  the only shape `listen()` may return, so "nothing to listen to" still has
@@ -52,30 +69,44 @@ export class MasoraVoiceDictationAdapter implements DictationAdapter {
    *  A callback rather than a store import: this file is the adapter, and the
    *  dialog is the board's business. */
   private readonly onMissing: (download: string) => void;
-  private readonly onStarted: (hotkey: string) => void;
+  private readonly onSaid: (line: string) => void;
 
-  constructor(opts: { onMissing: (download: string) => void; onStarted: (hotkey: string) => void }) {
+  constructor(opts: { onMissing: (download: string) => void; onSaid: (line: string) => void }) {
     this.onMissing = opts.onMissing;
-    this.onStarted = opts.onStarted;
+    this.onSaid = opts.onSaid;
   }
 
   listen(): DictationAdapter.Session {
-    const local = bridge.local as
-      | { voiceStart?: () => Promise<{ ok: boolean; installed?: boolean; hotkey?: string }> }
-      | undefined;
+    const local = bridge.local as { voiceMic?: () => Promise<MicResult> } | undefined;
     // An older desktop build has no such method. Offering the download is the
     // honest answer there too — what it cannot do is pretend to dictate.
-    if (!local || typeof local.voiceStart !== "function") {
-      this.onMissing("https://usemasora.com/voice");
+    if (!local || typeof local.voiceMic !== "function") {
+      this.onMissing(DOWNLOAD);
       return endedSession();
     }
     void local
-      .voiceStart()
-      .then((r) => {
-        if (r && r.ok) this.onStarted(r.hotkey || "");
-        else this.onMissing("https://usemasora.com/voice");
-      })
-      .catch(() => this.onMissing("https://usemasora.com/voice"));
+      .voiceMic()
+      .then((r) => this.report(r))
+      .catch(() => this.onMissing(DOWNLOAD));
     return endedSession();
+  }
+
+  /** One of four outcomes, each with its own sentence. The one thing none of
+   *  them may do is stay silent — the mic is a button, and a button that does
+   *  nothing visible is the bug this whole file exists to remove. */
+  private report(r: MicResult): void {
+    if (!r || !r.installed) return this.onMissing((r && r.download) || DOWNLOAD);
+    if (r.ok) return this.onSaid("Listening. Press the mic again when you are done.");
+    if (r.stale) {
+      return this.onSaid(
+        `This Masora Voice is too old to be started from here — update it, or hold ${r.hotkey || "the hotkey"}.`,
+      );
+    }
+    if (r.starting) {
+      // Cold start: the app is coming up and has not armed its listener yet. A
+      // signal sent into that gap is simply lost, so ask rather than sleep.
+      return this.onSaid("Masora Voice is starting. Press the mic again in a moment.");
+    }
+    this.onSaid(r.error || "Masora Voice could not be started.");
   }
 }

@@ -187,6 +187,7 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   // See desktop/masora-voice.js for why there is no "start recording".
   voiceStatus: () => ipcRenderer.invoke("local:voiceStatus"),
   voiceStart: () => ipcRenderer.invoke("local:voiceStart"),
+  voiceMic: () => ipcRenderer.invoke("local:voiceMic"),
   resumeAgent: (agent, cwd, resumeFrom, opts) =>
     ipcRenderer.invoke("local:resumeAgent", { agent, cwd, resumeFrom, opts }),
   agentSettings: (root) => ipcRenderer.invoke("local:agentSettings", { root }),

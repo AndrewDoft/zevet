@@ -20,27 +20,32 @@
  * (masora_dictation/config.py). `bar.start()` runs once at startup in
  * __main__.py. So "turn the flow bar on" IS "start the app".
  *
- * ⚠️ AND ZEVET CANNOT START A RECORDING. Checked against the source rather
- * than assumed: masora_dictation has no socket, no named pipe, no file it
- * watches, and no admin CLI verb for it (admin.py's verbs are download-model,
- * model-manifest, set-enrollment, enroll, renew, enrollment-status, set,
- * set-key, test-connection, status, quit). The one named Win32 event it
- * listens on is `Local\MasoraDictation-<hash>-quit`, which only quits.
- * Synthesising the hotkey does not work either — hotkey/windows.py's
- * `should_process()` drops events flagged LLKHF_INJECTED unless the app was
- * started with `--accept-injected`, a flag its own help calls "e2e tests
- * only". So the person still holds the hotkey; zevet says which one.
- * A record trigger would have to be added on the Masora Voice side, next to
- * the quit event it already has.
+ * ⚠️ IT CAN START A RECORDING TOO, and that had to be built on the other
+ * side first. When this file was written there was no way in: masora_dictation
+ * had no socket, no named pipe, no watched file and no admin verb for it, and
+ * synthesising the chord does not work either — hotkey/windows.py's
+ * `should_process()` drops LLKHF_INJECTED events unless the app was started
+ * with `--accept-injected`, which its own help calls "e2e tests only". zevet
+ * 0.2.24 shipped the consequence: a mic that raised the bar and then told you
+ * to press a key yourself, which reads as a broken button.
+ *
+ * masora2-dictation D-DEPLOY-10 added `Local\MasoraDictation-<hash>-record`,
+ * the sibling of the quit event, set by `masora_dictation.admin record`. It
+ * posts Masora Voice's own `toggle`, so the same signal starts a hands-free
+ * dictation and then finishes it.
  */
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, execFile } = require("node:child_process");
 
 /** The GUI launcher inside an installed bundle. install.ps1 lays the versioned
  *  bundle out with a stable `launcher/` directory, which is why this is not
  *  version-dependent. */
 const EXE = "Masora Voice.exe";
+/** The same bundle's console launcher, which forwards argv to a module. Verified
+ *  on a real install: `"Masora Voice Console.exe" -m masora_dictation.admin status`
+ *  printed "running (supervised)". */
+const CONSOLE_EXE = "Masora Voice Console.exe";
 
 /**
  * Where install.ps1 puts it: per-user by default, all-users optionally.
@@ -155,4 +160,84 @@ function start(env = process.env, spawnImpl = spawn) {
   return { ok: true, installed: true, hotkey: hotkey(env) };
 }
 
-module.exports = { candidates, find, hotkey, status, start, EXE, DEFAULT_HOLD };
+/**
+ * Ask the running instance to start a dictation — or stop the one in progress.
+ *
+ * ⚠️ THIS IS A TOGGLE, not a start, because that is what the event does:
+ * `admin record` posts Masora Voice's own `toggle`, the hands-free transition
+ * its Ctrl+`+Space chord posts. So the second press stops and transcribes.
+ * zevet gets that for free and must not pretend otherwise.
+ *
+ * The text does NOT come back through here. Masora Voice types into whatever
+ * window has focus when the signal lands, which is zevet — that is the whole
+ * design, and why this resolves with no transcript.
+ *
+ * An older Masora Voice has no `record` verb and exits non-zero with its usage
+ * on stderr. That is reported as `{ ok: false, stale: true }` rather than as a
+ * generic failure, because the answer to it is "update Masora Voice" and not
+ * "something went wrong".
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {typeof execFile} [execFileImpl]
+ */
+function dictate(env = process.env, execFileImpl = execFile) {
+  const exe = find(env);
+  if (!exe) return Promise.resolve({ ok: false, installed: false, error: "Masora Voice is not installed" });
+  const cli = path.join(path.dirname(exe), CONSOLE_EXE);
+  return new Promise((resolve) => {
+    execFileImpl(
+      cli,
+      ["-m", "masora_dictation.admin", "record"],
+      { windowsHide: true, timeout: 10000 },
+      (err, _stdout, stderr) => {
+        if (!err) return resolve({ ok: true, installed: true });
+        const said = String(stderr || err.message || "");
+        // Its argparse prints the verb list when the verb is unknown.
+        const stale = /invalid choice|usage: masora_dictation\.admin/i.test(said);
+        resolve({
+          ok: false,
+          installed: true,
+          stale,
+          error: stale ? "this Masora Voice is too old for the record trigger" : said.trim().split("\n")[0],
+        });
+      },
+    );
+  });
+}
+
+/**
+ * The whole microphone gesture, in one call, because it is one intent.
+ *
+ * Masora Voice has to be RUNNING to take a record signal — `admin record`
+ * refuses otherwise rather than claiming success. So a cold machine needs two
+ * steps, and they cannot be collapsed: the app takes seconds to come up, load
+ * its model and arm its listener, and a signal sent into that gap is simply
+ * lost. Rather than sleep-and-hope, this reports `starting` and the board asks
+ * for the mic again — by which time the flow bar is on screen, which is its
+ * own invitation.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {{ dictateImpl?: Function, startImpl?: Function }} [impls]
+ */
+async function mic(env = process.env, impls = {}) {
+  const dictateImpl = impls.dictateImpl || dictate;
+  const startImpl = impls.startImpl || start;
+  if (!find(env)) {
+    return { ok: false, installed: false, download: status(env).download };
+  }
+  const first = await dictateImpl(env);
+  if (first.ok) return { ok: true, installed: true, dictating: true, hotkey: hotkey(env) };
+  if (first.stale) return { ...first, hotkey: hotkey(env) };
+  // Not running: raise it, and say so rather than pretending to have started
+  // a dictation that nothing heard.
+  const started = startImpl(env);
+  return {
+    ok: false,
+    installed: true,
+    starting: started.ok,
+    error: started.ok ? null : started.error,
+    hotkey: hotkey(env),
+  };
+}
+
+module.exports = { candidates, find, hotkey, status, start, dictate, mic, EXE, CONSOLE_EXE, DEFAULT_HOLD };
