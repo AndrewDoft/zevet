@@ -20,6 +20,7 @@
  * nobody reads. "All" is one click away and is what the filter box is for.
  */
 import { useState } from "react";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AgentLogo } from "./brand";
 import { mono } from "./assistant-ui/elements/surfaces";
@@ -212,25 +213,37 @@ export function SessionsPane({ hue }: { hue?: number } = {}) {
                 : "No claude or codex sessions on this machine."}
           </div>
         ) : null}
-        {groups.map((g) => (
-          <details
-            className="session-group"
-            key={g.name}
-            open={filtering || (opened[g.name] ?? g.name === here)}
-            onToggle={(e) => {
-              const on = (e.currentTarget as HTMLDetailsElement).open;
-              setOpened((o) => (o[g.name] === on ? o : { ...o, [g.name]: on }));
-            }}
-          >
-            <summary className="session-group-head">
-              <span className="session-group-name">{g.name}</span>
-              <span className="session-group-count">{g.rows.length}</span>
-            </summary>
-            {g.rows.map((s) => (
-              <SessionRow key={`${s.source}:${s.id}`} s={s} hue={hue} />
-            ))}
-          </details>
-        ))}
+        {groups.map((g) => {
+          const on = filtering || (opened[g.name] ?? g.name === here);
+          return (
+            <details
+              className="session-group"
+              key={g.name}
+              open={on}
+              onToggle={(e) => {
+                const next = (e.currentTarget as HTMLDetailsElement).open;
+                setOpened((o) => (o[g.name] === next ? o : { ...o, [g.name]: next }));
+              }}
+            >
+              {/* THE FILE TREE CHEVRON, not a glyph in a ::before pseudo. The
+                  two trees now use the same lucide icons at the same size and
+                  weight as components/tree.tsx and components/people.tsx, so
+                  they cannot drift apart again. */}
+              <summary className="session-group-head">
+                {on ? (
+                  <ChevronDownIcon className="text-foreground/25 size-3 shrink-0" />
+                ) : (
+                  <ChevronRightIcon className="text-foreground/25 size-3 shrink-0" />
+                )}
+                <span className="session-group-name">{g.name}</span>
+                <span className="session-group-count">{g.rows.length}</span>
+              </summary>
+              {g.rows.map((s) => (
+                <SessionRow key={`${s.source}:${s.id}`} s={s} hue={hue} />
+              ))}
+            </details>
+          );
+        })}
         {/* `total` counts every session file found, before the cap and before
             the filter — so a list that stops at 400 says so rather than
             looking complete. */}
@@ -252,13 +265,10 @@ export function SessionsPane({ hue }: { hue?: number } = {}) {
  */
 export function SessionBanner() {
   const open = useBoard((st) => st.sessions.open);
-  const agents = useBoard((st) => st.sessions.agents);
   const openAgent = useBoard((st) => st.sessions.openAgent);
-  const openSessionAgent = useBoard((st) => st.openSessionAgent);
   const truncated = useBoard((st) => st.sessions.openTruncated);
   const loading = useBoard((st) => st.sessions.openLoading);
   const closeSession = useBoard((st) => st.closeSession);
-  const [showAgents, setShowAgents] = useState(false);
   if (!open) return null;
 
   const where = sessionWhere(open);
@@ -277,49 +287,18 @@ export function SessionBanner() {
           {loading ? " · reading…" : ""}
           {truncated ? " · earliest turns trimmed" : ""}
         </span>
-        {/* The subagents this session spawned. The count comes from a readdir
-            on the row; the names cost a file each and are fetched only when
-            the session is opened. Absent for codex, which records its
-            subagent activity inline in the parent rollout instead. */}
-        {open.children > 0 ? (
-          <button
-            type="button"
-            className="session-banner-close"
-            aria-expanded={showAgents}
-            onClick={() => setShowAgents((v) => !v)}
-          >
-            {open.children} agent{open.children === 1 ? "" : "s"}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="session-banner-close"
-          onClick={() => (openAgent ? openSessionAgent(null) : closeSession())}
-        >
-          {openAgent ? "Back to session" : "Back to live"}
+        {/* ⚠️ ONE CONTROL, NOT THREE. The subagent dropdown and "Back to
+            session" both lived here and are gone: the People tree shows the
+            same subagents under the agent that spawned them, and clicking the
+            parent there is how you go back up. Andrew: "you can click on them
+            there. this should get rid of the nav at the top that says x agents
+            and back to session."
+            "Back to live" stays, because leaving a recording entirely is not
+            something the tree expresses — every row in it opens something. */}
+        <button type="button" className="session-banner-close" onClick={() => closeSession()}>
+          Back to live
         </button>
       </div>
-      {showAgents && agents.length ? (
-        <div className="session-agents">
-          {agents.map((a) => (
-            <button
-              type="button"
-              key={a.id}
-              className="session-agent-row"
-              data-active={String(openAgent?.id === a.id)}
-              onClick={() => {
-                setShowAgents(false);
-                openSessionAgent(a);
-              }}
-            >
-              <span className="session-agent-title">{a.title}</span>
-              <span className={cn(mono, "session-agent-meta")}>
-                {[a.kind, a.model].filter(Boolean).join(" · ")}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : null}
     </>
   );
 }

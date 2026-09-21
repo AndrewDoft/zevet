@@ -297,6 +297,30 @@ function closeOpenTurn(state) {
  *
  * @param {{ title?: string; prompt?: string; id?: string }} session
  */
+/**
+ * The same session in two or three words, for a tree row rather than a list.
+ *
+ * ⚠️ THE CLI ALREADY WROTE ONE. Claude Code keeps an `ai-title` record and
+ * rewrites it as the session goes (desktop/agent-sessions.js § describeClaude),
+ * which is the short summary its own terminal header shows — "Zevet bugs",
+ * "Fix the parser". Andrew asked for exactly that: "the icon for the model type
+ * next to the 1-3 word blurb like what exists in claude code in the terminal".
+ * So a title is taken whole; only a fallback to the prompt gets cut, because a
+ * prompt is a paragraph and a rail row is not.
+ *
+ * @param {{ title?: string; prompt?: string; id?: string }} session
+ * @param {number} words how many to keep when falling back to the prompt
+ */
+export function sessionBlurb(session, words = 3) {
+  const s = session || {};
+  const titled = unwrapEnvelope(text(s.title)).replace(/\s+/g, " ").trim();
+  if (titled) return titled.length > 34 ? `${titled.slice(0, 33)}…` : titled;
+  const said = unwrapEnvelope(text(s.prompt)).replace(/\s+/g, " ").trim();
+  if (!said) return text(s.id) || "session";
+  const cut = said.split(" ").slice(0, Math.max(1, words)).join(" ");
+  return cut.length < said.length ? `${cut}…` : cut;
+}
+
 export function sessionLabel(session) {
   const s = session || {};
   // Each candidate is peeled on its own, so a title that is ALL envelope falls

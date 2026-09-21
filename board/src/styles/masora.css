@@ -250,44 +250,63 @@
     flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle);
   }
 
-  /* ---- one CLI, and the sessions of it still being written to -------------
-     Indented under the person like a file tree, and with no folder icon: the
-     agent has a mark of its own and a second glyph beside it would say less,
-     not more. */
-  .agent-group > summary.agent-group-head {
+  /* ---- person > repo > agent > subagent -----------------------------------
+     A file tree with no folder icons: the repo is a word, the agent carries
+     its CLI mark, and each level is indented by one chevron width. Every
+     twisty is the lucide pair components/tree.tsx uses, rendered in the JSX
+     rather than drawn as a ::before — a pseudo-element could match its size
+     but never its shape. */
+  .repo-group-head {
     display: flex; align-items: center; gap: 6px;
-    padding: 5px 10px 5px 30px; cursor: pointer; list-style: none;
-    font-size: 11.5px; color: var(--ink-muted);
+    width: 100%; text-align: left; cursor: pointer;
+    padding: 5px 10px 5px 26px;
+    background: none; border: 0;
+    font-size: 12px; color: var(--ink-muted);
   }
-  .agent-group > summary::-webkit-details-marker { display: none; }
-  .agent-group > summary.agent-group-head::before {
-    content: "▸"; flex: none; font-size: 9px; color: var(--subtle);
-    margin-left: -12px; transition: transform 120ms ease;
-  }
-  .agent-group[open] > summary.agent-group-head::before { transform: rotate(90deg); }
-  .agent-group > summary.agent-group-head:hover { background: var(--raise-soft); }
-  .agent-group-mark { flex: none; }
-  .agent-group-name {
+  .repo-group-head:hover { background: var(--raise-soft); color: var(--ink); }
+  .repo-group-name {
     flex: 1 1 auto; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .agent-group-count { flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle); }
-  .agent-session {
-    display: flex; align-items: baseline; gap: 8px;
+  .repo-group-count { flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle); }
+
+  .agent-row {
+    display: flex; align-items: center; gap: 6px;
     width: 100%; text-align: left; cursor: pointer;
-    padding: 4px 10px 4px 46px;
+    padding: 4px 10px 4px 38px;
     background: none; border: 0; border-left: 2px solid transparent;
     font-size: 12px; color: var(--ink-muted);
   }
-  .agent-session:hover { background: var(--raise-soft); color: var(--ink); }
-  .agent-session[data-active="true"] { background: var(--raise); border-left-color: var(--who); color: var(--ink); }
-  .agent-session-name {
+  .agent-row:hover { background: var(--raise-soft); color: var(--ink); }
+  .agent-row[data-active="true"] { background: var(--raise); border-left-color: var(--who); color: var(--ink); }
+  /* An agent with no subagents still lines its mark up with the ones that
+     have a twisty. Reserved, not collapsed: a row that shifts sideways when
+     its children arrive is a row that looks broken. */
+  .agent-row-gap { width: 12px; flex: none; }
+  .agent-row-mark { flex: none; }
+  .agent-row-name {
     flex: 1 1 auto; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .agent-session-ago {
+  .agent-row-ago {
     flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle);
   }
+
+  .agent-sub {
+    display: flex; align-items: center; gap: 6px;
+    width: 100%; text-align: left; cursor: pointer;
+    padding: 3px 10px 3px 62px;
+    background: none; border: 0; border-left: 2px solid transparent;
+    font-size: 11.5px; color: var(--subtle);
+  }
+  .agent-sub:hover { background: var(--raise-soft); color: var(--ink); }
+  .agent-sub[data-active="true"] { background: var(--raise); border-left-color: var(--who); color: var(--ink); }
+  .agent-sub-mark { flex: none; opacity: 0.8; }
+  .agent-sub-name {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .agent-sub-note { cursor: default; font-style: italic; }
 
   /* The launcher, as a plus in the People header rather than a row of its own. */
   .rail-new {
@@ -953,11 +972,6 @@
     border-bottom: 1px solid var(--line);
   }
   .session-group > summary::-webkit-details-marker { display: none; }
-  .session-group > summary.session-group-head::before {
-    content: "▸"; flex: none; font-size: 9px; color: var(--subtle);
-    transition: transform 120ms ease;
-  }
-  .session-group[open] > summary.session-group-head::before { transform: rotate(90deg); }
   .session-group > summary.session-group-head:hover { background: var(--raise); }
   .session-group-name {
     flex: 1 1 auto; min-width: 0;
@@ -996,22 +1010,6 @@
   /* The subagents one session spawned, under its banner. A separate row
      rather than a dropdown over the transcript: opening one REPLACES what is
      below, so the list has to stay where the thing it replaced was. */
-  .session-agents {
-    flex: none; max-height: 40vh; overflow: auto;
-    border-bottom: 1px solid var(--line); background: var(--raise-soft);
-  }
-  .session-agent-row {
-    display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
-    padding: 5px 12px 5px 22px; cursor: pointer;
-    background: none; border: 0; border-left: 2px solid transparent;
-  }
-  .session-agent-row:hover { background: var(--raise); }
-  .session-agent-row[data-active="true"] { border-left-color: var(--cerulean); }
-  .session-agent-title {
-    flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--ink);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .session-agent-meta { flex: none; font-size: 10.5px; color: var(--subtle); }
 
   .session-banner-close {
     flex: none; font-size: 11px; padding: 3px 7px; border-radius: 2px;

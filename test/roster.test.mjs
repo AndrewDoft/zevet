@@ -117,10 +117,38 @@ describe("roster rendering", () => {
     assert.ok(!people.includes("turnOf"), "the turn trace came back to the rail");
     // What a teammate is working on, in their own words, survives.
     assert.ok(people.includes("missionOf(r)"), "the row lost its mission");
-    // Which agent is running is named by its own group now, not by the person
-    // row: one disclosure per CLI, with that CLI's mark.
-    assert.ok(people.includes("<AgentGroup"), "the agent-type groups are gone");
+    // Which agent is running is named by its own row now, not by the person
+    // row, and it carries that CLI's mark.
+    assert.ok(people.includes("<AgentRow"), "the agent rows are gone");
     assert.ok(people.includes("<AgentLogo"), "the agent mark is gone");
+  });
+
+  test("the tree goes person, repo, agent, subagent", () => {
+    const people = src("components/people.tsx");
+    // Andrew: "under user (andrew) is repo(s) (zevet), inside of that filetree
+    // is the icon for the model type next to the 1-3 word blurb like what
+    // exists in claude code in the terminal."
+    assert.ok(people.includes("<RepoGroup"), "the repo level is gone");
+    assert.ok(people.includes("sessionProject("), "agents are no longer bucketed by repo");
+    assert.ok(people.includes("sessionBlurb("), "the agent row lost its short blurb");
+    // The subagents moved out of the banner and into the tree, which is what
+    // let the banner drop two of its three controls.
+    assert.ok(people.includes("<SubagentRow"), "subagents are not in the tree");
+    const sessions = src("components/sessions.tsx");
+    assert.ok(!sessions.includes("Back to session"), "the banner kept its back-up control");
+    assert.ok(!sessions.includes("showAgents"), "the banner kept its subagent dropdown");
+    assert.ok(sessions.includes("Back to live"), "there is no way out of a recording");
+  });
+
+  test("every twisty in the rail is the file tree's", () => {
+    // Andrew: "take the dropdown arrow from the filetree to keep things
+    // consistent." One pair of icons, one size, three files.
+    const want = 'ChevronDownIcon className="text-foreground/25 size-3 shrink-0"';
+    for (const f of ["components/tree.tsx", "components/people.tsx", "components/sessions.tsx"]) {
+      assert.ok(src(f).includes(want), `${f} draws its own arrow`);
+    }
+    // And nothing draws one with a glyph any more.
+    assert.ok(!src("styles/masora.css").includes('content: "▸"'), "a css triangle came back");
   });
 
   test("People shows only sessions still being written to", () => {

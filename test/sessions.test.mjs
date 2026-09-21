@@ -28,7 +28,7 @@ import { ROOT } from "./helpers.mjs";
 
 const require = createRequire(import.meta.url);
 const sessionsFile = path.join(ROOT, "board", "src", "lib", "sessions.mjs");
-const { codexItem, sessionEvents, sessionTranscript, sessionLabel, sessionMatches, sessionProject, sessionWhere } =
+const { codexItem, sessionEvents, sessionTranscript, sessionBlurb, sessionLabel, sessionMatches, sessionProject, sessionWhere } =
   await import(pathToFileURL(sessionsFile).href);
 const reader = require(path.join(ROOT, "desktop", "agent-sessions.js"));
 
@@ -243,6 +243,21 @@ describe("row helpers", () => {
       sessionLabel({ prompt: "<task-notification>\n<task-id>b1</task-id>\nwhy is </div> here" }),
       "why is </div> here",
     );
+  });
+
+  test("the blurb is the CLI's own short title, or the first words of the ask", () => {
+    // Andrew: "the icon for the model type next to the 1-3 word blurb like
+    // what exists in claude code in the terminal." Claude Code already writes
+    // that title into the session file and rewrites it as the run goes, so a
+    // title is taken whole and only a prompt fallback gets cut.
+    assert.equal(sessionBlurb({ title: "Zevet bugs" }), "Zevet bugs");
+    assert.equal(sessionBlurb({ prompt: "run an agent in here so my terminal agent can watch" }), "run an agent…");
+    assert.equal(sessionBlurb({ prompt: "one two three four" }, 2), "one two…");
+    // Same envelope peel the full label gets, and the same fallbacks.
+    assert.equal(sessionBlurb({ title: "<task-notification><task-id>b1</task-id>", prompt: "ship it now please" }), "ship it now…");
+    assert.equal(sessionBlurb({ id: "abc" }), "abc");
+    // A title that is somehow a paragraph is still a rail row.
+    assert.equal(sessionBlurb({ title: "x".repeat(60) }).length, 34);
   });
 
   test("the project is the last segment, of a path or of a slug", () => {
