@@ -129,7 +129,27 @@ describe("sending is refused only where it would go nowhere", () => {
     // The queue is the whole point: the composer used to make you wait with a
     // thought you had already had.
     const runtime = readFileSync(path.join(BOARD, "lib", "runtime.tsx"), "utf8");
-    assert.match(runtime, /queue: oneShot \? undefined : queue\.adapter/);
+    assert.match(runtime, /queue: !active \|\| oneShot \? undefined : queue\.adapter/);
+  });
+
+  test("with nothing running there is no queue, because Send must START a run", () => {
+    // THE BUG THIS PINS, shipped in 0.2.22 and found by pressing Send in the
+    // real app: the external-store runtime checks `queue` BEFORE `onNew` and
+    // returns if one is set --
+    //
+    //     if (!isEdit && this._store.queue) { ...enqueue(message); return; }
+    //     else await this._store.onNew(message);
+    //
+    // (@assistant-ui/core external-store-thread-runtime-core.js). `onNew` is
+    // the ONLY thing that spawns an agent, so while a queue was present with
+    // no console open, the first prompt went into a queue nothing would ever
+    // drain: composer cleared, no run, no error. A queue is meaningful only
+    // when there is a run to queue for.
+    const runtime = readFileSync(path.join(BOARD, "lib", "runtime.tsx"), "utf8");
+    const queueLine = /queue:.*/.exec(runtime)?.[0] ?? "";
+    assert.match(queueLine, /!active/, "the queue must be off when no console is active");
+    // And onNew must still be the thing that starts one.
+    assert.match(runtime, /if \(canStart\) startAgent\(launchAgent/);
   });
 
   test("MULTI_TURN is the one place that knows which agents keep talking", () => {

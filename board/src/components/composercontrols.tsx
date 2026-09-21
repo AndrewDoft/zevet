@@ -72,6 +72,7 @@ export function ComposerControls() {
   const active = useBoard(selectActiveConsole);
   const localAgents = useBoard((s) => s.localAgents);
   const launchMode = useBoard((s) => s.launchMode);
+  const launchModel = useBoard((s) => s.launchModel);
   const setLaunchMode = useBoard((s) => s.setLaunchMode);
   const usable = localAgents.filter((a) => a.ok);
 
@@ -86,6 +87,16 @@ export function ComposerControls() {
    * effort and posture" — they are just no longer the only thing on the row:
    * what THIS console actually launched with is added alongside as a fact,
    * since the two can diverge the moment the pickers are touched again. */
+  /* ⚠️ ONLY WHAT DIVERGED. The fact row printed the model and the posture
+     unconditionally, beside the pickers that were showing the same two
+     values — "nemotron-3-ultra  Auto   nemotron-3-ultra Auto" on one line,
+     seen in a real run. It is worth saying only when this console is running
+     something other than what the pickers would start next; when they agree,
+     the pickers have already said it. The numbers (context, cost) belong to
+     the console alone and always show. */
+  const sameModel = Boolean(active) && active!.model === launchModel;
+  const sameMode = Boolean(active) && active!.mode === launchMode;
+
   const facts = active
     ? (() => {
         const { usage } = active;
@@ -93,9 +104,15 @@ export function ComposerControls() {
         const model = describeModel(active.model).label || active.model;
         return (
           <span className={cn(mono, "flex min-w-0 shrink items-center gap-1.5 text-foreground/50")}>
-            <AgentLogo agent={active.agent} model={active.model} className="size-3.5 shrink-0" />
-            <span className="min-w-0 truncate">{model}</span>
-            <span className="shrink-0 text-foreground/35">{MODE_LABEL[active.mode] ?? active.mode}</span>
+            {!sameModel && (
+              <>
+                <AgentLogo agent={active.agent} model={active.model} className="size-3.5 shrink-0" />
+                <span className="min-w-0 truncate">{model}</span>
+              </>
+            )}
+            {!sameMode && (
+              <span className="shrink-0 text-foreground/35">{MODE_LABEL[active.mode] ?? active.mode}</span>
+            )}
             {usage.context != null && (
               <span className="shrink-0">
                 {tokens(usage.context)}/{tokens(window)}

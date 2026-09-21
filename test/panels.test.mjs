@@ -153,10 +153,15 @@ describe("voice and queuing", () => {
     assert.match(runtime, /const dictation = useMemo\(\(\) => new WebSpeechDictationAdapter\(\), \[\]\)/);
   });
 
-  test("only multi-turn agents get a queue", () => {
+  test("only multi-turn agents get a queue, and only while one is running", () => {
     // codex and opencode close stdin after one prompt, so a queued second
     // prompt would be accepted by the UI and delivered to a closed pipe.
-    assert.match(runtime, /queue: oneShot \? undefined : queue\.adapter/);
+    //
+    // `!active` joined that condition after a shipped bug: the runtime checks
+    // `queue` before `onNew` and returns, so with no console open the first
+    // prompt went into a queue nothing would ever drain and no agent started.
+    // See composer.test.mjs for the full account.
+    assert.match(runtime, /queue: !active \|\| oneShot \? undefined : queue\.adapter/);
   });
 
   test("the queue is driven from the run's edges", () => {

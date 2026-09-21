@@ -252,6 +252,7 @@ export function Provenance() {
   const localRoot = useBoard((s) => s.localRoot);
   const localEntries = useBoard((s) => s.localEntries);
   const localError = useBoard((s) => s.localError);
+  const localTruncated = useBoard((s) => s.localTruncated);
   const [hoveredId, setHoveredId] = useState("");
 
   const turn = lastAssistantMessage(messages);
@@ -263,7 +264,11 @@ export function Provenance() {
 
   const calls = allToolCalls(messages);
   const treeUnconfirmedReason =
-    localEntries == null ? "no local file tree loaded this run" : localError || "";
+    localEntries == null
+      ? "no local file tree loaded this run"
+      // Both: a tree that failed to load and one that was cut short are
+      // equally unable to prove a path is absent.
+      : localError || localTruncated || "";
 
   const claims: ConfidenceClaim[] = mentions.map((mention, i) => {
     const id = String(i);

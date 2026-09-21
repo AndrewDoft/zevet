@@ -218,7 +218,24 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
         (oneShot && active.running && (streaming || sent > 0))
       : !canStart,
 
-    queue: oneShot ? undefined : queue.adapter,
+    /* ⚠️ NO QUEUE WHEN NOTHING IS RUNNING. The external-store runtime
+     * checks `queue` FIRST and returns:
+     *
+     *     if (!isEdit && this._store.queue) { ...enqueue(message); return; }
+     *     ...
+     *     else await this._store.onNew(message);
+     *
+     * (@assistant-ui/core, external-store-thread-runtime-core.js). So while a
+     * queue adapter is present, `onNew` is NEVER reached - and `onNew` is the
+     * only thing that starts an agent. With no console open, Send put the
+     * prompt into a queue that nothing would ever drain: the composer cleared,
+     * no run began, and nothing anywhere said so. Exactly the dead end the
+     * composer was rebuilt to remove ("there is no way to start right now"),
+     * back again by a different route, and invisible because both halves
+     * looked correct on their own.
+     *
+     * A queue only means anything when there is a run to queue FOR. */
+    queue: !active || oneShot ? undefined : queue.adapter,
 
     onNew: async (message) => {
       const text = textOf(message);

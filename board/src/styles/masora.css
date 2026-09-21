@@ -327,6 +327,8 @@
   .node[data-collide="true"] .name { color: var(--alert); }
 
   .empty-tree { padding: 30px 18px; color: var(--ink-muted); font-size: 13px; max-width: 46ch; }
+  /* "showing the first N entries", at the end of the list it describes. */
+  .tree-partial { padding: 8px 18px 2px; color: var(--subtle); font-size: 11px; }
 
   /* ---- agent view --------------------------------------------------------
      The same board, rearranged for driving agents instead of typing.

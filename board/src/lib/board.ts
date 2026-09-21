@@ -140,6 +140,8 @@ interface BoardState {
   localRoot: string | null;
   localEntries: LocalEntry[] | null;
   localError: string | null;
+  /** The tree was cut short. NOT an error - see openLocalRoot. */
+  localTruncated: string | null;
   localAgents: UsableAgentShape[];
   localWorkspaces: LocalWorkspace[];
   localFile: LocalFileData | null;
@@ -376,6 +378,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   localRoot: null,
   localEntries: null,
   localError: null,
+  localTruncated: null,
   localAgents: [],
   localWorkspaces: [],
   localFile: null,
@@ -644,16 +647,35 @@ export const useBoard = create<BoardState>((set, get) => ({
       localEntries: null,
       localFile: null,
       localError: null,
+      localTruncated: null,
       selectedPath: g.selectedPath,
     }));
     bridge.local?.tree(dir).then((r) => {
       if (r && r.ok) {
+        /* A CUT-SHORT TREE IS NOT A FAILED ONE. This wrote the truncation
+           notice into `localError`, and the rail renders localError as a row
+           under the folder picker - so opening any large repo printed
+           "showing the first 4000 entries" into the bottom corner, styled as
+           a fault, in the space that was just reclaimed by dropping the Repos
+           header. Found by opening masora2 in the running app.
+
+           Two readers, two meanings, so two fields: the rail shows only real
+           failures, the tree says its own list is partial, and provenance.tsx
+           - which rightly treats BOTH as "the tree cannot confirm this path"
+           - reads them together. */
         set({
           localEntries: r.entries || null,
-          localError: r.truncated ? `showing the first ${(r.entries || []).length} entries` : null,
+          localError: null,
+          localTruncated: r.truncated
+            ? `showing the first ${(r.entries || []).length} entries`
+            : null,
         });
       } else {
-        set({ localEntries: [], localError: (r && r.error) || "could not read that folder" });
+        set({
+          localEntries: [],
+          localError: (r && r.error) || "could not read that folder",
+          localTruncated: null,
+        });
       }
       get().refreshStats(true);
     });

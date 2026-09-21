@@ -184,6 +184,7 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
   const needsToken = useBoard((s) => s.needsToken);
   const conn = useBoard((s) => s.conn);
   const followMode = useBoard((s) => s.followMode);
+  const localTruncated = useBoard((s) => s.localTruncated);
   const setFollowMode = useBoard((s) => s.setFollowMode);
   useBoard(selectEvents);
   const built = buildTree();
@@ -261,6 +262,15 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
               {needsToken ? "Sign in to see what the team is working on." : "No files touched yet. Shows where agents read and edit \u2014 never file contents."}
             </div>
           )}
+          {/* The list is partial, said at the end of the list it is about.
+              This used to be written into `localError` and rendered in the
+              rail, under the folder picker, styled as a fault - so opening a
+              large repo put "showing the first 4000 entries" in the bottom
+              corner as if something had gone wrong. It is a fact about THIS
+              column. */}
+          {!blanked && localTruncated ? (
+            <div className="tree-partial">{localTruncated}</div>
+          ) : null}
         </div>
       </div>
     </div>
