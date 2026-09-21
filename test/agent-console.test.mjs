@@ -670,11 +670,22 @@ describe("the platform workarounds themselves", () => {
       "stream-json",
       "--output-format",
       "--verbose",
-      "--include-partial-messages",
       "--replay-user-messages",
     ]) {
       assert.ok(claude.includes(flag), `claude invocation is missing ${flag}`);
     }
+    /* ⚠️ AND ONE FLAG THAT MUST NOT BE THERE. --include-partial-messages makes
+       claude wrap every raw SSE event in a `stream_event` payload, and zevet
+       has no reader for one — each printed the literal text
+       `[claude: stream_event]` into the assistant's message. Measured in the
+       running app 2026-09-21: a one-sentence question answered with dozens of
+       them and nothing else. The same content arrives complete as an
+       `assistant` payload per content block, so asking for the partials buys
+       nothing and costs the transcript. */
+    assert.ok(
+      !claude.includes("--include-partial-messages"),
+      "claude must not ask for partial messages: they render as [claude: stream_event]",
+    );
 
     // Read off `codex exec --help` (codex-cli 0.155.0-alpha.2.6). The trailing
     // "-" is the CLI's own documented spelling of "read the prompt from stdin",

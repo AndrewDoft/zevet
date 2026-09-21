@@ -1089,7 +1089,25 @@
   .console-row-status [data-slot="agent-status-trailing"],
   .person-status [data-slot="agent-status-trailing"] { display: none; }
 
-  .thinking-row { padding: 0 22px 8px; flex: none; }
+  /* ⚠️ A STRIP THAT IS ALWAYS THERE, rather than three rows that come and go.
+     These sit BELOW the composer, and `.chat-thread-body` — which CONTAINS
+     the composer — is the flex item that gives. So every one of them, on
+     appearing, took its height out of the body and MOVED THE CHAT BOX UP.
+     Measured in the running app 2026-09-21: pressing Send moved the composer
+     23px the instant the "working" row appeared. Andrew: "the chatbox (and
+     all of the windows and stuff for that matter) should never change
+     positions or resize autonomously."
+
+     Absolute positioning cannot fix this one: the composer is inside the
+     Thread, so there is no ancestor to anchor to whose bottom edge is the
+     composer's top edge, and guessing the composer's height is how it breaks
+     the first time somebody types three lines. Reserving the space is exact.
+     The strip is the height of one line and is empty most of the time. */
+  .chat-underline {
+    flex: none; min-height: 22px;
+    display: flex; flex-direction: column; justify-content: flex-end;
+  }
+  .thinking-row { padding: 0 22px 8px; }
 
   /* The collapsed detail rows under the conversation. Same shape as
      .run-meters, which they sit beside. */

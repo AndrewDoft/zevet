@@ -300,6 +300,29 @@ function fromClaude(state, p, root) {
   // reads it off the raw payload; it is not transcript content.
   if (p.type === "system") return state;
 
+  /* ⚠️ `stream_event` IS NOT TRANSCRIPT CONTENT, AND RENDERING IT IS THE BUG
+   * ANDREW SAW. `--include-partial-messages` makes claude wrap every raw SSE
+   * event — message_start, content_block_start, content_block_delta,
+   * content_block_stop, message_delta, message_stop — in one of these. None
+   * of them was handled, so every single one fell through to the "unknown but
+   * real" branch below and printed `[claude: stream_event]` into the
+   * assistant's own message. Measured 2026-09-21 in the running app: a
+   * one-sentence question produced an answer that was nothing but dozens of
+   * those. Andrew: "the response looked super weird."
+   *
+   * They are dropped rather than rendered because the SAME CONTENT ARRIVES
+   * AGAIN, complete, as an `assistant` payload per content block — handled at
+   * the top of this function. Rendering both would double every sentence.
+   * agent-console.js no longer asks for them at all; this stays so an older
+   * desktop build, or a flag that comes back, degrades to silence instead of
+   * to garbage. */
+  if (p.type === "stream_event") return state;
+
+  /* Rate limits, read off the raw payload by lib/board.ts's `limitsOf` and
+   * shown as a chip on the composer row. Not transcript content either, and
+   * it used to print `[claude: rate_limit_event]` for the same reason. */
+  if (p.type === "rate_limit_event") return state;
+
   return null;
 }
 

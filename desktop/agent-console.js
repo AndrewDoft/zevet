@@ -449,7 +449,18 @@ function invocationFor(agent, opts) {
       "--output-format",
       "stream-json",
       "--verbose",
-      "--include-partial-messages",
+      /* ⚠️ NO --include-partial-messages. It makes claude wrap every raw SSE
+       * event in a `stream_event` payload, and zevet has never had a reader
+       * for one: each arrived at transcript.mjs's "unknown but real" branch
+       * and was printed as the literal text `[claude: stream_event]` INTO THE
+       * ASSISTANT'S MESSAGE. Measured in the running app 2026-09-21 — a
+       * one-sentence question answered with dozens of them, and nothing else.
+       *
+       * Asking for them buys nothing either way: the same content arrives
+       * complete as an `assistant` payload PER CONTENT BLOCK, which is what
+       * the board renders and what it rendered before this flag was added.
+       * The partials would only be useful token-by-token, and using them that
+       * way means de-duplicating against the block that follows. */
       "--replay-user-messages",
       ...(forkFrom ? ["--resume", forkFrom, "--fork-session"] : resumeFrom ? ["--resume", resumeFrom] : []),
       ...extra,

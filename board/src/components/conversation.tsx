@@ -173,12 +173,19 @@ export function Conversation() {
           shape, because zevet Voice's flow bar is drawn over every window by
           its own process and does not resize anything else either. */}
       {reading ? null : <VoiceHint />}
-      {/* Appears only while text is selected in the transcript. */}
-      <QuoteToComposer />
-      {/* A half-written prompt survives a reload now. Offered only while the
-          composer is empty, so it never overwrites what you are typing. */}
-      <DraftRestore />
-      {reading ? null : <Thinking />}
+      {/* ⚠️ ONE STRIP, ALWAYS PRESENT. Each of these three used to be its own
+          row that appeared and disappeared, and each one moved the chat box
+          when it did — the "working" row alone shifted it 23px on every Send.
+          The strip reserves one line's height whether or not anything is in
+          it, so the composer sits where it sits. See `.chat-underline`. */}
+      <div className="chat-underline">
+        {/* Appears only while text is selected in the transcript. */}
+        <QuoteToComposer />
+        {/* A half-written prompt survives a reload now. Offered only while the
+            composer is empty, so it never overwrites what you are typing. */}
+        <DraftRestore />
+        {reading ? null : <Thinking />}
+      </div>
       {/* ⚠️ FIVE COLLAPSED ROWS USED TO SIT HERE — turn detail, find, read
           aloud, prompts and the run meters — and every one of them pushed the
           chat box up when it opened. Andrew: "all of those dropdowns pop up
