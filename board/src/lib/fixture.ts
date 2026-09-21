@@ -398,6 +398,12 @@ export function installFixtureBridge(): boolean {
       return { ok: true };
     },
     stopAgent: async () => ({ ok: true }),
+    // Optional in LocalBridge, unused by the fixture's scripted replay —
+    // nothing here plays an ask, so onAskRequest never fires. Present only
+    // so a caller that checks `typeof bridge.local.onAskRequest` behaves
+    // the same against the demo bridge as against a real desktop build.
+    onAskRequest: () => () => {},
+    askAnswer: async () => ({ ok: true }),
     watch: async () => ({ ok: true }),
     unwatch: async () => ({ ok: true }),
     diffHunks: async () => ({ ok: true, hunks: [{ start: 12 }] }),

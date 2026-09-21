@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { bridge, type AgentSchedule, type AgentSettings, type MemoryNote, type PermitRequest, type RepoCommit, type StatusResult } from "./bridge";
+import { bridge, type AgentSchedule, type AgentSettings, type AskRequest, type MemoryNote, type PermitRequest, type RepoCommit, type StatusResult } from "./bridge";
 import { shortInput } from "./fmt";
 import {
   appendAgentPayload,
@@ -183,6 +183,8 @@ interface BoardState {
   /** Things an agent has asked to do and is waiting on. Oldest first; a
    *  question that is answered leaves the list. */
   permits: PermitRequest[];
+  /** Questions an agent is BLOCKED on, oldest first. See components/asks.tsx. */
+  asks: AskRequest[];
   /** MCP servers the agent reported at startup, by console key. Read off
    *  claude's init payload; absent for a CLI that does not announce them. */
   mcpServers: Record<number, { name: string; status: string; tools: string[] }[]>;
@@ -289,6 +291,10 @@ interface BoardState {
   openLauncher: () => void;
   stopConsole: (key: number) => void;
   sendPrompt: (key: number, text: string) => void;
+  /** Change a console's posture. A running console cannot take a new one
+   *  mid-turn (see `ConsoleEntry.nextMode`), so this only ever writes
+   *  `mode` directly for a console that is not running. */
+  setConsoleMode: (key: number, mode: string) => void;
 
   openLocalRoot: (dir: string) => void;
   unsetLocalRoot: () => void;
@@ -319,6 +325,7 @@ interface BoardState {
   setSessionQuery: (q: string) => void;
   setSessionScope: (v: "repo" | "all") => void;
   openSession: (s: SessionSummary) => void;
+  continueSession: (s: SessionSummary) => void;
   openSessionAgent: (a: SessionAgent | null) => void;
   closeSession: () => void;
 
@@ -445,6 +452,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   memories: [],
   agentSettings: null,
   permits: [],
+  asks: [],
   mcpServers: {},
   launchAgent: "",
   launchModel: "",
@@ -681,9 +689,63 @@ export const useBoard = create<BoardState>((set, get) => ({
     }));
   },
 
-  sendPrompt: (key, text) => {
+  setConsoleMode: (key, mode) => {
     const c = get().myConsoles.find((x) => x.key === key);
     if (!c) return;
+    // Refuse an id the CLI's own table (desktop/agent-console.js MODES)
+    // does not know, rather than parking it in `mode`/`nextMode` and
+    // handing an unresumable posture to `startAgent`/`resumeAgent` later.
+    if (!MODES.some((m) => m.id === mode)) return;
+    // "Unchanged" means unchanged from where the console is ACTUALLY headed:
+    // a running console already carrying a different `nextMode` is headed
+    // there, not at `mode` — so re-picking that same pending choice must
+    // also no-op instead of re-writing the identical value.
+    const heading = c.running ? (c.nextMode ?? c.mode) : c.mode;
+    if (heading === mode) return;
+    set((g) => ({
+      myConsoles: g.myConsoles.map((x) => {
+        if (x.key !== key) return x;
+        // ⚠️ A RUNNING CONSOLE NEVER HAS ITS `mode` WRITTEN HERE. There is no
+        // way to hand a live process new argv, and stopping it mid-turn to
+        // apply a preference would throw away whatever the person is waiting
+        // on — so the new posture is parked in `nextMode` and only takes
+        // effect when `sendPrompt` starts the next process. An idle console
+        // has no turn in flight, so it can just take the mode directly; the
+        // next prompt resumes with it, and there is nothing to restart.
+        return x.running
+          ? { ...x, nextMode: mode as LaunchMode }
+          : { ...x, mode: mode as LaunchMode, nextMode: null };
+      }),
+    }));
+  },
+
+  sendPrompt: (key, text) => {
+    const before = get().myConsoles.find((x) => x.key === key);
+    if (!before) return;
+
+    /* ⚠️ A PENDING POSTURE CHANGE APPLIES NOW, NOT WHEN IT WAS PICKED — see
+       `ConsoleEntry.nextMode` and `setConsoleMode`. This IS "now": the first
+       moment a new process is free to start. Stop the OLD process (reusing
+       `stopConsole` rather than writing a second stop), then swap `nextMode`
+       into `mode` so the `!c.running` resume branch below — unchanged —
+       picks it up.
+
+       ORDER MATTERS TWICE OVER. First, this has to run before that branch's
+       `!c.running` check, or the check sees a still-running console and never
+       fires. Second, `stopConsole` applies its `running: false` with `set()`,
+       which replaces this console's array entry with a NEW object rather
+       than mutating the old one — so `c` below is re-read AFTER calling it,
+       not the `before` reference the swap condition was computed from, which
+       is stale the instant `stopConsole` runs. */
+    const swapping =
+      before.running && Boolean(before.nextMode) && before.nextMode !== before.mode && Boolean(before.sessionId);
+    if (swapping) get().stopConsole(key);
+    const c = swapping ? get().myConsoles.find((x) => x.key === key)! : before;
+    if (swapping) {
+      c.mode = c.nextMode!;
+      c.nextMode = null;
+    }
+
     pushConsoleLine(c, "you", text);
     c.transcript = appendUserText(c.transcript, text);
 
@@ -1072,6 +1134,115 @@ export const useBoard = create<BoardState>((set, get) => ({
       .catch((err: unknown) =>
         set((st) => ({ sessions: { ...st.sessions, openLoading: false, error: String(err) } })),
       );
+  },
+
+  /** Carry a RECORDED session on as a live console.
+   *
+   * The recorded transcript becomes the console's starting transcript, so the
+   * old turns read above the new ones as one conversation; from then on this
+   * is an ordinary console — composer, resume-on-exit and stop all key off the
+   * ConsoleEntry fields filled in here, so they work unchanged.
+   */
+  continueSession: (s) => {
+    const br = bridge.local;
+    const st = get();
+    // ⚠️ THE SESSION'S OWN cwd, NOT WHATEVER FOLDER HAPPENS TO BE OPEN. The
+    // desktop side resolves this through `knownRoot()`, which only accepts a
+    // registered workspace path exactly — resuming session A while workspace
+    // B is open must still ask for A's directory, or it either resumes
+    // against the wrong project or is refused outright. `localRoot` is only
+    // a fallback for a session the CLI never recorded a cwd for.
+    const root = s.cwd || st.localRoot;
+    if (!br || !root || typeof br.resumeAgent !== "function") return;
+    const resumeId = resumeIdForSession(s);
+    if (!resumeId) return;
+    /* ⚠️ ONE PROCESS PER SESSION FILE. Two consoles resumed from the same id
+       both append to the same session, interleaving turns neither can see —
+       so a console already open for this agent + id is focused, never doubled. */
+    const existing = get().myConsoles.find(
+      (x) => x.agent === s.source && x.sessionId === resumeId,
+    );
+    if (existing) {
+      set((g) => ({
+        activeConsole: existing.key,
+        launching: false,
+        seenConsole: { ...g.seenConsole, [existing.key]: Date.now() },
+        sessions: {
+          ...g.sessions,
+          open: null,
+          openTranscript: null,
+          openTruncated: false,
+          openLoading: false,
+          agents: [],
+          openAgent: null,
+        },
+      }));
+      return;
+    }
+    // `openTruncated` is head+tail trimming done for DISPLAY only — the file
+    // on disk is whole, and the CLI's own `--resume` / `exec resume` re-reads
+    // that file in full, so a truncated read here loses nothing real.
+    const base =
+      st.sessions.open &&
+      st.sessions.open.id === s.id &&
+      st.sessions.open.source === s.source &&
+      st.sessions.openTranscript
+        ? st.sessions.openTranscript
+        : emptyTranscript();
+    const model = get().launchModel;
+    const mode = get().launchMode;
+    // Same object shape startAgent builds — the composer and the event pump
+    // only ever read these fields, so a continued console is indistinguishable.
+    const c: ConsoleEntry = {
+      key: ++consoleSeq,
+      id: null,
+      agent: s.source,
+      lines: [],
+      transcript: base,
+      running: true,
+      error: null,
+      mode,
+      model,
+      root,
+      hue: get().myConsoles.length % 5,
+      usage: { context: null, cacheHit: null, cost: null, model: null, input: null, cachedInput: null, output: null, window: null, series: [] },
+      limits: [],
+      sessionId: resumeId,
+      slashCommands: [],
+      forkedFrom: null,
+      startedAt: Date.now(),
+      exitCode: null,
+    };
+    set((g) => ({
+      myConsoles: [...g.myConsoles, c],
+      activeConsole: c.key,
+      launching: false,
+      seenConsole: { ...g.seenConsole, [c.key]: Date.now() },
+      sessions: {
+        ...g.sessions,
+        open: null,
+        openTranscript: null,
+        openTruncated: false,
+        openLoading: false,
+        agents: [],
+        openAgent: null,
+      },
+    }));
+    // Same resume shape as sendPrompt's follow-up path: the console keeps its
+    // key and its (recorded + new) transcript; only the process is new.
+    br.resumeAgent(c.agent, c.root, resumeId, { model: c.model, mode: c.mode }).then((r) => {
+      if (!r || !r.ok) {
+        c.running = false;
+        c.error = (r && r.error) || "could not continue";
+        pushConsoleLine(c, "err", (r && r.error) || "could not continue");
+        signalConsolesChanged();
+        return;
+      }
+      // The events for this turn arrive under the NEW process id, so the
+      // console has to answer to it — `consoleById` matches on `c.id`.
+      c.id = r.id ? String(r.id) : null;
+      signalConsolesChanged();
+    });
   },
 
   closeSession: () =>
@@ -1485,6 +1656,26 @@ function sessionIdOf(payload: unknown): string | null {
   // `thread_id` on thread.started, opencode `sessionID` on every event.
   const id = p.session_id ?? p.thread_id ?? p.sessionID;
   return typeof id === "string" && id ? id : null;
+}
+
+/**
+ * Which field of a SessionSummary the CLI's own resume actually takes.
+ *
+ * ⚠️ claude and codex do NOT agree, and backwards silently resumes the wrong
+ * thing or fails: `claude --resume <session-id>` takes the session id, which
+ * IS the file's own name (`id`), while `codex exec resume <session-id>` takes
+ * the thread id inside session_meta (`sessionId`) — the file name is just where
+ * the rollout landed, and a renamed file makes the two differ (measured in
+ * desktop/agent-console.js:373-400 and desktop/agent-sessions.js, where codex's
+ * `sessionId = str(meta.session_id) || str(meta.id) || id`).
+ *
+ * Exported so `components/sessions.tsx` asks THIS function whether to show
+ * "Continue" rather than re-deriving the same claude/codex split inline —
+ * two copies of this branch is how it drifts.
+ */
+export function resumeIdForSession(s: SessionSummary): string | null {
+  if (s.source === "codex") return s.sessionId ? s.sessionId : null;
+  return s.id ? s.id : null;
 }
 
 /**
@@ -2388,6 +2579,16 @@ export function boot(): void {
       useBoard.setState((g) => ({ permits: [...g.permits, req] }));
     });
   }
+  if (bridge.local && typeof bridge.local.onAskRequest === "function") {
+    /* An agent has asked the PERSON something and is blocked on the answer.
+       Unlike a permit, silence here is not a refusal — the gate answers "no
+       answer" and the agent is told to decide for itself (desktop/ask-server.js
+       § normalizeAskResult), so nothing is lost by closing the window. */
+    bridge.local.onAskRequest((req) => {
+      if (!req || typeof req.id !== "string") return;
+      useBoard.setState((g) => ({ asks: [...g.asks, req] }));
+    });
+  }
   if (bridge.local && typeof bridge.local.onAgentEvent === "function") {
     bridge.local.onAgentEvent(ingressAgentEvent);
   }
@@ -2522,6 +2723,26 @@ export async function saveAgentSettings(patch: Partial<AgentSettings>): Promise<
  * there and the request leaves the list either way — a question that has been
  * answered is not still being asked, whichever way it went.
  */
+/**
+ * What they picked, back to the agent that is waiting.
+ *
+ * ⚠️ THE CARD GOES FIRST, AND BY ID. Removing it optimistically is what stops
+ * a second click answering the same question twice, and filtering by id rather
+ * than by position is what stops the wrong one disappearing when two are
+ * pending. Same shape as answerPermit, deliberately.
+ */
+export async function answerAsk(id: string, picked: string[]): Promise<void> {
+  const br = bridge.local;
+  useBoard.setState((g) => ({ asks: g.asks.filter((a) => a.id !== id) }));
+  if (!br || typeof br.askAnswer !== "function") return;
+  try {
+    await br.askAnswer(id, picked);
+  } catch {
+    // The gate's own timeout tells the agent nobody answered, which is the
+    // same end this failure has. Nothing to retry and nothing to report.
+  }
+}
+
 export async function answerPermit(id: string, allow: boolean, reason?: string): Promise<void> {
   const br = bridge.local;
   useBoard.setState((g) => ({ permits: g.permits.filter((p) => p.id !== id) }));

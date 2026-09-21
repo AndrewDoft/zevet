@@ -92,11 +92,13 @@ describe("the board page", () => {
     // The app looks each of these up by id. Renaming one in the source is a
     // silent failure: the lookup returns undefined and the pane simply never
     // fills. ("changed" was here until the changed-file list was removed in
-    // favour of the tree, and "streams"/"streamsTitle" until teammate cards
-    // folded into the roster and consoles moved to the rail and chat; the
-    // absences are the contract now, not oversights.)
+    // favour of the tree, "streams"/"streamsTitle" until teammate cards
+    // folded into the roster and consoles moved to the rail and chat, and
+    // "consolesSlot" until the "You" section itself folded into #people —
+    // a console zevet launched is an agent row in people.tsx now, not a
+    // second rail host; the absences are the contract now, not oversights.)
     "people", "workspaces", "tree", "detail", "detailTitle", "collisions",
-    "chat", "consolesSlot", "strip", "themer", "settingsLink",
+    "chat", "strip", "themer", "settingsLink",
   ];
   for (const id of ids) {
     test(`#${id} is written into the board`, () => {
@@ -114,19 +116,17 @@ describe("the board page", () => {
     // draft. They are two different components now — the rail is navigation,
     // #chat is the assistant-ui Thread — so the rule that carries the same
     // weight is this one: the rail must not grow a composer back.
+    // ⚠️ THE RAIL HOST USED TO BE `#consolesSlot` IN App.tsx — its own
+    // section, gated on `myConsoles.length`, with `<Consoles/>` as its only
+    // child. That section is gone: a console zevet launched is an
+    // `AgentRow` in people.tsx now, exactly where a terminal session is, so
+    // the file that must never grow a composer moved with it.
     const app = readFileSync(path.join(SRC, "App.tsx"), "utf8");
-    assert.equal((app.match(/id="consolesSlot"/g) || []).length, 1, "there must be exactly one rail host");
-    // ⚠️ THIS USED TO REQUIRE `viewMode === "ide"` ON THE RAIL HOST, and that
-    // was asserting an implementation detail as if it were the rule. In agent
-    // view it left no thread list: one console could be started and never
-    // switched away from, never joined by a second, and never closed back to
-    // the launcher. The rule this file actually exists to hold is the next
-    // three lines and the two after them — ONE composer, and not in the rail.
-    assert.ok(!/viewMode === "ide" \? \(\s*<>\s*<div className="pane-title">You/.test(app), "the rail host is gated on the ide view again");
-    assert.equal((app.match(/<Consoles/g) || []).length, 1, "the rail is the only place Consoles mounts");
+    assert.ok(!/id="consolesSlot"/.test(app), "the \"You\" rail host must not come back");
+    assert.ok(!/<Consoles/.test(app), "components/consoles.tsx is gone; nothing may still mount it");
     assert.equal((app.match(/<Conversation/g) || []).length, 1, "the chat column is the only place Conversation mounts");
 
-    const rail = readFileSync(path.join(SRC, "components", "consoles.tsx"), "utf8");
+    const rail = readFileSync(path.join(SRC, "components", "people.tsx"), "utf8");
     assert.ok(!rail.includes("<textarea"), "the rail grew a composer back");
     assert.ok(!/sendPrompt/.test(rail), "the rail must not send prompts; the Thread does");
 

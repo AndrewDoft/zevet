@@ -113,6 +113,13 @@
        thing a new person is shown first, because what people are shown first is
        what they do. -->
   <div class="row">
+    <!-- Shown unconditionally. There is no way to ask a hub which providers it
+         has before signing in — `/auth/whoami` is session-gated, and it is
+         session-gated precisely so an unauthenticated stranger cannot enumerate
+         the team. So a hub without Google answers the button with "Google
+         sign-in is not configured for this hub", which is one wasted click and
+         a sentence that names the cause. -->
+    <button id="google" class="primary">Sign in with Google</button>
     <button id="gh" class="primary">Sign in with GitHub</button>
   </div>
 
@@ -123,6 +130,20 @@
     <div id="ghState" class="hint">Waiting for approval…</div>
     <div class="row">
       <button id="ghCancel">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ⚠️ NO CODE HERE, AND THAT IS THE DIFFERENCE, NOT AN OMISSION. Google's
+       web flow finishes in the browser and lands back on the hub, so there is
+       nothing for the person to read or type. The URL is still shown, for the
+       same reason the GitHub code is: a browser that opened on the wrong
+       profile, or did not open at all, must not be a dead end. -->
+  <div id="googleStep" class="note" hidden>
+    <b>Finish in your browser.</b> Didn't it open?
+    <code id="googleUrl"></code>
+    <div id="googleState" class="hint">Waiting for your browser…</div>
+    <div class="row">
+      <button id="googleCancel">Cancel</button>
     </div>
   </div>
 
@@ -147,7 +168,7 @@
   <label>
     <span class="lbl">Display name</span>
     <input id="actor" placeholder="kai" autocomplete="off" spellcheck="false" />
-    <span class="hint">Defaults to your GitHub username.</span>
+    <span class="hint">Defaults to the account you signed in with.</span>
   </label>
 
   <div class="row">
@@ -195,6 +216,7 @@
    */
   function ghBusy(on) {
     $("gh").disabled = on;
+    $("google").disabled = on;
     $("ghStep").hidden = !on;
   }
 
@@ -240,6 +262,66 @@
   $("ghCancel").addEventListener("click", function () {
     window.zevet.githubCancel();
     ghBusy(false);
+    say("", "Sign-in cancelled.");
+  });
+
+  /* ── The Google path ───────────────────────────────────────────────────────
+   *
+   * The same three calls and the same rule about who writes the config. Two
+   * differences, both consequences of the browser finishing the flow rather
+   * than this window: there is no code to paint, and `googleWait` can sit for
+   * ten minutes while somebody picks an account.
+   */
+  function googleBusy(on) {
+    $("google").disabled = on;
+    $("gh").disabled = on;
+    $("googleStep").hidden = !on;
+  }
+
+  $("google").addEventListener("click", async function () {
+    var hub = $("hub").value.trim();
+    if (!hub) { say("bad", "Enter a hub address."); return; }
+    if (!/^https?:\/\//i.test(hub)) { say("bad", "Hub address needs https:// or http://."); return; }
+
+    say("", "Starting sign-in…");
+    googleBusy(true);
+    var started = await window.zevet.googleStart(hub);
+    if (!started.ok) {
+      googleBusy(false);
+      // Same reasoning as the GitHub branch: a hub with no Google client is a
+      // deployment problem, and the fallback is sitting right there.
+      say("bad", started.error + "<br><br>Use GitHub above, or your team's master secret below.");
+      return;
+    }
+
+    $("googleUrl").textContent = started.url;
+    $("googleState").textContent = started.domain
+      ? "Waiting for your browser — sign in with your " + started.domain + " account…"
+      : "Waiting for your browser…";
+    $("msg").hidden = true;
+
+    var done = await window.zevet.googleWait();
+    googleBusy(false);
+    if (!done.ok) {
+      if (done.cancelled) { say("", "Sign-in cancelled."); return; }
+      say("bad", done.error);
+      return;
+    }
+
+    verified = true;
+    $("finish").disabled = false;
+    // The local part, not the whole address: a board full of rows labelled
+    // "andrew@usemasora.com" is a board where the domain is repeated on every
+    // line and the name is the part nobody can see. Still overridable.
+    if (!$("actor").value.trim()) $("actor").value = String(done.login).split("@")[0];
+    say("good", "Signed in as <b>" + done.login + "</b>." +
+      (done.owner ? " Owner. Invite teammates in Settings." : ""));
+    $("repoStep").hidden = false;
+  });
+
+  $("googleCancel").addEventListener("click", function () {
+    window.zevet.googleCancel();
+    googleBusy(false);
     say("", "Sign-in cancelled.");
   });
 

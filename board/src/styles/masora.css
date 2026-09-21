@@ -272,13 +272,22 @@
 
   .agent-row {
     display: flex; align-items: center; gap: 6px;
-    width: 100%; text-align: left; cursor: pointer;
     padding: 4px 10px 4px 38px;
-    background: none; border: 0; border-left: 2px solid transparent;
+    border-left: 2px solid transparent;
     font-size: 12px; color: var(--ink-muted);
   }
   .agent-row:hover { background: var(--raise-soft); color: var(--ink); }
   .agent-row[data-active="true"] { background: var(--raise); border-left-color: var(--who); color: var(--ink); }
+  /* The clickable part of the row: twisty/gap, mark, name, and the posture-or-
+     age slot. Its own element rather than making `.agent-row` itself the
+     button, because a console row also carries a Stop button beside this one
+     and a <button> cannot nest inside another <button>. */
+  .agent-row-pick {
+    flex: 1 1 auto; min-width: 0;
+    display: flex; align-items: center; gap: 6px;
+    width: 100%; text-align: left; cursor: pointer;
+    background: none; border: 0; padding: 0; color: inherit; font: inherit;
+  }
   /* An agent with no subagents still lines its mark up with the ones that
      have a twisty. Reserved, not collapsed: a row that shifts sideways when
      its children arrive is a row that looks broken. */
@@ -290,6 +299,42 @@
   }
   .agent-row-ago {
     flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle);
+  }
+  /* A console's posture, in the same trailing slot `.agent-row-ago` uses for
+     a disk session — the two never sit on the same row, since a `Row` is
+     backed by exactly one of a ConsoleEntry or a SessionSummary. Now a real
+     <button> (it cycles MODES on click), so browser button chrome is reset
+     back to the plain-text look `.agent-row-ago` has. `white-space: nowrap`
+     matters more here than it did as a span: "Auto → Skip permissions" is
+     long enough to wrap onto a second line in a narrow rail, and a wrapped
+     row is a row that grew — the one thing a pending-change label must not
+     do (⚠️ see people.tsx `AgentRow`). */
+  .agent-row-mode {
+    flex: none; font-size: 10.5px; color: var(--subtle);
+    background: none; border: 0; padding: 0; cursor: pointer;
+    white-space: nowrap;
+  }
+  .agent-row-mode:hover { color: var(--ink); }
+  .agent-row-mode[data-danger="true"] { color: var(--alert); }
+  /* A pending change (mode → nextMode) reads as ink rather than the default
+     subtle grey, same reasoning as Stop's red: a change waiting on the next
+     message is not the resting state and should not look like one. */
+  .agent-row-mode[data-pending="true"] { color: var(--ink); }
+  .agent-row-mode[data-pending="true"][data-danger="true"] { color: var(--alert); }
+  /* Stop/Close. Andrew asked for Stop specifically in red, not merely on
+     hover: a running agent is the one state in this pane you should not have
+     to hover to notice. Close — the same button, relabelled, once the
+     process has exited — stays the muted colour every other control here
+     uses. Always mounted for a console row, label and colour swapping rather
+     than the button appearing or disappearing, so the row never resizes. */
+  .agent-row-stop {
+    flex: none; font-size: 11px; padding: 3px 7px; border-radius: 2px;
+    color: var(--subtle); border: 1px solid transparent;
+  }
+  .agent-row-stop[data-running="true"] { color: var(--alert); }
+  .agent-row-stop:hover { border-color: currentColor; }
+  .agent-row-err {
+    font-size: 11.5px; color: var(--alert); padding: 0 10px 4px 38px;
   }
 
   .agent-sub {
@@ -868,47 +913,11 @@
 
   .idle-note { font-size: 12px; color: var(--subtle); }
 
-  /* ---- your own agent, running here ------------------------------------ */
-  /* ---- rail: one row per running agent --------------------------------
-     The conversation column is the assistant-ui Thread; this is navigation.
-     Registry elements bring their own look, so what is left here is the part
-     that is zevet's: the per-collaborator hue on the left edge, and the
-     posture, which is the one thing you want to see without clicking. */
-  .console-row {
-    border-bottom: 1px solid var(--line);
-    border-left: 2px solid var(--who);
-    background: var(--raise-soft);
-    display: flex; align-items: center; gap: 6px;
-    padding: 8px 10px 8px 12px;
-  }
-  .console-row[data-active="true"] { background: var(--raise); }
-  .console-row-pick {
-    flex: 1 1 auto; min-width: 0;
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    text-align: left; background: none; border: 0; padding: 0; cursor: pointer;
-  }
-  .console-row-status { flex: 0 1 auto; min-width: 0; }
-  /* The first thing this console was asked. Two claude consoles on Auto were
-     otherwise the same three words twice, with only the hue on the left edge
-     telling them apart — and the rail's whole job is knowing which thread is
-     which. Full width, so it wraps under rather than squeezing the name. */
-  .console-row-task {
-    flex: 1 0 100%; min-width: 0;
-    font-size: 11.5px; line-height: 15px; min-height: 15px;
-    color: var(--subtle);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .console-row-mode { color: var(--subtle); }
-  .console-row-mode[data-danger="true"] { color: var(--alert); }
-  .console-row-close {
-    flex: none; font-size: 11px; padding: 3px 7px; border-radius: 2px;
-    color: var(--subtle); background: none; border: 1px solid transparent;
-    cursor: pointer;
-  }
-  .console-row-close:hover { color: var(--alert); border-color: var(--alert); }
-  .console-row-err {
-    flex: 1 0 100%; font-size: 11.5px; color: var(--alert); padding-top: 4px;
-  }
+  /* ---- your own agent, running here ------------------------------------
+     Used to be a second rail list here (consoles.tsx's `.console-row`), under
+     its own "You" heading, separate from every terminal session. It is one
+     of the `.agent-row` family now — see components/people.tsx — so there is
+     nothing left in this section. */
 
   /* SESSIONS — what has run on this machine, not what is running.
      Denser than a console row on purpose: there are 127 of these and 3 of
@@ -1266,14 +1275,9 @@
   .tool-error-inert > div:last-child { display: none; }
 
 
-  /* The rail is 180px at its narrowest; the pill keeps its shape but not its
-     chat-width padding. */
-  .console-row-status { padding-inline: 8px; }
-  .console-row-status .max-w-44 { max-width: none; }
-
-  /* The trailing slot is empty by design (see consoles.tsx); it would still
-     reserve 24px in a 180px rail. */
-  .console-row-status [data-slot="agent-status-trailing"],
+  /* The trailing slot is empty by design; it would still reserve 24px in a
+     180px rail. (`.console-row-status` was the other half of this rule —
+     removed with consoles.tsx; `.agent-row` never used AgentStatus.) */
   .person-status [data-slot="agent-status-trailing"] { display: none; }
 
   /* ⚠️ A STRIP THAT IS ALWAYS THERE, rather than three rows that come and go.

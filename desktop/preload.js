@@ -75,6 +75,26 @@ contextBridge.exposeInMainWorld("zevet", {
   githubCancel: () => ipcRenderer.invoke("zevet:githubCancel"),
   /** End this machine's GitHub session, hub-side and locally. */
   githubLogout: () => ipcRenderer.invoke("zevet:githubLogout"),
+  /**
+   * Sign in with Google.
+   *
+   * Same shape as the GitHub trio and one difference worth knowing: there is no
+   * `userCode`, because Google's web flow never shows the person a code.
+   * `googleStart` resolves with `{ url, domain }` once the hub has minted a
+   * pairing code and the main process has opened the browser; `googleWait` then
+   * resolves when the browser has come back to the hub, and by then the config
+   * is written.
+   *
+   * ⚠️ NEITHER CALL RETURNS THE SECRET OR THE SESSION — the same rule as the
+   * GitHub pair, for the same reason.
+   */
+  googleStart: (hub) => ipcRenderer.invoke("zevet:googleStart", { hub }),
+  googleWait: () => ipcRenderer.invoke("zevet:googleWait"),
+  googleCancel: () => ipcRenderer.invoke("zevet:googleCancel"),
+  /** End this machine's session, hub-side and locally. A session does not
+   *  remember which provider minted it, so this is the same call as
+   *  `githubLogout` under the name the Google button expects. */
+  googleLogout: () => ipcRenderer.invoke("zevet:googleLogout"),
   /** Native folder picker; resolves to a path or null. */
   pickRepo: () => ipcRenderer.invoke("zevet:pickRepo"),
   /** Install the hooks into that repo. */

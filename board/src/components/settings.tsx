@@ -131,9 +131,9 @@ function GithubConnectBox({ onDone }: { onDone: () => void }) {
     }, (err) => setState({ phase: "fail", message: (err && err.message) || "Could not start sign-in." }));
   }
 
-  const label = connectPhaseLabel(state.phase);
+  const label = connectPhaseLabel(state.phase, "GitHub");
 
-  const value = connectValue(state.phase, state);
+  const value = connectValue(state.phase, state, "GitHub");
 
   return (
     <div className="srow">
@@ -165,7 +165,86 @@ function GithubDisconnectRow({ onDone }: { onDone: () => void }) {
   return (
     <div className="srow">
       <button className={MAKE_BTN} type="button" disabled={state === "busy"} onClick={click}>
-        {state === "busy" ? "Disconnecting\u2026" : state === "fail" ? "Retry" : "Disconnect GitHub"}
+        {state === "busy" ? "Disconnecting…" : state === "fail" ? "Retry" : "Disconnect GitHub"}
+      </button>
+      <span className="v">{disconnectValue(state)}</span>
+    </div>
+  );
+}
+
+function GoogleConnectBox({ onDone }: { onDone: () => void }) {
+  const [state, setState] = useState<
+    | { phase: "idle" }
+    | { phase: "starting" }
+    | { phase: "waiting" }
+    | { phase: "done"; login: string }
+    | { phase: "fail"; message: string }
+  >({ phase: "idle" });
+
+  function click() {
+    if (state.phase === "waiting") {
+      window.zevet?.googleCancel?.();
+      setState({ phase: "idle" });
+      return;
+    }
+    setState({ phase: "starting" });
+    const hub = (bridge.cfg && bridge.cfg.hub) || undefined;
+    window.zevet?.googleStart?.(hub).then((r) => {
+      if (!r || !r.ok) {
+        setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
+        return;
+      }
+      setState({ phase: "waiting" });
+      window.zevet?.googleWait?.().then(
+        (done) => {
+          if (!done || !done.ok) {
+            if (done && done.cancelled) setState({ phase: "idle" });
+            else setState({ phase: "fail", message: (done && done.error) || "Sign-in failed." });
+            return;
+          }
+          setState({ phase: "done", login: done.login || "" });
+          onDone();
+        },
+        (err) => setState({ phase: "fail", message: (err && err.message) || "Sign-in failed." }),
+      );
+    }, (err) => setState({ phase: "fail", message: (err && err.message) || "Could not start sign-in." }));
+  }
+
+  const label = connectPhaseLabel(state.phase, "Google");
+
+  const value = connectValue(state.phase, state, "Google");
+
+  return (
+    <div className="srow">
+      <button className={MAKE_BTN} type="button" disabled={state.phase === "starting"} onClick={click}>
+        {label}
+      </button>
+      <span className="v">{value}</span>
+    </div>
+  );
+}
+
+function GoogleDisconnectRow({ onDone }: { onDone: () => void }) {
+  const [state, setState] = useState("idle");
+
+  function click() {
+    setState("busy");
+    window.zevet?.googleLogout?.().then(
+      (r) => {
+        if (!r || !r.ok) setState("fail");
+        else {
+          setState("done");
+          onDone();
+        }
+      },
+      () => setState("fail"),
+    );
+  }
+
+  return (
+    <div className="srow">
+      <button className={MAKE_BTN} type="button" disabled={state === "busy"} onClick={click}>
+        {state === "busy" ? "Disconnecting…" : state === "fail" ? "Retry" : "Disconnect Google"}
       </button>
       <span className="v">{disconnectValue(state)}</span>
     </div>
@@ -225,8 +304,10 @@ function AccountSection() {
   const owner = Boolean(whoState.owner);
   const people = Array.isArray(whoState.people) ? (whoState.people as Array<{ login: string; owner?: boolean; pending?: boolean }>) : [];
   const githubSignIn = Boolean(whoState.githubSignIn);
+  const googleSignIn = Boolean(whoState.googleSignIn);
   const local = Boolean(bridge.local);
   const canConnect = githubSignIn && local && Boolean(window.zevet && typeof window.zevet.githubStart === "function");
+  const canConnectGoogle = googleSignIn && local && Boolean(window.zevet && typeof window.zevet.googleStart === "function");
   const localSession = Boolean(bridge.cfg && bridge.cfg.session);
 
   const out: ReactNode[] = [<SRow key="as" k="Signed in as" v={login ? "@" + login : "not signed in"} />];
@@ -238,16 +319,25 @@ function AccountSection() {
     } else {
       note += " GitHub sign-in is unavailable on this hub.";
     }
+    if (googleSignIn) {
+      if (!canConnectGoogle && !localSession) note += " Open the desktop app to sign in with Google.";
+    } else {
+      note += " Google sign-in is unavailable on this hub.";
+    }
     out.push(<SNote key="note">{note}</SNote>);
     if (!login && !localSession) {
-      if (canConnect) out.push(<GithubConnectBox key="connect" onDone={() => refreshWhoami()} />);
+      if (canConnect) out.push(<GithubConnectBox key="connect-github" onDone={() => refreshWhoami()} />);
+      if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" onDone={() => refreshWhoami()} />);
     } else {
       // ⚠️ NO SECOND "Signed in as". The `out` row above this block is
       // unconditional and already prints exactly this, so every signed-in user
       // on a shared hub saw it twice in Settings → Account.
       if (localSession && !login) out.push(<SNote key="mh">GitHub connected on this machine.</SNote>);
       if (local && window.zevet && typeof window.zevet.githubLogout === "function") {
-        out.push(<GithubDisconnectRow key="disc" onDone={() => refreshWhoami()} />);
+        out.push(<GithubDisconnectRow key="disc-github" onDone={() => refreshWhoami()} />);
+      }
+      if (local && window.zevet && typeof window.zevet.googleLogout === "function") {
+        out.push(<GoogleDisconnectRow key="disc-google" onDone={() => refreshWhoami()} />);
       }
     }
   }
@@ -291,12 +381,12 @@ function AccountSection() {
           if (v) changePeople("/auth/allow", v);
         }}
       >
-        <input className="mono" id="settingsInvite" type="text" ref={invite} aria-label="GitHub username" placeholder="GitHub username" autoComplete="off" spellCheck={false} />
+        <input className="mono" id="settingsInvite" type="text" ref={invite} aria-label="GitHub username or email" placeholder="GitHub username or email" autoComplete="off" spellCheck={false} />
         <button className={MAKE_BTN} type="submit" disabled={busy}>
           Invite
         </button>
       </form>,
-      <SNote key="howto">Send them this hub’s address. They can sign in with GitHub after installing zevet.</SNote>,
+      <SNote key="howto">Send them this hub's address. They can sign in with GitHub or Google after installing zevet.</SNote>,
     );
   }
 
@@ -334,7 +424,7 @@ function IndexSection() {
       <SSection title="Code index">
         <SRow k="Status" v="external index running" />
         <SNote>
-          External index on port {String(m.cindexPort || 8080)}. Stop it to use zevet’s built-in index.
+          External index on port {String(m.cindexPort || 8080)}. Stop it to use zevet's built-in index.
         </SNote>
       </SSection>
     );
@@ -362,8 +452,7 @@ function IndexSection() {
       key="machine"
       k="This machine"
       v={measured.totalMemMB
-        ? Math.round(measured.totalMemMB / 1024) + " GB RAM \u00b7 " + measured.cores + " cores \u00b7 " +
-          Math.round((measured.freeDiskMB || 0) / 1024) + " GB free"
+        ? Math.round(measured.totalMemMB / 1024) + " GB RAM \u00b7 " + measured.cores + " cores \u00b7 " + Math.round((measured.freeDiskMB || 0) / 1024) + " GB free"
         : "could not be measured"}
     />,
   );
@@ -396,7 +485,7 @@ function IndexSection() {
       style={{ marginTop: "10px" }}
       disabled={!localRoot || st.building}
       onClick={() => {
-        setIndex({ progressText: "starting\u2026", barPct: 0 });
+        setIndex({ progressText: "starting…", barPct: 0 });
         bridge.local && typeof bridge.local.indexEnable === "function" &&
           bridge.local.indexEnable(localRoot).then((r) => {
             setIndex({
@@ -406,7 +495,7 @@ function IndexSection() {
           });
       }}
     >
-      {st.building ? "Building\u2026" : stats ? "Refresh the index" : "Build the index"}
+      {st.building ? "Building…" : stats ? "Refresh the index" : "Build the index"}
     </button>,
   );
 
@@ -491,7 +580,7 @@ function VersionSection() {
         disabled={checking || installing || (s && s.phase === "checking") || (s && s.phase === "downloading") || false}
         onClick={() => updateCheck()}
       >
-        {checking || (s && s.phase === "checking") ? "Checking\u2026" : "Check now"}
+        {checking || (s && s.phase === "checking") ? "Checking…" : "Check now"}
       </button>,
     );
   }

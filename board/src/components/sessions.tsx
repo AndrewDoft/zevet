@@ -24,7 +24,7 @@ import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AgentLogo } from "./brand";
 import { mono } from "./assistant-ui/elements/surfaces";
-import { useBoard } from "../lib/board";
+import { useBoard, resumeIdForSession } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { agoLabel } from "../lib/fmt";
 import {
@@ -269,9 +269,19 @@ export function SessionBanner() {
   const truncated = useBoard((st) => st.sessions.openTruncated);
   const loading = useBoard((st) => st.sessions.openLoading);
   const closeSession = useBoard((st) => st.closeSession);
+  const continueSession = useBoard((st) => st.continueSession);
   if (!open) return null;
 
   const where = sessionWhere(open);
+  // `resumeIdForSession` is the SAME function `continueSession` guards on in
+  // board.ts — asked here rather than re-deriving the claude/codex split, so
+  // the button and the action can never disagree about what is resumable.
+  const resumeId = resumeIdForSession(open);
+  // A recording without a resumable id, or a build with no local bridge,
+  // honestly offers no Continue — clicking one would start a fresh session
+  // wearing the old one's title.
+  const canContinue =
+    Boolean(resumeId) && Boolean(bridge.local) && typeof bridge.local?.resumeAgent === "function";
   return (
     <>
       <div className="session-banner">
@@ -295,6 +305,15 @@ export function SessionBanner() {
             and back to session."
             "Back to live" stays, because leaving a recording entirely is not
             something the tree expresses — every row in it opens something. */}
+        {canContinue ? (
+          <button
+            type="button"
+            className="session-banner-close"
+            onClick={() => continueSession(open)}
+          >
+            Continue
+          </button>
+        ) : null}
         <button type="button" className="session-banner-close" onClick={() => closeSession()}>
           Back to live
         </button>

@@ -1,6 +1,6 @@
 {
   "name": "zevet-desktop",
-  "version": "0.2.42",
+  "version": "0.2.43",
   "private": true,
   "description": "zevet — watch your team's coding agents",
   "main": "main.js",
@@ -51,6 +51,7 @@
       "zevet-voice.js",
       "agent-sessions.js",
       "github-signin.js",
+      "google-signin.js",
       "setup.html",
       "fonts/**",
       "build/icon.png",

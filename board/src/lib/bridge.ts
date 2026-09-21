@@ -138,6 +138,21 @@ export interface StatusResult {
   [key: string]: unknown;
 }
 
+/**
+ * A multiple-choice question an agent is BLOCKED on.
+ *
+ * Bounded before it ever reaches here — desktop/zevet-mcp.js § cleanQuestion
+ * is where the agent's own text stops being arbitrary, so the board is never
+ * handed a shape it has to defend against.
+ */
+export interface AskRequest {
+  id: string;
+  question: string;
+  header: string;
+  multi: boolean;
+  options: Array<{ label: string; description: string }>;
+}
+
 export interface LocalBridge {
   available: boolean;
   read: (root: string, relPath: string) => Promise<ReadResult>;
@@ -178,6 +193,13 @@ export interface LocalBridge {
   chrome: (spec: ColorThemeSpec) => void;
   addWorkspace: () => Promise<LocalWorkspace | null>;
   indexStatus: (root: string | null) => Promise<{ ok: boolean } & Record<string, unknown>>;
+  /* A question from an agent, and the answer back. Optional like the permit
+     pair beside them: an older main process simply never sends one. */
+  onAskRequest?: (cb: (req: AskRequest) => void) => () => void;
+  /* Answered ONCE, with the chosen LABELS. Answering twice is harmless on the
+     wire — the main process has already deleted the pending entry — but the
+     UI must not be able to, which is why the card is removed optimistically. */
+  askAnswer?: (id: string, picked: string[]) => Promise<{ ok: boolean; error?: string }>;
   /* Save this user default permission posture. Returns what is now stored —
      never assume the write landed, which is the whole reason it answers. */
   defaultMode: (mode: string) => Promise<{ ok?: boolean; error?: string; mode?: string }>;
@@ -237,6 +259,13 @@ export interface ZevetBridge {
   githubWait: () => Promise<{ ok?: boolean; cancelled?: boolean; error?: string; login?: string }>;
   githubCancel: () => void;
   githubLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
+  /* The same three calls for Google. The flow differs — the hub owns the
+     callback, so `googleStart` hands back a URL to open rather than a code to
+     type — but the app's side of it is the same start / wait / cancel. */
+  googleStart?: (hub?: string) => Promise<{ ok?: boolean; error?: string; url?: string; expiresIn?: number; domain?: string }>;
+  googleWait?: () => Promise<{ ok?: boolean; cancelled?: boolean; error?: string; login?: string; owner?: boolean }>;
+  googleCancel?: () => void;
+  googleLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
 }
 
 declare global {

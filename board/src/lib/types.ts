@@ -78,6 +78,16 @@ export interface ConsoleEntry {
   running: boolean;
   error: string | null;
   mode: LaunchMode;
+  /** The posture the NEXT turn should run under, when it differs from `mode`.
+   *
+   *  ⚠️ THIS IS NOT `mode` — `mode` is what the CURRENT process was actually
+   *  started with, which cannot change without killing it. Picking a new
+   *  posture on a running console cannot apply mid-turn (there is no way to
+   *  hand a live process new argv), so it is parked here instead and only
+   *  swapped into `mode` by `sendPrompt`, right before it resumes with a new
+   *  process — the first moment a new process is free. Null (the normal
+   *  case) means the next turn runs with the same posture as this one. */
+  nextMode?: LaunchMode | null;
   model: string;
   root: string;
   hue: number;

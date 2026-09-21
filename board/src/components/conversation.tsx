@@ -21,6 +21,7 @@ import { Launcher } from "./launcher";
 import { QuoteToComposer } from "./guards";
 import { VoiceHint } from "./voicedialog";
 import { PermitPrompt, PermitQueue } from "./permits";
+import { AskPrompt, AskQueue } from "./asks";
 import { DraftRestore } from "./findviews";
 import { ThreadMap } from "./mapviews";
 import { SessionBanner } from "./sessions";
@@ -156,6 +157,8 @@ export function Conversation() {
           the ask-server denies on timeout, so ignoring it is a refusal. */}
       {reading ? null : <PermitPrompt />}
       {reading ? null : <PermitQueue />}
+      {reading ? null : <AskPrompt />}
+      {reading ? null : <AskQueue />}
       <div className="chat-thread-body">
         <Thread autoFocus={false} components={TURN_COMPONENTS} />
         {/* A tick per message down the right edge. It is the one thing that

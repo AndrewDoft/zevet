@@ -39,6 +39,7 @@ const { AppUpdater } = require("./app-update.js");
 const runtime = require("./runtime.js");
 const askServer = require("./ask-server.js");
 const { GithubSignIn } = require("./github-signin.js");
+const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
@@ -977,8 +978,50 @@ ipcMain.handle("zevet:githubStart", async (_e, { hub } = {}) => {
   }
 });
 
-ipcMain.handle("zevet:githubWait", async () => {
-  if (!signIn) return { ok: false, error: "Start GitHub sign-in first." };
+/* ── Signing in with Google ────────────────────────────────────────────────
+ *
+ * The same three calls, against a flow that never shows the person a code:
+ * Google's web flow sends them to a browser, and the browser lands back on the
+ * HUB rather than here. `start` therefore returns a URL and nothing to read
+ * out; what `wait` polls is the hub's pairing code, not Google. See
+ * desktop/google-signin.js.
+ *
+ * ⚠️ THE SAME `signIn` SLOT AS GITHUB, DELIBERATELY. One attempt at a time was
+ * already enforced for two overlapping GitHub flows; a GitHub flow and a Google
+ * flow racing is the same bug with two names, and each would try to write the
+ * config over the other.
+ */
+ipcMain.handle("zevet:googleStart", async (_e, { hub } = {}) => {
+  try {
+    if (signIn) signIn.cancel();
+    signIn = new GoogleSignIn({ hub: hub || (readConfig() || {}).hub });
+    const r = await signIn.start();
+    // Opened from the MAIN process, never by the renderer — same rule as the
+    // GitHub flow above, and it matters more here: this URL carries the pairing
+    // code that a completed sign-in will be handed over for.
+    shell.openExternal(r.authUrl).catch(() => {
+      /* No browser, or none that would take it. The URL goes back to the window
+       * so it can offer a copyable link rather than being a dead end. */
+    });
+    // No `userCode`: there is nothing for the person to read or type, which is
+    // the whole reason this flow is the web one and not Google's device flow.
+    return { ok: true, url: r.authUrl, expiresIn: r.expiresIn, domain: r.domain };
+  } catch (err) {
+    signIn = null;
+    return { ok: false, error: err.message };
+  }
+});
+
+/**
+ * What happens once a sign-in succeeds — ONE implementation, both providers.
+ *
+ * ⚠️ THIS IS THE PART THAT PRODUCES A HALF-WORKING INSTALL WHEN IT IS WRONG,
+ * and two copies of it would be two chances to get it wrong in different ways.
+ * The providers differ in how they ASK. They do not differ in what an answer
+ * means, and nothing below reads the provider.
+ */
+async function awaitSignIn(what) {
+  if (!signIn) return { ok: false, error: `Start ${what} sign-in first.` };
   const attempt = signIn;
   try {
     const r = await attempt.wait();
@@ -996,10 +1039,12 @@ ipcMain.handle("zevet:githubWait", async () => {
       hub,
       secret: r.secret || existing.secret || "",
       session: r.token,
-      // The GitHub login is a far better actor name than a hostname, and it is
-      // the name teammates will recognise on the board. An actor already chosen
-      // by hand is not overwritten.
-      actor: existing.actor || r.login,
+      // The login is a far better actor name than a hostname, and it is the
+      // name teammates will recognise on the board. An actor already chosen by
+      // hand is not overwritten. A Google login is an email address, so the
+      // local part is used — a board of rows reading "name@usemasora.com"
+      // repeats the domain on every line and hides the part that identifies.
+      actor: existing.actor || String(r.login || "").split("@")[0],
       login: r.login,
     });
     return { ok: true, login: r.login, owner: r.owner };
@@ -1008,13 +1053,21 @@ ipcMain.handle("zevet:githubWait", async () => {
   } finally {
     if (signIn === attempt) signIn = null;
   }
-});
+}
 
-ipcMain.handle("zevet:githubCancel", () => {
+ipcMain.handle("zevet:githubWait", () => awaitSignIn("GitHub"));
+ipcMain.handle("zevet:googleWait", () => awaitSignIn("Google"));
+
+/* Cancelling is provider-blind — there is one attempt in flight and this ends
+ * it, whichever kind it is. Registered under both names so the renderer can
+ * call the one that matches the button it is next to. */
+const cancelSignIn = () => {
   if (signIn) signIn.cancel();
   signIn = null;
   return true;
-});
+};
+ipcMain.handle("zevet:githubCancel", cancelSignIn);
+ipcMain.handle("zevet:googleCancel", cancelSignIn);
 
 /* ── Sign out of GitHub, from Settings ─────────────────────────────────────
  *
@@ -1027,7 +1080,7 @@ ipcMain.handle("zevet:githubCancel", () => {
  * offer with one click and no confirmation. Reconnecting is the same click
  * in reverse.
  */
-ipcMain.handle("zevet:githubLogout", async () => {
+const signOut = async () => {
   const cfg = readConfig() || {};
   const session = typeof cfg.session === "string" ? cfg.session : "";
   if (!session) return { ok: true, loggedOut: false };
@@ -1052,7 +1105,11 @@ ipcMain.handle("zevet:githubLogout", async () => {
   delete rest.session;
   writeConfig(rest);
   return { ok: true, loggedOut };
-});
+};
+// Signing out ends a SESSION, and a session does not remember which provider
+// minted it — so this is one function, under the name each button expects.
+ipcMain.handle("zevet:githubLogout", signOut);
+ipcMain.handle("zevet:googleLogout", signOut);
 
 ipcMain.handle("zevet:pickRepo", async () => {
   const picked = await dialog.showOpenDialog(setupWindow, {

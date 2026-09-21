@@ -7,7 +7,6 @@ import { ConnBanner } from "./components/conn";
 import { BackgroundInbox } from "./components/inbox";
 import { Palette } from "./components/palette";
 import { UpdateRow } from "./components/updaterow";
-import { Consoles } from "./components/consoles";
 import { Conversation } from "./components/conversation";
 import { ConsoleRuntimeProvider } from "./lib/runtime";
 import { FollowControl, TreeFill } from "./components/tree";
@@ -22,7 +21,6 @@ import {
   boot,
   buildSplits,
   positionSplits,
-  selectMyConsoles,
   selectRoster,
   selectTheme,
   selectViewMode,
@@ -79,7 +77,6 @@ function App() {
   const localRoot = useBoard((s) => s.localRoot);
 
   const roster = useBoard(selectRoster);
-  const myConsoles = useBoard(selectMyConsoles);
   const launching = useBoard((s) => s.launching);
   const openLauncher = useBoard((s) => s.openLauncher);
   const local = Boolean(bridge.local);
@@ -160,32 +157,19 @@ function App() {
           <div className="pane-body" id="people">
             <PeoplePane />
           </div>
-          {/* ⚠️ THIS USED TO BE GATED ON `viewMode === "ide"`, and in agent
-              view — the mode built for talking to agents — it left the rail
-              with no thread list at all. Found by using it: start one console
-              in agent view and there is no way to switch away from it, no way
-              to start a second, and no way back to the launcher, because the
-              conversation column only offers the launcher when NO console is
-              active and nothing in that view can make that true again.
-
-              The contract this gate was standing in for is a different one,
-              and it still holds: exactly one composer, and never in the rail.
-              test/board.test.mjs asserts that directly against consoles.tsx —
-              no textarea, no sendPrompt — which is the rule that actually
-              matters. The list is navigation in both views. */}
-          {/* ⚠️ NOT RENDERED EMPTY. The launcher row that used to sit under
-              this heading is gone (it is the plus in the People header now),
-              so with no console running this was a section title with nothing
-              beneath it — a heading that promises a list and then does not
-              have one. */}
-          {myConsoles.length ? (
-            <div id="consolesSlot">
-              <div className="pane-title">You</div>
-              <div className="pane-body" id="consoles">
-                <Consoles />
-              </div>
-            </div>
-          ) : null}
+          {/* ⚠️ THE "You" SECTION IS GONE. It used to be a second rail list —
+              its own heading, its own `#consolesSlot` host, its own
+              Consoles component — sitting below People and showing only the
+              agents zevet itself had launched. Andrew: "this terminal conv is
+              tracked in the right place (people), but the claude session in
+              zevet is at the bottom of the people window, somewhere else."
+              A console now normalises into the same `AgentRow` a terminal
+              session renders as, in its repo group, in people.tsx — so there
+              is one tree instead of two, and the contract "exactly one
+              composer, never in the rail" (still real: the Thread in #chat is
+              the only composer) is now asserted against people.tsx rather
+              than the deleted consoles.tsx. See components/people.tsx and
+              test/board.test.mjs. */}
           {/* ⚠️ THE SESSIONS LIST IS NOT A RAIL SECTION ANY MORE. What has run
               on this machine is MY work — every file it reads comes out of
               this machine's own ~/.claude and ~/.codex — so it now hangs under

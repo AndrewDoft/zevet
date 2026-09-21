@@ -69,7 +69,42 @@ const SESSION_BYTES = 32;
  *  company stops working within one. */
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
-const EMPTY = () => ({ version: 1, secret: "", owner: null, allowed: [], sessions: {} });
+/**
+ * Every identity carries the provider that vouched for it.
+ *
+ * ⚠️ AN ID IS ONLY UNIQUE WITHIN ITS PROVIDER. A GitHub numeric id and a Google
+ * `sub` are both digit strings out of two unrelated namespaces, so any lookup
+ * that compares `id` alone can match the wrong person. Every comparison in this
+ * file goes through `samePerson` for that reason, and there is no code path
+ * that matches on an id by itself.
+ *
+ * Records written before Google existed have no `provider` field. They are
+ * GitHub's, and `#load` fills it in — which is the entire migration.
+ */
+const DEFAULT_PROVIDER = "github";
+
+const EMPTY = () => ({ version: 1, secret: "", owner: null, allowed: [], blocked: [], sessions: {} });
+
+/** Same person? Provider AND id, never id alone. A record with no id yet (an
+ *  invitation nobody has accepted) matches nobody — it is matched by login, at
+ *  the one call site that needs to. */
+function samePerson(a, b) {
+  return Boolean(a && b && a.id && b.id && a.id === b.id && provider(a) === provider(b));
+}
+
+/** The provider of a record, with the pre-Google default applied. Read through
+ *  this rather than the field, so a record that reached memory from somewhere
+ *  other than `#load` cannot be compared as `undefined`. */
+function provider(rec) {
+  return String((rec && rec.provider) || DEFAULT_PROVIDER);
+}
+
+/** How to name somebody in a sentence a person reads. A GitHub login wants its
+ *  "@"; an email address already has one and gains nothing from a second. */
+function display(rec) {
+  const l = String((rec && rec.login) || "");
+  return provider(rec) === "google" ? l : `@${l}`;
+}
 
 export class Accounts {
   /**
@@ -113,11 +148,20 @@ export class Accounts {
     return this.state.owner ? this.state.owner.login : null;
   }
 
-  /** Everyone permitted, owner first. */
+  /** Everyone permitted, owner first. `provider` is normalised on the way out
+   *  so no caller has to know about the pre-Google default. */
   list() {
-    const out = this.state.owner ? [{ ...this.state.owner, owner: true }] : [];
-    for (const a of this.state.allowed) out.push({ ...a, owner: false });
+    const out = this.state.owner ? [{ ...this.state.owner, provider: provider(this.state.owner), owner: true }] : [];
+    for (const a of this.state.allowed) out.push({ ...a, provider: provider(a), owner: false });
     return out;
+  }
+
+  /** Has this person been thrown out? Checked separately from the allowlist
+   *  because a Workspace domain admits by RULE — removing such a person from
+   *  `allowed` would let them walk straight back in on their next sign-in, so
+   *  revocation has to leave something behind that says no. */
+  #blocked(user) {
+    return this.state.blocked.some((b) => samePerson(b, user));
   }
 
   /**
@@ -137,15 +181,19 @@ export class Accounts {
    * `ZEVET_GITHUB_OWNER` closes it: set it, and only that login can claim the
    * hub, no matter who reaches it first.
    */
-  mayEnter(user, { requiredOwner = "" } = {}) {
-    const login = String(user.login || "").toLowerCase();
-    const id = String(user.id || "");
-    if (!login || !id) return { ok: false, error: "GitHub did not say who you are" };
+  mayEnter(user, { requiredOwner = "", domain = "" } = {}) {
+    const me = { provider: provider(user), login: String(user.login || "").toLowerCase(), id: String(user.id || "") };
+    if (!me.login || !me.id) return { ok: false, error: `${me.provider === "google" ? "Google" : "GitHub"} did not say who you are` };
+
+    // ⚠️ CHECKED BEFORE EVERYTHING, INCLUDING TRUST-ON-FIRST-USE. A revoked
+    // person must not be able to claim an unowned hub, and must not be let back
+    // in by the domain rule at the bottom.
+    if (this.#blocked(me)) return { ok: false, error: `${display(me)} was removed from this hub` };
 
     if (!this.state.owner) {
-      const want = String(requiredOwner || "").trim().toLowerCase();
-      if (want && want !== login) {
-        return { ok: false, error: `this hub is reserved for @${want}` };
+      const want = String(requiredOwner || "").trim().toLowerCase().replace(/^@/, "");
+      if (want && want !== me.login) {
+        return { ok: false, error: `this hub is reserved for ${display({ ...me, login: want })}` };
       }
       return { ok: true, first: true };
     }
@@ -154,10 +202,34 @@ export class Accounts {
     // and, once renamed, claimable by a stranger — an allowlist keyed on the
     // string alone is an allowlist that can be inherited.
     for (const a of this.list()) {
-      if (a.id && id && a.id === id) return { ok: true, first: false };
-      if (!a.id && a.login === login) return { ok: true, first: false };
+      if (samePerson(a, me)) return { ok: true, first: false };
+      // An invitation the owner typed has no id until its first sign-in, so it
+      // can only be matched by login — within its own provider, because
+      // "andrew" on GitHub and "andrew@…" on Google are different people and a
+      // cross-provider login match would be a way to inherit someone's seat.
+      if (!a.id && provider(a) === me.provider && a.login === me.login) return { ok: true, first: false };
     }
-    return { ok: false, error: `@${user.login} is not on this hub's list — ask @${this.owner} to add you` };
+
+    /**
+     * ⚠️ THE DOMAIN DOOR. Anyone whose Google account is administered by
+     * `domain` gets in without being invited — that is the point of it, and it
+     * is a genuinely different bargain from the GitHub allowlist: it delegates
+     * "who works here" to the Workspace admin, where that question actually
+     * lives. Somebody who leaves loses their account and stops being able to
+     * sign in, without anybody remembering to revoke them here.
+     *
+     * The gate is `hd`, which Google asserts and only Workspace accounts carry.
+     * `google-auth.mjs` explains at length why the email suffix is not the same
+     * test and must never be substituted for it.
+     */
+    if (me.provider === "google" && domain && String(user.hd || "").toLowerCase() === String(domain).toLowerCase()) {
+      return { ok: true, first: false, byDomain: true };
+    }
+
+    // `display(this.state.owner)`, not `this.owner` — the latter is the bare
+    // login, and printing it raw drops the "@" that every other mention of a
+    // GitHub user in this file carries.
+    return { ok: false, error: `${display(me)} is not on this hub's list — ask ${display(this.state.owner)} to add you` };
   }
 
   /**
@@ -171,20 +243,39 @@ export class Accounts {
    */
   signIn(user) {
     const rec = {
+      provider: provider(user),
       login: String(user.login).toLowerCase(),
-      display: String(user.login),
+      display: String(user.display || user.login),
       id: String(user.id),
       added: new Date(this.now()).toISOString(),
     };
 
-    if (!this.state.owner) this.state.owner = rec;
-    else if (!this.list().some((a) => a.id === rec.id)) this.state.allowed.push(rec);
+    if (!this.state.owner) {
+      this.state.owner = rec;
+    } else {
+      // An invitation the owner typed has no id until now. First sign-in CLAIMS
+      // that row rather than adding a second one — otherwise the person appears
+      // in People twice, once for ever as "pending", which is what this did
+      // before Google arrived and `allow`'s own comment already promised it did
+      // not.
+      const invited = this.state.allowed.find((a) => !a.id && provider(a) === rec.provider && a.login === rec.login);
+      if (invited) {
+        invited.id = rec.id;
+        invited.display = rec.display;
+      } else if (!this.list().some((a) => samePerson(a, rec))) {
+        // Somebody the DOMAIN rule admitted lands here, and is recorded exactly
+        // like anyone else. That is deliberate: `session()` re-checks the list
+        // on every request, so a person admitted by rule and never written down
+        // would be signed out again on their very next call.
+        this.state.allowed.push(rec);
+      }
+    }
 
     const token = randomBytes(SESSION_BYTES).toString("hex");
-    this.state.sessions[token] = { login: rec.login, id: rec.id, at: this.now() };
+    this.state.sessions[token] = { provider: rec.provider, login: rec.login, id: rec.id, at: this.now() };
     this.#sweep();
     this.#save();
-    return { token, login: rec.display, owner: this.state.owner.id === rec.id };
+    return { token, login: rec.display, owner: samePerson(this.state.owner, rec) };
   }
 
   /**
@@ -216,7 +307,7 @@ export class Accounts {
     }
     // Revoking a login has to kill its live sessions, and the cheapest correct
     // place to enforce that is here rather than by hunting the session map.
-    if (!this.list().some((a) => a.id === s.id)) {
+    if (!this.list().some((a) => samePerson(a, s))) {
       delete this.state.sessions[token];
       this.#save();
       return null;
@@ -224,16 +315,34 @@ export class Accounts {
     return s;
   }
 
-  /** Add a login by hand — the owner inviting somebody who has not signed in
-   *  yet. There is no id until they do, so this record is login-keyed and gains
-   *  an id on first sign-in. */
+  /**
+   * Add a login by hand — the owner inviting somebody who has not signed in
+   * yet. There is no id until they do, so this record is login-keyed and gains
+   * an id on first sign-in (in `signIn`, which claims it).
+   *
+   * Which provider it is for is decided by the "@": an email is a Google
+   * identity, a bare name is a GitHub one. That is a judgement made from the
+   * string rather than from a second argument or a dropdown, because the two
+   * namespaces cannot overlap — GitHub usernames may not contain "@" — and one
+   * text box is a better invite form than two.
+   */
   allow(login) {
-    const l = String(login || "").trim().replace(/^@/, "").toLowerCase();
-    if (!/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/.test(l)) {
-      return { ok: false, error: "that is not a GitHub username" };
+    const typed = String(login || "").trim().replace(/^@/, "");
+    const l = typed.toLowerCase();
+    const p = l.includes("@") ? "google" : "github";
+
+    if (p === "google") {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(l)) return { ok: false, error: "that is not an email address" };
+    } else if (!/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/.test(l)) {
+      return { ok: false, error: "that is not a GitHub username or an email address" };
     }
-    if (this.list().some((a) => a.login === l)) return { ok: true, already: true };
-    this.state.allowed.push({ login: l, display: login.replace(/^@/, ""), id: "", added: new Date(this.now()).toISOString() });
+
+    if (this.list().some((a) => provider(a) === p && a.login === l)) return { ok: true, already: true };
+    // Inviting somebody UN-BLOCKS them. The owner typing a name is the owner
+    // saying yes, and a block left behind would make this button silently do
+    // nothing — the worst shape a permission bug can take.
+    this.state.blocked = this.state.blocked.filter((b) => !(provider(b) === p && b.login === l));
+    this.state.allowed.push({ provider: p, login: l, display: typed, id: "", added: new Date(this.now()).toISOString() });
     this.#save();
     return { ok: true, already: false };
   }
@@ -245,13 +354,32 @@ export class Accounts {
     if (this.state.owner && this.state.owner.login === l) {
       return { ok: false, error: "the owner cannot be removed" };
     }
-    const before = this.state.allowed.length;
+    // Matched across providers on the login alone, which is unambiguous because
+    // the two namespaces are disjoint: only one of them can contain an "@".
+    const going = this.state.allowed.filter((a) => a.login === l);
     this.state.allowed = this.state.allowed.filter((a) => a.login !== l);
+
+    /* ⚠️ DELETION ALONE DOES NOT REVOKE ANYBODY ON THE WORKSPACE DOMAIN. They
+     * were admitted by a RULE, not by this list, so removing their row just
+     * means the rule re-adds it the next time they sign in — a revoke button
+     * that reports success and changes nothing. The block list is what says no,
+     * and `mayEnter` consults it before the domain door.
+     *
+     * For somebody who should be gone for good the real revocation is still in
+     * Google Workspace — suspend the account and every hub stops trusting them.
+     * This is for the case where they should keep the Google account and lose
+     * zevet. */
+    for (const a of going) {
+      if (a.id && !this.state.blocked.some((b) => samePerson(b, a))) {
+        this.state.blocked.push({ provider: provider(a), login: a.login, id: a.id, at: new Date(this.now()).toISOString() });
+      }
+    }
+
     for (const [tok, s] of Object.entries(this.state.sessions)) {
       if (s.login === l) delete this.state.sessions[tok];
     }
     this.#save();
-    return { ok: true, removed: before !== this.state.allowed.length };
+    return { ok: true, removed: going.length > 0 };
   }
 
   /**
@@ -279,12 +407,26 @@ export class Accounts {
     if (!this.file) return EMPTY();
     try {
       const raw = JSON.parse(readFileSync(this.file, "utf8"));
+      // ⚠️ THE WHOLE GOOGLE MIGRATION IS THIS ONE LINE APPLIED EVERYWHERE. A
+      // file written before Google existed holds untagged records; they are
+      // GitHub's, and tagging them on the way in means no comparison further
+      // down ever has to cope with an absent provider.
+      const tag = (r) => ({ ...r, provider: provider(r) });
+
+      const sessions = {};
+      const rawSessions = raw.sessions && typeof raw.sessions === "object" ? raw.sessions : {};
+      for (const [tok, s] of Object.entries(rawSessions)) if (s && typeof s === "object") sessions[tok] = tag(s);
+
       return {
         version: 1,
         secret: typeof raw.secret === "string" ? raw.secret : "",
-        owner: raw.owner && raw.owner.login ? raw.owner : null,
-        allowed: Array.isArray(raw.allowed) ? raw.allowed.filter((a) => a && a.login) : [],
-        sessions: raw.sessions && typeof raw.sessions === "object" ? raw.sessions : {},
+        owner: raw.owner && raw.owner.login ? tag(raw.owner) : null,
+        allowed: Array.isArray(raw.allowed) ? raw.allowed.filter((a) => a && a.login).map(tag) : [],
+        // A block with no id blocks nobody — `samePerson` needs one — so a
+        // malformed entry is dropped rather than kept as a row that silently
+        // never matches.
+        blocked: Array.isArray(raw.blocked) ? raw.blocked.filter((b) => b && b.login && b.id).map(tag) : [],
+        sessions,
       };
     } catch (err) {
       // ⚠️ A CORRUPT FILE IS NOT SILENTLY REPLACED. Starting empty would mean

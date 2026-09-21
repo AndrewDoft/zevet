@@ -51,6 +51,8 @@ const UNRENDERED = {
     "removed with: its host, the read-aloud shelf under the composer, was one of five collapsed rows that each pushed the chat box up when opened. It was the body of that shelf. Andrew, 2026-09-21: \"delete what it did, find, and read aloud\". Speaking the transcript aloud was browser speech synthesis over text already on screen, so nothing zevet measures is lost with it.",
   "speaker-identity.tsx":
     "removed with: the same host as read-aloud. It labelled which turn of a read-aloud was being spoken, so without the reading there is no speaker to identify. It is the only element here whose data was produced by another element rather than by an agent.",
+  "agent-status.tsx":
+    "removed with: its only render site was consoles.tsx's ConsoleRow, and consoles.tsx is deleted — a console zevet launched is an AgentRow in people.tsx now, in the same tree a terminal session appears in, and Andrew's ask for that merged row was specifically the CLI mark, the posture and Stop. A working/done/failed pill was not one of the three, so AgentRow does not render one.",
 
   /* --- no data ---------------------------------------------------------- */
   "approval-card.tsx":
@@ -82,7 +84,7 @@ const UNRENDERED = {
   "onboarding.tsx":
     "not the shape: zevet's first run is the desktop app's setup window (desktop/setup.html) — sign in, pick a repo, install hooks. It happens before the board exists.",
   "agent-card.tsx":
-    "not the shape: tried, reverted. In the 180px rail it overlapped its own text and pushed two of three teammates off screen. consoles.tsx uses agent-status instead, which fits.",
+    "not the shape: tried, reverted. In the 180px rail it overlapped its own text and pushed two of three teammates off screen. people.tsx's AgentRow — a mark, a name and one trailing slot — is what fits.",
 
   /* --- superseded ------------------------------------------------------- */
   "syntax-highlighter.tsx":

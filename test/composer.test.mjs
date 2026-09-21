@@ -62,8 +62,10 @@ describe("the composer's Send button can appear", () => {
   test("stopping the process is still offered somewhere", () => {
     // Moving isRunning off the process is only safe because the console row
     // keeps its own Stop. If that goes, a running agent becomes unkillable
-    // from the UI.
-    const rail = readFileSync(path.join(BOARD, "components", "consoles.tsx"), "utf8");
+    // from the UI. The row moved from components/consoles.tsx (deleted) into
+    // people.tsx's AgentRow, which folds a console into the same tree a
+    // terminal session appears in — the Stop control came with it.
+    const rail = readFileSync(path.join(BOARD, "components", "people.tsx"), "utf8");
     assert.match(rail, /c\.running \? "Stop" : "Close"/);
     assert.match(rail, /closeConsole\(c\.key\)/);
   });
