@@ -355,6 +355,17 @@ class BurnWindows {
 
   trim(now) {
     const cutoff = now - this.longest;
+    /* ⚠️ COST IS TRIMMED TOO, and it never used to be. `read()` summed every
+       entry `costBySession` had ever held while the token counts beside it
+       were windowed — so the strip paired "7d 84k" with a dollar figure that
+       was every session since the app started, and only grew. The `t` stored
+       on each entry was the tell: it was written and never read.
+
+       A session whose last cost report is older than the longest window is
+       not spend "in the last 7 days" by any reading, so it goes. */
+    for (const [key, v] of this.costBySession) {
+      if (v.t < cutoff) this.costBySession.delete(key);
+    }
     if (this.samples.length && this.samples[0].t >= cutoff) return;
     // Samples arrive in time order, so a single findIndex beats a filter.
     let i = 0;
@@ -375,7 +386,10 @@ class BurnWindows {
       }
       out[w.key] = { tokens };
     }
-    for (const v of this.costBySession.values()) out.cost += v.cost;
+    /* Windowed to the longest window, like the tokens above. `trim` evicts on
+       write; this guards a `read` that arrives long after the last `add`. */
+    const costFrom = t - this.longest;
+    for (const v of this.costBySession.values()) if (v.t >= costFrom) out.cost += v.cost;
     return out;
   }
 }

@@ -297,6 +297,19 @@ describe("rolling spend", () => {
     assert.equal(Number(b.read(NOW).cost.toFixed(2)), 0.35);
   });
 
+  test("cost older than the longest window stops counting, like the tokens do", () => {
+    /* ⚠️ read() USED TO SUM EVERY COST ENTRY EVER STORED while the token
+       counts beside it were windowed, so the strip paired "7d <n>" with a
+       dollar figure covering every session since the app started. The `t` on
+       each entry was written and never read. */
+    const b = new S.BurnWindows();
+    b.add({ tokens: 10, cost: 5, sessionId: "old" }, NOW - 30 * 24 * 3600000);
+    b.add({ tokens: 10, cost: 2, sessionId: "new" }, NOW);
+    assert.equal(b.read(NOW).cost, 2, "a month-old session still counted toward the rolling cost");
+    // And it is gone from the map, not merely skipped in the sum.
+    assert.equal(b.costBySession.has("old"), false, "the old entry is kept forever");
+  });
+
   test("a sample with no tokens does not create an entry", () => {
     const b = new S.BurnWindows();
     b.add({ cost: 1, sessionId: "a" }, NOW);

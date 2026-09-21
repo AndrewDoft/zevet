@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { describeModel } from "../lib/models.mjs";
-import { tokens } from "../lib/fmt";
+import { money, tokens } from "../lib/fmt";
 import type { LaunchMode } from "../lib/types";
 
 /** The fallback context window — the same 200k floor runmeters.tsx's
@@ -47,7 +47,6 @@ const CONTEXT_LIMIT = 200_000;
 
 /** Same rounding as runmeters.tsx's `money`, minus the null branch — callers
  *  here only reach it once `usage.cost != null` has already been checked. */
-const money = (n: number) => `$${n.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`;
 
 /** ModelChoice's trigger is sized for the launcher panel (h-9, w-full) — too
  *  tall for a composer row of size-7 icon buttons. Its own file is off

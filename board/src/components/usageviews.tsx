@@ -10,23 +10,25 @@
  * the active console, same as runmeters.tsx.
  */
 import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
-import { tokens } from "../lib/fmt";
+import { money, tokens } from "../lib/fmt";
 import { Chart } from "./assistant-ui/elements/chart";
 import { DataTable, type ModelUsage } from "./assistant-ui/elements/data-table";
 import { NumberTicker } from "./assistant-ui/elements/number-ticker";
 
-const money = (n: number | null) => (n == null ? "$0.00" : `$${n.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`);
 
 /** One row per console that has reported usage, not just the active one —
  *  the point of this table is making the several-agents-at-once case
  *  readable, which the single-console strip and meters cannot do. */
 export function RunUsageTable() {
   const consoles = useBoard(selectMyConsoles);
+  /* "has reported usage" is context OR cost. Filtering on context alone
+     dropped a console that had reported a cost but no context yet, hiding
+     real spend from the one table whose whole job is showing it. */
   const rows: ModelUsage[] = consoles
-    .filter((c) => c.usage.context != null)
+    .filter((c) => c.usage.context != null || c.usage.cost != null)
     .map((c) => ({
       name: c.usage.model || c.model || c.agent,
-      context: tokens(c.usage.context!),
+      context: c.usage.context != null ? tokens(c.usage.context) : "—",
       cost: money(c.usage.cost),
     }));
 

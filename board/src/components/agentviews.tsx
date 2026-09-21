@@ -77,7 +77,9 @@ function allToolCalls(
   const out: ToolCallLike[] = [];
   for (const m of messages) {
     for (const c of toolCalls(m.content)) {
-      if (match(c.toolName.toLowerCase())) out.push(c);
+      // `toolCalls` casts; a part with no toolName threw here and took the
+      // whole card down. Same guard as knowledge.tsx's copy of this loop.
+      if (typeof c.toolName === "string" && match(c.toolName.toLowerCase())) out.push(c);
     }
   }
   return out;
@@ -107,6 +109,15 @@ export function TurnTrace() {
   const calls = turn ? toolCalls(turn.content) : [];
   if (!calls.length) return null;
 
+  /* ⚠️ THE CLOCK, NOT Date.now() IN THE RENDER BODY. A running span is
+     drawn from its start to "now", and reading `now` here meant it advanced
+     only when something ELSE caused a re-render — so the waterfall crept
+     forward on unrelated hub traffic, stood still while the app was quiet,
+     and every other bar changed width with it because the total moved. The
+     store already publishes a 1s tick for exactly this; subscribing makes the
+     bars advance because time passed rather than because React ran. Same fix
+     as the file tree's staleness marks. */
+  useBoard((s) => s.tick);
   const nowMs = Date.now();
   const baseline = Math.min(...calls.map((c) => c.startedAt ?? nowMs));
 

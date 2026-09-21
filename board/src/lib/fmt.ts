@@ -76,6 +76,27 @@ export function tokens(n: number): string {
   return (n / 1_000).toFixed(0) + "k";
 }
 
+/**
+ * A dollar amount, the same way everywhere.
+ *
+ * ⚠️ THREE COPIES OF THIS USED TO STRIP TRAILING ZEROS off a 4-decimal
+ * fixed-point string, which made one column of tabular numbers read $1.2,
+ * $1.20 and $1.2346 depending on the value, and rounded every amount under a
+ * hundredth of a cent to "$0.00" — a running agent that has spent something
+ * reported as having spent nothing, which is the same lie the meters' context
+ * gate exists to prevent.
+ *
+ * Two decimals normally; four only for real dust, where two would be zero.
+ */
+export function money(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "$0.00";
+  // Below the fourth decimal, four decimals ARE "$0.0000" — which is the same
+  // "it spent nothing" that this function exists to stop telling.
+  if (n > 0 && n < 0.0001) return "<$0.0001";
+  if (n > 0 && n < 0.01) return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
+}
+
 export function tint(v: number, warn: number, bad: number): string {
   return v >= bad ? "bad" : v >= warn ? "warn" : "ok";
 }

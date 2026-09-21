@@ -297,8 +297,22 @@ function toUint8(value) {
   // A Buffer is a Uint8Array subclass, so it never reaches here; a Uint8Array
   // from ANOTHER JavaScript realm is not `instanceof` this one's, and that is
   // precisely what a cross-world clone could hand over.
-  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    /* ⚠️ COPIED, NOT RE-VIEWED. This returned
+       `new Uint8Array(value.buffer, value.byteOffset, value.byteLength)`,
+       which is still a VIEW over the original store — so it walked straight
+       into the hazard the branch above spells out and was written to prevent,
+       in the branch that handles the case that comment names as the likely
+       source. The inner call takes the window, the outer copies it. */
+    return new Uint8Array(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+  }
+  /* `instanceof` is false for ANOTHER REALM's ArrayBuffer, and an ArrayBuffer
+     has no `length`, so a cross-realm one fell past the array-like check below
+     and became `new Uint8Array(0)`: doc:send synced nothing and reported no
+     error. The brand check is realm-independent. */
+  if (value instanceof ArrayBuffer || Object.prototype.toString.call(value) === "[object ArrayBuffer]") {
+    return new Uint8Array(value);
+  }
   // An array-like `{0:…, 1:…, length:n}` is what a structured clone that lost
   // the type would look like. `Uint8Array.from` reads it correctly; a plain
   // `new Uint8Array(obj)` would silently produce a zero-length array, which

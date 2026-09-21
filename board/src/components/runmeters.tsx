@@ -18,7 +18,7 @@ import { MessageTiming } from "./assistant-ui/elements/message-timing";
 import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
 import { ContextChart, ContextTicker, RunUsageTable } from "./usageviews";
 import { ContextGauge } from "./mapviews";
-import { tokens } from "../lib/fmt";
+import { money, tokens } from "../lib/fmt";
 
 /** The fallback context window, used only when the agent hasn't said what its
  *  real one is (ConsoleUsage.window, lib/types.ts — claude's result payload
@@ -26,8 +26,6 @@ import { tokens } from "../lib/fmt";
  *  opus-5[1m], not this). Smallest common window across agents, so a bar
  *  drawn against it undersells rather than oversells how full it is. */
 const CONTEXT_LIMIT = 200_000;
-
-const money = (n: number) => `$${n.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`;
 
 /**
  * ⚠️ NO LONGER A COLLAPSED ROW UNDER THE COMPOSER. It was one of five stacked
