@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { bridge, type AgentSchedule, type RepoCommit, type StatusResult } from "./bridge";
+import { bridge, type AgentSchedule, type MemoryNote, type RepoCommit, type StatusResult } from "./bridge";
 import { shortInput } from "./fmt";
 import {
   appendAgentPayload,
@@ -143,6 +143,9 @@ interface BoardState {
   /** Agent runs on a timer, as the desktop app holds them. Empty on a build
    *  that does not have the capability, which is not an error. */
   schedules: AgentSchedule[];
+  /** What the agent has written down about this repo. Read from the agent's
+   *  own memory directory; empty for an agent that keeps none. */
+  memories: MemoryNote[];
   /** MCP servers the agent reported at startup, by console key. Read off
    *  claude's init payload; absent for a CLI that does not announce them. */
   mcpServers: Record<number, { name: string; status: string; tools: string[] }[]>;
@@ -203,7 +206,6 @@ interface BoardState {
   openLauncher: () => void;
   stopConsole: (key: number) => void;
   sendPrompt: (key: number, text: string) => void;
-  noteComposing: (key: number | null, text: string) => void;
 
   openLocalRoot: (dir: string) => void;
   unsetLocalRoot: () => void;
@@ -347,6 +349,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   checkpoints: [],
   repoCommits: [],
   schedules: [],
+  memories: [],
   mcpServers: {},
   launchModel: "",
   launchEffort: "",
@@ -470,6 +473,9 @@ export const useBoard = create<BoardState>((set, get) => ({
       model: get().launchModel,
       root,
       hue: get().myConsoles.length % 5,
+      usage: { context: null, cacheHit: null, cost: null, model: null, input: null, cachedInput: null, output: null, series: [] },
+      startedAt: Date.now(),
+      exitCode: null,
     };
     set((g) => ({
       myConsoles: [...g.myConsoles, c],
@@ -509,7 +515,6 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (del && del.running && del.id) void bridge.local?.stopAgent(del.id);
     const cur = get();
     if (cur.edView) { /* unchanged */ }
-    clearComposing(key);
   },
 
   stopConsole: (key) => {
@@ -526,7 +531,6 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (!c) return;
     pushConsoleLine(c, "you", text);
     c.transcript = appendUserText(c.transcript, text);
-    clearComposing(key);
     if (!c.id) return;
     bridge.local?.sendToAgent(c.id, text).then((r) => {
       if (r && r.ok === false) {
@@ -534,11 +538,6 @@ export const useBoard = create<BoardState>((set, get) => ({
       }
       signalConsolesChanged();
     });
-  },
-
-  noteComposing: (key, text) => {
-    composingKey = key;
-    composingText = text;
   },
 
   openLocalRoot: (dir) => {
@@ -590,6 +589,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   refreshStats: (force) => {
     void refreshCommits();
     void refreshSchedules();
+    void refreshMemories();
     const g = get();
     if (!bridge.local || !g.localRoot || !g.localEntries) return;
     const now = Date.now();
@@ -811,27 +811,6 @@ export function collisionSet(): Record<string, boolean> {
  * PAIRWISE HELPERS USED BY CONSOLES
  * ------------------------------------------------------------------------- */
 
-let composingKey: number | null = null;
-let composingText = "";
-
-export function composingState(key: number): { value: string; save: (v: string) => void } {
-  return {
-    get value() {
-      return composingKey === key ? composingText : "";
-    },
-    save(v) {
-      composingKey = key;
-      composingText = v;
-    },
-  };
-}
-
-export function clearComposing(key: number): void {
-  if (composingKey === key) {
-    composingKey = null;
-    composingText = "";
-  }
-}
 
 function pushConsoleLine(c: ConsoleEntry, kind: ConsoleLine["kind"], text: string): void {
   c.lines.push({ kind, text: String(text) });
@@ -875,11 +854,22 @@ function ingressAgentEvent(evt: { id?: string; type: string; code?: number | nul
       }
     }
     const u = usageOf(payload);
-    if (u) {
-      useBoard.getState().setStripLive({ context: u.context, ...(u.cacheHit != null ? { cacheHit: u.cacheHit } : {}), ...(u.model ? { model: u.model } : {}) });
-    }
-    if (typeof payload.total_cost_usd === "number") {
-      useBoard.getState().setStripLive({ cost: payload.total_cost_usd });
+    const cost = typeof payload.total_cost_usd === "number" ? payload.total_cost_usd : null;
+    if (u || cost != null) {
+      /* ⚠️ THE STRIP IS ONE SET OF NUMBERS AND THERE CAN BE THREE AGENTS.
+         Before this, every usage payload went straight to strip.live, so the
+         console that spoke last owned the rail AND the meters under whichever
+         thread you happened to be reading. Attribute them first; the strip
+         then only takes the ones belonging to the console in front. */
+      const cu = consoleById(evt.id);
+      if (cu) recordUsage(cu, u, cost);
+      const front = selectActiveConsole(useBoard.getState());
+      if (!cu || !front || front.key === cu.key) {
+        if (u) {
+          useBoard.getState().setStripLive({ context: u.context, ...(u.cacheHit != null ? { cacheHit: u.cacheHit } : {}), ...(u.model ? { model: u.model } : {}) });
+        }
+        if (cost != null) useBoard.getState().setStripLive({ cost });
+      }
     }
   }
 
@@ -887,6 +877,7 @@ function ingressAgentEvent(evt: { id?: string; type: string; code?: number | nul
   if (!c) return;
   if (evt.type === "exit") {
     c.running = false;
+    c.exitCode = evt.code ?? null;
     pushConsoleLine(c, "meta", `agent exited (${evt.code === null ? "signal " + evt.signal : "code " + evt.code})`);
     c.transcript = closeTranscript(c.transcript, { code: evt.code ?? null });
   } else if (evt.type === "stderr") {
@@ -951,7 +942,51 @@ function classifyAgent(
 
 /** The usage on one stream-json line. Feeds the live strip, not the rolling
  *  totals. Must agree with desktop/status-sources.js usageFrom(). */
-function usageOf(payload: { message?: { usage?: unknown; model?: string }; usage?: unknown; part?: { tokens?: unknown }; model?: string }): { context: number; cacheHit: number | null; model: string | null } | null {
+/** How many context readings one console keeps. A long run reports a usage
+ *  payload per turn; the chart is 300px wide and the shape of the last 120 is
+ *  the whole story. */
+const SERIES_CAP = 120;
+
+/** Fold one usage reading into the console that reported it. Mutates, as every
+ *  other console update here does — `signalConsolesChanged` publishes. */
+function recordUsage(c: ConsoleEntry, u: UsageReading | null, cost: number | null): void {
+  const prev = c.usage;
+  const next = { ...prev };
+  if (u) {
+    next.context = u.context;
+    if (u.cacheHit != null) next.cacheHit = u.cacheHit;
+    if (u.model) next.model = u.model;
+    next.input = u.input;
+    next.cachedInput = u.cachedInput;
+    next.output = u.output;
+    // Only a reading that MOVED is a new point. claude repeats the same usage
+    // block on several payloads of one turn, and a flat run of identical
+    // points draws a line that says the context stalled.
+    if (prev.series[prev.series.length - 1] !== u.context) {
+      next.series = [...prev.series, u.context].slice(-SERIES_CAP);
+    }
+  }
+  if (cost != null) next.cost = cost;
+  c.usage = next;
+}
+
+/** One usage reading, with the parts kept.
+ *
+ *  `context` and `cacheHit` are what the strip has always shown. The three
+ *  raw counts beside them exist because a panel that says "cached" ought to
+ *  print the number the agent reported rather than a share recovered from a
+ *  rounded percentage. `cachedInput` is the READ cache only — cache creation
+ *  is fresh input that happens to have been written down. */
+interface UsageReading {
+  context: number;
+  cacheHit: number | null;
+  model: string | null;
+  input: number;
+  cachedInput: number;
+  output: number;
+}
+
+function usageOf(payload: { message?: { usage?: unknown; model?: string }; usage?: unknown; part?: { tokens?: unknown }; model?: string }): UsageReading | null {
   if (!payload || typeof payload !== "object") return null;
   const u = ((payload.message && payload.message.usage) || payload.usage) as { input_tokens?: unknown; cache_read_input_tokens?: unknown; cache_creation_input_tokens?: unknown; output_tokens?: unknown } | undefined;
   const tokens = payload.part && payload.part.tokens;
@@ -960,7 +995,9 @@ function usageOf(payload: { message?: { usage?: unknown; model?: string }; usage
     const n2 = (v: unknown): number => (typeof v === "number" && isFinite(v) ? v : 0);
     const cx = n2(ti.input);
     if (!cx && !n2(ti.output)) return null;
-    return { context: cx, cacheHit: cx > 0 ? 0 : null, model: null };
+    // opencode reports input and output and says nothing about caching, so
+    // the cache share is 0 rather than unknown-shown-as-something.
+    return { context: cx, cacheHit: cx > 0 ? 0 : null, model: null, input: cx, cachedInput: 0, output: n2(ti.output) };
   }
   if (!u || typeof u !== "object") return null;
   const n = (v: unknown): number => (typeof v === "number" && isFinite(v) ? v : 0);
@@ -971,6 +1008,9 @@ function usageOf(payload: { message?: { usage?: unknown; model?: string }; usage
     context,
     cacheHit: context > 0 ? (read / context) * 100 : null,
     model: (payload.message && (payload.message as { model?: string }).model) || payload.model || null,
+    input: n(u.input_tokens) + n(u.cache_creation_input_tokens),
+    cachedInput: read,
+    output: n(u.output_tokens),
   };
 }
 
@@ -1782,11 +1822,32 @@ export async function refreshCommits(): Promise<void> {
   const root = useBoard.getState().localRoot;
   if (!br || !root || typeof br.commits !== "function") return;
   try {
-    const r = await br.commits(root, 20);
+    // Deep enough for the activity graph to cover weeks. The checkpoint list
+    // takes the first few off the same read.
+    const r = await br.commits(root, 200);
     if (r && r.ok && Array.isArray(r.commits)) useBoard.setState({ repoCommits: r.commits });
   } catch {
     // A folder that is not a repo, or a git that is not installed. Neither is
     // worth a message: the list simply does not appear.
+  }
+}
+
+/**
+ * Read the agent's memories for the open repo, if this build can.
+ *
+ * Optional in the same way `commits` is, and empty for an agent that writes
+ * none — which is most of them. Read only: there is no counterpart that
+ * deletes one, and the panel offers no forget button because of it.
+ */
+export async function refreshMemories(): Promise<void> {
+  const br = bridge.local;
+  const root = useBoard.getState().localRoot;
+  if (!br || !root || typeof br.memories !== "function") return;
+  try {
+    const r = await br.memories(root);
+    if (r && r.ok && Array.isArray(r.memories)) useBoard.setState({ memories: r.memories });
+  } catch {
+    // No memory directory, or no permission to read one. Nothing to show.
   }
 }
 

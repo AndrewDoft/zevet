@@ -11,6 +11,9 @@ import {
 import type { EditorViewState } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { Checkpoints, Schedules } from "./repoviews";
+import { CommitActivity, RepoTimeline } from "./historyviews";
+import { Memories } from "./runspec";
+import { IndexSearch } from "./search";
 import { agoText, hhmm, verbFor } from "../lib/text";
 
 function CollideBars() {
@@ -124,11 +127,19 @@ export function DetailPane({ blanked }: { blanked?: boolean }) {
         <h2>Pick a file.</h2>
         <p>Select a file to see recent activity.</p>
         {/* This pane is wide and otherwise empty until a file is picked, and
-            these two are about the repo rather than about any one file. Both
-            render nothing when there is nothing to say. */}
+            none of these is about any one file — they are about the repo. Every
+            one renders nothing when it has nothing to say, so on a folder that
+            is not a repo this is still a blank pane.
+
+            Search goes first because it is the only one you come here to USE;
+            the rest are there to be read. */}
         <div className="blank-repo">
+          <IndexSearch />
+          <RepoTimeline />
           <Checkpoints />
+          <CommitActivity />
           <Schedules />
+          <Memories />
         </div>
       </div>
     );

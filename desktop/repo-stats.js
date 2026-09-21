@@ -348,7 +348,10 @@ async function branchState(rootDir) {
  * this file follows.
  */
 async function commits(rootDir, limit = 20) {
-  const n = Math.max(1, Math.min(100, Number(limit) || 20));
+  // The ceiling is 500 because two callers share this: the checkpoint list
+  // wants the last handful, and the activity graph wants enough of them to
+  // cover weeks. One `git log` serves both.
+  const n = Math.max(1, Math.min(500, Number(limit) || 20));
   // A unit separator between fields and a record separator between commits:
   // a subject line can contain anything a person typed, including tabs and
   // pipes, and splitting on one of those is how a commit message breaks a

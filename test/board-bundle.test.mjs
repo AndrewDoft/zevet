@@ -131,18 +131,59 @@ describe("only one syntax highlighter ships", () => {
   // SECOND engine: 1,339 kB of highlight.js plus 939 kB of refractor, taking
   // the bundle to 2.77 MB. components/highlight.tsx fills the same slot with
   // the engine that was already on the page.
-  test("react-syntax-highlighter is not a dependency", () => {
-    const pkg = JSON.parse(readFileSync(path.join(ROOT, "board", "package.json"), "utf8"));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    for (const name of ["react-syntax-highlighter", "@assistant-ui/react-syntax-highlighter"]) {
-      assert.ok(!deps[name], `${name} is back in board/package.json`);
-    }
+  //
+  // ⚠️ THIS USED TO ASSERT THE PACKAGE WAS NOT INSTALLED, and that was the
+  // wrong line to hold. 0.2.16 installs the registry's syntax-highlighter and
+  // shiki-highlighter items — both were asked for by name — so their packages
+  // are in package.json and their files are in the tree, where tsc needs the
+  // types to compile them. What must never happen is either engine reaching
+  // the BUNDLE, and that is a fact about the build, not about package.json.
+  // test/elements.test.mjs is the other half: it requires both files to stay
+  // in the unrendered ledger with the reason.
+  test("no second engine is in the bundle", () => {
+    const map = JSON.parse(readFileSync(`${BUNDLE}.map`, "utf8"));
+    const engines = (map.sources || []).filter((s) =>
+      /node_modules[\/](refractor|highlight\.js|shiki|@shikijs|react-shiki|react-syntax-highlighter)[\/]/.test(s),
+    );
+    assert.deepEqual(engines.slice(0, 3), [], `a second highlighting engine is in the bundle (${engines.length} modules)`);
   });
 
-  test("refractor did not come back in through something else", () => {
+  test("nothing the board reaches imports one", () => {
+    // The bundle check above only sees what the last build produced. This one
+    // fails the moment somebody imports the registry highlighters, before a
+    // rebuild has had the chance to hide it in a megabyte of minified output.
+    const board = path.join(ROOT, "board", "src");
+    const skip = new Set(["syntax-highlighter.tsx", "shiki-highlighter.tsx", "shiki-highlighter.aui.tsx"]);
+    const walk = (dir) => {
+      for (const name of readdirSync(dir)) {
+        const full = path.join(dir, name);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.(tsx?|mts|mjs)$/.test(name) && !skip.has(name)) {
+          const src = readFileSync(full, "utf8");
+          for (const engine of ["react-syntax-highlighter", "react-shiki"]) {
+            assert.ok(
+              !src.includes(`"${engine}"`),
+              `${path.relative(ROOT, full)} imports ${engine}; components/highlight.tsx is the one highlighter`,
+            );
+          }
+        }
+      }
+    };
+    walk(board);
+  });
+
+  test("the mermaid engine is a side bundle, not part of board.js", () => {
+    // Same argument, measured: statically importing the registry's mermaid
+    // element took board.js from 1.27 MB to 2.81 MB, on a route the hub serves
+    // with `cache-control: no-store`. hub/public/mermaid.js is fetched only
+    // when a ```mermaid block actually appears.
     const map = JSON.parse(readFileSync(`${BUNDLE}.map`, "utf8"));
-    const engines = (map.sources || []).filter((s) => /node_modules[\/](refractor|highlight\.js)[\/]/.test(s));
-    assert.deepEqual(engines.slice(0, 3), [], `a second highlighting engine is in the bundle (${engines.length} modules)`);
+    const inBundle = (map.sources || []).filter((s) => /node_modules[\/]beautiful-mermaid[\/]/.test(s));
+    assert.deepEqual(inBundle, [], "beautiful-mermaid is in board.js; it belongs in hub/public/mermaid.js");
+    assert.ok(
+      statSync(path.join(ROOT, "hub", "public", "mermaid.js"), { throwIfNoEntry: false })?.isFile(),
+      "hub/public/mermaid.js is missing — run `node build.mjs` in board/ and commit it",
+    );
   });
 });
 

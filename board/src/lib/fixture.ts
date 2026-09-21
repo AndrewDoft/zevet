@@ -184,12 +184,87 @@ const CLAUDE_SCRIPT: unknown[] = [
         { type: "tool_use", id: "t7", name: "Bash", input: { command: "npm test" } },
       ],
     },
+    usage: { input_tokens: 21900, cache_read_input_tokens: 58400, output_tokens: 940 },
   },
   {
     type: "user",
     message: {
       role: "user",
       content: [{ type: "tool_result", tool_use_id: "t7", content: "943 passing\n0 failing" }],
+    },
+  },
+  /* From here on, the parts of a turn the KNOWLEDGE panels read: a web search
+   * with real-shaped results, a fetched page, and a diagram in the prose. None
+   * of it is new vocabulary — it is the same tool_use/tool_result shape as
+   * everything above, exercising the readers that turn it into citations, a
+   * page preview and a rendered mermaid figure. */
+  {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "t8",
+          name: "WebSearch",
+          input: { query: "assistant-ui external store runtime" },
+        },
+      ],
+    },
+  },
+  {
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "t8",
+          content:
+            "Building a custom runtime — https://www.assistant-ui.com/docs/runtimes/custom/external-store\nThreadMessageLike reference — https://www.assistant-ui.com/docs/api-reference/ThreadMessageLike\nuseExternalStoreRuntime — https://www.assistant-ui.com/docs/api-reference/useExternalStoreRuntime",
+        },
+      ],
+    },
+  },
+  {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "t9",
+          name: "WebFetch",
+          input: { url: "https://www.assistant-ui.com/docs/runtimes/custom/external-store" },
+        },
+      ],
+    },
+    usage: { input_tokens: 24600, cache_read_input_tokens: 61200, output_tokens: 1180 },
+  },
+  {
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "t9",
+          content:
+            "An external store runtime adapts state you already own. You give it messages, isRunning and onNew, and it gives you a thread.",
+        },
+      ],
+    },
+  },
+  {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: "So the shape is one way, from the store outwards:\n\n```mermaid\nflowchart LR\n  A[agent stdout] --> B[transcript.mjs]\n  B --> C[ThreadMessageLike]\n  C --> D[ExternalStoreRuntime]\n  D --> E[Thread]\n```\n\nNothing writes back up that chain, which is why editing a past message is not on offer.",
+        },
+      ],
     },
   },
   { type: "result", subtype: "success", total_cost_usd: 0.1842 },
@@ -339,6 +414,48 @@ export function installFixtureBridge(): boolean {
     addWorkspace: async () => ({ name: "zevet", dir: ROOT, repo: "zevet" }),
     indexStatus: async () => ({ ok: true, enabled: true, indexed: 412 }),
     indexEnable: async () => ({ ok: true, indexed: 412, skipped: 8 }),
+    /* Scores are cosines in the real thing (code-index.js clamps them to
+     * [-1, 1]), so the ones here are in that range and in descending order —
+     * a fixture that returned 0.99 for everything would make a panel whose
+     * whole point is the ranking look fine while hiding a broken sort. */
+    indexSearch: async (_root, query) => ({
+      ok: true,
+      hits: [
+        {
+          path: "board/src/lib/transcript.mjs",
+          startLine: 118,
+          endLine: 146,
+          score: 0.71,
+          text: `/** Fold one agent payload line into the transcript. ${query} */\nexport function appendAgentPayload(state, payload) {\n  // ...\n}`,
+        },
+        {
+          path: "board/src/lib/runtime.tsx",
+          startLine: 96,
+          endLine: 121,
+          score: 0.58,
+          text: "const runtime = useExternalStoreRuntime({\n  messages,\n  isRunning: streaming,\n  onNew,\n});",
+        },
+        {
+          path: "desktop/agent-console.js",
+          startLine: 210,
+          endLine: 228,
+          score: 0.33,
+          text: "// codex and opencode close stdin after one prompt.\nfunction send(id, text) {\n  // ...\n}",
+        },
+      ],
+    }),
+    memories: async () => ({
+      ok: true,
+      dir: "~/.claude/projects/C--dev-GitHub-zevet/memory",
+      memories: [
+        { id: "hub-has-no-build-step.md", text: "The hub serves hub/public verbatim; an uncommitted bundle does not ship.", at: Date.now() - 20 * 60_000, fresh: true },
+        { id: "one-prompt-clis.md", text: "codex and opencode close stdin after a single prompt.", at: Date.now() - 3 * 24 * 60 * 60_000, fresh: false },
+        { id: "zoom-accelerators.md", text: "An invisible Electron menu item registers no accelerator.", at: Date.now() - 9 * 24 * 60 * 60_000, fresh: false },
+      ],
+    }),
+    /* Enough of them, spread over enough days, for the activity graph to be a
+     * graph rather than one square. The four at the top are the same recent
+     * ones the checkpoint list shows. */
     commits: async () => ({
       ok: true,
       commits: [
@@ -346,6 +463,13 @@ export function installFixtureBridge(): boolean {
         { sha: "117248cf", subject: "release: 0.2.14", at: Date.now() - 9 * 60_000, files: 2 },
         { sha: "f60a203a", subject: "feat(board): the agent panels", at: Date.now() - 41 * 60_000, files: 33 },
         { sha: "ac03ffeb", subject: "fix(board): do not label an attachment twice", at: Date.now() - 95 * 60_000, files: 4 },
+        ...Array.from({ length: 26 }, (_, i) => ({
+          sha: `d${(0xd0 + i).toString(16)}00aa${i}`,
+          subject: `chore: earlier work ${i + 1}`,
+          // Two or three a day, walking back through the last few weeks.
+          at: Date.now() - (2 + Math.floor(i / 2)) * 24 * 60 * 60_000 - (i % 2) * 5 * 60 * 60_000,
+          files: 1 + ((i * 7) % 9),
+        })),
       ],
     }),
     schedules: async () => ({

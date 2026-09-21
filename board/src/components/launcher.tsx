@@ -19,6 +19,8 @@ import { cn } from "@/lib/utils";
 import { MODES } from "../lib/constants";
 import { ModelChoice } from "./model-choice";
 import { selectMyConsoles, useBoard } from "../lib/board";
+import { AgentComparison } from "./runspec";
+import { AgentLogo } from "./brand";
 import type { LaunchMode } from "../lib/types";
 
 /** What each posture actually does, in the words the board uses elsewhere. */
@@ -110,11 +112,18 @@ export function Launcher() {
               launchMode === "dangerous" && "bg-destructive text-background",
             )}
           >
+            <AgentLogo agent={a.name} className="mr-1.5 inline-block size-3.5 align-[-2px]" />
             {(started ? "Another " : "Start ") + a.name}
             {!a.signedIn ? <span className="ml-1.5 inline-block size-1.5 rounded-full bg-current opacity-50" /> : null}
           </button>
         ))}
       </div>
+
+      {/* Under the buttons, not above them: the choice is usually already made,
+          and this is for the time it is not. Everything on it is a fact this
+          screen already had — installed, signed in, and whether the CLI will
+          take a second prompt. */}
+      <AgentComparison />
     </div>
   );
 }

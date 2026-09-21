@@ -21,6 +21,10 @@ import {
   TurnTrace,
 } from "./agentviews";
 import { CommandRuns, NextStep, Pages, StoppedRuns } from "./moreviews";
+import { Citations, MathBlocks, Reads } from "./knowledge";
+import { ResearchReportView, SubagentGraph } from "./graphviews";
+import { RunSpec } from "./runspec";
+import { Speakers } from "./speech";
 import { McpServerPanel } from "./assistant-ui/elements/mcp-server-panel";
 import { selectActiveConsole, useBoard } from "../lib/board";
 
@@ -76,17 +80,26 @@ export function TurnDetail() {
       {open ? (
         <div className="turn-detail-body">
           {/* Ordered the way you would ask: what was the plan, what stopped
-              it, what is next, how long did each step take, then the detail. */}
+              it, what is next, how long did each step take, then the detail —
+              what it ran, what it read, what it looked up, who it handed to,
+              and finally what it was launched with. */}
           <AgentPlanView />
+          <ResearchReportView />
           <StoppedRuns />
           <NextStep />
           <TurnTrace />
           <CommandRuns />
+          <Reads />
           <Pages />
+          <Citations />
+          <MathBlocks />
           <TaskCards />
+          <SubagentGraph />
           <Handoffs />
           <Artifacts />
           <McpServers />
+          <Speakers />
+          <RunSpec />
         </div>
       ) : null}
     </div>

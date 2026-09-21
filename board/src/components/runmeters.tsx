@@ -18,6 +18,8 @@ import { ContextBreakdown, type ContextSegment } from "./assistant-ui/elements/c
 import { CostMeter } from "./assistant-ui/elements/cost-meter";
 import { MessageTiming } from "./assistant-ui/elements/message-timing";
 import { selectActiveConsole, selectStrip, useBoard } from "../lib/board";
+import { ContextChart, ContextTicker, RunUsageTable } from "./usageviews";
+import { ContextGauge } from "./mapviews";
 
 /** A context window we can draw a bar against. The agents do not report their
  *  own limit, so this is the smallest common one — being honest that the bar
@@ -72,6 +74,15 @@ export function RunMeters() {
       <div className="run-meters-body">
       <ContextBreakdown className="max-w-none" segments={segments} limit={CONTEXT_LIMIT} />
 
+      {/* The same window, three ways, because they answer different questions:
+          the gauge is "how close to full", the chart is "how fast did it get
+          there", the ticker is the count itself. All three read the console's
+          OWN usage rather than the strip, which is one global set of numbers
+          for however many agents are running. */}
+      <ContextGauge />
+      <ContextChart />
+      <ContextTicker />
+
       <CostMeter
         className="max-w-none"
         runCost={money(live.cost)}
@@ -99,6 +110,10 @@ export function RunMeters() {
           { label: "posture", value: active.mode },
         ]}
       />
+
+      {/* Every console, not just this one. With three agents running the
+          question is which of them is burning the window. */}
+      <RunUsageTable />
       </div>
       )}
     </div>

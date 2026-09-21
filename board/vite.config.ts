@@ -41,6 +41,7 @@ export default defineConfig({
       "/highlight.js": { target: "http://127.0.0.1:8787", changeOrigin: true },
       "/agent-sprites.js": { target: "http://127.0.0.1:8787", changeOrigin: true },
       "/editor.js": { target: "http://127.0.0.1:8787", changeOrigin: true },
+      "/mermaid.js": { target: "http://127.0.0.1:8787", changeOrigin: true },
       /* The hub exchanges `?token=` for an HttpOnly cookie on `/` and only on
        * `/`, and in dev `/` is vite's page, not the hub's — so the exchange
        * never happened and every request came back 401. Open

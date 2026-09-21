@@ -266,8 +266,5 @@ const defaultComponents = memoizeMarkdownComponents({
     );
   },
   CodeHeader,
-  // Transcript code blocks rendered as plain <code> until now: no colour at
-  // all, in a product whose whole job is watching code change. Not the
-  // registry's Prism one — see components/highlight.tsx for why.
   SyntaxHighlighter,
 });

@@ -17,6 +17,12 @@ import { useEffect, useState } from "react";
 import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { Launcher } from "./launcher";
+import { DictationOrb } from "./brand";
+import { ListenShelf } from "./speech";
+import { PostureNotice, QuoteToComposer } from "./guards";
+import { DraftRestore } from "./findviews";
+import { FindShelf } from "./findshelf";
+import { ThreadMap } from "./mapviews";
 import { RunMeters } from "./runmeters";
 import { TurnDetail } from "./turndetail";
 import { PromptShelf } from "./promptshelf";
@@ -116,9 +122,27 @@ export function Conversation() {
 
   return (
     <div className="chat-thread">
+      {/* What this console may and may not do, said once at the top rather
+          than discovered when an edit does not land. The posture is a flag
+          fixed at launch, so this is a standing fact about the run, not a
+          state that changes under you. */}
+      <PostureNotice />
       <div className="chat-thread-body">
         <Thread autoFocus={false} />
+        {/* A tick per message down the right edge. It is the one thing that
+            makes a long run navigable without scrolling it twice, and it costs
+            no height — it sits inside the viewport, against the wall. */}
+        <ThreadMap />
       </div>
+      {/* The mic is inside the composer, which is inside the Thread; this is
+          the state of it, where there is room to see it. Renders nothing
+          unless dictation is actually running. */}
+      <DictationOrb />
+      {/* Appears only while text is selected in the transcript. */}
+      <QuoteToComposer />
+      {/* A half-written prompt survives a reload now. Offered only while the
+          composer is empty, so it never overwrites what you are typing. */}
+      <DraftRestore />
       <Thinking />
       {/* Under the transcript, in the column that has room for it. The rail's
           strip keeps the same numbers at a glance. */}
@@ -126,6 +150,10 @@ export function Conversation() {
           transcript already on screen, and the conversation keeps its height —
           which is the lesson the run meters cost the first time. */}
       <TurnDetail />
+      <FindShelf />
+      {/* Speech out, behind a row. Speech in is the mic in the composer;
+          neither is a voice session — both are the browser's own. */}
+      <ListenShelf />
       <PromptShelf />
       <RunMeters />
     </div>

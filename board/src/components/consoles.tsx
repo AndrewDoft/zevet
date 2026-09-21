@@ -6,12 +6,16 @@
  * conversation column is the assistant-ui Thread now, so the rail's job is
  * navigation: which threads exist, which is in front, and what each is doing.
  *
- * It is the registry ThreadList over `myConsoles`, with an AgentStatus pill per
- * row so "working / done / failed" reads the same here as everywhere else.
+ * It is zevet's own list rather than the registry ThreadList, and the reason is
+ * in the row below: a console carries a posture, a stop button and a process
+ * state, none of which a generic thread row has anywhere to put. What IS the
+ * registry's is the AgentStatus pill on each row, so "working / done / failed"
+ * reads the same here as everywhere else.
  * Starting an agent lives in the conversation column (see launcher.tsx), which
  * is where there is room to choose one.
  */
 import { AgentStatus, type AgentState } from "./assistant-ui/elements/agent-status";
+import { AgentLogo } from "./brand";
 import { ghostButton, mono } from "./assistant-ui/elements/surfaces";
 import { cn } from "@/lib/utils";
 import { MODE_LABEL } from "../lib/constants";
@@ -56,6 +60,11 @@ function ConsoleRow({ c }: { c: ConsoleEntry }) {
             a console — the button to the right of this does — but it cannot
             pause or re-run one, and an affordance that does nothing is the
             same mistake as ToolError's Retry. */}
+        {/* 12px, in the console's own colour. The row is 180px at its
+            narrowest and the elapsed slot was removed for exactly that
+            reason, so this is deliberately smaller than the icon that cost
+            the name its last five characters. */}
+        <AgentLogo agent={c.agent} hue={c.hue} className="console-row-logo size-3" />
         <AgentStatus className="console-row-status" state={state} label={c.agent} trailing={null} />
         <span className={cn(mono, "console-row-mode")} data-danger={String(c.mode === "dangerous")}>
           {MODE_LABEL[c.mode] || c.mode}

@@ -76,6 +76,33 @@ export interface ConsoleEntry {
   model: string;
   root: string;
   hue: number;
+  /** What this console has spent, as IT reported it.
+   *
+   *  `strip.live` carries the same numbers for the rail, but there is only one
+   *  of it: with three consoles running, whichever spoke last owns the strip
+   *  and the meters under a different thread read as that thread's. These are
+   *  attributed by the event's console id, so a panel can say whose they are.
+   *  `startedAt` is when the process was launched, `exitCode` how it ended. */
+  usage: ConsoleUsage;
+  startedAt: number;
+  exitCode: number | null;
+}
+
+export interface ConsoleUsage {
+  context: number | null;
+  cacheHit: number | null;
+  cost: number | null;
+  model: string | null;
+  /** The parts, as the agent reported them. A panel that prints "cached"
+   *  should print the number that was given rather than a share recovered
+   *  from a rounded percentage. `cachedInput` is the READ cache only. */
+  input: number | null;
+  cachedInput: number | null;
+  output: number | null;
+  /** Context after each usage payload, oldest first. A run's context only
+   *  grows, and watching it approach the window is the thing that explains a
+   *  session going wrong. Capped, because a long run reports hundreds. */
+  series: number[];
 }
 
 export interface UsableAgent {

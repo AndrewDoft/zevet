@@ -3,6 +3,7 @@ import { hueOf, isIdle, selectRoster, serverNow, useBoard } from "../lib/board";
 import type { RosterEntry } from "../lib/types";
 import { agoText, currentOf, missionOf, turnOf } from "../lib/text";
 import { SubagentList, type SubagentItem } from "./assistant-ui/elements/subagent-list";
+import { AgentLogo } from "./brand";
 import type { AgentState } from "./assistant-ui/elements/agent-status";
 
 function expandedStored(): string[] {
@@ -28,6 +29,17 @@ function PersonDetail({ r, now }: { r: RosterEntry; now: number }) {
   const cur = currentOf(r);
   return (
     <div className="person-detail" style={{ "--who": hueOf(r.actor) } as CSSProperties}>
+      {/* Whose tool they are running, in their own colour. The agent name is
+          on the hub event (`HubEvent.agent`), so this is the mark of the
+          thing actually running on their machine rather than a decoration —
+          and it renders nothing for an agent with no honest logo, which is
+          opencode, because it fronts a dozen providers. */}
+      {r.lastEvent?.agent ? (
+        <div className="person-agent">
+          <AgentLogo agent={r.lastEvent.agent} hue={r.hue} className="size-3" />
+          <span className="mono">{r.lastEvent.agent}</span>
+        </div>
+      ) : null}
       {mission ? <div className="mission">{mission}</div> : null}
       {cur ? (
         <div className="step">

@@ -65,6 +65,38 @@ export interface CommitsResult {
   commits?: RepoCommit[];
 }
 
+export interface IndexHit {
+  path: string;
+  startLine: number;
+  endLine: number;
+  /** Cosine similarity, [-1, 1]. Measured, not a rank. */
+  score: number;
+  text?: string;
+}
+
+export interface IndexSearchResult {
+  ok: boolean;
+  error?: string;
+  hits?: IndexHit[];
+}
+
+export interface MemoryNote {
+  id: string;
+  /** The memory's own one-line description, as it was written. */
+  text: string;
+  /** ms since epoch. */
+  at: number;
+  /** Whether the file is newer than it is old — a memory written during this
+   *  run of the app, versus one that was already there. */
+  fresh: boolean;
+}
+
+export interface MemoriesResult {
+  ok: boolean;
+  dir?: string;
+  memories?: MemoryNote[];
+}
+
 export interface StatusResult {
   ok: boolean;
   repo?: { branch?: string; sha?: string; ahead?: number | null; behind?: number | null };
@@ -98,6 +130,13 @@ export interface LocalBridge {
   chrome: (spec: ColorThemeSpec) => void;
   addWorkspace: () => Promise<LocalWorkspace | null>;
   indexStatus: (root: string | null) => Promise<{ ok: boolean } & Record<string, unknown>>;
+  /** Semantic search over the workspace index. The scores are real cosines —
+   *  `code-index.js` clamps them to [-1, 1] — which is why a retrieval panel
+   *  can print one. Optional: a build without the index capability has none. */
+  indexSearch?: (root: string | null, query: string, opts?: { k?: number; filter?: string }) => Promise<IndexSearchResult>;
+  /** What the agent has written down about this repo, if it writes memories
+   *  at all. Read only: there is no bridge call that deletes one. */
+  memories?: (root: string) => Promise<MemoriesResult>;
   indexEnable?: (root: string | null) => Promise<{ ok?: boolean; indexed?: number; skipped?: number; error?: string } | null | undefined>;
   updateCheck: () => Promise<unknown>;
   updateStatus: () => Promise<unknown>;
@@ -131,6 +170,9 @@ declare global {
     zevetEditor?: Record<string, unknown>;
     zevetHighlight?: { highlight?: (t: string, l: string) => string; languageFor?: (p: string) => string };
     zevetSprites?: { spriteFor?: (o: { tool?: string | null; width: number; height: number }) => string };
+    // hub/public/mermaid.js — beautiful-mermaid, loaded on demand only when a
+    // transcript actually contains a ```mermaid block. See mermaid.tsx.
+    zevetMermaid?: { renderMermaidSVG?: (code: string, options?: Record<string, unknown>) => string };
     zevet?: Partial<ZevetBridge>;
     __zevetCfg?: ZevetConfig;
     __zevetHub?: string;

@@ -64,6 +64,24 @@ export const ITEMS = [
   "elements-prompt-library", "elements-command-palette", "elements-checkpoint-history",
   "elements-thinking-indicator", "elements-mcp-server-panel",
   "elements-computer-use", "elements-code-runner",
+  // 0.2.16 — knowledge and structured output.
+  "elements-image-generation", "elements-retrieval-chunks", "elements-memory-chips",
+  "elements-research-report", "elements-map-answer", "elements-chart",
+  "elements-diagram", "elements-flow-graph", "elements-math-block",
+  "elements-spec-sheet", "elements-comparison-card", "elements-score-breakdown",
+  // 0.2.16 — renderers, primitives and the rest of the thread surfaces.
+  "syntax-highlighter", "shiki-highlighter", "mermaid-diagram", "generative-ui",
+  "logos", "heat-graph", "assistant-modal", "assistant-sidebar",
+  "threadlist-sidebar", "voice", "context-display", "mcp-config", "quote",
+  "composer-trigger-popover", "directive-text", "elements-chat-panel",
+  "elements-canvas-split", "elements-shared-conversation",
+  "elements-launcher-bubble", "elements-onboarding", "elements-mobile-composer",
+  "elements-conversation-map",
+  // 0.2.16 — the last of the thread and voice items.
+  "elements-message-branches", "elements-feedback-dialog",
+  "elements-speaker-identity", "elements-confidence-marker",
+  "elements-elicitation-form", "elements-voice-conversation",
+  "elements-read-aloud",
 ];
 
 const manifestUrl = (name) =>
@@ -131,14 +149,23 @@ console.log(moved ? `moved ${moved} file(s) into place` : "nothing to move");
  * than by hand. Only imports whose basename the registry actually placed are
  * touched; anything else is the board's own and is left alone. */
 let fixed = 0;
-for (const file of walk(path.join(SRC, "components", "assistant-ui"))) {
+/* Every directory the registry drops files into. Walking only assistant-ui was
+ * enough until an item shipped an icon under components/icons. */
+const REPAIR_DIRS = ["assistant-ui", "icons"];
+for (const dir of REPAIR_DIRS)
+for (const file of walk(path.join(SRC, "components", dir))) {
   if (!/\.(tsx?|ts)$/.test(file)) continue;
   const before = readFileSync(file, "utf8");
   const after = before.replace(/(["'])@\/components\/([a-z0-9.-]+)\1/g, (whole, q, base) => {
-    const declared = [...wanted.values()].find(
-      (p) => p.replace(/^components\//, "").replace(/\.tsx?$/, "") === `assistant-ui/elements/${base}`,
-    );
-    return declared ? `${q}@/components/assistant-ui/elements/${base}${q}` : whole;
+    // FOLLOW THE MANIFEST; do not assume a directory. This used to rewrite
+    // every such import to assistant-ui/elements/, which is where most items
+    // land — and then threadlist-sidebar shipped importing `@/components/github`
+    // while its own manifest puts that icon under components/icons/, so the
+    // import was left broken. `wanted` already knows where each basename goes.
+    const declared = wanted.get(`${base}.tsx`) || wanted.get(`${base}.ts`);
+    if (!declared) return whole;
+    const target = declared.replace(/^components\//, "").replace(/\.tsx?$/, "");
+    return `${q}@/components/${target}${q}`;
   });
   if (after !== before) {
     writeFileSync(file, after);
@@ -158,11 +185,105 @@ if (fixed) console.log(`repaired ${fixed} file(s) whose imports disagreed with t
  * rewrites the file. */
 const COPY = [
   {
+    file: "components/assistant-ui/elements/inline-citation.tsx",
+    // The element ships as a DEMO: a hardcoded sentence about optimistic
+    // updates, with exactly two citation slots baked into it. Its props say it
+    // takes `sources`, so a caller hands it real search results and the
+    // element attributes somebody else's prose to them. These three patches
+    // make it do what the props already promise — the caller's own text, and
+    // one chip per source — which is the only form in which it can be used
+    // here at all.
+    from: `export interface InlineCitationProps extends Omit<
+  ComponentProps<"p">,
+  "children"
+> {`,
+    to: `export interface InlineCitationProps extends ComponentProps<"p"> {`,
+  },
+  {
+    file: "components/assistant-ui/elements/inline-citation.tsx",
+    from: `export function InlineCitation({
+  sources,`,
+    to: `export function InlineCitation({
+  children,
+  sources,`,
+  },
+  {
+    file: "components/assistant-ui/elements/inline-citation.tsx",
+    from: `      Optimistic updates keep the thread responsive while the server confirms
+      the write
+      {sources[0] && (
+        <Citation
+          index={0}
+          source={sources[0]}
+          open={openIndex === 0}
+          onOpenChange={(open) => onOpenIndexChange(open ? 0 : null)}
+        />
+      )}
+      . The store already exposes a consistent snapshot for every subscriber
+      {sources[1] && (
+        <Citation
+          index={1}
+          source={sources[1]}
+          open={openIndex === 1}
+          onOpenChange={(open) => onOpenIndexChange(open ? 1 : null)}
+        />
+      )}
+      , so no extra reconciliation pass is needed.`,
+    to: `      {children}
+      {sources.map((source, index) => (
+        <Citation
+          key={\`\${source.domain}-\${index}\`}
+          index={index}
+          source={source}
+          open={openIndex === index}
+          onOpenChange={(open) => onOpenIndexChange(open ? index : null)}
+        />
+      ))}`,
+  },
+  {
+    file: "components/assistant-ui/elements/composer-trigger-popover.aui.tsx",
+    // `process` does not exist in a browser and the board has no node types,
+    // so this was a hard TS2591 on a clean install. vite's own build-time flag
+    // asks the same question and compiles away in production.
+    from: 'process.env.NODE_ENV !== "production"',
+    to: "import.meta.env.DEV",
+  },
+  {
+    file: "components/assistant-ui/elements/markdown-text.tsx",
+    // Transcript code blocks render as plain <code> with no colour at all
+    // unless a highlighter is handed to the markdown components — in a product
+    // whose whole job is watching code change. This was a hand edit once, and
+    // the next `shadcn add` silently took it back out; that is exactly what
+    // this list exists to prevent. Not the registry's Prism or shiki one — see
+    // components/highlight.tsx for why zevet uses its own side bundle.
+    from: 'import { cn } from "@/lib/utils";',
+    to: 'import { cn } from "@/lib/utils";\nimport { SyntaxHighlighter } from "@/components/highlight";',
+  },
+  {
+    file: "components/assistant-ui/elements/markdown-text.tsx",
+    from: "  CodeHeader,\n});",
+    to: "  CodeHeader,\n  SyntaxHighlighter,\n});",
+  },
+  {
     file: "components/assistant-ui/elements/connection-state.tsx",
     // zevet's hub relays events and runs nothing. The agent that kept going is
     // on somebody's own machine — the opposite claim, and the reassuring one.
     from: "Connection lost. The run kept going on the server.",
     to: "Lost the hub. Your agents keep running on their own machines.",
+  },
+  {
+    file: "components/assistant-ui/elements/document-reference.tsx",
+    // The element was written for PDFs and counts pages. zevet's documents are
+    // source files, and the anchors it cites are the line ranges an agent
+    // actually read. "p. 412" of a file is a page that does not exist; the
+    // number is right and only the unit was wrong.
+    from: "{pages} pages · {anchors.length} cited",
+    to: "read {anchors.length}× · through L{pages}",
+  },
+  {
+    file: "components/assistant-ui/elements/document-reference.tsx",
+    from: "p. {anchor.page}",
+    to: "L{anchor.page}",
   },
   {
     file: "components/assistant-ui/elements/checkpoint-history.tsx",
@@ -173,17 +294,27 @@ const COPY = [
   },
 ];
 
+/* Line endings are not part of the patch. A `from` that spans lines is written
+ * here with \n, the downloaded file may arrive with \r\n, and matching the one
+ * against the other silently found nothing — which reads exactly like
+ * "upstream changed the copy" and is not. Normalise both ends, then hand the
+ * file back the endings it came with. */
+const lf = (t) => t.replace(/\r\n/g, "\n");
+
 let copied = 0;
 for (const { file, from, to } of COPY) {
   const full = path.join(SRC, file);
   if (!statSync(full, { throwIfNoEntry: false })) continue;
-  const before = readFileSync(full, "utf8");
-  if (before.includes(to)) continue;
-  if (!before.includes(from)) {
-    console.error(`  ! ${file}: upstream copy changed — re-check "${from.slice(0, 40)}…"`);
+  const raw = readFileSync(full, "utf8");
+  const crlf = raw.includes("\r\n");
+  const before = lf(raw);
+  if (before.includes(lf(to))) continue;
+  if (!before.includes(lf(from))) {
+    console.error(`  ! ${file}: upstream copy changed — re-check "${lf(from).slice(0, 40)}…"`);
     continue;
   }
-  writeFileSync(full, before.replace(from, to));
+  const after = before.replace(lf(from), lf(to));
+  writeFileSync(full, crlf ? after.replace(/\n/g, "\r\n") : after);
   console.log(`  corrected copy in ${file}`);
   copied++;
 }

@@ -23,10 +23,25 @@
  * on the page at all, the code renders as plain text rather than as markup.
  */
 import type { SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
+import { Mermaid } from "./mermaid";
 
 export function SyntaxHighlighter({ components, language, code }: SyntaxHighlighterProps) {
   const { Pre, Code } = components;
   const engine = window.zevetHighlight;
+
+  /* ```mermaid is a DRAWING, not a listing. Agents emit these constantly —
+     "here is the flow", "here is the schema" — and highlighting the source of
+     one is answering a different question than the agent was answering. This
+     is the one branch where the block is rendered rather than coloured.
+     The registry's own MermaidDiagram statically imports `beautiful-mermaid`,
+     which is ~1.5 MB and would ship in board.js on every load (measured:
+     1,268,601 -> 2,807,376 bytes) even though most transcripts never contain
+     a diagram. `./mermaid` is zevet's own component — same shape as this
+     file's engine, a committed side bundle at hub/public/mermaid.js fetched
+     only when this branch actually runs. */
+  if ((language || "").toLowerCase() === "mermaid") {
+    return <Mermaid code={code} />;
+  }
 
   if (!engine || typeof engine.highlight !== "function") {
     return (

@@ -65,16 +65,14 @@ function Citation({ index, source, open, onOpenChange }: CitationProps) {
   );
 }
 
-export interface InlineCitationProps extends Omit<
-  ComponentProps<"p">,
-  "children"
-> {
+export interface InlineCitationProps extends ComponentProps<"p"> {
   sources: Source[];
   openIndex: number | null;
   onOpenIndexChange: (index: number | null) => void;
 }
 
 export function InlineCitation({
+  children,
   sources,
   openIndex,
   onOpenIndexChange,
@@ -91,26 +89,16 @@ export function InlineCitation({
 
       {...props}
     >
-      Optimistic updates keep the thread responsive while the server confirms
-      the write
-      {sources[0] && (
+      {children}
+      {sources.map((source, index) => (
         <Citation
-          index={0}
-          source={sources[0]}
-          open={openIndex === 0}
-          onOpenChange={(open) => onOpenIndexChange(open ? 0 : null)}
+          key={`${source.domain}-${index}`}
+          index={index}
+          source={source}
+          open={openIndex === index}
+          onOpenChange={(open) => onOpenIndexChange(open ? index : null)}
         />
-      )}
-      . The store already exposes a consistent snapshot for every subscriber
-      {sources[1] && (
-        <Citation
-          index={1}
-          source={sources[1]}
-          open={openIndex === 1}
-          onOpenChange={(open) => onOpenIndexChange(open ? 1 : null)}
-        />
-      )}
-      , so no extra reconciliation pass is needed.
+      ))}
     </p>
   );
 }

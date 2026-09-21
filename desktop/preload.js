@@ -182,6 +182,7 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   status: (root) => ipcRenderer.invoke("local:status", { root }),
   stats: (root, relPaths) => ipcRenderer.invoke("local:stats", { root, relPaths }),
   commits: (root, limit) => ipcRenderer.invoke("local:commits", { root, limit }),
+  memories: (root) => ipcRenderer.invoke("local:memories", { root }),
   schedules: () => ipcRenderer.invoke("local:schedules"),
   scheduleSave: (s) => ipcRenderer.invoke("local:scheduleSave", { schedule: s }),
   scheduleRemove: (id) => ipcRenderer.invoke("local:scheduleRemove", { id }),

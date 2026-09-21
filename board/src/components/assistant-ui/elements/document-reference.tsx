@@ -51,7 +51,7 @@ export function DocumentReference({
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[13.5px] font-medium">{title}</span>
           <span className={cn(mono, "text-foreground/30")}>
-            {pages} pages · {anchors.length} cited
+            read {anchors.length}× · through L{pages}
           </span>
         </div>
       </div>
@@ -69,7 +69,7 @@ export function DocumentReference({
           const content = (
             <>
               <span className={cn(mono, "text-foreground/30")}>
-                p. {anchor.page}
+                L{anchor.page}
               </span>
               <span className="text-foreground/65 border-foreground/15 border-s-2 ps-2 text-xs leading-relaxed break-words">
                 {anchor.quote}

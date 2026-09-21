@@ -25,7 +25,11 @@ export function Checkpoints() {
   if (commits.length < 2) return null;
 
   const head = (machine && (machine.repo as { sha?: string } | undefined)?.sha) || "";
-  const items: Checkpoint[] = commits.map((c) => ({
+  /* ⚠️ SLICED. `repoCommits` is fetched 200 deep so the activity graph can
+     cover weeks, and this list shipped for one release rendering every one of
+     them: a wall of history in a pane that exists to answer "where am I". A
+     checkpoint list is the last few. */
+  const items: Checkpoint[] = commits.slice(0, 8).map((c) => ({
     id: c.sha,
     label: c.subject || c.sha.slice(0, 8),
     at: whenText(c.at),

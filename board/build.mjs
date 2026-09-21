@@ -13,6 +13,11 @@
  * index.html, because the board page IS the app entry. The output is still
  * committed, and the existing script-tag side bundles (highlight.js,
  * agent-sprites.js, editor.js) are preserved untouched by vite.config.ts.
+ *
+ * This also runs the separate vite.mermaid.config.ts build, producing
+ * ../hub/public/mermaid.js — the same "side bundle, fetched on demand" move
+ * as highlight.js, kept out of the main build for the reason documented in
+ * vite.config.ts's `inlineDynamicImports` comment: ONE board.js, always.
  */
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -29,6 +34,7 @@ const STAMP = path.join(HERE, "..", "hub", "public", "board.js.srchash");
 
 try {
   await build({ configFile: path.join(HERE, "vite.config.ts") });
+  await build({ configFile: path.join(HERE, "vite.mermaid.config.ts") });
 
   const srcHash = createHash("sha256");
   function hashDir(dir) {
@@ -47,7 +53,7 @@ try {
 
   const out = path.join(HERE, "..", "hub", "public");
   console.log(`built ${path.relative(path.join(HERE, ".."), out)}`);
-  for (const name of ["board.js", "board.css", "index.html", "board.js.srchash"]) {
+  for (const name of ["board.js", "board.css", "index.html", "board.js.srchash", "mermaid.js"]) {
     const bytes = readFileSync(path.join(out, name)).length;
     console.log(`  ${name} ${bytes} bytes`);
   }

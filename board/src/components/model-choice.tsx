@@ -29,6 +29,7 @@ import {
   type ModelOption,
 } from "./assistant-ui/elements/model-selector";
 import { mono } from "./assistant-ui/elements/surfaces";
+import { AgentLogo } from "./brand";
 import { cn } from "@/lib/utils";
 import { MODELS, MULTI_TURN } from "../lib/constants";
 import { aliasOf, describeModel } from "../lib/models.mjs";
@@ -101,7 +102,10 @@ export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
               key={agent.name}
               heading={
                 <span className="flex items-baseline justify-between gap-3">
-                  <span>{agent.name}</span>
+                  <span className="flex items-center gap-1.5">
+                    <AgentLogo agent={agent.name} className="size-3" />
+                    {agent.name}
+                  </span>
                   <span className={cn(mono, "text-foreground/35")}>{agentNote(agent)}</span>
                 </span>
               }

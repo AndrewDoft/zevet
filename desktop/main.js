@@ -1554,6 +1554,65 @@ ipcMain.handle("local:commits", async (_e, arg) => {
   }
 });
 
+/** When this run of the app started. A memory file newer than this was
+ *  written while you were watching, which is the only "change" state the
+ *  filesystem can honestly report. */
+const APP_STARTED = Date.now();
+
+/**
+ * What the agent has written down about this repo.
+ *
+ * Claude Code keeps per-project memories as one markdown file per fact under
+ * `~/.claude/projects/<slug>/memory`, where the slug is the project path with
+ * every non-alphanumeric character replaced by a dash. Nothing else reads
+ * these, which is exactly why they are worth surfacing: a memory that is wrong
+ * steers every future session in this repo and is otherwise invisible.
+ *
+ * READ ONLY. There is deliberately no handler that deletes one — see the note
+ * on the panel. An agent that does not write memories has an empty directory,
+ * which is not an error.
+ */
+ipcMain.handle("local:memories", async (_e, arg) => {
+  const dir = knownRoot(arg && arg.root);
+  if (!dir) return { ok: false, memories: [] };
+  const slug = path.resolve(dir).replace(/[^A-Za-z0-9]/g, "-");
+  const memDir = path.join(os.homedir(), ".claude", "projects", slug, "memory");
+  let names;
+  try {
+    names = fs.readdirSync(memDir);
+  } catch {
+    return { ok: true, dir: memDir, memories: [] };
+  }
+  const out = [];
+  for (const name of names) {
+    // MEMORY.md is the index over the others, not a memory.
+    if (!name.endsWith(".md") || name === "MEMORY.md") continue;
+    const full = path.join(memDir, name);
+    let stat;
+    let head;
+    try {
+      stat = fs.statSync(full);
+      if (!stat.isFile() || stat.size > 64 * 1024) continue;
+      head = fs.readFileSync(full, "utf8").slice(0, 2048);
+    } catch {
+      continue;
+    }
+    // The description line of the frontmatter is the memory in one sentence,
+    // which is what a chip has room for. Falling back to the slug rather than
+    // to the body: a chip full of prose is unreadable at that size.
+    const m = /^description:\s*(.+)$/m.exec(head);
+    const text = ((m && m[1]) || name.replace(/\.md$/, "").replace(/-/g, " ")).trim().slice(0, 160);
+    out.push({
+      id: name,
+      text,
+      at: stat.mtimeMs,
+      fresh: stat.mtimeMs >= APP_STARTED,
+    });
+  }
+  out.sort((a, b) => b.at - a.at);
+  return { ok: true, dir: memDir, memories: out.slice(0, 40) };
+});
+
 ipcMain.handle("local:stats", async (_e, { root, relPaths }) => {
   // knownRoot FIRST, exactly as every handler above does it, and for the same
   // reason: without it `C:\` is a valid root and the counter walks the disk.

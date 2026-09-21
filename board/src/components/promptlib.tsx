@@ -10,7 +10,8 @@ import {
 } from "./assistant-ui/elements/prompt-library";
 import { field, fieldInteractive, mono, paper } from "./assistant-ui/elements/surfaces";
 import { cn } from "@/lib/utils";
-import { composingState, selectActiveConsole, useBoard } from "../lib/board";
+import { useAui, useAuiState } from "@assistant-ui/react";
+import { selectActiveConsole, useBoard } from "../lib/board";
 
 const STORAGE_KEY = "zevet.prompts.v1";
 
@@ -78,7 +79,15 @@ export function PromptLibraryPanel() {
   const [selectedId, setSelectedId] = useState("");
   const [draftName, setDraftName] = useState("");
   const active = useBoard(selectActiveConsole);
-  const noteComposing = useBoard((s) => s.noteComposing);
+  /* ⚠️ THIS USED TO GO THROUGH `noteComposing`, AND BOTH BUTTONS DID NOTHING.
+     That bridge is a module-level string in board.ts left over from the old
+     textarea composer; the registry Thread's composer is assistant-ui's own,
+     and nothing reads the string back into it. So Insert wrote to a variable
+     nobody displays, and Save draft read back whatever Insert last wrote
+     rather than what you had typed. `useAui` is the client the composer
+     itself is backed by — the same one lib/runtime.tsx configures. */
+  const aui = useAui();
+  const composerText = useAuiState((s) => s.composer.text);
 
   useEffect(() => savePrompts(prompts), [prompts]);
 
@@ -87,12 +96,12 @@ export function PromptLibraryPanel() {
   const handleInsert = (id: string) => {
     const prompt = prompts.find((p) => p.id === id);
     if (!prompt || !active) return;
-    noteComposing(active.key, prompt.body);
+    aui.composer.setText(prompt.body);
   };
 
   const handleSaveDraft = () => {
     if (!active) return;
-    const body = composingState(active.key).value;
+    const body = composerText;
     const name = draftName.trim();
     if (!name || !body.trim()) return;
     // {variable} markers in the draft become the library's variable chips —
