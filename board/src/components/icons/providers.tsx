@@ -7,8 +7,16 @@
  * one contributor build from another.
  *
  * Source: github.com/homarr-labs/dashboard-icons (Apache License 2.0),
- * fetched 2026-09-20. Marks covered: opencode, DeepSeek, Qwen, Kimi
- * (Moonshot AI), Mistral, MiniMax, Ollama, Meta.
+ * fetched 2026-09-20 and 2026-09-21. Marks covered: opencode, DeepSeek, Qwen,
+ * Kimi (Moonshot AI), Mistral, MiniMax, Ollama, Meta, Nvidia, Google,
+ * poolside.
+ *
+ * TWO OF THE FREE MODELS STILL HAVE NO MARK, deliberately. dashboard-icons
+ * has no Cohere and no Thinking Machines icon (checked live 2026-09-21:
+ * cohere.svg, and every spelling of thinkingmachines, 404), so
+ * `openrouter/cohere/north-mini-code` and the `openrouter/thinkingmachines/
+ * inkling*` pair render nothing. That is the rule this file was written
+ * around - a wrong logo is worse than none. Add them when upstream does.
  */
 
 import { useId, type ComponentProps, type ReactNode } from "react";
@@ -237,6 +245,55 @@ function MetaLogo(props: LogoProps) {
 }
 
 /* ---------------------------------------------------------------------------
+ * NvidiaLogo - nvidia.svg. Nemotron, in both its shapes: opencode's own
+ * `nemotron-3-ultra-free` contributor build and OpenRouter's
+ * `nvidia/nemotron-3-super-120b-a12b`.
+ * ------------------------------------------------------------------------- */
+
+function NvidiaLogo(props: LogoProps) {
+  return (
+    <svg viewBox="0 86.6 512 338.8" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" {...props}>
+      <path
+        style={{ fill: "#77b900" }}
+        d="M52.3 232.5s46.3-68.3 138.7-75.4v-24.8C88.7 140.5 0 227.2 0 227.2s50.2 145.2 191 158.4v-26.3C87.7 346.3 52.3 232.5 52.3 232.5M191 307v24.1C112.9 317.2 91.3 236 91.3 236s37.5-41.5 99.8-48.3v26.5h-.1c-32.7-3.9-58.2 26.6-58.2 26.6S147 292.2 191 307m0-220.4v45.7c3-.2 6-.4 9-.5 116.4-3.9 192.2 95.5 192.2 95.5s-87.1 105.9-177.8 105.9c-8.3 0-16.1-.8-23.4-2.1v28.3c6.3.8 12.7 1.3 19.5 1.3 84.4 0 145.5-43.1 204.6-94.2 9.8 7.9 49.9 27 58.2 35.3-56.2 47.1-187.3 85-261.5 85-7.2 0-14-.4-20.8-1.1v39.7h321V86.6zm0 101.1v-30.6c3-.2 6-.4 9-.5 83.7-2.6 138.6 71.9 138.6 71.9s-59.3 82.4-122.9 82.4c-9.2 0-17.4-1.5-24.7-4v-92.8c32.6 3.9 39.1 18.3 58.7 51l43.6-36.7s-31.8-41.7-85.4-41.7c-5.8 0-11.4.4-16.9 1"
+      />
+    </svg>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * GoogleLogo - google.svg. Gemma is Google's open-weights family, so the
+ * house mark is the honest one; google-gemini.svg belongs to a different
+ * model line and is not what OpenRouter is serving here.
+ * ------------------------------------------------------------------------- */
+
+function GoogleLogo(props: LogoProps) {
+  return (
+    <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" {...props}>
+      <path style={{ fill: "#4285f4" }} d="M501.8 261.8c0-18.2-1.6-35.6-4.7-52.4H256v99.1h137.8c-6.1 31.9-24.2 58.9-51.4 77V450h83.1c48.3-44.6 76.3-110.2 76.3-188.2" />
+      <path style={{ fill: "#34a853" }} d="M256 512c69.1 0 127.1-22.8 169.4-61.9l-83.1-64.5c-22.8 15.4-51.9 24.7-86.3 24.7-66.6 0-123.1-44.9-143.4-105.4H27.5V371C69.6 454.5 155.9 512 256 512" />
+      <path style={{ fill: "#fbbc05" }} d="M112.6 304.6c-5.1-15.4-8.1-31.7-8.1-48.6s3-33.3 8.1-48.6v-66.1H27.5C10 175.7 0 214.6 0 256s10 80.3 27.5 114.7L93.8 319c0 .1 18.8-14.4 18.8-14.4" />
+      <path style={{ fill: "#ea4335" }} d="M256 101.9c37.7 0 71.2 13 98 38.2l73.3-73.3C382.8 25.4 325.1 0 256 0 155.9 0 69.6 57.5 27.5 141.3l85.2 66.1c20.2-60.5 76.7-105.5 143.3-105.5" />
+    </svg>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * PoolsideLogo - poolside-ai.svg. The Laguna models.
+ * ------------------------------------------------------------------------- */
+
+function PoolsideLogo(props: LogoProps) {
+  return (
+    <svg viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" {...props}>
+      <path
+        fill="#4137FF"
+        d="M35.959 121.526C24.0818 115.732 14.4341 106.579 8.05066 95.0574C1.81473 83.7992 -0.879432 71.1 0.251828 58.3309C0.507952 55.4694 3.02886 53.3568 5.89156 53.6095C8.7489 53.864 10.8649 56.3873 10.6123 59.2505C9.66451 69.946 11.9251 80.5867 17.1503 90.021C21.6488 98.1439 28.092 104.861 35.9564 109.677L60.417 59.5137C50.8426 56.3249 42.8678 57.713 42.1501 57.8524C42.0448 57.8767 41.943 57.8938 41.8395 57.9145C39.4554 58.3137 37.1494 57.0107 36.2211 54.8443C34.94 52.4524 31.0936 46.6059 26.4383 44.3349C21.7831 42.0638 14.6085 42.7964 12.2989 43.2986C10.3515 43.7238 8.32488 42.9977 7.09485 41.4319C5.86482 39.866 5.62905 37.7304 6.50215 35.9399C21.9599 4.22118 60.3479 -8.99859 92.0614 6.47266C123.775 21.9439 136.981 60.3025 121.55 92.012C121.534 92.0443 121.518 92.0767 121.501 92.1126C106.016 123.796 67.6581 136.99 35.959 121.526ZM69.7599 64.0716L45.3011 114.231C69.9874 123.453 98.0784 113.207 110.924 89.9213C109.118 87.1266 105.95 83.1199 102.283 81.3311C97.5455 79.0197 90.6037 79.7768 88.2189 80.2779C87.8263 80.3712 87.435 80.4162 87.0416 80.4201C86.3368 80.4235 85.6217 80.2838 84.9355 79.9846C84.2241 79.6732 83.5808 79.2036 83.0615 78.5986C82.7647 78.2491 82.5194 77.8669 82.3222 77.4591C82.1689 77.1529 78.3756 69.7924 69.7563 64.0698L69.7599 64.0716ZM30.9948 34.9814C34.9779 36.9245 38.2192 40.0146 40.6431 42.9284C48.1391 31.4618 58.3119 22.8009 66.1701 17.2168C69.0902 15.1432 72.1137 13.2045 75.0253 11.5316C54.5716 7.23693 33.135 15.3431 20.7056 32.4098C23.9955 32.635 27.6265 33.3382 30.9948 34.9814ZM98.566 23.0203C99.0407 26.3451 99.3765 29.9182 99.5389 33.5001C99.9773 43.105 99.422 56.4087 95.0351 69.3476C98.694 69.4457 102.949 70.0927 106.842 71.9919C110.318 73.6878 113.232 76.2533 115.526 78.8142C121.381 58.4737 114.576 36.5278 98.5643 23.0239L98.566 23.0203ZM69.7958 52.1345C76.989 55.6436 82.1885 60.3121 85.7127 64.3368C91.4457 45.7079 88.9465 24.8611 86.8596 17.1403C79.4921 20.2488 61.5261 31.1118 50.3829 47.1013C55.7288 47.3994 62.6061 48.627 69.7958 52.1345Z"
+      />
+    </svg>
+  );
+}
+
+/* ---------------------------------------------------------------------------
  * providerFor — resolves a provider mark from either of the two spellings
  * zevet uses: an agent name ("opencode") or an opencode model id
  * ("openrouter/google/gemma-4-31b-it:free", "opencode/nemotron-3-ultra-free"
@@ -269,6 +326,33 @@ const VENDORS: Record<string, { Mark: (props: LogoProps) => ReactNode; name: str
   ollama: { Mark: OllamaLogo, name: "Ollama" },
   meta: { Mark: MetaLogo, name: "Meta" },
   "meta-llama": { Mark: MetaLogo, name: "Meta" },
+  nvidia: { Mark: NvidiaLogo, name: "Nvidia" },
+  google: { Mark: GoogleLogo, name: "Google" },
+  poolside: { Mark: PoolsideLogo, name: "poolside" },
+};
+
+/**
+ * Model FAMILIES whose id does not name their lab.
+ *
+ * WHY THIS IS SEPARATE FROM `VENDORS`. The segment scan above resolves
+ * `openrouter/nvidia/nemotron-3-super-120b-a12b:free` because the lab is a
+ * path segment. opencode's own builds are not written that way: their id is
+ * `opencode/<model>-free`, so the only segment that matches anything is
+ * "opencode" itself, and every one of them rendered the opencode mark.
+ * Andrew: "within opencode add the right logos for the relevant models (i.e.
+ * meta logo for muse)".
+ *
+ * These keys are MODEL-FAMILY names, not vendor words, and they are matched
+ * as a PREFIX of the last path segment - so "muse-spark-1.3-contributor-free"
+ * resolves and a model that merely contains a lab's name somewhere in the
+ * middle still does not. The rule the rest of this file follows holds here
+ * too: anything not listed gets no mark rather than a guessed one.
+ */
+const FAMILIES: Record<string, string> = {
+  "muse-spark": "meta",
+  nemotron: "nvidia",
+  laguna: "poolside",
+  gemma: "google",
 };
 
 /**
@@ -293,7 +377,17 @@ export function normalizeAgentKey(raw: string): string {
 
 export function providerFor(key: string): { Mark: (props: LogoProps) => ReactNode; name: string } | null {
   const k = normalizeAgentKey(key);
-  for (const segment of k.split(/[/:]/)) {
+  const segments = k.split(/[/:]/);
+  // ⚠️ THE FAMILY IS CHECKED FIRST, and it has to be. An opencode id reads
+  // `opencode/muse-spark-1.3-contributor-free`, and "opencode" is a segment
+  // that matches VENDORS — so a segment-first scan answered "opencode" for
+  // every contributor build and never looked at the model at all. The name of
+  // the runtime fronting a model is the LEAST specific thing in that id.
+  const tail = segments[segments.length - 1] ?? "";
+  for (const [family, vendor] of Object.entries(FAMILIES)) {
+    if (tail.startsWith(family)) return VENDORS[vendor] ?? null;
+  }
+  for (const segment of segments) {
     const hit = VENDORS[segment];
     if (hit) return hit;
   }
@@ -302,6 +396,9 @@ export function providerFor(key: string): { Mark: (props: LogoProps) => ReactNod
 
 export {
   OpencodeLogo,
+  NvidiaLogo,
+  GoogleLogo,
+  PoolsideLogo,
   DeepSeekLogo,
   QwenLogo,
   KimiLogo,

@@ -79,7 +79,16 @@ export function AgentLogo({ agent, model, hue, className }: AgentLogoProps) {
     );
   }
 
-  const provider = providerFor(a) ?? (model ? providerFor(model) : null);
+  /* ⚠️ THE MODEL WINS, NOT THE AGENT. This asked the agent name first, and for
+     opencode the agent name always answers — so every row in the picker, and
+     every opencode console, wore opencode's own mark no matter which lab was
+     actually running. Andrew: "within opencode add the right logos for the
+     relevant models (i.e. meta logo for muse)".
+     A model id is strictly more specific than the CLI fronting it; the agent
+     is the fallback for when there is no model, or the id names no lab this
+     board knows. claude and codex never reach here — they are matched above
+     and their marks live in logos.tsx. */
+  const provider = (model ? providerFor(model) : null) ?? providerFor(a);
   if (!provider) return null;
   const { Mark } = provider;
   return (

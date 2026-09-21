@@ -192,7 +192,22 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
   return (
     <div className="treecol">
       <div className="pane-title row">
-        <span id="filesTitle">{selectedRepo ? "Files \u2014 " + selectedRepo : "Files"}</span>
+        {/* !! NO TITLE TEXT. It said "Files - zevet", and both halves were
+            already on screen: the column is visibly a file tree, and the repo
+            is named by the picker in the rail. Andrew: "get rid of files -
+            zevet (or whatever repo) at the top. that is superfluous."
+
+            The ROW stays, and must: `.pane-title` carries
+            `-webkit-app-region: drag`, so these strips are the only thing
+            holding the window (the native caption is hidden - see the title
+            bar note in masora.css). It holds the follow control now.
+
+            ASCII only in here: this is JSX TEXT, not a string literal, so an
+            escape written in a comment renders as itself and a real em dash
+            trips test/board-jsx.test.mjs. */}
+        <span id="filesTitle" className="sr-only">
+          {selectedRepo ? "Files \u2014 " + selectedRepo : "Files"}
+        </span>
         {/* Was a native <select>. On Windows the OS draws that popup in its own
             colours, so in dark mode it opened as a white menu — the one piece
             of the board that never followed the theme. */}

@@ -167,10 +167,28 @@ describe("agent hunk seating", () => {
 
 describe("repo wording", () => {
   test("user-facing workspace wording is gone", () => {
+    // The rule is the WORD, not where it sits. This asserted a "Repos" title
+    // in App.tsx, and that title is gone — it was a header labelling a
+    // dropdown that says what it is ("get rid of the repo header and have the
+    // dropdown just start with open a repo"). What must not come back is the
+    // internal word: the store still calls these workspaces, and the board
+    // must not.
     const app = src("App.tsx");
+    const ws = src("components/workspaces.tsx");
     const tree = src("components/tree.tsx");
-    assert.ok(app.includes("Repos"), "Repos title missing");
+    assert.ok(ws.includes("Open a repo"), "the folder picker no longer says repo");
     assert.ok(!app.includes(">Workspaces"), "Workspaces title still present");
     assert.ok(tree.includes("Follow mine"), "follow control missing");
+  });
+
+  test("the Files column does not print the repo name back at you", () => {
+    // "Files — zevet" said two things already on screen: the column is
+    // visibly a file tree, and the rail's picker names the open repo.
+    // Andrew: "that is superfluous". The row itself must stay — .pane-title
+    // carries -webkit-app-region: drag and is the only handle this window has.
+    const tree = src("components/tree.tsx");
+    assert.ok(tree.includes('className="pane-title row"'), "the drag handle row is gone");
+    assert.match(tree, /id="filesTitle"[^>]*className="sr-only"/,
+      "the Files title is visible again");
   });
 });

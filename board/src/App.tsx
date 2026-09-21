@@ -1,3 +1,4 @@
+import { SettingsIcon } from "lucide-react";
 import { useEffect } from "react";
 import { PeoplePane } from "./components/people";
 import { WorkspacesPane } from "./components/workspaces";
@@ -50,8 +51,18 @@ function RailFoot() {
           {isDark ? "Dark" : "Light"}
         </span>
       </button>
-      <button type="button" className="settings-link" id="settingsLink" onClick={openSettings}>
-        Settings
+      {/* A gear, not the word. Andrew: "get a gear thing instead of the word
+          settings". The label moves to the tooltip and the accessible name,
+          so nothing is lost for a screen reader or a hover. */}
+      <button
+        type="button"
+        className="settings-link"
+        id="settingsLink"
+        aria-label="Settings"
+        title="Settings"
+        onClick={openSettings}
+      >
+        <SettingsIcon className="size-4" aria-hidden="true" />
       </button>
     </>
   );
@@ -133,15 +144,18 @@ function App() {
           <ConnBanner />
           <Strip />
           <UpdateRow />
+          {/* ⚠️ NO "Repos" HEADER. It was a full pane-title row — 24px of
+              padding and a word — sitting above a dropdown that already says
+              what it is. Andrew: "get rid of the repo header and have the
+              dropdown just start with open a repo". The rail's bottom corner
+              is now three short rows (status, theme + gear, folder) instead
+              of five, and the People list takes back what they were using. */}
           <div className="railfoot">
             <RailFoot />
           </div>
-          <div className="pane-title" style={{ borderTop: "1px solid var(--line)" }}>
-            Repos
-          </div>
-          <div className="ws" id="workspaces">
-            <WorkspacesPane />
-          </div>
+          {/* No wrapper: WorkspacesPane renders its own `.ws #workspaces`, and
+              this one duplicated both the class and the id. */}
+          <WorkspacesPane />
         </aside>
 
         <div className="middle">
