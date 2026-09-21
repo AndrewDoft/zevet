@@ -286,12 +286,17 @@ describe("zevet-mcp.js over stdio", () => {
     assert.equal(res.id, 99);
   });
 
-  test("tools/list names all five tools, including permission_prompt, with input schemas", async (t) => {
-    const c = mcpClient(t);
+  test("a computer-use run names all six tools, with input schemas", async (t) => {
+    // ⚠️ THE LIST DEPENDS ON THE CAPABILITY NOW. This server serves every
+    // agent so that any of them can ask a question; only a repo with computer
+    // use turned on gets the mouse, and main.js says which by setting
+    // ZEVET_MCP_COMPUTER. test/ask-tool.test.mjs owns the other half of this
+    // contract — that a plain run gets ask_user and nothing else.
+    const c = mcpClient(t, { env: { ZEVET_MCP_COMPUTER: "1" } });
     c.send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
     const res = await c.next();
     const names = res.result.tools.map((tool) => tool.name).sort();
-    assert.deepEqual(names, ["click", "permission_prompt", "press_key", "screenshot", "type_text"]);
+    assert.deepEqual(names, ["ask_user", "click", "permission_prompt", "press_key", "screenshot", "type_text"]);
     for (const tool of res.result.tools) {
       assert.equal(typeof tool.description, "string");
       assert.equal(tool.inputSchema.type, "object");
@@ -299,7 +304,10 @@ describe("zevet-mcp.js over stdio", () => {
   });
 
   test("tools/call is refused with no permit env configured", async (t) => {
-    const env = { ZEVET_MCP_URL: undefined, ZEVET_MCP_TOKEN: undefined };
+    // ZEVET_MCP_COMPUTER so the tool is on offer at all — the point of this
+    // test is the missing GATE, not the missing capability, and without it the
+    // refusal would come from the wrong check and prove nothing.
+    const env = { ZEVET_MCP_URL: undefined, ZEVET_MCP_TOKEN: undefined, ZEVET_MCP_COMPUTER: "1" };
     const c = mcpClient(t, { env });
     c.send({
       jsonrpc: "2.0",
