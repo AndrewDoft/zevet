@@ -31,6 +31,7 @@ import {
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import { selectActiveConsole, selectMyConsoles, useBoard } from "./board";
+import { bridge } from "./bridge";
 import { MULTI_TURN } from "./constants";
 import { ToolUIs } from "../components/tools";
 import type { ConsoleEntry } from "./types";
@@ -116,6 +117,16 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
   /** An assistant message is open, so the agent is mid-answer. */
   const streaming = (active?.transcript.openIndex ?? -1) >= 0;
   const oneShot = Boolean(active) && !MULTI_TURN.has(active!.agent);
+  /* ⚠️ ONE-SHOT NO LONGER MEANS ONE PROMPT.
+   *
+   * codex and opencode close stdin after a prompt, so the composer refused
+   * their second one — correct, because it would have gone to a closed pipe.
+   * All three CLIs can RESUME a session by id (measured 2026-09-21), and
+   * `sendPrompt` uses that: a follow-up to a finished run starts a new process
+   * that picks the conversation up. So the refusal only applies while there is
+   * no session to resume, or to a build whose desktop side cannot. */
+  const canContinue =
+    Boolean(active?.sessionId) && typeof bridge.local?.resumeAgent === "function";
   const sent = messages.reduce((n, m) => n + (m.role === "user" ? 1 : 0), 0);
 
   /* QUEUING, and only where it can be honoured.
@@ -201,7 +212,10 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     // takes the prompt and sends it when the turn settles. A one-shot agent
     // keeps it, because for that one there is no later.
     isSendDisabled: active
-      ? !active.running || (oneShot && (streaming || sent > 0))
+      ? // A finished run that can be resumed is not a dead end; a running turn
+        // still refuses a one-shot agent, because that process IS mid-prompt.
+        (!active.running && !canContinue) ||
+        (oneShot && active.running && (streaming || sent > 0))
       : !canStart,
 
     queue: oneShot ? undefined : queue.adapter,

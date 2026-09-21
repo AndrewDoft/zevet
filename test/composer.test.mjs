@@ -105,7 +105,24 @@ describe("sending is refused only where it would go nowhere", () => {
     //
     // `sent > 0` now sits inside the one-shot branch rather than beside it,
     // because a multi-turn agent gets a queue and no longer refuses mid-turn.
-    assert.match(value, /oneShot && \(streaming \|\| sent > 0\)/);
+    // ⚠️ AND IT IS NARROWER NOW. The refusal used to be the whole story for
+    // codex and opencode: stdin closes after one prompt, so their second one
+    // had nowhere to go. All three CLIs can RESUME a session by id (measured
+    // 2026-09-21 — claude `--resume`, codex `exec resume`, opencode `run -s`),
+    // and sendPrompt uses it, so a follow-up to a FINISHED run is a new
+    // process continuing the conversation rather than a write to a dead pipe.
+    // What still refuses is a one-shot agent mid-turn, because that process is
+    // genuinely busy with the prompt it already has.
+    assert.match(value, /oneShot && active\.running && \(streaming \|\| sent > 0\)/);
+  });
+
+  test("a finished run that can be resumed is not a dead end", () => {
+    assert.match(value, /!active\.running && !canContinue/);
+    assert.match(
+      runtime,
+      /const canContinue =[\s\S]*active\?\.sessionId[\s\S]*resumeAgent/,
+      "canContinue must require both a session to resume and a desktop build that can",
+    );
   });
 
   test("a turn in flight only refuses where there is no queue to catch it", () => {

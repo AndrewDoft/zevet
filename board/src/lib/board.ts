@@ -598,6 +598,35 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (!c) return;
     pushConsoleLine(c, "you", text);
     c.transcript = appendUserText(c.transcript, text);
+
+    /* ⚠️ A FOLLOW-UP TO A FINISHED RUN IS A NEW PROCESS, NOT A WRITE TO A DEAD
+       PIPE. codex and opencode close stdin after one prompt, so their console
+       is already gone by the time you have read the answer — which is why the
+       composer used to refuse the second prompt to those two.
+       
+       All three can resume a session by id, measured 2026-09-21, so the
+       refusal is no longer the only honest answer. The console keeps its key
+       and its transcript; only the process underneath it is new. */
+    if (!c.running && c.sessionId && typeof bridge.local?.resumeAgent === "function") {
+      c.running = true;
+      c.exitCode = null;
+      signalConsolesChanged();
+      bridge.local.resumeAgent(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode }).then((r) => {
+        if (!r || !r.ok) {
+          c.running = false;
+          pushConsoleLine(c, "err", (r && r.error) || "could not continue");
+          signalConsolesChanged();
+          return;
+        }
+        // The events for this turn arrive under the NEW process id, so the
+        // console has to answer to it — `consoleById` matches on `c.id`.
+        c.id = r.id ? String(r.id) : null;
+        signalConsolesChanged();
+        if (c.id) void bridge.local?.sendToAgent(c.id, text);
+      });
+      return;
+    }
+
     if (!c.id) return;
     bridge.local?.sendToAgent(c.id, text).then((r) => {
       if (r && r.ok === false) {
@@ -1102,8 +1131,10 @@ function recordUsage(c: ConsoleEntry, u: UsageReading | null, cost: number | nul
  * check for this rather than assuming it.
  */
 function sessionIdOf(payload: unknown): string | null {
-  const p = (payload || {}) as { session_id?: unknown; thread_id?: unknown };
-  const id = p.session_id ?? p.thread_id;
+  const p = (payload || {}) as { session_id?: unknown; thread_id?: unknown; sessionID?: unknown };
+  // Three CLIs, three spellings, all measured: claude `session_id`, codex
+  // `thread_id` on thread.started, opencode `sessionID` on every event.
+  const id = p.session_id ?? p.thread_id ?? p.sessionID;
   return typeof id === "string" && id ? id : null;
 }
 

@@ -2151,6 +2151,55 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   return { ok: true, id: started.id, agent, cwd: dir };
 });
 
+/**
+ * A follow-up prompt to a console whose process has already exited.
+ *
+ * codex and opencode close stdin after one prompt, so their console is dead
+ * the moment it has answered. Both can RESUME a session by id, and so can
+ * claude, which makes a follow-up an ordinary start with `resumeFrom` set —
+ * the agent picks the conversation up with everything it already read.
+ *
+ * The board keeps the SAME console entry and swaps in the new process id, so
+ * the transcript continues rather than starting a second thread beside it.
+ */
+ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) => {
+  await runtimeReady;
+  const dir = knownRoot(cwd);
+  if (!dir) return { ok: false, error: "not an opened workspace" };
+  if (typeof resumeFrom !== "string" || !resumeFrom.trim()) {
+    return { ok: false, error: "no session to resume" };
+  }
+  const settings = agentSettingsFor(dir);
+  let mcpConfig = null;
+  if (String(agent || "") === "claude") {
+    try {
+      mcpConfig = await mcpConfigFor(dir);
+    } catch (err) {
+      console.error(`zevet: could not set up computer use: ${err.message}`);
+    }
+  }
+
+  const handle = { id: null };
+  const started = agentConsole.startConsole({
+    agent: String(agent || ""),
+    cwd: dir,
+    model: opts && typeof opts.model === "string" ? opts.model : "",
+    mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
+    systemPrompt: settings.systemPrompt,
+    resumeFrom: resumeFrom.trim(),
+    ...(mcpConfig ? { mcpConfig, permissionTool: "mcp__zevet__permission_prompt" } : {}),
+    onEvent: (evt) => {
+      if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
+      toBoard("local:agentEvent", { id: handle.id, ...evt });
+    },
+  });
+  if (!started.ok) return { ok: false, error: started.error };
+
+  handle.id = started.id;
+  consoles.set(started.id, started);
+  return { ok: true, id: started.id, agent, cwd: dir };
+});
+
 ipcMain.handle("local:sendToAgent", (_e, { id, text }) => {
   const c = consoles.get(id);
   if (!c) return { ok: false, error: "no such console" };

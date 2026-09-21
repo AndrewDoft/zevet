@@ -134,7 +134,17 @@ export interface LocalBridge {
   read: (root: string, relPath: string) => Promise<ReadResult>;
   write: (root: string, relPath: string, text: string, opts: { bom?: boolean; eol?: string }) => Promise<{ ok: boolean; error?: string }>;
   agents: () => Promise<UsableAgent[]>;
-  startAgent: (name: string, root: string, opts: { model: string; mode: string }) => Promise<StartAgentResult>;
+  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string }) => Promise<StartAgentResult>;
+  /** A follow-up to a console whose process has exited. All three CLIs can
+   *  resume a session by id (measured 2026-09-21); codex and opencode need a
+   *  new process to do it, which is what this is. Optional: an older desktop
+   *  build has no resume, and the composer falls back to refusing. */
+  resumeAgent?: (
+    name: string,
+    root: string,
+    resumeFrom: string,
+    opts: { model: string; mode: string },
+  ) => Promise<StartAgentResult>;
   sendToAgent: (id: string, text: string) => Promise<{ ok: boolean; error?: string }>;
   stopAgent: (id: string) => Promise<unknown>;
   watch: (root: string, relPath: string, lastWritten: string | null) => Promise<{ ok: boolean }>;

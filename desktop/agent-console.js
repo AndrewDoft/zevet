@@ -384,6 +384,31 @@ function modeFlags(agent, mode) {
  */
 const CAN_FORK = new Set(["claude", "codex"]);
 
+/**
+ * Carrying a conversation on, for the two that cannot.
+ *
+ * MEASURED 2026-09-21. claude keeps stdin open and takes as many prompts as
+ * you send it. codex and opencode close it after one — which is why the
+ * composer used to refuse a second prompt to those two, and that refusal was
+ * honest: the text would have gone to a closed pipe.
+ *
+ * It is no longer the only option. Both can RESUME a session by id, so a
+ * follow-up is a new process that picks the conversation up where it stopped:
+ *
+ *   claude   --resume <session-id>            (without --fork-session)
+ *   codex    exec resume <session-id> [PROMPT]
+ *   opencode run -s <session-id>
+ *
+ * RESUME, NOT FORK, is the difference that matters here. A fork starts a
+ * branch and leaves the original alone, which is what "ask that again" wants.
+ * A follow-up is the same conversation continuing, so it appends — and the
+ * agent keeps everything it already read.
+ *
+ * All three report a session id, each spelling it differently: claude
+ * `session_id`, codex `thread_id`, opencode `sessionID` on every event.
+ */
+const CAN_RESUME = new Set(["claude", "codex", "opencode"]);
+
 function invocationFor(agent, opts) {
   const o = opts || {};
   const extra = [];
@@ -394,6 +419,10 @@ function invocationFor(agent, opts) {
 
   const forkFrom =
     typeof o.forkFrom === "string" && o.forkFrom.trim() && CAN_FORK.has(agent) ? o.forkFrom.trim() : null;
+  const resumeFrom =
+    !forkFrom && typeof o.resumeFrom === "string" && o.resumeFrom.trim() && CAN_RESUME.has(agent)
+      ? o.resumeFrom.trim()
+      : null;
 
   if (agent === "claude") {
     // Standing instructions for this repo, if the person set any. claude is
@@ -422,7 +451,7 @@ function invocationFor(agent, opts) {
       "--verbose",
       "--include-partial-messages",
       "--replay-user-messages",
-      ...(forkFrom ? ["--resume", forkFrom, "--fork-session"] : []),
+      ...(forkFrom ? ["--resume", forkFrom, "--fork-session"] : resumeFrom ? ["--resume", resumeFrom] : []),
       ...extra,
     ];
   }
@@ -433,7 +462,8 @@ function invocationFor(agent, opts) {
     // No trailing prompt argument: the prompt goes on stdin (§ send), so user
     // text never reaches argv and the shim-shell check below stays trivially
     // clean.
-    return ["run", "--format", "json", ...extra];
+    // `-s <id>` continues that session; without it opencode starts a new one.
+    return ["run", "--format", "json", ...(resumeFrom ? ["-s", resumeFrom] : []), ...extra];
   }
   // codex. The trailing `-` must stay last: it is the positional PROMPT arg.
   //
@@ -441,6 +471,7 @@ function invocationFor(agent, opts) {
   // so it goes immediately after `exec` — before the flags and before the `-`,
   // which is still the prompt and still last.
   if (forkFrom) return ["exec", "fork", forkFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
+  if (resumeFrom) return ["exec", "resume", resumeFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
   return ["exec", "--skip-git-repo-check", "--json", ...extra, "-"];
 }
 

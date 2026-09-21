@@ -183,6 +183,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   stats: (root, relPaths) => ipcRenderer.invoke("local:stats", { root, relPaths }),
   commits: (root, limit) => ipcRenderer.invoke("local:commits", { root, limit }),
   memories: (root) => ipcRenderer.invoke("local:memories", { root }),
+  resumeAgent: (agent, cwd, resumeFrom, opts) =>
+    ipcRenderer.invoke("local:resumeAgent", { agent, cwd, resumeFrom, opts }),
   agentSettings: (root) => ipcRenderer.invoke("local:agentSettings", { root }),
   saveAgentSettings: (root, patch) => ipcRenderer.invoke("local:saveAgentSettings", { root, patch }),
   schedules: () => ipcRenderer.invoke("local:schedules"),
