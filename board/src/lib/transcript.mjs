@@ -335,6 +335,11 @@ function fromClaude(state, p, root) {
   // reads it off the raw payload; it is not transcript content.
   if (p.type === "system") return state;
 
+  // `/clear` typed to claude: it drops its own context and says so with this
+  // line. The board's copy of the conversation has to go with it, or the
+  // screen shows a history the agent no longer has.
+  if (p.type === "conversation_reset") return emptyTranscript();
+
   /* ⚠️ `stream_event` IS NOT TRANSCRIPT CONTENT, AND RENDERING IT IS THE BUG
    * ANDREW SAW. `--include-partial-messages` makes claude wrap every raw SSE
    * event — message_start, content_block_start, content_block_delta,

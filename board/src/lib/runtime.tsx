@@ -34,6 +34,7 @@ import { bridge } from "./bridge";
 import { MasoraVoiceDictationAdapter } from "./voice";
 import { MULTI_TURN } from "./constants";
 import { groupTurnTools } from "./turngroup.mjs";
+import { parseLocal } from "./slash.mjs";
 import { ToolUIs } from "../components/tools";
 import type { ConsoleEntry } from "./types";
 
@@ -287,6 +288,24 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
       if (reading) return;
       const text = textOf(message);
       if (!text) return;
+      /* Slash commands zevet answers itself (lib/slash.mjs). Everything else
+         starting with `/` is a prompt like any other: claude runs its own. */
+      const local = parseLocal(text, active?.agent ?? launchAgent);
+      if (local === "stop") {
+        if (active) stopConsole(active.key);
+        return;
+      }
+      if (local === "new") {
+        openLauncher();
+        return;
+      }
+      if (local === "clear") {
+        // Not claude (it runs /clear itself): end this run and leave no active
+        // console, so the next Send starts a fresh one through the branch below.
+        if (active) stopConsole(active.key);
+        setActiveConsole(null);
+        return;
+      }
       if (active) {
         sendPrompt(active.key, text);
         return;

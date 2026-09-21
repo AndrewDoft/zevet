@@ -11,6 +11,7 @@
  * four permission postures and a model per CLI, and that choice is the product.
  */
 import { Thread } from "./assistant-ui/elements/thread.aui";
+import { TurnToolGroup } from "./toolgroup";
 import { ThinkingIndicator } from "./assistant-ui/elements/thinking-indicator";
 import { EmptyState, EmptyStateGreeting } from "./assistant-ui/elements/empty-state";
 import { useEffect, useState } from "react";
@@ -23,6 +24,8 @@ import { PermitPrompt, PermitQueue } from "./permits";
 import { DraftRestore } from "./findviews";
 import { ThreadMap } from "./mapviews";
 import { SessionBanner } from "./sessions";
+
+const TURN_COMPONENTS = { ToolGroup: TurnToolGroup };
 
 function Blank({ title, note }: { title: string; note: string }) {
   return (
@@ -154,7 +157,7 @@ export function Conversation() {
       {reading ? null : <PermitPrompt />}
       {reading ? null : <PermitQueue />}
       <div className="chat-thread-body">
-        <Thread autoFocus={false} />
+        <Thread autoFocus={false} components={TURN_COMPONENTS} />
         {/* A tick per message down the right edge. It is the one thing that
             makes a long run navigable without scrolling it twice, and it costs
             no height — it sits inside the viewport, against the wall. */}

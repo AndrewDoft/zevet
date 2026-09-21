@@ -600,6 +600,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       usage: { context: null, cacheHit: null, cost: null, model: null, input: null, cachedInput: null, output: null, window: null, series: [] },
       limits: [],
       sessionId: null,
+      slashCommands: [],
       // Which console this is a branch of, if any — see `forkedFrom` in
       // types.ts for why it cannot be worked out after the fact.
       forkedFrom: launch && typeof launch.fromKey === "number" ? launch.fromKey : null,
@@ -1295,6 +1296,14 @@ function ingressAgentEvent(evt: { id?: string; type: string; code?: number | nul
     /* The session id, which every claude payload carries and codex announces
        once as `thread_id`. It is what `--resume` / `exec resume` take, so it
        is the difference between being able to ask again from here and not. */
+    const announcedCommands = (payload as { slash_commands?: unknown }).slash_commands;
+    if (payload.type === "system" && Array.isArray(announcedCommands)) {
+      const cc = consoleById(evt.id);
+      if (cc) {
+        cc.slashCommands = announcedCommands.filter((n): n is string => typeof n === "string");
+        signalConsolesChanged();
+      }
+    }
     const sid = sessionIdOf(payload);
     if (sid) {
       const cs = consoleById(evt.id);

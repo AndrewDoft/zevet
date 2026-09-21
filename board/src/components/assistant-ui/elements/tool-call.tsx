@@ -70,7 +70,16 @@ export function ToolCall({
           )}
         </span>
       </CollapsibleTrigger>
-      <CollapsibleContent className={cn(collapsePanel, "outline-none")}>
+      {/* Clicking the opened panel closes it — the trigger can be scrolled away
+          by the time you are done reading. A drag to select text is not a
+          click on it, so copying out of the result still works. */}
+      <CollapsibleContent
+        className={cn(collapsePanel, "cursor-pointer outline-none")}
+        onClick={() => {
+          if (window.getSelection()?.toString()) return;
+          onOpenChange(false);
+        }}
+      >
         <div className={cn(field, "mt-2 overflow-hidden rounded-2xl text-xs")}>
           <div className="px-3.5 pt-2.5 pb-2">
             <p className={cn(mono, "text-foreground/35 mb-1")}>Request</p>

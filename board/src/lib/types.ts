@@ -98,6 +98,9 @@ export interface ConsoleEntry {
    *  takes, so it is the difference between being able to ask again from here
    *  and not. */
   sessionId: string | null;
+  /** Slash commands the agent CLI announced in its init line (claude does;
+   *  the others do not, and stay empty). Drives the composer's `/` menu. */
+  slashCommands: string[];
   /** The console this one was forked from, by `key`.
    *
    *  ⚠️ IT HAS TO BE RECORDED HERE, because it cannot be recovered. Both CLIs

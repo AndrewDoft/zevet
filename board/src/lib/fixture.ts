@@ -34,7 +34,7 @@ type AgentEvent = {
 /** claude `--output-format stream-json`. A turn with reasoning, a successful
  *  tool call, a failing one, and prose either side. */
 const CLAUDE_SCRIPT: unknown[] = [
-  { type: "system", subtype: "init", model: "claude-opus-5" },
+  { type: "system", subtype: "init", model: "claude-opus-5", slash_commands: ["compact", "clear", "context", "cost", "init", "review", "superpowers:brainstorming"] },
   {
     type: "assistant",
     message: {
