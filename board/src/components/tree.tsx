@@ -85,6 +85,17 @@ function NodeRow({ node, path, depth, now }: { node: TreeNode; path: string; dep
     <>
       <button
         className="node"
+        /* ⚠️ EVERY ROW WAS A TAB STOP. A plain button per node, in a tree that
+           renders up to 4000 entries — measured 473 in this repo — so Tab out
+           of the rail meant 473 presses to reach the conversation, and a
+           screen reader was told "button" with no level, no expanded state and
+           no selection. The tree is now one tab stop with arrow keys inside
+           it; see TreeFill for the handler. */
+        role="treeitem"
+        tabIndex={-1}
+        aria-level={depth + 1}
+        aria-expanded={isDir ? open : undefined}
+        aria-selected={isDir ? undefined : selectedPath === path}
         data-kind={node.kind}
         data-collide={String(Boolean(collisionSet()[path]))}
         data-touched={String(addicts.length > 0)}
@@ -92,7 +103,9 @@ function NodeRow({ node, path, depth, now }: { node: TreeNode; path: string; dep
         // The element's own indent formula, in the units it uses.
         style={{ paddingInlineStart: `${0.85 + depth * 0.85}rem` }}
         onClick={() => {
-          if (isDir) setCollapsed(path, !open);
+          // `open` IS the new collapsed state: this row is open, so collapse
+          // it. Passing `!open` wrote the current value back — see board.ts.
+          if (isDir) setCollapsed(path, open);
           else toggleSelection(path);
         }}
       >
@@ -127,6 +140,62 @@ function NodeRow({ node, path, depth, now }: { node: TreeNode; path: string; dep
       {isDir && open ? <TreeChildren node={node} depth={depth + 1} prefix={path} now={now} /> : null}
     </>
   );
+}
+
+/**
+ * Arrow keys for the tree, APG "Tree View Pattern".
+ *
+ * Driven off the DOM rather than off the store, because the rendered rows ARE
+ * the flattened, ordered, currently-visible list — a collapsed directory's
+ * children are not in the document, which is exactly what Down should skip.
+ * Reproducing that from `built` would mean re-deriving the traversal and
+ * keeping the two in step.
+ */
+function treeKeys(e: React.KeyboardEvent<HTMLDivElement>): void {
+  const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="treeitem"]'));
+  if (!items.length) return;
+  const cur = items.indexOf(document.activeElement as HTMLElement);
+  const go = (i: number) => {
+    const el = items[Math.max(0, Math.min(items.length - 1, i))];
+    if (!el) return;
+    el.focus();
+    el.scrollIntoView({ block: "nearest" });
+  };
+  const here = items[cur];
+  const expanded = here ? here.getAttribute("aria-expanded") : null;
+
+  if (e.key === "ArrowDown") { e.preventDefault(); go(cur + 1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); go(cur - 1); }
+  else if (e.key === "Home") { e.preventDefault(); go(0); }
+  else if (e.key === "End") { e.preventDefault(); go(items.length - 1); }
+  else if (e.key === "ArrowRight") {
+    if (!here) return;
+    e.preventDefault();
+    // Closed folder opens; open folder steps into it; a file has nowhere to go.
+    if (expanded === "false") here.click();
+    else if (expanded === "true") go(cur + 1);
+  } else if (e.key === "ArrowLeft") {
+    if (!here) return;
+    e.preventDefault();
+    if (expanded === "true") {
+      // Focus stays put: collapsing removes the children below, not this row.
+      here.click();
+      return;
+    }
+    const lvl = Number(here.getAttribute("aria-level") || 1);
+    for (let i = cur - 1; i >= 0; i--) {
+      if (Number(items[i].getAttribute("aria-level") || 1) < lvl) return go(i);
+    }
+  }
+}
+
+/** The tree is one tab stop. Landing on it puts focus on the selected row, or
+ *  the first one — a wrapper that kept focus itself would be a dead end. */
+function treeFocus(e: React.FocusEvent<HTMLDivElement>): void {
+  if (e.target !== e.currentTarget) return;
+  const sel = e.currentTarget.querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]');
+  const first = e.currentTarget.querySelector<HTMLElement>('[role="treeitem"]');
+  (sel || first)?.focus();
 }
 
 function TreeChildren({ node, depth, prefix, now }: { node: TreeNode; depth: number; prefix: string; now: number }) {
@@ -219,6 +288,13 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
   const conn = useBoard((s) => s.conn);
   const localTruncated = useBoard((s) => s.localTruncated);
   useBoard(selectEvents);
+  /* ⚠️ THE CLOCK, or `now` never moves. `built.now` is read once per render
+     and drives both `data-stale` and every "… ago" title, and the only other
+     subscription here is to events — so the marks stopped ageing at exactly
+     the moment the agents went quiet, which is when you are looking to see
+     whether they have. people.tsx and inbox.tsx each keep their own interval;
+     the store already publishes one for everybody. */
+  useBoard((s) => s.tick);
   const built = buildTree();
   const any = Object.keys(built.root.children).length > 0;
 
@@ -264,7 +340,16 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
               )}
             </div>
           ) : any ? (
-            <TreeChildren node={built.root} depth={0} prefix="" now={built.now} />
+            <div
+              className="tree-items"
+              role="tree"
+              aria-label="Files"
+              tabIndex={0}
+              onKeyDown={treeKeys}
+              onFocus={treeFocus}
+            >
+              <TreeChildren node={built.root} depth={0} prefix="" now={built.now} />
+            </div>
           ) : (
             <div className="empty-tree">
               {needsToken ? "Sign in to see what the team is working on." : "No files touched yet. Shows where agents read and edit \u2014 never file contents."}

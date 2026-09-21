@@ -15,7 +15,7 @@ export interface PaletteCommand {
 export function CommandPalette({
   commands,
   query,
-  activeId,
+  activeId: heldActiveId,
   onQueryChange,
   onActiveChange,
   onRun,
@@ -48,6 +48,12 @@ export function CommandPalette({
   const ordered = groups.flatMap((group) =>
     matches.filter((command) => command.group === group),
   );
+
+  // The first match is active whenever the held id is not in the list.
+  // See board/scripts/sync-registry.mjs, command-palette, for why.
+  const activeId = ordered.some((command) => command.id === heldActiveId)
+    ? heldActiveId
+    : (ordered[0]?.id ?? "");
 
   const move = (delta: number) => {
     if (ordered.length === 0) return;

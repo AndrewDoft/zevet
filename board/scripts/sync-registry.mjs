@@ -185,6 +185,35 @@ if (fixed) console.log(`repaired ${fixed} file(s) whose imports disagreed with t
  * rewrites the file. */
 const COPY = [
   {
+    file: "components/assistant-ui/elements/command-palette.tsx",
+    // Enter did nothing until you had pressed an arrow key. `activeId` is a
+    // prop, and the parent only ever changes it from ArrowUp/ArrowDown - so it
+    // is "" when the palette opens, and stale after any keystroke that filters
+    // the held command out of the list. Enter looks the command up BY that id:
+    // Ctrl+K, type "Settings", Enter, and nothing happens, with no highlighted
+    // row to explain why.
+    //
+    // Two edits, and the second SHADOWS the prop rather than renaming its
+    // uses: the highlight, aria-activedescendant, Enter and the arrow keys all
+    // read `activeId` already, so they cannot drift apart again by somebody
+    // reaching for one spelling and not the other.
+    from: "  activeId,\n",
+    to: "  activeId: heldActiveId,\n",
+  },
+  {
+    file: "components/assistant-ui/elements/command-palette.tsx",
+    from: "  const move = (delta: number) => {",
+    to: [
+      "  // The first match is active whenever the held id is not in the list.",
+      "  // See board/scripts/sync-registry.mjs, command-palette, for why.",
+      "  const activeId = ordered.some((command) => command.id === heldActiveId)",
+      "    ? heldActiveId",
+      '    : (ordered[0]?.id ?? "");',
+      "",
+      "  const move = (delta: number) => {",
+    ].join("\n"),
+  },
+  {
     file: "components/assistant-ui/elements/thread.aui.tsx",
     // Andrew, on 0.2.20: "there needs to be the model selector, the effort
     // selector, context, etc. in the chatbox, not above in that weird way."

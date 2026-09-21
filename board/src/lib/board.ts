@@ -263,7 +263,9 @@ interface BoardState {
   pushEvent: (e: HubEvent) => void;
   setSelectedActor: (a: string | null) => void;
   toggleRepo: (repo: string) => void;
-  setCollapsed: (path: string, open: boolean) => void;
+  /** `collapsed` is the NEW collapsed state, not the new open state — see the
+   *  implementation for the release-long bug that distinction caused. */
+  setCollapsed: (path: string, collapsed: boolean) => void;
   setFollowMode: (m: "mine" | "all" | "off") => void;
   setView: (v: ViewMode) => void;
   setTheme: (t: Theme) => void;
@@ -537,8 +539,14 @@ export const useBoard = create<BoardState>((set, get) => ({
   setSelectedActor: (a) => set({ selectedActor: a }),
   toggleRepo: (repo) =>
     set((g) => ({ selectedRepo: g.selectedRepo === repo ? null : repo })),
-  setCollapsed: (path, open) =>
-    set((g) => ({ collapsed: { ...g.collapsed, [path]: open } })),
+  /* ⚠️ THE ARGUMENT IS "IS IT COLLAPSED", AND IT USED TO BE NAMED `open`.
+     It was always written straight into the `collapsed` map, so the name was
+     the only thing that said otherwise — and tree.tsx believed the name. It
+     passed `!open`, which is `collapsed[path]` again, so every click wrote the
+     value back unchanged and a directory could not be collapsed at any point
+     in zevet's life. Nothing threw; the chevron just never turned. */
+  setCollapsed: (path, collapsed) =>
+    set((g) => ({ collapsed: { ...g.collapsed, [path]: collapsed } })),
   setFollowMode: (m) => {
     try {
       window.localStorage.setItem("zevet.follow.v1", m);
@@ -689,7 +697,15 @@ export const useBoard = create<BoardState>((set, get) => ({
       return;
     }
 
-    if (!c.id) return;
+    /* ⚠️ NOT A SILENT RETURN. The user line and the transcript entry are
+       already appended above, so dropping here showed the prompt as sent and
+       never sent it — the console just sits there. Reachable by typing a
+       second message inside the `startAgent` round trip. Say so instead. */
+    if (!c.id) {
+      pushConsoleLine(c, "err", "still starting — send that again in a moment");
+      signalConsolesChanged();
+      return;
+    }
     bridge.local?.sendToAgent(c.id, text).then((r) => {
       if (r && r.ok === false) {
         pushConsoleLine(c, "err", r.error || "could not send");
@@ -874,9 +890,21 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (g.sessions.loaded && !force) return;
     set((st) => ({ sessions: { ...st.sessions, loading: true, error: "" } }));
     const scoped = g.sessions.scope === "repo" ? g.localRoot : null;
+    /* ⚠️ WHICH SCOPE THIS ANSWER IS FOR. Switching repo/all calls this with
+       force, the guard above returns because a fetch is in flight, and then
+       the OLD fetch resolves and writes its list with loaded:true — so the
+       pane settles showing the scope you just switched away from, and looks
+       settled. Remembering what was asked lets the answer be discarded and
+       the right question asked instead. */
+    const asked = g.sessions.scope;
     bridge.local
       .sessions({ cwd: scoped || null })
-      .then((r) =>
+      .then((r) => {
+        if (get().sessions.scope !== asked) {
+          set((st) => ({ sessions: { ...st.sessions, loading: false } }));
+          get().refreshSessions(true);
+          return;
+        }
         set((st) => ({
           sessions: {
             ...st.sessions,
@@ -885,8 +913,8 @@ export const useBoard = create<BoardState>((set, get) => ({
             loading: false,
             loaded: true,
           },
-        })),
-      )
+        }));
+      })
       .catch((err: unknown) =>
         set((st) => ({
           sessions: { ...st.sessions, loading: false, loaded: true, error: String(err) },
@@ -1199,9 +1227,29 @@ function signalConsolesChanged(): void {
   useBoard.setState({ myConsoles: [...c] });
 }
 
+/**
+ * The console an agent event belongs to.
+ *
+ * The fallback exists because a console is created here the moment you press
+ * Send and only learns its process id when `startAgent` resolves — events can
+ * and do arrive inside that window, and dropping them loses the first line of
+ * every run.
+ *
+ * ⚠️ BUT IT USED TO GUESS. `list.find((c) => c.id === null)` returns the FIRST
+ * console still waiting for an id, so with two agents started close together —
+ * which is the whole point of the rail — B's opening events were folded into
+ * A's transcript, usage, limits and session id. Nothing errors; you get one
+ * console with two runs in it and one that never speaks.
+ *
+ * So the fallback applies only while exactly one console is waiting. With two,
+ * there is no honest answer and the event is dropped rather than misfiled.
+ */
 function consoleById(id: string | null | undefined): ConsoleEntry | undefined {
   const list = useBoard.getState().myConsoles;
-  return list.find((c) => c.id === id) || list.find((c) => c.id === null);
+  const exact = id != null ? list.find((c) => c.id === id) : undefined;
+  if (exact) return exact;
+  const pending = list.filter((c) => c.id === null);
+  return pending.length === 1 ? pending[0] : undefined;
 }
 
 /** Fold one decoded stream-json agent event into the store. */
@@ -1520,6 +1568,15 @@ export function toggleSelection(path: string): void {
   const g = useBoard.getState();
   const next = g.selectedPath === path ? null : path;
   if (next && bridge.local && g.localRoot) {
+    /* ⚠️ THE SELECTION ITSELF WAS NEVER RECORDED. This opened the file and
+       stopped; nothing on either branch below ever SET `selectedPath`, only
+       cleared it. Two consequences, both visible: tree.tsx renders
+       `data-sel={selectedPath === path}` so no row ever highlighted — measured
+       in the running app with 438 files and 0 selected after a click — and
+       `next` above could never come back null, so clicking the open file
+       re-opened it instead of toggling it closed, which is the one thing this
+       function is named for. */
+    useBoard.setState({ selectedPath: next });
     if (window.zevetEditor) openEditor(next);
     else openLocalFile(next);
   } else {

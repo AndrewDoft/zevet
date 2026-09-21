@@ -316,6 +316,14 @@
   .node[data-sel="true"] { background: var(--cerulean-soft); }
   .node[data-sel="true"][data-kind] .name { color: var(--ink); }
   .node:hover { background: var(--raise-soft); }
+  /* The tree is one tab stop and hands focus straight to a row, so the
+     wrapper never shows a ring of its own — but the row it lands on must,
+     or arrowing through 473 files is invisible. */
+  .tree-items:focus { outline: none; }
+  .node:focus-visible {
+    outline: 2px solid var(--cerulean); outline-offset: -2px;
+    background: var(--raise-soft);
+  }
   .node .label { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 0 1 auto; }
   .node .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .node[data-kind="dir"] .name { color: var(--ink); }
@@ -1119,6 +1127,20 @@
      transcript while the agent is running, which is the ordinary way to read
      one) grew the strip and pushed the chat box up, which is exactly what the
      strip was added to stop. Side by side in a fixed line they cannot. */
+  /* ⚠️ AN EMPTY ELEMENT STILL COSTS A FLEX GAP, and this one cost the last
+     16px the chat box ever moved on its own. assistant-ui's thread footer is
+     a flex column with `gap: 16px`, and it renders a suggestions container
+     while the conversation is new and the composer empty. zevet's runtime is
+     an external store over three CLIs and has no suggestion adapter, so that
+     container is ALWAYS empty — measured childElementCount 0, height 0 — but
+     it is still a third child, so the footer was 137px empty and 121px the
+     moment you pressed Send, and the box dropped 16px.
+
+     `:empty` rather than deleting it from the vendored thread: if a
+     suggestion adapter is ever wired up, this stops applying by itself
+     instead of leaving a hole where the suggestions were. */
+  .aui-thread-welcome-suggestions:empty { display: none; }
+
   .chat-underline {
     flex: none; height: 22px; overflow: hidden;
     display: flex; flex-direction: row; align-items: flex-end; gap: 10px;
