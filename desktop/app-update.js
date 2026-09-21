@@ -208,6 +208,11 @@ function readManifest(json, key) {
  * against a real local HTTP server writing into a temp directory — including
  * the cases that matter, which are a feed that lies.
  */
+/** What the Windows installer is run with. See install()'s header for why
+ *  each one is there \u2014 `--force-run` in particular is load-bearing and its
+ *  absence is silent. */
+const INSTALL_ARGS = ["--updated", "/S", "--force-run"];
+
 class AppUpdater {
   constructor(opts) {
     const o = opts || {};
@@ -425,6 +430,36 @@ class AppUpdater {
    * files a running process holds open, and an installer that succeeds at
    * everything except the .exe leaves a broken install. `detached` plus
    * unref'd stdio is what keeps the child alive across our own exit.
+   *
+   * \u26a0\ufe0f `--force-run` IS WHAT MAKES IT COME BACK, and it was missing.
+   * Andrew: "when you download a new version and hit restart to install it
+   * should reopen zevet when the new version installs." It did not - the app
+   * vanished and stayed gone, after a button that said restart.
+   *
+   * The reason is in electron-builder's own NSIS template. zevet ships the
+   * ASSISTED installer (`nsis.oneClick: false`), and installSection.nsh ends:
+   *
+   *     !ifdef ONE_CLICK
+   *       ...
+   *     !else
+   *       # for assisted installer run only if silent, because assisted
+   *       # installer has run after finish option
+   *       ${if} ${isForceRun}
+   *       ${andIf} ${Silent}
+   *         !insertmacro doStartApp
+   *       ${endIf}
+   *     !endif
+   *
+   * `runAfterFinish: true` in the build config only drives the wizard's finish
+   * -page checkbox, and `/S` is precisely the path that never shows it. So a
+   * silent assisted install relaunches on `--force-run` and on nothing else.
+   *
+   * The three flags are electron-updater's own, in its order: `--updated`
+   * tells the installer this replaces a running copy (StartApp passes it on
+   * to the new process), `/S` is NSIS's silent switch, `--force-run` is the
+   * relaunch. There is no race with the single-instance lock: NSIS cannot
+   * replace the .exe until this process is gone, so by the time it reaches
+   * doStartApp the lock is long released.
    */
   async install() {
     if (this.state.phase !== "ready" || !this.state.file) {
@@ -445,7 +480,7 @@ class AppUpdater {
 
     if (this.platform === "win32") {
       try {
-        const child = this.spawnImpl(this.state.file, ["/S"], {
+        const child = this.spawnImpl(this.state.file, INSTALL_ARGS, {
           detached: true,
           stdio: "ignore",
           windowsHide: true,
@@ -488,6 +523,7 @@ class AppUpdater {
 
 module.exports = {
   AppUpdater,
+  INSTALL_ARGS,
   compareVersions,
   platformKey,
   safeArtifactName,

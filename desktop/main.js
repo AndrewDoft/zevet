@@ -39,6 +39,7 @@ const { AppUpdater } = require("./app-update.js");
 const runtime = require("./runtime.js");
 const askServer = require("./ask-server.js");
 const { GithubSignIn } = require("./github-signin.js");
+const masoraVoice = require("./masora-voice.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -2268,6 +2269,17 @@ const appUpdater = new AppUpdater({
     app.exit(0);
   },
 });
+
+/* ========================================================================
+ * MASORA VOICE
+ *
+ * zevet does not transcribe. Masora Voice does, system-wide, into whatever
+ * field has focus — which includes zevet's own composer. All the board asks
+ * for is whether it is installed, and to start it so its flow bar is up.
+ * The whole of why it cannot ask for more is in desktop/masora-voice.js.
+ * ==================================================================== */
+ipcMain.handle("local:voiceStatus", () => masoraVoice.status());
+ipcMain.handle("local:voiceStart", () => masoraVoice.start());
 
 ipcMain.handle("app:updateStatus", () => appUpdater.status());
 ipcMain.handle("app:updateCheck", () => appUpdater.check());

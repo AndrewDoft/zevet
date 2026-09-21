@@ -220,6 +220,12 @@ interface BoardState {
 
   panes: Record<string, number>;
   sheetOpen: boolean;
+  /** Masora Voice is missing and the mic was pressed: the download URL to
+   *  offer, or null. See lib/voice.ts. */
+  voiceAsk: string | null;
+  /** The hold-to-talk chord Masora Voice is bound to, once it has been
+   *  started at least once this run. Its own config decides it. */
+  voiceHotkey: string | null;
 
   myActor: string | null;
 
@@ -272,6 +278,8 @@ interface BoardState {
 
   setPanes: (p: Record<string, number>) => void;
   openSettings: () => void;
+  setVoiceAsk: (url: string | null) => void;
+  setVoiceHotkey: (k: string) => void;
   closeSettings: () => void;
 
   setMyActor: (a: string | null) => void;
@@ -427,6 +435,8 @@ export const useBoard = create<BoardState>((set, get) => ({
     return d;
   })(),
   sheetOpen: false,
+  voiceAsk: null,
+  voiceHotkey: null,
 
   myActor: (bridge.cfg && bridge.cfg.actor) || null,
 
@@ -790,6 +800,8 @@ export const useBoard = create<BoardState>((set, get) => ({
     }
   },
 
+  setVoiceAsk: (url) => set({ voiceAsk: url }),
+  setVoiceHotkey: (k) => set({ voiceHotkey: k }),
   openSettings: () => set({ sheetOpen: true }),
   closeSettings: () => set({ sheetOpen: false }),
 

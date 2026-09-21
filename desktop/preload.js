@@ -183,6 +183,10 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   stats: (root, relPaths) => ipcRenderer.invoke("local:stats", { root, relPaths }),
   commits: (root, limit) => ipcRenderer.invoke("local:commits", { root, limit }),
   memories: (root) => ipcRenderer.invoke("local:memories", { root }),
+  // Masora Voice: is it installed, and start it so its flow bar comes up.
+  // See desktop/masora-voice.js for why there is no "start recording".
+  voiceStatus: () => ipcRenderer.invoke("local:voiceStatus"),
+  voiceStart: () => ipcRenderer.invoke("local:voiceStart"),
   resumeAgent: (agent, cwd, resumeFrom, opts) =>
     ipcRenderer.invoke("local:resumeAgent", { agent, cwd, resumeFrom, opts }),
   agentSettings: (root) => ipcRenderer.invoke("local:agentSettings", { root }),

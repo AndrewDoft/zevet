@@ -179,57 +179,65 @@ const FOLLOW_LABEL: Record<string, string> = {
   off: "Follow off",
 };
 
+/**
+ * Which agents' file activity the tree follows.
+ *
+ * ⚠️ RENDERED BY App.tsx, BESIDE "People" - not by the tree. It used to sit in
+ * the Files column's own header, which was then a whole `.pane-title` row
+ * holding nothing else. Andrew: "move the follow mine/all/off to next to
+ * people, so you can move the file tree up." It reads as a People control
+ * anyway: mine/all/off is a statement about WHOSE work to watch.
+ */
+export function FollowControl({ blanked }: { blanked?: boolean }) {
+  const followMode = useBoard((s) => s.followMode);
+  const setFollowMode = useBoard((s) => s.setFollowMode);
+  if (blanked) return null;
+  return (
+    /* Was a native <select>. On Windows the OS draws that popup in its own
+       colours, so in dark mode it opened as a white menu - the one piece of
+       the board that never followed the theme. */
+    <Select
+      value={followMode}
+      onValueChange={(v: string | null) => { if (v) setFollowMode(v as "mine" | "all" | "off"); }}
+    >
+      <SelectTrigger id="followSel" className="follow" size="sm" aria-label="Follow agent activity">
+        <SelectValue>{(v: string) => FOLLOW_LABEL[v] ?? v}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {Object.entries(FOLLOW_LABEL).map(([value, label]) => (
+          <SelectItem value={value} key={value}>
+            {label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function TreeFill({ blanked }: { blanked?: boolean }) {
-  const selectedRepo = useBoard((s) => s.selectedRepo);
   const needsToken = useBoard((s) => s.needsToken);
   const conn = useBoard((s) => s.conn);
-  const followMode = useBoard((s) => s.followMode);
   const localTruncated = useBoard((s) => s.localTruncated);
-  const setFollowMode = useBoard((s) => s.setFollowMode);
   useBoard(selectEvents);
   const built = buildTree();
   const any = Object.keys(built.root.children).length > 0;
 
   return (
     <div className="treecol">
-      <div className="pane-title row">
-        {/* !! NO TITLE TEXT. It said "Files - zevet", and both halves were
-            already on screen: the column is visibly a file tree, and the repo
-            is named by the picker in the rail. Andrew: "get rid of files -
-            zevet (or whatever repo) at the top. that is superfluous."
+      {/* !! NO HEADER ROW, so the tree starts at the top of its column.
+          Andrew: "move the follow mine/all/off to next to people, so you can
+          move the file tree up." The row held a screen-reader-only title and
+          the follow control, and the control now lives beside People - see
+          FollowControl above.
 
-            The ROW stays, and must: `.pane-title` carries
-            `-webkit-app-region: drag`, so these strips are the only thing
-            holding the window (the native caption is hidden - see the title
-            bar note in masora.css). It holds the follow control now.
-
-            ASCII only in here: this is JSX TEXT, not a string literal, so an
-            escape written in a comment renders as itself and a real em dash
-            trips test/board-jsx.test.mjs. */}
-        <span id="filesTitle" className="sr-only">
-          {selectedRepo ? "Files \u2014 " + selectedRepo : "Files"}
-        </span>
-        {/* Was a native <select>. On Windows the OS draws that popup in its own
-            colours, so in dark mode it opened as a white menu — the one piece
-            of the board that never followed the theme. */}
-        {!blanked ? (
-          <Select
-            value={followMode}
-            onValueChange={(v: string | null) => { if (v) setFollowMode(v as "mine" | "all" | "off"); }}
-          >
-            <SelectTrigger id="followSel" className="follow" size="sm" aria-label="Follow agent activity">
-              <SelectValue>{(v: string) => FOLLOW_LABEL[v] ?? v}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(FOLLOW_LABEL).map(([value, label]) => (
-                <SelectItem value={value} key={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : null}
-      </div>
+          WHAT IS LEFT IS A GRIP, and it has to be. `.pane-title` carries
+          `-webkit-app-region: drag`, and the native caption is hidden (see
+          the title bar note in masora.css), so these strips are the only
+          thing holding this window. Deleting the row outright would leave the
+          middle third of the window's top edge ungrabbable - and put a
+          clickable file row exactly where someone aims to move the window.
+          10px instead of 40. */}
+      <div className="pane-title treecol-grip" aria-hidden="true" />
       <div className="pane-body" id="treeBody">
         <div className="tree" id="tree">
           {!blanked && any ? <TreeSummary /> : null}

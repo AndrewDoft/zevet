@@ -181,14 +181,30 @@ describe("repo wording", () => {
     assert.ok(tree.includes("Follow mine"), "follow control missing");
   });
 
-  test("the Files column does not print the repo name back at you", () => {
-    // "Files — zevet" said two things already on screen: the column is
-    // visibly a file tree, and the rail's picker names the open repo.
-    // Andrew: "that is superfluous". The row itself must stay — .pane-title
-    // carries -webkit-app-region: drag and is the only handle this window has.
+  test("the Files column has no header, but keeps a grip on the window", () => {
+    // Two asks, one row. "Files — zevet" said two things already on screen,
+    // so the title went; then "move the follow mine/all/off to next to
+    // people, so you can move the file tree up" took the last thing in that
+    // row and the row itself with it.
+    //
+    // ⚠️ WHAT MUST NOT GO IS THE DRAG REGION. `.pane-title` carries
+    // -webkit-app-region: drag and the native caption is hidden, so those
+    // strips are the only thing holding this window. Deleting the row
+    // outright would leave the middle third of the top edge ungrabbable and
+    // put a clickable file row where somebody aims to move the window.
     const tree = src("components/tree.tsx");
-    assert.ok(tree.includes('className="pane-title row"'), "the drag handle row is gone");
-    assert.match(tree, /id="filesTitle"[^>]*className="sr-only"/,
-      "the Files title is visible again");
+    const css = readFileSync(path.join(ROOT, "board", "src", "styles", "masora.css"), "utf8");
+    assert.ok(tree.includes("treecol-grip"), "the drag grip is gone from the Files column");
+    assert.match(tree, /className="pane-title treecol-grip"/,
+      "the grip must keep the pane-title class, which is what carries the drag region");
+    assert.match(css, /\.treecol-grip\s*\{[^}]*height:/, "the grip has no height rule");
+    assert.ok(!tree.includes('id="filesTitle"'), "the Files title text is back");
+  });
+
+  test("the follow control is in the rail, beside People", () => {
+    const app = src("App.tsx");
+    const tree = src("components/tree.tsx");
+    assert.ok(tree.includes("export function FollowControl"), "FollowControl is not exported");
+    assert.ok(app.includes("<FollowControl"), "the rail does not render the follow control");
   });
 });

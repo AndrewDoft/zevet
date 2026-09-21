@@ -10,10 +10,11 @@ import { UpdateRow } from "./components/updaterow";
 import { Consoles } from "./components/consoles";
 import { Conversation } from "./components/conversation";
 import { ConsoleRuntimeProvider } from "./lib/runtime";
-import { TreeFill } from "./components/tree";
+import { FollowControl, TreeFill } from "./components/tree";
 import { DetailPane } from "./components/detail";
 import { SettingsSheet } from "./components/settings";
 import { UpdateDialog } from "./components/updatedialog";
+import { VoiceDialog } from "./components/voicedialog";
 import {
   applyPanes,
   applyTheme,
@@ -117,7 +118,14 @@ function App() {
     <ConsoleRuntimeProvider>
       <div className="shell" inert={sheetOpen ? true : undefined}>
         <aside className="pane rail">
-          <div className="pane-title">People</div>
+          {/* The follow control sits here now, not in the Files column's own
+              header - which let that header go, and the tree start at the top
+              of its column. It is a People control by meaning as well as by
+              position: mine/all/off says whose work to watch. */}
+          <div className="pane-title row">
+            <span>People</span>
+            <FollowControl blanked={blanked} />
+          </div>
           <div className="pane-body" id="people">
             <PeoplePane />
           </div>
@@ -174,6 +182,7 @@ function App() {
       <SettingsSheet />
       <Palette />
       <UpdateDialog />
+      <VoiceDialog />
     </ConsoleRuntimeProvider>
   );
 }

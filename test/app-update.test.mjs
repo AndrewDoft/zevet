@@ -499,7 +499,14 @@ describe("installing", () => {
       assert.equal(calls[0][0], file);
       // /S is NSIS's silent switch. Without it the person watches a wizard
       // they did not ask for, after clicking a button that said "restart".
-      assert.deepEqual(calls[0][1], ["/S"]);
+      //
+      // --force-run is what brings the app BACK, and it is the whole reason
+      // this assertion lists the args rather than just checking for /S. zevet
+      // ships the assisted installer (nsis.oneClick: false), and
+      // electron-builder's installSection.nsh relaunches an assisted silent
+      // install only when isForceRun is set. Without it the app quits to
+      // install and never returns, after a button that said "restart".
+      assert.deepEqual(calls[0][1], ["--updated", "/S", "--force-run"]);
       assert.equal(calls[0][2].detached, true);
       // The quit is on a short timer so the child is running before we go.
       await new Promise((r2) => setTimeout(r2, 900));

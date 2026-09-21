@@ -17,7 +17,7 @@ import { useEffect, useState } from "react";
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { Launcher } from "./launcher";
-import { DictationOrb } from "./brand";
+import { VoiceHint } from "./voicedialog";
 import { ListenShelf } from "./speech";
 import { PostureNotice, QuoteToComposer } from "./guards";
 import { QuotaNotice } from "./quota";
@@ -157,10 +157,16 @@ export function Conversation() {
             no height — it sits inside the viewport, against the wall. */}
         <ThreadMap />
       </div>
-      {/* The mic is inside the composer, which is inside the Thread; this is
-          the state of it, where there is room to see it. Renders nothing
-          unless dictation is actually running. */}
-      <DictationOrb />
+      {/* ⚠️ THE DICTATION ORB IS GONE. It rendered an unstyled white
+          rectangle at the bottom of this column the moment the mic was
+          pressed — Andrew: "something goes up and it looks weird" — and it
+          was driven by a Web Speech session that never worked in Electron
+          anyway. Nothing replaces it as an indicator, because there is
+          nothing in zevet to indicate: Masora Voice draws its own flow bar,
+          in its own process, over every window. What IS left is one line
+          saying which key to hold, because the mic starts the app and cannot
+          start the recording. */}
+      <VoiceHint />
       {/* Appears only while text is selected in the transcript. */}
       <QuoteToComposer />
       {/* A half-written prompt survives a reload now. Offered only while the

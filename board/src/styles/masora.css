@@ -283,6 +283,10 @@
 
   /* Follow control + resizable panes. */
   .pane-title.row { justify-content: space-between; }
+  /* The Files column has no header any more, only the grip that keeps its
+     third of the window's top edge draggable. 10px instead of 40, which is
+     the height the tree moved up by. */
+  .treecol-grip { height: 10px; padding: 0; flex: none; }
   /* The Files title is screen-reader-only now, so it is out of flow and
      space-between has nothing to push against. Keep the follow control where
      it has always been: hard right. */
@@ -325,6 +329,19 @@
   .mark[data-stale="true"] { opacity: 0.28; }
   .node[data-collide="true"] { background: color-mix(in srgb, var(--alert) 9%, transparent); }
   .node[data-collide="true"] .name { color: var(--alert); }
+
+  /* One line under the composer, after the mic has raised Masora Voice's flow
+     bar. Not a banner: it says which key to hold and gets out of the way. */
+  .voice-hint {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 6px 16px 2px; font-size: 11.5px; color: var(--ink-muted);
+  }
+  .voice-hint kbd {
+    font-family: var(--font-mono); font-size: 11px; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 3px; padding: 0 4px;
+  }
+  .voice-hint button { color: var(--subtle); font-size: 13px; line-height: 1; flex: none; }
+  .voice-hint button:hover { color: var(--ink); }
 
   .empty-tree { padding: 30px 18px; color: var(--ink-muted); font-size: 13px; max-width: 46ch; }
   /* "showing the first N entries", at the end of the list it describes. */

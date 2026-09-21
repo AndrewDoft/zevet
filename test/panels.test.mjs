@@ -150,7 +150,10 @@ describe("voice and queuing", () => {
   test("the adapter is built once, not per render", () => {
     // It holds a SpeechRecognition session; a new one each render drops the
     // one that is listening.
-    assert.match(runtime, /const dictation = useMemo\(\(\) => new WebSpeechDictationAdapter\(\), \[\]\)/);
+    // The mic runs Masora Voice now, not the browser's Web Speech API - which
+    // in Electron has no backend at all (it logged `Dictation error:
+    // network` and flashed an unstyled white box). See lib/voice.ts.
+    assert.match(runtime, /new MasoraVoiceDictationAdapter\(/);
   });
 
   test("only multi-turn agents get a queue, and only while one is running", () => {

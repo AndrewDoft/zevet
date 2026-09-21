@@ -23,7 +23,6 @@ import {
   AssistantRuntimeProvider,
   CompositeAttachmentAdapter,
   SimpleTextAttachmentAdapter,
-  WebSpeechDictationAdapter,
   createMessageQueue,
   type AppendMessage,
   type ExternalStoreThreadData,
@@ -32,6 +31,7 @@ import {
 } from "@assistant-ui/react";
 import { selectActiveConsole, selectMyConsoles, useBoard } from "./board";
 import { bridge } from "./bridge";
+import { MasoraVoiceDictationAdapter } from "./voice";
 import { MULTI_TURN } from "./constants";
 import { ToolUIs } from "../components/tools";
 import type { ConsoleEntry } from "./types";
@@ -100,18 +100,33 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     [consoles],
   );
 
-  /* DICTATION.
+  /* DICTATION — MASORA VOICE, not the browser.
    *
-   * Built once, not per render: it holds a SpeechRecognition session, and a new
-   * adapter on every render would drop the one that is listening.
+   * ⚠️ THIS WAS `new WebSpeechDictationAdapter()`, and in Electron that API
+   * has no backend: pressing the mic logged `Dictation error: network` and
+   * flashed an unstyled white rectangle at the bottom of the conversation.
+   * Andrew: "when i hit the microphone there is an issue, and something goes
+   * up and it looks weird", and then what it should do instead — "it turns on
+   * the masora voice flow bar. if masora voice is not downloaded, you get a
+   * pop up to download it."
    *
-   * ⚠️ THIS IS NOT MASORA. Masora's dictation is a local service that types
-   * into whatever field has focus, so it already works with this composer and
-   * needs nothing from zevet; its HTTP surface is enrollment and key renewal,
-   * not transcription. What this adds is a mic IN the composer, which works
-   * without Masora installed. Pointing it at a transcription endpoint later is
-   * a change to this one line. */
-  const dictation = useMemo(() => new WebSpeechDictationAdapter(), []);
+   * The comment this replaces said Masora "needs nothing from zevet" and was
+   * right about the mechanism — Masora Voice types into the focused field, so
+   * no transcript comes back through this adapter — but wrong about the
+   * conclusion: somebody has to turn it ON, and the mic is where a person
+   * reaches for that. See lib/voice.ts and desktop/masora-voice.js.
+   *
+   * Built once, not per render, same as before. */
+  const setVoiceAsk = useBoard((s) => s.setVoiceAsk);
+  const setVoiceHotkey = useBoard((s) => s.setVoiceHotkey);
+  const dictation = useMemo(
+    () =>
+      new MasoraVoiceDictationAdapter({
+        onMissing: (url) => setVoiceAsk(url),
+        onStarted: (key) => setVoiceHotkey(key),
+      }),
+    [setVoiceAsk, setVoiceHotkey],
+  );
 
   const messages = active?.transcript.messages ?? NO_MESSAGES;
   /** An assistant message is open, so the agent is mid-answer. */
