@@ -299,7 +299,7 @@ function closeOpenTurn(state) {
  */
 export function sessionLabel(session) {
   const s = session || {};
-  const raw = unwrap(text(s.title) || text(s.prompt)) || text(s.id) || "session";
+  const raw = unwrapEnvelope(text(s.title) || text(s.prompt)) || text(s.id) || "session";
   const one = raw.replace(/\s+/g, " ").trim();
   return one.length > 72 ? `${one.slice(0, 71)}…` : one;
 }
@@ -319,7 +319,7 @@ export function sessionLabel(session) {
  *
  * @param {string} prompt
  */
-function unwrap(prompt) {
+export function unwrapEnvelope(prompt) {
   let out = String(prompt || "").trim();
   // Bounded rather than `while (true)`: a handful of envelopes is the real
   // shape, and a pathological prompt must not spin the render.

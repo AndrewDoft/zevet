@@ -281,7 +281,11 @@
      share, so the list would scroll inside a box of a few dozen pixels while
      the pane around it had room to spare. Flatten it and let `#people` do the
      one scroll. */
-  .person-sessions { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  /* ⚠️ SHRINK-ONLY, NEVER GROW. With `1 1 auto` the list claimed every spare
+     pixel even with every group collapsed, and the teammates under it were
+     pushed to the bottom of the pane behind a band of empty rail. `0 1 auto`
+     takes the height the rows actually need and gives back the rest. */
+  .person-sessions { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0; }
   .person-sessions > .pane-title { padding-left: 26px; flex: none; }
   .person-sessions > .pane-body { min-height: 0; }
 
@@ -296,7 +300,7 @@
   #people > * { flex: none; }
   #people > .person-wrap:has(.person-sessions) {
     display: flex; flex-direction: column;
-    flex: 1 1 auto; min-height: 0;
+    flex: 0 1 auto; min-height: 0;
   }
 
   /* The rail's last row. It had a "Repos" header above it and 10px under it;

@@ -99,6 +99,7 @@ export function sessionTranscript(
   records: readonly SessionRecord[] | null | undefined,
   opts?: { cwd?: string | null; source?: string },
 ): TranscriptState;
+export function unwrapEnvelope(prompt: string): string;
 export function sessionLabel(session: { title?: string; prompt?: string; id?: string }): string;
 export function sessionWhere(session: { surface?: string; origin?: string }): string;
 export function sessionProject(session: { cwd?: string; slug?: string }): string;
