@@ -166,6 +166,35 @@ describe("diff stats", { skip: HAVE_GIT ? false : "git is not installed" }, () =
     assert.equal(byPath.size, 0);
   });
 
+  test("a workspace INSIDE a repo gets workspace-relative keys, not repo-relative", async () => {
+    /* ⚠️ git PRINTS THESE RELATIVE TO THE REPOSITORY ROOT and the tree's
+       rows are relative to the WORKSPACE. Those are the same string only when
+       the workspace IS the root -- and the workspace picker is a folder
+       dialog, so opening a subdirectory is an ordinary thing to do. Before
+       --show-prefix every key came back as `sub/a.txt` against a row called
+       `a.txt`, nothing matched, and ok:true made the tree draw a dirty repo as
+       clean. Both the tracked and the untracked path are checked, because they
+       come from two different git commands. */
+    const { repo, g } = makeRepo("subdir");
+    mkdirSync(path.join(repo, "sub"), { recursive: true });
+    writeFileSync(path.join(repo, "sub", "a.txt"), "one\n");
+    writeFileSync(path.join(repo, "top.txt"), "top\n");
+    g("add", "-A");
+    g("commit", "-qm", "first");
+    writeFileSync(path.join(repo, "sub", "a.txt"), "one\ntwo\n");
+    writeFileSync(path.join(repo, "sub", "new.txt"), "fresh\n");
+
+    const fromRoot = await diffStats(repo);
+    assert.deepEqual([...fromRoot.byPath.keys()].sort(), ["sub/a.txt", "sub/new.txt"]);
+
+    const fromSub = await diffStats(path.join(repo, "sub"));
+    assert.equal(fromSub.ok, true);
+    assert.deepEqual([...fromSub.byPath.keys()].sort(), ["a.txt", "new.txt"]);
+    // And a change OUTSIDE the workspace has no row in it, so it is dropped
+    // rather than keyed to something the tree cannot show.
+    assert.equal(fromSub.byPath.has("top.txt"), false);
+  });
+
   test("a modified file reports added and removed", async () => {
     const { repo, g } = makeRepo("modified");
     writeFileSync(path.join(repo, "a.txt"), "one\ntwo\nthree\n");

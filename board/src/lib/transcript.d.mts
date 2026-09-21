@@ -34,6 +34,7 @@ export type TranscriptEvent =
 export function emptyTranscript(): TranscriptState;
 export function appendUserText(state: TranscriptState, text: string): TranscriptState;
 export function appendRaw(state: TranscriptState, text: string): TranscriptState;
+export function appendLine(state: TranscriptState, text: string): TranscriptState;
 export function appendAgentPayload(
   state: TranscriptState,
   payload: unknown,

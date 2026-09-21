@@ -130,6 +130,31 @@ export function appendRaw(state, text) {
 }
 
 /**
+ * A COMPLETE line or notice, rather than a streaming fragment.
+ *
+ * ⚠️ appendStreamed DELIBERATELY ADDS NO SEPARATOR, because a token stream
+ * must not gain whitespace it was never sent. Everything that arrives whole
+ * went through it anyway, so consecutive stdout lines were run together:
+ * "npm notice new version availablenpm notice run npm i -g npm", measured, and
+ * a codex error notice landed inside the sentence before it —
+ * "The fix is in place.codex: skill descriptions shortenedAnything else?".
+ *
+ * So a unit that is already a whole line says so, and gets a newline in front
+ * of it when the text it is joining does not already end in one. stderr keeps
+ * using appendRaw: it is NOT line-split on the desktop side, on purpose,
+ * because progress bars and ANSI do not survive being cut at newlines.
+ */
+export function appendLine(state, text) {
+  const t = String(text ?? "");
+  if (!t) return state;
+  const open = state.openIndex >= 0 ? state.messages[state.openIndex] : null;
+  const content = open && Array.isArray(open.content) ? open.content : null;
+  const last = content ? content[content.length - 1] : null;
+  const joins = last && last.type === "text" && last.text && !last.text.endsWith("\n");
+  return appendStreamed(state, "text", joins ? "\n" + t : t);
+}
+
+/**
  * One `{type:"agent", payload}` event.
  *
  * `agent` selects the vocabulary. An unrecognised payload is NOT dropped — it
@@ -176,7 +201,7 @@ export function assembleTranscript(events, opts = {}) {
     if (!e) continue;
     if (e.type === "you") state = appendUserText(state, e.text);
     else if (e.type === "agent") state = appendAgentPayload(state, e.payload, opts);
-    else if (e.type === "stdout-line") state = appendRaw(state, e.line);
+    else if (e.type === "stdout-line") state = appendLine(state, e.line);
     else if (e.type === "stderr") state = appendRaw(state, e.text);
     else if (e.type === "exit") state = closeTranscript(state, e);
   }
@@ -438,7 +463,11 @@ function fromCodex(state, p, root) {
   if (p.type === "item.started" || p.type === "item.completed" || p.type === "item.updated") {
     const item = p.item || {};
     if (item.type === "agent_message") {
-      return appendStreamed(state, "text", String(item.text ?? ""));
+      const text = String(item.text ?? "");
+      // A COMPLETED item is a whole message and needs a line of its own — it
+      // is what lands either side of a `codex:` notice. `started`/`updated`
+      // may still be filling in, so those keep the streaming join.
+      return p.type === "item.completed" ? appendLine(state, text) : appendStreamed(state, "text", text);
     }
     if (item.type === "reasoning") {
       return appendStreamed(state, "reasoning", String(item.text ?? ""));
@@ -448,7 +477,7 @@ function fromCodex(state, p, root) {
        finished normally — so it is shown rather than used to end the turn. */
     if (item.type === "error") {
       const message = String(item.message ?? "");
-      return message ? appendRaw(state, `codex: ${message}`) : state;
+      return message ? appendLine(state, `codex: ${message}`) : state;
     }
     if (item.type === "command_execution" || item.type === "file_change" || item.type === "mcp_tool_call") {
       const callId = item.id || nextId();

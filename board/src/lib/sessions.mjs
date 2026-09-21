@@ -268,10 +268,22 @@ export function sessionTranscript(records, opts = {}) {
 }
 
 function closeOpenTurn(state) {
-  if (state.openIndex < 0) return state;
-  const messages = state.messages.slice();
-  const at = state.openIndex;
-  messages[at] = { ...messages[at], status: { type: "complete", reason: "stop" } };
+  /* ⚠️ EVERY UNFINISHED TURN, NOT JUST THE OPEN ONE. This closed
+     `state.openIndex` and stopped, which is only the LAST turn. The earlier
+     ones are closed during assembly by the arrival of the next user message —
+     and claude's session files carry no `result` records, so nothing ever
+     gives them a terminal status and they keep the `running` they were born
+     with. Measured on a six-record session: every assistant turn but the last
+     came back `{"type":"running"}`, so reading a conversation that ended last
+     Tuesday showed a column of spinners that never resolve. */
+  let changed = state.openIndex >= 0;
+  const messages = state.messages.map((m) => {
+    if (!m || m.role !== "assistant") return m;
+    if (m.status && m.status.type !== "running") return m;
+    changed = true;
+    return { ...m, status: { type: "complete", reason: "stop" } };
+  });
+  if (!changed) return state;
   return { ...state, messages, openIndex: -1, running: false };
 }
 

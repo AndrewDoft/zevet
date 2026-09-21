@@ -44,6 +44,17 @@
  *   worth rearranging. Below it there is no dropdown to win and reordering
  *   would cost the interleaving for nothing.
  */
+/* ⚠️ THE REARRANGED MESSAGE HAS TO KEEP ITS IDENTITY. assistant-ui memoises
+   a message by reference, and `{...m, content}` mints a fresh object on every
+   call — so a turn that needed rearranging re-rendered on every store update,
+   which for a chatty run is every few milliseconds. Returning `m` itself
+   already covers the turns that need no change; this covers the rest.
+
+   WeakMap, keyed on the INPUT message: the store replaces a message object
+   whenever it changes, so a changed turn is a new key and is recomputed, and
+   nothing here keeps a message alive. */
+const rearranged = new WeakMap();
+
 export function groupTurnTools(messages, opts = {}) {
   const min = Number.isFinite(opts.min) ? Number(opts.min) : 2;
   if (!Array.isArray(messages) || !messages.length) return messages;
@@ -67,7 +78,11 @@ export function groupTurnTools(messages, opts = {}) {
     if (firstTool === rest.length) return m;
 
     changed = true;
-    return { ...m, content: rest.concat(tools) };
+    const seen = rearranged.get(m);
+    if (seen) return seen;
+    const next = { ...m, content: rest.concat(tools) };
+    rearranged.set(m, next);
+    return next;
   });
 
   return changed ? out : messages;
