@@ -897,17 +897,25 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (g.sessions.loaded && !force) return;
     set((st) => ({ sessions: { ...st.sessions, loading: true, error: "" } }));
     const scoped = g.sessions.scope === "repo" ? g.localRoot : null;
-    /* ⚠️ WHICH SCOPE THIS ANSWER IS FOR. Switching repo/all calls this with
-       force, the guard above returns because a fetch is in flight, and then
-       the OLD fetch resolves and writes its list with loaded:true — so the
-       pane settles showing the scope you just switched away from, and looks
-       settled. Remembering what was asked lets the answer be discarded and
-       the right question asked instead. */
-    const asked = g.sessions.scope;
+    /* ⚠️ WHAT THIS ANSWER IS AN ANSWER TO — the scope AND the folder, because
+       a repo-scoped question is different the moment the folder changes.
+       Either can change while the fetch is in flight, the `loading` guard
+       above swallows the re-fire, and the old answer then lands with
+       loaded:true and is never corrected.
+
+       The folder half was the one that bit on every launch: the pane mounts
+       and fetches while `localRoot` is still null, so a "repo"-scoped request
+       goes out with cwd null and the desktop side answers with EVERY session
+       on the machine; `restoreLastRoot` then opens the folder, the effect
+       re-fires, the guard eats it, and the pane settled showing all 127
+       sessions with "This repo" reading as pressed. */
+    const asked = { scope: g.sessions.scope, cwd: scoped };
     bridge.local
       .sessions({ cwd: scoped || null })
       .then((r) => {
-        if (get().sessions.scope !== asked) {
+        const st0 = get();
+        const nowWant = st0.sessions.scope === "repo" ? st0.localRoot : null;
+        if (st0.sessions.scope !== asked.scope || nowWant !== asked.cwd) {
           set((st) => ({ sessions: { ...st.sessions, loading: false } }));
           get().refreshSessions(true);
           return;

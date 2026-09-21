@@ -63,7 +63,17 @@ export function BackgroundInbox() {
   // "since zevet's UI last looked" rather than the exact process-exit tick.
   const finishedAtRef = useRef<Map<number, number>>(new Map());
   for (const c of consoles) {
-    if (!c.running && !finishedAtRef.current.has(c.key)) {
+    /* ⚠️ FORGET THE STAMP WHILE IT RUNS, or a console is only ever reported
+       ONCE. A console is not finished for good: asking it a follow-up flips
+       `running` back on (board.ts § sendPrompt, the resume branch). The stamp
+       used to be written only if the key was absent, so the second and every
+       later completion kept the FIRST finish time — which by then is older
+       than `seenConsole[key]`, because you have viewed the console since. The
+       comparison below fails and the run is silently dropped from "what
+       happened while you were looking at something else", which is the one
+       thing this panel exists to say. */
+    if (c.running) finishedAtRef.current.delete(c.key);
+    else if (!finishedAtRef.current.has(c.key)) {
       finishedAtRef.current.set(c.key, Date.now());
     }
   }

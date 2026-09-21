@@ -109,8 +109,16 @@ export function AskAgain() {
 
 export function EditAndAsk() {
   const active = useBoard(selectActiveConsole);
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
+  /* ⚠️ THE EDIT IS KEYED TO THE CONSOLE IT BELONGS TO. It used to be a bare
+     `editing` boolean and a bare string, and nothing remounts this on a
+     console switch — so starting an edit and then changing runs (Branches
+     below, or the background inbox) left the old run's words in the box and
+     saved them against the NEW console: `forkConsole(active.key, text)`
+     branched a run you had not been editing, from a prompt that was not its
+     own. Comparing the key makes the edit simply not apply to another run. */
+  const [edit, setEdit] = useState<{ key: number; value: string } | null>(null);
+  const editing = edit != null && active != null && edit.key === active.key;
+  const value = edit ? edit.value : "";
   const original = active ? textOf(lastUserMessage(active.transcript.messages)?.content) : "";
 
   if (!active || !active.sessionId || active.running || !original) return null;
@@ -129,16 +137,13 @@ export function EditAndAsk() {
         // sending — 0 is the honest count, not a placeholder.
         discardedReplies={0}
         editing={editing}
-        onValueChange={setValue}
-        onStartEdit={() => {
-          setValue(original);
-          setEditing(true);
-        }}
-        onCancel={() => setEditing(false)}
+        onValueChange={(v: string) => setEdit({ key: active.key, value: v })}
+        onStartEdit={() => setEdit({ key: active.key, value: original })}
+        onCancel={() => setEdit(null)}
         onSave={() => {
           const text = value.trim();
           if (text) forkConsole(active.key, text);
-          setEditing(false);
+          setEdit(null);
         }}
       />
     </div>
