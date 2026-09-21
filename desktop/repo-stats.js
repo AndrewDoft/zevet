@@ -83,6 +83,24 @@ async function diffStats(rootDir) {
   const head = await git(rootDir, ["rev-parse", "--verify", "HEAD"]);
   const base = head && head.trim() ? "HEAD" : EMPTY_TREE;
 
+  /* ⚠️ GIT PRINTS THESE RELATIVE TO THE REPOSITORY ROOT, and the tree
+     rows are relative to the WORKSPACE. Those are the same string only when
+     the workspace IS the repository root -- and local:addWorkspace opens a
+     native folder dialog, so opening `repo/desktop` is an ordinary thing to
+     do. There every key came back as `desktop/main.js` against a row called
+     `main.js`, nothing matched, and `ok: true` made the tree draw the whole
+     repo as clean rather than as "no git info".
+
+     `--show-prefix` is exactly this offset and is empty when the workspace
+     is the root, so the common case is untouched. diffHunks below is NOT
+     affected: there the path is a pathspec, which git does resolve against
+     the cwd -- the two behaving differently is what confirms this. */
+  const prefixRaw = await git(rootDir, ["rev-parse", "--show-prefix"]);
+  const prefix = prefixRaw === null ? "" : prefixRaw.trim();
+  /** A repo-root-relative path as the workspace sees it, or null when it is
+   *  outside the workspace, which the tree has no row for. */
+  const local = (rel) => (!prefix ? rel : rel.startsWith(prefix) ? rel.slice(prefix.length) : null);
+
   const numstat = await git(rootDir, ["diff", "--numstat", base]);
   if (numstat === null) return empty;
 
@@ -100,7 +118,9 @@ async function diffStats(rootDir) {
     // field. Take the last path; the row the user is looking at is the new one.
     const rel = parts.slice(2).join("\t");
     const binary = a === "-" || r === "-";
-    byPath.set(renamedTo(rel), {
+    const key = local(renamedTo(rel));
+    if (key === null) continue;
+    byPath.set(key, {
       added: binary ? null : Number(a),
       removed: binary ? null : Number(r),
       status: "modified",
@@ -115,11 +135,20 @@ async function diffStats(rootDir) {
     for (const line of porcelain.split("\n")) {
       if (!line.startsWith("?? ")) continue;
       const rel = line.slice(3).trim().replace(/^"|"$/g, "");
-      if (!byPath.has(rel)) byPath.set(rel, { added: null, removed: 0, status: "untracked" });
+      const key = local(rel);
+      if (key === null) continue;
+      if (!byPath.has(key)) byPath.set(key, { added: null, removed: 0, status: "untracked" });
     }
   }
 
-  return { byPath, ok: true };
+  /* ⚠️ `ok` ANSWERS FOR BOTH CALLS. It used to be a literal true, so a
+     `status` that timed out on a cold tree or blew maxBuffer dropped every
+     untracked file and still reported a COMPLETE answer -- and main.js turns
+     `ok` into "draw this diff" versus "say nothing is known". The tree then
+     showed a repo full of new files as having none, confidently, which is
+     the exact failure the comment above this block exists to prevent. An
+     incomplete answer is worth less than no answer here. */
+  return { byPath, ok: porcelain !== null };
 }
 
 /**

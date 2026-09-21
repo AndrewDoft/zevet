@@ -454,36 +454,73 @@ function timeoutSignal() {
  * the buffered path, which is fine for the small bodies a test uses.
  */
 async function download(ctx, url, dest, onBytes) {
-  const res = await fetcher(ctx)(url, { redirect: "follow", signal: timeoutSignal() });
-  if (!res || !res.ok) {
-    const code = res && res.status ? res.status : "no response";
-    throw new EmbedderError(
-      `huggingface.co answered ${code} for ${url} — if that is 404 the model id is wrong, ` +
-        `otherwise wait and try again. Nothing was written.`,
-    );
-  }
+  /* ⚠️ A STALL TIMEOUT, NOT A DEADLINE ON THE WHOLE TRANSFER. This used to
+     pass `timeoutSignal()` -- `AbortSignal.timeout(60000)`, created before the
+     request -- and undici ties that signal to the RESPONSE BODY as well as the
+     headers. So the loop below was aborted 60 seconds after the request
+     started however much progress it had made, and the 86MB model therefore
+     needed ~1.4 MB/s sustained (about 12 Mbit) to arrive at all. Below that it
+     failed every single time, the half-written temp directory was deleted, and
+     the error told the person to "check the network and enable the code index
+     again", which reproduces it identically.
 
-  let loaded = 0;
-  const body = res.body;
-  if (body && typeof body[Symbol.asyncIterator] === "function") {
-    const handle = await fsp.open(dest, "w");
-    try {
-      for await (const chunk of body) {
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        await handle.write(buf);
-        loaded += buf.length;
-        onBytes(loaded);
-      }
-    } finally {
-      await handle.close();
+     Re-armed on every chunk, it now means what everyone already reads it as
+     meaning: give up when nothing has ARRIVED for a minute. The HEAD request
+     keeps the plain deadline -- there is no body to stream there.
+
+     ⚠️ AND EVERY EXIT DISARMS IT. A setTimeout nobody clears holds the event
+     loop open for its full duration, so a process that should have exited sits
+     there instead. Caught by measuring the first attempt at this: `npm test`
+     went from 7s to a very round 60.4s, because the 404 throw below skipped
+     the clear. */
+  const ctl = typeof AbortController === "function" ? new AbortController() : null;
+  let idle = null;
+  const arm = () => {
+    if (!ctl) return;
+    if (idle) clearTimeout(idle);
+    idle = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
+  };
+
+  try {
+    arm();
+    const res = await fetcher(ctx)(url, {
+      redirect: "follow",
+      signal: ctl ? ctl.signal : timeoutSignal(),
+    });
+    if (!res || !res.ok) {
+      const code = res && res.status ? res.status : "no response";
+      throw new EmbedderError(
+        `huggingface.co answered ${code} for ${url} — if that is 404 the model id is wrong, ` +
+          `otherwise wait and try again. Nothing was written.`,
+      );
     }
-  } else {
-    const buf = Buffer.from(await res.arrayBuffer());
-    await fsp.writeFile(dest, buf);
-    loaded = buf.length;
-    onBytes(loaded);
+
+    let loaded = 0;
+    const body = res.body;
+    if (body && typeof body[Symbol.asyncIterator] === "function") {
+      const handle = await fsp.open(dest, "w");
+      try {
+        for await (const chunk of body) {
+          arm(); // something arrived: the clock starts again
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          await handle.write(buf);
+          loaded += buf.length;
+          onBytes(loaded);
+        }
+      } finally {
+        await handle.close();
+      }
+    } else {
+      const buf = Buffer.from(await res.arrayBuffer());
+      await fsp.writeFile(dest, buf);
+      loaded = buf.length;
+      onBytes(loaded);
+    }
+    return loaded;
+  } finally {
+    if (idle) clearTimeout(idle);
+    idle = null;
   }
-  return loaded;
 }
 
 /* ========================================================================
