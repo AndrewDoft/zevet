@@ -42,7 +42,9 @@ function str(v: unknown, fallback = ""): string {
  *  every value here goes through PermissionGrant as a plain string child,
  *  never markup, and JSX text interpolation can't be reinterpreted as HTML. */
 function reachFor(p: PermitRequest): string[] {
-  const args = rec(p.args);
+  // `arguments` is the wire name; `args` only for an older desktop build. See
+  // PermitRequest in lib/bridge.ts.
+  const args = rec(p.arguments ?? p.args);
   const out: string[] = [];
   switch (p.tool) {
     case "click": {
@@ -66,6 +68,18 @@ function reachFor(p: PermitRequest): string[] {
       break;
   }
   if (p.detail) out.push(p.detail);
+  /* ⚠️ NEVER AN EMPTY LIST. This card is the only thing standing between an
+     agent and the mouse, and "this grants" with nothing under it is worse than
+     no card — it reads as "nothing much". Anything the switch above has no
+     wording for gets printed as it arrived, and a request that carries nothing
+     at all says so in as many words. Still plain strings: PermissionGrant
+     takes these as text children, so model output cannot become markup. */
+  if (!out.length) {
+    for (const [k, v] of Object.entries(args)) {
+      out.push(`${k}: ${str(v, JSON.stringify(v))}`);
+    }
+  }
+  if (!out.length) out.push("the agent sent no details with this request");
   return out;
 }
 

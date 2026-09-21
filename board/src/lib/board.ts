@@ -724,6 +724,13 @@ export const useBoard = create<BoardState>((set, get) => ({
       // Private mode, cleared site data, a quota that is full: the app works
       // without this and re-picking a folder is not a failure worth reporting.
     }
+    /* ⚠️ THE INDEX LINE BELONGS TO A FOLDER. "done — 812 indexed, 40 skipped"
+       is only ever written and never cleared, so it stayed pinned in Settings
+       after the build that produced it — and after you opened a DIFFERENT
+       repo, where it sat directly under "Index: not built for this folder",
+       contradicting it. Reset alongside `stats` just below, for the same
+       reason: both describe the repo being replaced. */
+    set({ index: { state: null, barPct: 0, progressText: "ready" } });
     set((g) => ({
       stats: { lines: Object.create(null) as Stats["lines"], diff: null, root: null },
       localRoot: dir,

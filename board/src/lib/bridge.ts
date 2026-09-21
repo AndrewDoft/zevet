@@ -103,7 +103,15 @@ export interface PermitRequest {
   id: string;
   /** The MCP tool it wants to call: "click", "type_text", "screenshot"… */
   tool?: string;
-  /** Its arguments, as the agent sent them. Untrusted — it is model output. */
+  /** Its arguments, as the agent sent them. Untrusted — it is model output.
+   *
+   *  ⚠️ THE WIRE NAME IS `arguments`. zevet-mcp.js posts `{ tool, arguments }`,
+   *  ask-server.js hands that body through unchanged and main.js spreads it
+   *  onto the event — so `args` was never once populated and the card that
+   *  asks you to hand an agent the mouse showed an empty list of what it would
+   *  do. Both are declared because the board ships over the hub and runs
+   *  against whatever desktop build is installed. */
+  arguments?: Record<string, unknown>;
   args?: Record<string, unknown>;
   /** claude's own description of what it wants, when it sends one. */
   detail?: string;

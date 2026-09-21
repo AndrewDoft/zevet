@@ -185,7 +185,9 @@ function AccountSection() {
     if (!login && !localSession) {
       if (canConnect) out.push(<GithubConnectBox key="connect" onDone={() => refreshWhoami()} />);
     } else {
-      if (login) out.push(<SRow key="as2" k="Signed in as" v={"@" + login} />);
+      // ⚠️ NO SECOND "Signed in as". The `out` row above this block is
+      // unconditional and already prints exactly this, so every signed-in user
+      // on a shared hub saw it twice in Settings → Account.
       if (localSession && !login) out.push(<SNote key="mh">GitHub connected on this machine.</SNote>);
       if (local && window.zevet && typeof window.zevet.githubLogout === "function") {
         out.push(<GithubDisconnectRow key="disc" onDone={() => refreshWhoami()} />);
