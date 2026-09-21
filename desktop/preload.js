@@ -192,6 +192,10 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   sessionAgents: (slug, id) => ipcRenderer.invoke("local:sessionAgents", { slug, id }),
   // Masora Voice: is it installed, and start it so its flow bar comes up.
   // See desktop/masora-voice.js for why there is no "start recording".
+  /* The permission posture a new agent starts with, saved beside the zoom in
+     ~/.zevet/config.json. Returns what is now stored, so the settings pane can
+     show the truth rather than what it hoped for. */
+  defaultMode: (mode) => ipcRenderer.invoke("local:defaultMode", mode),
   voiceStatus: () => ipcRenderer.invoke("local:voiceStatus"),
   voiceStart: () => ipcRenderer.invoke("local:voiceStart"),
   voiceMic: () => ipcRenderer.invoke("local:voiceMic"),

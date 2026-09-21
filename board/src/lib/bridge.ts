@@ -178,6 +178,9 @@ export interface LocalBridge {
   chrome: (spec: ColorThemeSpec) => void;
   addWorkspace: () => Promise<LocalWorkspace | null>;
   indexStatus: (root: string | null) => Promise<{ ok: boolean } & Record<string, unknown>>;
+  /* Save this user default permission posture. Returns what is now stored —
+     never assume the write landed, which is the whole reason it answers. */
+  defaultMode: (mode: string) => Promise<{ ok?: boolean; error?: string; mode?: string }>;
   /** Semantic search over the workspace index. The scores are real cosines —
    *  `code-index.js` clamps them to [-1, 1] — which is why a retrieval panel
    *  can print one. Optional: a build without the index capability has none. */
@@ -220,6 +223,9 @@ export interface ZevetConfig {
   /* The GitHub login this machine signed in as. `main.js` has always sent it
      (desktop/main.js § zevet:config); only the type did not say so. */
   login?: string;
+  /* The default permission posture for this user, or "" when they have not
+     chosen one. An id from agent-console.js MODES. */
+  mode?: string;
   session?: boolean;
   hasSecret?: boolean;
   legacy?: boolean;

@@ -164,6 +164,51 @@ function storedZoom() {
   }
 }
 
+/**
+ * The permission posture an agent starts with when nobody picks one.
+ *
+ * ⚠️ THIS IS A PER-USER SETTING AND IT LIVES IN THE CONFIG, NOT IN THE BOARD.
+ * localStorage would have been one line, and it is scoped to the hub origin —
+ * so it is cleared with site data, lost when the hub moves, and separate in
+ * every window. A default that decides whether an agent asks before it edits
+ * must not be able to quietly revert. It sits beside `zoom` in
+ * ~/.zevet/config.json, which is this machine, which is this user.
+ *
+ * VALIDATED AGAINST agent-console.js's OWN TABLE, never a list copied here:
+ * that module is what turns the id into real flags — `dangerous` is
+ * `--dangerously-skip-permissions` for claude and
+ * `--dangerously-bypass-approvals-and-sandbox` for codex — and a second
+ * spelling of the same four names is how a setting starts meaning nothing.
+ */
+function storedMode() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
+    const m = cfg && typeof cfg.mode === "string" ? cfg.mode : "";
+    return Object.prototype.hasOwnProperty.call(agentConsole.MODES, m) ? m : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Remember it, the same best-effort way zoom is remembered — but this one
+ *  REPORTS rather than swallowing, because a permission default that silently
+ *  failed to save is the one setting you must not have to guess about. */
+function rememberMode(mode) {
+  const next = Object.prototype.hasOwnProperty.call(agentConsole.MODES, mode) ? mode : "";
+  if (!next) return { ok: false, error: "not a permission mode", mode: storedMode() };
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
+    if (!cfg || typeof cfg !== "object") return { ok: false, error: "no config to write to", mode: "" };
+    if (cfg.mode !== next) {
+      cfg.mode = next;
+      writeConfig(cfg);
+    }
+    return { ok: true, mode: next };
+  } catch (err) {
+    return { ok: false, error: err.message, mode: storedMode() };
+  }
+}
+
 /** Remember it. Best effort: a window that cannot persist its zoom is still a
  *  window, and this must never be able to take the app down. */
 function rememberZoom(level) {
@@ -781,6 +826,9 @@ ipcMain.handle("zevet:config", () => {
     // name, not a credential -- it is on every commit this person has ever
     // pushed -- so unlike the secret and the session it is safe to hand back.
     login: typeof cfg.login === "string" ? cfg.login : "",
+    // The posture an agent starts with unless the composer says otherwise.
+    // "" means nobody has chosen, and the board falls back to its own default.
+    mode: storedMode(),
     session: typeof cfg.session === "string" && cfg.session.length > 0,
     // A machine set up before the master secret existed: a raw shared token and
     // nothing to derive a document key from. The editor cannot work there and
@@ -2347,6 +2395,8 @@ ipcMain.handle("local:session", (_e, arg) =>
 ipcMain.handle("local:sessionAgents", (_e, arg) =>
   agentSessions.children((arg && arg.slug) || "", (arg && arg.id) || ""),
 );
+
+ipcMain.handle("local:defaultMode", (_e, mode) => rememberMode(String(mode || "")));
 
 ipcMain.handle("local:voiceStatus", () => masoraVoice.status());
 ipcMain.handle("local:voiceStart", () => masoraVoice.start());

@@ -5,4 +5,8 @@ export interface SlashCommand {
 }
 export function commandsFor(agent: string | null | undefined, announced?: readonly string[]): SlashCommand[];
 export function matchSlash(text: string, commands: readonly SlashCommand[]): SlashCommand[];
+export function slashLead(
+  text: string,
+  commands: readonly { name: string }[],
+): { name: string; rest: string } | null;
 export function parseLocal(text: string, agent: string | null | undefined): string | null;

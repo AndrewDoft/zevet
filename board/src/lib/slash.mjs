@@ -96,6 +96,29 @@ export function matchSlash(text, commands) {
   return starts.concat(inside);
 }
 
+/**
+ * A prompt that STARTS with a command the agent really offers.
+ *
+ * ⚠️ ONLY A NAME THE AGENT ANNOUNCED. The board highlights this so you can see
+ * a slash command registered — Andrew: "that way we can be sure they are
+ * registered" — which only means anything if an unknown name stays plain. So
+ * this answers null for a made-up command, and the absence is the signal.
+ *
+ * A command is a FIRST token: "see /docs for this" is prose about a path, and
+ * "/compact focus on tests" is a command with an argument.
+ *
+ * @param {string} text
+ * @param {readonly {name: string}[]} commands
+ * @returns {{ name: string, rest: string } | null}
+ */
+export function slashLead(text, commands) {
+  const m = /^\/([^\s/]+)(\s[\s\S]*)?$/.exec(text || "");
+  if (!m) return null;
+  const name = m[1].toLowerCase();
+  const known = (commands || []).some((c) => String(c.name).toLowerCase() === name);
+  return known ? { name: m[1], rest: m[2] || "" } : null;
+}
+
 /** `/name rest` -> the zevet-local command it names, if any. */
 export function parseLocal(text, agent) {
   const m = /^\/([^\s/]+)\s*$/.exec((text || "").trim());

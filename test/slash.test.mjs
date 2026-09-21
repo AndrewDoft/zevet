@@ -1,7 +1,35 @@
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
-import { commandsFor, matchSlash, parseLocal } from "../board/src/lib/slash.mjs";
+import { commandsFor, matchSlash, parseLocal, slashLead } from "../board/src/lib/slash.mjs";
 import { appendUserText, appendAgentPayload, emptyTranscript } from "../board/src/lib/transcript.mjs";
+
+describe("a command that registered", () => {
+  // ⚠️ THE POINT IS CONFIRMATION. The board draws this in the sender's colour
+  // so you can see the command took — Andrew: "highlight slash commands in the
+  // user color and bold them, that way we can be sure they are registered" —
+  // which only means something if an unknown name stays plain.
+  const cmds = commandsFor("claude", ["compact", "loop"]);
+
+  test("a known command leads, with its argument left alone", () => {
+    assert.deepEqual(slashLead("/loop", cmds), { name: "loop", rest: "" });
+    assert.deepEqual(slashLead("/loop 5m /foo", cmds), { name: "loop", rest: " 5m /foo" });
+    // zevet's own commands count too; they are in the same list.
+    assert.equal(slashLead("/stop", cmds).name, "stop");
+  });
+
+  test("anything the agent does not offer stays plain text", () => {
+    assert.equal(slashLead("/nope", cmds), null);
+    assert.equal(slashLead("/deploy now", cmds), null);
+    // Not a first token, so not a command.
+    assert.equal(slashLead("see /docs here", cmds), null);
+    assert.equal(slashLead("", cmds), null);
+    assert.equal(slashLead("/loop", []), null);
+  });
+
+  test("the case you type is kept, the case you match is not", () => {
+    assert.deepEqual(slashLead("/LOOP", cmds), { name: "LOOP", rest: "" });
+  });
+});
 
 test("claude's menu is what claude announced, plus zevet's own", () => {
   const cmds = commandsFor("claude", ["zzz-skill", "compact", "clear"]);

@@ -24,7 +24,7 @@ import {
   newestHunk,
 } from "./roster.mjs";
 import {
-  HUES, IDLE_FALLBACK, MODELS, PANE_DEFAULTS, PANE_KEY, PANE_LIMITS,
+  HUES, IDLE_FALLBACK, MODELS, MODES, PANE_DEFAULTS, PANE_KEY, PANE_LIMITS,
   STATS_EVERY_MS, STATS_MAX_PATHS, STATUS_EVERY_MS,
 } from "./constants";
 import type {
@@ -202,6 +202,9 @@ interface BoardState {
    *  declares support, so it is carried even while it does not apply. */
   launchEffort: string;
   launchMode: LaunchMode;
+  /** The posture this user chose as their default, or "" if they never did.
+   *  Read from ~/.zevet/config.json at boot; see desktop/main.js storedMode. */
+  defaultMode: string;
 
   edView: EditorViewState | null;
   docStatus: Record<string, { state: string; detail?: string }>;
@@ -272,6 +275,7 @@ interface BoardState {
   clearSelectedPath: () => void;
 
   setLaunchMode: (m: LaunchMode) => void;
+  setDefaultMode: (m: string) => Promise<{ ok: boolean; error?: string }>;
   setLaunchModel: (m: string) => void;
   setLaunchEffort: (e: string) => void;
   setLaunchAgent: (a: string) => void;
@@ -446,6 +450,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   launchModel: "",
   launchEffort: "",
   launchMode: "auto",
+  defaultMode: "",
 
   edView: null,
   docStatus: Object.create(null) as Record<string, { state: string; detail?: string }>,
@@ -569,6 +574,18 @@ export const useBoard = create<BoardState>((set, get) => ({
   clearSelectedPath: () => set({ selectedPath: null }),
 
   setLaunchMode: (m) => set({ launchMode: m }),
+
+  /* ⚠️ APPLIES NOW, NOT NEXT LAUNCH. Saving a default and then watching the
+     composer still offer the old one is what makes somebody set it twice and
+     trust it neither time, so a write that lands moves the live posture with
+     it. One that does not land moves nothing and says why. */
+  setDefaultMode: async (m) => {
+    const br = bridge.local;
+    if (!br || typeof br.defaultMode !== "function") return { ok: false, error: "not the desktop app" };
+    const r = await br.defaultMode(m);
+    if (r && r.ok) set({ defaultMode: m, launchMode: m as LaunchMode });
+    return { ok: Boolean(r && r.ok), error: (r && r.error) || "" };
+  },
   setLaunchModel: (m) => set({ launchModel: m }),
   setLaunchEffort: (e) => set({ launchEffort: e }),
   setLaunchAgent: (a) => set({ launchAgent: a }),
@@ -2351,6 +2368,13 @@ export function boot(): void {
       window.__zevetCfg = c as never;
       window.__zevetHub = c.hub;
       if (c.actor) useBoard.getState().setMyActor(c.actor);
+      /* The saved posture, applied as soon as it arrives. A value the CLI
+         table does not know is ignored rather than passed on, so a
+         hand-edited config cannot launch an agent with a flag nothing maps. */
+      const saved = String(c.mode || "");
+      if (MODES.some((m) => m.id === saved)) {
+        useBoard.setState({ defaultMode: saved, launchMode: saved as LaunchMode });
+      }
     });
   }
 
@@ -2405,6 +2429,8 @@ export function boot(): void {
 interface ZevetConfigLike {
   hub?: string;
   actor?: string;
+  /** This user's default permission posture; see desktop/main.js storedMode. */
+  mode?: string;
 }
 
 /* ---------------------------------------------------------------------------

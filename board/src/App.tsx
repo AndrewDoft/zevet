@@ -127,7 +127,12 @@ function App() {
               of its column. It is a People control by meaning as well as by
               position: mine/all/off says whose work to watch. */}
           <div className="pane-title row">
-            <span>People</span>
+            {/* ⚠️ THE LABEL IS "Agents"; THE ID IS STILL `#people`. What this
+                pane lists is a person and the agents running under them, and
+                Andrew asked for it to say so. The id stays because it is the
+                hook a dozen CSS rules and two tests reach for, and renaming a
+                selector to match a word is churn with a chance of a miss. */}
+            <span>Agents</span>
             {/* ⚠️ THE PLUS IS THE LAUNCHER. It used to be a full text row at
                 the bottom of the You list reading "Start an agent…", which is
                 a whole line of a 250px rail spent on a verb. Andrew: "there is

@@ -379,6 +379,8 @@ export function installFixtureBridge(): boolean {
 
   const local: LocalBridge = {
     available: true,
+    // The demo has no config to write to; it just agrees.
+    defaultMode: async (mode: string) => ({ ok: true, mode }),
     read: async (_root, rel) => ({ ok: true, text: rel.endsWith(".mjs") ? SAMPLE : `// ${rel}\n`, bytes: SAMPLE.length, eol: "\n" }),
     write: async () => ({ ok: true }),
     agents: async () => [

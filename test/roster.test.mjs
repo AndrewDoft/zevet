@@ -190,6 +190,36 @@ describe("roster rendering", () => {
   });
 });
 
+describe("the default permission posture", () => {
+  test("it is stored in the config and validated against the CLI table", () => {
+    const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
+    // ⚠️ THE CONFIG, NOT localStorage. localStorage is scoped to the hub
+    // origin: cleared with site data, lost when the hub moves, separate per
+    // window. A default that decides whether an agent asks before it edits
+    // must not be able to quietly revert.
+    assert.ok(main.includes("function storedMode()"), "the posture is not read from the config");
+    assert.ok(main.includes("function rememberMode("), "the posture cannot be saved");
+    assert.ok(main.includes("cfg.mode = next;"), "the posture is never written");
+    // One table of modes, and it is the one that builds the actual flags.
+    const guard = /hasOwnProperty\.call\(agentConsole\.MODES, /g;
+    assert.ok((main.match(guard) || []).length >= 2, "a mode list was copied instead of shared");
+    assert.ok(main.includes('ipcMain.handle("local:defaultMode"'), "nothing can set it");
+  });
+
+  test("the board seeds from it and the sheet can change it", () => {
+    const board = src("lib/board.ts");
+    // An unknown posture in a hand-edited config must not reach the CLI.
+    assert.ok(board.includes("MODES.some((m) => m.id === saved)"), "a bad config value is trusted");
+    assert.ok(board.includes("useBoard.setState({ defaultMode: saved, launchMode: saved as LaunchMode })"),
+      "the saved posture is never applied at boot");
+    // Saving applies now, not next launch.
+    assert.ok(/set\(\{ defaultMode: m, launchMode: m as LaunchMode \}\)/.test(board), "saving does not take effect");
+    const settings = src("components/settings.tsx");
+    assert.ok(settings.includes('<SSection title="Permissions"'), "settings has no permissions section");
+    assert.ok(settings.includes("MODE_NOTE[m.id]"), "the postures are offered without saying what they do");
+  });
+});
+
 describe("pane widths", () => {
   test("clampPaneWidth holds the rails inside their limits", () => {
     assert.equal(clampPaneWidth(500, 180, 420), 420);

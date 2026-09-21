@@ -727,6 +727,11 @@
   }
   /* One row per group of segments (see components/strip.tsx), each row laid
      out across. `.strip` itself stays a column so the rows stack. */
+  /* A slash command that the agent actually offers, in the sender colour.
+     It is a confirmation that the command registered, so it is only ever
+     drawn for a name the agent announced — see components/slashtext.tsx. */
+  .slash-said { color: var(--who); font-weight: 600; }
+
   .strip-line {
     display: flex; flex-wrap: wrap; align-items: baseline;
     gap: 4px 10px; max-width: 100%;

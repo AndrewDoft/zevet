@@ -7,6 +7,7 @@ import {
   useBoard,
 } from "../lib/board";
 import { updateCommand, updatePercent, updateStatusText } from "../lib/update.mjs";
+import { MODES, MODE_NOTE } from "../lib/constants";
 
 function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   return (
@@ -35,6 +36,62 @@ function SNote({ children, style }: { children: ReactNode; style?: CSSProperties
 }
 
 const MAKE_BTN = "sbtn";
+
+/**
+ * The posture every agent this user starts gets, unless the composer changes
+ * it for one run.
+ *
+ * ⚠️ PER USER, AND ON DISK. It is written beside the zoom in
+ * ~/.zevet/config.json rather than into localStorage, because localStorage is
+ * scoped to the hub origin — cleared with site data, lost when the hub moves,
+ * separate in every window — and a default that decides whether an agent asks
+ * before it edits must not be able to quietly revert. Andrew: "add a tab to
+ * settings that saves each user's default permissions."
+ *
+ * ⚠️ AND IT SHOWS WHAT WAS SAVED, NOT WHAT WAS ASKED FOR. The main process
+ * answers with what is now stored, so a write that did not land reads as a
+ * setting that did not move — which matters more on this row than on any
+ * other one in this sheet.
+ */
+function PermissionSection() {
+  const defaultMode = useBoard((s) => s.defaultMode);
+  const setDefaultMode = useBoard((s) => s.setDefaultMode);
+  const [err, setErr] = useState("");
+  if (!bridge.local) return null;
+
+  return (
+    <SSection title="Permissions" id="settingsPermissions">
+      <SNote>
+        What an agent you start may do before it asks. The composer can still
+        change it for a single run.
+      </SNote>
+      {MODES.map((m) => (
+        <div className="srow" key={m.id}>
+          <button
+            className={MAKE_BTN}
+            id={"settingsMode-" + m.id}
+            type="button"
+            style={{ marginRight: "8px" }}
+            disabled={defaultMode === m.id}
+            onClick={() => {
+              setErr("");
+              void setDefaultMode(m.id).then((r) => {
+                if (!r.ok) setErr(r.error || "could not save that");
+              });
+            }}
+          >
+            {m.label + (defaultMode === m.id ? " \u00b7 on" : "")}
+          </button>
+          <span className="v" style={{ color: "var(--ink-muted)", fontSize: "11.5px" }}>
+            {MODE_NOTE[m.id]}
+          </span>
+        </div>
+      ))}
+      {!defaultMode ? <SNote>No default chosen: agents start on Auto.</SNote> : null}
+      {err ? <SNote style={{ color: "var(--bad)" }}>{err}</SNote> : null}
+    </SSection>
+  );
+}
 
 function GithubConnectBox({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState<
@@ -550,6 +607,8 @@ export function SettingsSheet() {
             </div>
           ))}
         </SSection>
+
+        <PermissionSection />
 
         <SSection title="Folders">
           {!local ? (
