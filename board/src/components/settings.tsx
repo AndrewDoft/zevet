@@ -7,7 +7,8 @@ import {
   useBoard,
 } from "../lib/board";
 import { updateCommand, updatePercent, updateStatusText } from "../lib/update.mjs";
-import { MODES, MODE_NOTE } from "../lib/constants";
+import { MODES, MODE_LABEL } from "../lib/constants";
+import { Twist } from "./twist";
 
 function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   return (
@@ -18,11 +19,37 @@ function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   );
 }
 
-function SSection({ title, id, children }: { title: string; id?: string; children: ReactNode }) {
+/**
+ * One collapsed row per setting, opened by the file tree's chevron.
+ *
+ * ⚠️ THE SUMMARY IS THE POINT, not the chevron. Andrew: "settings is ugly and
+ * has too many words." Every section printed its title, its rows AND a
+ * paragraph explaining each button, so the one fact a person opens Settings
+ * for — what is this set to right now — was buried in prose about what the
+ * setting means. A closed row carries the current value, so the common case is
+ * read without opening anything, and the explanations are DELETED rather than
+ * hidden: a note that only appears after a click is a note nobody reads.
+ */
+function SSection({
+  title,
+  id,
+  summary,
+  children,
+}: {
+  title: string;
+  id?: string;
+  summary?: ReactNode;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
   return (
     <div className="sset" id={id}>
-      <h3>{title}</h3>
-      {children}
+      <button className="sset-head" type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Twist open={open} />
+        <span className="sset-title">{title}</span>
+        {summary ? <span className="sset-sum">{summary}</span> : null}
+      </button>
+      {open ? <div className="sset-body">{children}</div> : null}
     </div>
   );
 }
@@ -60,18 +87,15 @@ function PermissionSection() {
   if (!bridge.local) return null;
 
   return (
-    <SSection title="Permissions" id="settingsPermissions">
-      <SNote>
-        What an agent you start may do before it asks. The composer can still
-        change it for a single run.
-      </SNote>
-      {MODES.map((m) => (
-        <div className="srow" key={m.id}>
+    <SSection title="Permissions" id="settingsPermissions" summary={MODE_LABEL[defaultMode || ""] || "Auto"}>
+      <div className="sbtn-row">
+        {MODES.map((m) => (
           <button
             className={MAKE_BTN}
+            key={m.id}
             id={"settingsMode-" + m.id}
             type="button"
-            style={{ marginRight: "8px" }}
+            aria-pressed={defaultMode === m.id}
             disabled={defaultMode === m.id}
             onClick={() => {
               setErr("");
@@ -80,14 +104,10 @@ function PermissionSection() {
               });
             }}
           >
-            {m.label + (defaultMode === m.id ? " \u00b7 on" : "")}
+            {m.label}
           </button>
-          <span className="v" style={{ color: "var(--ink-muted)", fontSize: "11.5px" }}>
-            {MODE_NOTE[m.id]}
-          </span>
-        </div>
-      ))}
-      {!defaultMode ? <SNote>No default chosen: agents start on Auto.</SNote> : null}
+        ))}
+      </div>
       {err ? <SNote style={{ color: "var(--bad)" }}>{err}</SNote> : null}
     </SSection>
   );
@@ -293,7 +313,7 @@ function AccountSection() {
 
   if (!whoState) {
     return (
-      <SSection title="Account">
+      <SSection title="Account" summary="loading…">
         <SNote>Loading account…</SNote>
       </SSection>
     );
@@ -310,29 +330,19 @@ function AccountSection() {
   const canConnectGoogle = googleSignIn && local && Boolean(window.zevet && typeof window.zevet.googleStart === "function");
   const localSession = Boolean(bridge.cfg && bridge.cfg.session);
 
-  const out: ReactNode[] = [<SRow key="as" k="Signed in as" v={login ? "@" + login : "not signed in"} />];
+  /* ⚠️ NO "Signed in as" ROW. The closed section header already prints the
+     login, and printing it again one line below was the sheet's oldest piece
+     of noise. The three-sentence paragraph that used to sit here — team key,
+     open the desktop app, this provider is unavailable — is gone for the same
+     reason: a button that is not there IS the message. */
+  const out: ReactNode[] = [];
 
   if (shared) {
-    let note = "Connected with a team key.";
-    if (githubSignIn) {
-      if (!canConnect && !localSession) note += " Open the desktop app to sign in with GitHub.";
-    } else {
-      note += " GitHub sign-in is unavailable on this hub.";
-    }
-    if (googleSignIn) {
-      if (!canConnectGoogle && !localSession) note += " Open the desktop app to sign in with Google.";
-    } else {
-      note += " Google sign-in is unavailable on this hub.";
-    }
-    out.push(<SNote key="note">{note}</SNote>);
     if (!login && !localSession) {
       if (canConnect) out.push(<GithubConnectBox key="connect-github" onDone={() => refreshWhoami()} />);
       if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" onDone={() => refreshWhoami()} />);
+      if (!canConnect && !canConnectGoogle) out.push(<SNote key="note">Sign in from the desktop app.</SNote>);
     } else {
-      // ⚠️ NO SECOND "Signed in as". The `out` row above this block is
-      // unconditional and already prints exactly this, so every signed-in user
-      // on a shared hub saw it twice in Settings → Account.
-      if (localSession && !login) out.push(<SNote key="mh">GitHub connected on this machine.</SNote>);
       if (local && window.zevet && typeof window.zevet.githubLogout === "function") {
         out.push(<GithubDisconnectRow key="disc-github" onDone={() => refreshWhoami()} />);
       }
@@ -373,8 +383,7 @@ function AccountSection() {
     out.push(
       <form
         key="invite"
-        className="row"
-        style={{ marginTop: "10px" }}
+        className="sinvite"
         onSubmit={(ev) => {
           ev.preventDefault();
           const v = (invite.current && invite.current.value.trim()) || "";
@@ -386,14 +395,13 @@ function AccountSection() {
           Invite
         </button>
       </form>,
-      <SNote key="howto">Send them this hub's address. They can sign in with GitHub or Google after installing zevet.</SNote>,
     );
   }
 
   if (whoErr) out.push(<SNote key="err">{whoErr}</SNote>);
 
   return (
-    <SSection title="Account">
+    <SSection title="Account" summary={login ? "@" + login : "not signed in"}>
       {out}
     </SSection>
   );
@@ -421,8 +429,7 @@ function IndexSection() {
   const m = stripMachine as (StatusResultView & { cindex?: boolean; cindexPort?: number }) | null;
   if (m && m.cindex === true) {
     return (
-      <SSection title="Code index">
-        <SRow k="Status" v="external index running" />
+      <SSection title="Code index" summary="external">
         <SNote>
           External index on port {String(m.cindexPort || 8080)}. Stop it to use zevet's built-in index.
         </SNote>
@@ -431,7 +438,7 @@ function IndexSection() {
   }
   if (!bridge.local || typeof bridge.local.indexStatus !== "function") {
     return (
-      <SSection title="Code index">
+      <SSection title="Code index" summary="unavailable">
         <SNote>Not available in this build.</SNote>
       </SSection>
     );
@@ -439,7 +446,7 @@ function IndexSection() {
   const st = (indexStatus || null) as IndexStatusView | null;
   if (!st) {
     return (
-      <SSection title="Code index">
+      <SSection title="Code index" summary="checking…">
         <SNote>Checking this machine…</SNote>
       </SSection>
     );
@@ -460,9 +467,8 @@ function IndexSection() {
   if (!st.capable) {
     node.push(<SRow key="status" k="Status" v="not enabled on this machine" />);
     node.push(<SNote key="why">{st.reasons.join("  \u00b7  ")}</SNote>);
-    node.push(<SNote key="fine">Other features remain available.</SNote>);
     return (
-      <SSection title="Code index">{node}</SSection>
+      <SSection title="Code index" summary="off">{node}</SSection>
     );
   }
 
@@ -508,10 +514,8 @@ function IndexSection() {
       </div>,
     );
   }
-  node.push(<SNote key="cost">The index is built and stored on this machine.</SNote>);
-
   return (
-    <SSection title="Code index">{node}</SSection>
+    <SSection title="Code index" summary={stats ? stats.files + " files" : "not built"}>{node}</SSection>
   );
 }
 
@@ -532,13 +536,13 @@ function VersionSection() {
   const updateInstall = useBoard((s) => s.updateInstall);
   if (!bridge.local || typeof bridge.local.updateStatus !== "function") {
     return (
-      <SSection title="Version">
+      <SSection title="Version" summary="web">
         <SNote>Get the latest version at usemasora.com/zevet.</SNote>
       </SSection>
     );
   }
   const up = { checking, installing };
-  const out: ReactNode[] = [<SRow key="inst" k="Installed" v={s && s.current ? s.current : "unknown"} />];
+  const out: ReactNode[] = [];
   const status = updateStatusText(s, up);
   out.push(
     <div className="srow" aria-live="polite" key="status">
@@ -586,7 +590,7 @@ function VersionSection() {
   }
   out.push(<SRow key="updates" k="Updates" v={<div className="update-actions">{actions}</div>} />);
   return (
-    <SSection title="Version">{out}</SSection>
+    <SSection title="Version" summary={s && s.current ? s.current : "unknown"}>{out}</SSection>
   );
 }
 
@@ -601,9 +605,7 @@ function credentialLabel() {
 export function SettingsSheet() {
   const sheetOpen = useBoard((s) => s.sheetOpen);
   const closeSettings = useBoard((s) => s.closeSettings);
-  const theme = useBoard((s) => s.theme);
   const viewMode = useBoard(selectViewMode);
-  const setTheme = useBoard((s) => s.setTheme);
   const setView = useBoard((s) => s.setView);
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
   const myActor = useBoard((s) => s.myActor);
@@ -661,50 +663,44 @@ export function SettingsSheet() {
           </button>
         </div>
 
-        <SSection title="Appearance">
-          <SRow
-            k="Theme"
-            v={
-              <button className={MAKE_BTN} id="settingsTheme" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-                {theme === "dark" ? "Switch to light" : "Switch to dark"}
-              </button>
-            }
-          />
-        </SSection>
-
-        <SSection title="View">
-          {(
-            [
-              ["ide", "IDE", "Files, editor and shared cursors."],
-              ["agent", "Agent", "Agent conversations with a compact editor."],
-            ] as const
-          ).map(([id, label, note]) => (
-            <div className="srow" key={id}>
+        {/* ⚠️ NO APPEARANCE SECTION. The light/dark toggle lives in the strip,
+            where it is one click away instead of three, and Andrew asked for
+            the duplicate here to go: "that's already represented outside of
+            settings." Two controls for one piece of state is also two places
+            for it to look wrong. */}
+        <SSection title="View" summary={viewMode === "ide" ? "IDE" : "Agent"}>
+          <div className="sbtn-row">
+            {(
+              [
+                ["ide", "IDE"],
+                ["agent", "Agent"],
+              ] as const
+            ).map(([id, label]) => (
               <button
                 className={MAKE_BTN}
                 id={"settingsView-" + id}
+                key={id}
                 type="button"
-                style={{ marginRight: "8px" }}
+                aria-pressed={viewMode === id}
                 disabled={viewMode === id}
                 onClick={() => setView(id)}
               >
-                {label + (viewMode === id ? " \u00b7 on" : "")}
+                {label}
               </button>
-              <span className="v" style={{ color: "var(--ink-muted)", fontSize: "11.5px" }}>
-                {note}
-              </span>
-            </div>
-          ))}
+            ))}
+          </div>
         </SSection>
 
         <PermissionSection />
 
-        <SSection title="Folders">
+        <SSection
+          title="Folders"
+          summary={!local ? "desktop only" : localWorkspaces.length ? String(localWorkspaces.length) : "none"}
+        >
           {!local ? (
             <SNote>Use the desktop app to open local folders.</SNote>
           ) : (
             <>
-              {!localWorkspaces.length ? <SNote>Add a folder to give zevet access.</SNote> : null}
               {(localWorkspaces || []).map((w) => (
                 <div className="srow" key={w.dir}>
                   <span className="k">{w.name + (w.repo ? "" : "  (not a git repo)")}</span>
@@ -714,7 +710,6 @@ export function SettingsSheet() {
               <button className={MAKE_BTN} type="button" style={{ marginTop: "10px" }} onClick={() => useBoard.getState().addWorkspace()}>
                 Add a folder…
               </button>
-              <SNote>Identifies your account. Folder access stays limited to the list above.</SNote>
             </>
           )}
         </SSection>
@@ -722,10 +717,9 @@ export function SettingsSheet() {
         <AccountSection />
         <IndexSection />
 
-        <SSection title="Connection">
+        <SSection title="Connection" summary={credentialLabel()}>
           <SRow k="Hub" v={bridge.hub} mono />
           <SRow k="You" v={myActor || "unknown"} />
-          <SRow k="Credential" v={credentialLabel()} />
         </SSection>
 
         <VersionSection />

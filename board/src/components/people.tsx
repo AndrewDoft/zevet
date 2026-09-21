@@ -47,7 +47,7 @@
  * is in this pane's own title row (App.tsx).
  */
 import { type CSSProperties, useEffect, useState } from "react";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { Twist } from "./twist";
 import {
   hueOf,
   isIdle,
@@ -69,15 +69,6 @@ import { ghostButton, mono } from "./assistant-ui/elements/surfaces";
 import { cn } from "@/lib/utils";
 import { bridge } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS, MODE_LABEL, MODES } from "../lib/constants";
-
-/** The file tree's own twisty, so the two trees cannot drift apart. */
-function Twist({ open }: { open: boolean }) {
-  return open ? (
-    <ChevronDownIcon className="text-foreground/25 size-3 shrink-0" />
-  ) : (
-    <ChevronRightIcon className="text-foreground/25 size-3 shrink-0" />
-  );
-}
 
 function expandedStored(): string[] {
   try {

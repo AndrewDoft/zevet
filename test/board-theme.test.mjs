@@ -138,6 +138,50 @@ describe("theme behaviours", () => {
     assert.ok(app.includes('if (ev.key === "Escape") closeSettings();'), "Escape no longer closes the sheet from the shell");
     assert.ok(settings.includes('id="sheetBack"'), "clicking outside the sheet no longer closes it");
   });
+
+  // Andrew, on 0.2.43's sheet: "settings is ugly and has too many words... no
+  // need to describe each of the buttons. and no need for them to each have
+  // their own rows. they can all be dropdowns (take the filetree dropdown
+  // thing). get rid of the light/dark thing on the top."
+  test("every section is a dropdown with its value on the closed row", () => {
+    const settings = src("components/settings.tsx");
+    const twist = src("components/twist.tsx");
+
+    // The SAME chevron as the file tree and the Agents rail, which is why it
+    // is one component and not three copies of two lucide imports.
+    assert.ok(twist.includes("ChevronDownIcon") && twist.includes("ChevronRightIcon"), "the twisty lost its icons");
+    assert.match(twist, /text-foreground\/25 size-3 shrink-0/, "the twisty drifted from the file tree's");
+    for (const file of ["components/people.tsx", "components/settings.tsx"]) {
+      assert.ok(src(file).includes('from "./twist"'), file + " grew its own twisty again");
+    }
+
+    assert.ok(settings.includes("<Twist open={open} />"), "sections no longer open and close");
+    assert.ok(settings.includes('aria-expanded={open}'), "the section header does not say whether it is open");
+    // A closed row that says nothing is worse than the old sheet, not better:
+    // the point is reading the value WITHOUT opening anything.
+    assert.ok(settings.includes("sset-sum"), "the closed row no longer carries its value");
+    assert.ok(settings.includes('id="settingsPermissions" summary='), "Permissions does not show the saved posture when closed");
+
+    // The per-button prose is deleted, not hidden behind the chevron.
+    assert.ok(!settings.includes("MODE_NOTE"), "the permission buttons describe themselves again");
+    assert.ok(settings.includes("sbtn-row"), "the buttons went back to one row each");
+
+    // The duplicate theme control is gone; the strip's is the only one.
+    assert.ok(!settings.includes('id="settingsTheme"'), "the light/dark toggle came back to Settings");
+    assert.ok(!settings.includes("setTheme"), "Settings still reaches for the theme");
+    assert.ok(src("App.tsx").includes("setTheme("), "the strip lost the only remaining theme toggle");
+  });
+
+  test("the invitation field cannot overlap its button", () => {
+    const settings = src("components/settings.tsx");
+    const css = readFileSync(path.join(ROOT, "board", "src", "styles", "masora.css"), "utf8");
+    // `className="row"` matched no rule in this stylesheet, so the input took
+    // its width from the placeholder and the button landed on top of it.
+    assert.ok(!/className="row"/.test(settings), "the invite form is back on a class nothing styles");
+    assert.ok(settings.includes('className="sinvite"'), "the invite form lost its layout class");
+    assert.match(css, /\.sinvite \{[^}]*display: flex/, ".sinvite must lay the field and button out in a row");
+    assert.match(css, /\.sinvite input \{[^}]*min-width: 0/, "the field must be able to shrink, or it overlaps again");
+  });
 });
 // ---------------------------------------------------------------------------
 // THE TWO PALETTES ARE ONE PALETTE NOW.

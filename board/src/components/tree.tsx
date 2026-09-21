@@ -1,5 +1,6 @@
 import { type CSSProperties, type ReactNode, useMemo } from "react";
-import { ChevronDownIcon, ChevronRightIcon, FileIcon, FolderIcon } from "lucide-react";
+import { FileIcon, FolderIcon } from "lucide-react";
+import { Twist } from "./twist";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { cn } from "@/lib/utils";
 import { mono } from "./assistant-ui/elements/surfaces";
@@ -142,13 +143,7 @@ function NodeRow({
         }}
       >
         <span className="label">
-          {isDir ? (
-            open ? (
-              <ChevronDownIcon className="text-foreground/25 size-3 shrink-0" />
-            ) : (
-              <ChevronRightIcon className="text-foreground/25 size-3 shrink-0" />
-            )
-          ) : null}
+          {isDir ? <Twist open={open} /> : null}
           {isDir ? (
             <FolderIcon className="text-foreground/35 size-3.5 shrink-0" />
           ) : (

@@ -20,7 +20,7 @@
  * nobody reads. "All" is one click away and is what the filter box is for.
  */
 import { useState } from "react";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { Twist } from "./twist";
 import { cn } from "@/lib/utils";
 import { AgentLogo } from "./brand";
 import { mono } from "./assistant-ui/elements/surfaces";
@@ -230,11 +230,7 @@ export function SessionsPane({ hue }: { hue?: number } = {}) {
                   weight as components/tree.tsx and components/people.tsx, so
                   they cannot drift apart again. */}
               <summary className="session-group-head">
-                {on ? (
-                  <ChevronDownIcon className="text-foreground/25 size-3 shrink-0" />
-                ) : (
-                  <ChevronRightIcon className="text-foreground/25 size-3 shrink-0" />
-                )}
+                <Twist open={on} />
                 <span className="session-group-name">{g.name}</span>
                 <span className="session-group-count">{g.rows.length}</span>
               </summary>

@@ -142,10 +142,20 @@ describe("roster rendering", () => {
 
   test("every twisty in the rail is the file tree's", () => {
     // Andrew: "take the dropdown arrow from the filetree to keep things
-    // consistent." One pair of icons, one size, three files.
-    const want = 'ChevronDownIcon className="text-foreground/25 size-3 shrink-0"';
-    for (const f of ["components/tree.tsx", "components/people.tsx", "components/sessions.tsx"]) {
-      assert.ok(src(f).includes(want), `${f} draws its own arrow`);
+    // consistent." Four files used to hold four copies of the same two lines
+    // of JSX and a test compared them all to a string; there is one component
+    // now, and what this pins is that nobody grew a fifth copy.
+    const twist = src("components/twist.tsx");
+    assert.match(twist, /text-foreground\/25 size-3 shrink-0/, "the twisty drifted from the file tree's");
+    assert.ok(twist.includes("ChevronDownIcon") && twist.includes("ChevronRightIcon"), "the twisty lost an icon");
+    for (const f of [
+      "components/tree.tsx",
+      "components/people.tsx",
+      "components/sessions.tsx",
+      "components/settings.tsx",
+    ]) {
+      assert.ok(src(f).includes('from "./twist"'), `${f} does not use the shared twisty`);
+      assert.ok(!/Chevron(Down|Right)Icon/.test(src(f)), `${f} draws its own arrow again`);
     }
     // And nothing draws one with a glyph any more.
     assert.ok(!src("styles/masora.css").includes('content: "▸"'), "a css triangle came back");
@@ -216,7 +226,12 @@ describe("the default permission posture", () => {
     assert.ok(/set\(\{ defaultMode: m, launchMode: m as LaunchMode \}\)/.test(board), "saving does not take effect");
     const settings = src("components/settings.tsx");
     assert.ok(settings.includes('<SSection title="Permissions"'), "settings has no permissions section");
-    assert.ok(settings.includes("MODE_NOTE[m.id]"), "the postures are offered without saying what they do");
+    // ⚠️ AND NO PER-BUTTON PROSE. This used to require MODE_NOTE beside every
+    // posture; Andrew cut it in 0.2.44 — "no need to describe each of the
+    // buttons" — and the saved one is named on the closed section header
+    // instead, which is the fact somebody opens Settings to check.
+    assert.ok(!settings.includes("MODE_NOTE"), "the permission buttons describe themselves again");
+    assert.ok(settings.includes('id="settingsPermissions" summary='), "the closed row does not name the saved posture");
   });
 });
 
