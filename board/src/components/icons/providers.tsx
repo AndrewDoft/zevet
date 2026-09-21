@@ -9,14 +9,17 @@
  * Source: github.com/homarr-labs/dashboard-icons (Apache License 2.0),
  * fetched 2026-09-20 and 2026-09-21. Marks covered: opencode, DeepSeek, Qwen,
  * Kimi (Moonshot AI), Mistral, MiniMax, Ollama, Meta, Nvidia, Google,
- * poolside.
+ * poolside, Cohere.
  *
- * TWO OF THE FREE MODELS STILL HAVE NO MARK, deliberately. dashboard-icons
- * has no Cohere and no Thinking Machines icon (checked live 2026-09-21:
- * cohere.svg, and every spelling of thinkingmachines, 404), so
- * `openrouter/cohere/north-mini-code` and the `openrouter/thinkingmachines/
- * inkling*` pair render nothing. That is the rule this file was written
- * around - a wrong logo is worse than none. Add them when upstream does.
+ * Cohere's is NOT from that set - dashboard-icons has no Cohere mark at any
+ * spelling (checked live 2026-09-21), so Andrew supplied it from Cohere's own
+ * brand assets.
+ *
+ * ONE FREE MODEL FAMILY STILL HAS NO MARK, deliberately: there is no Thinking
+ * Machines icon anywhere upstream, so the `openrouter/thinkingmachines/
+ * inkling*` pair falls back to the mark of the CLI actually running them.
+ * That is the rule this file was written around - a wrong logo is worse than
+ * none. Add it the moment a real one exists.
  */
 
 import { useId, type ComponentProps, type ReactNode } from "react";
@@ -294,6 +297,33 @@ function PoolsideLogo(props: LogoProps) {
 }
 
 /* ---------------------------------------------------------------------------
+ * CohereLogo - north-mini-code. NOT from dashboard-icons: that set has no
+ * Cohere mark at any spelling (checked live 2026-09-21), so this one was
+ * supplied by Andrew from Cohere's own brand assets, which is why the header
+ * above names two sources.
+ * ------------------------------------------------------------------------- */
+
+function CohereLogo(props: LogoProps) {
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" {...props}>
+      <path
+        fill="#39594D"
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M8.128 14.099c.592 0 1.77-.033 3.398-.703 1.897-.781 5.672-2.2 8.395-3.656 1.905-1.018 2.74-2.366 2.74-4.18A4.56 4.56 0 0018.1 1H7.549A6.55 6.55 0 001 7.55c0 3.617 2.745 6.549 7.128 6.549z"
+      />
+      <path
+        fill="#D18EE2"
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M9.912 18.61a4.387 4.387 0 012.705-4.052l3.323-1.38c3.361-1.394 7.06 1.076 7.06 4.715a5.104 5.104 0 01-5.105 5.104l-3.597-.001a4.386 4.386 0 01-4.386-4.387z"
+      />
+      <path fill="#FF7759" d="M4.776 14.962A3.775 3.775 0 001 18.738v.489a3.776 3.776 0 007.551 0v-.49a3.775 3.775 0 00-3.775-3.775z" />
+    </svg>
+  );
+}
+
+/* ---------------------------------------------------------------------------
  * providerFor — resolves a provider mark from either of the two spellings
  * zevet uses: an agent name ("opencode") or an opencode model id
  * ("openrouter/google/gemma-4-31b-it:free", "opencode/nemotron-3-ultra-free"
@@ -329,6 +359,7 @@ const VENDORS: Record<string, { Mark: (props: LogoProps) => ReactNode; name: str
   nvidia: { Mark: NvidiaLogo, name: "Nvidia" },
   google: { Mark: GoogleLogo, name: "Google" },
   poolside: { Mark: PoolsideLogo, name: "poolside" },
+  cohere: { Mark: CohereLogo, name: "Cohere" },
 };
 
 /**
@@ -399,6 +430,7 @@ export {
   NvidiaLogo,
   GoogleLogo,
   PoolsideLogo,
+  CohereLogo,
   DeepSeekLogo,
   QwenLogo,
   KimiLogo,
