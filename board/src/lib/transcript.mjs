@@ -28,6 +28,15 @@
 let seq = 0;
 const nextId = () => `zv-${++seq}`;
 
+/** Injectable so a test can pin a clock. */
+let clock = () => Date.now();
+const now = () => clock();
+
+/** Tests only. */
+export function _setClock(fn) {
+  clock = fn || (() => Date.now());
+}
+
 /** Reset the id counter. Tests only — ids are otherwise process-lifetime. */
 export function _resetIds() {
   seq = 0;
@@ -35,7 +44,7 @@ export function _resetIds() {
 
 /** @returns {TranscriptState} */
 export function emptyTranscript() {
-  return { messages: [], openIndex: -1, toolIndex: {}, running: false };
+  return { messages: [], openIndex: -1, toolIndex: {}, byPartId: {}, running: false };
 }
 
 /* ---------------------------------------------------------------------------
@@ -170,7 +179,23 @@ export function assembleTranscript(events, opts = {}) {
 
 function addToolCall(state, { id, name, args }, root) {
   const s = openAssistant(state);
-  const callId = id || nextId();
+
+  /* ⚠️ A TOOL CALL ID MUST BE UNIQUE WITHIN A TRANSCRIPT, and the agent is not
+   * the one guaranteeing it.
+   *
+   * MEASURED: sending a second prompt to a console replays a turn whose tool
+   * ids repeat, and assistant-ui keys its message parts by toolCallId —
+   * "Duplicate key toolCallId-t2 in useResources" threw inside AuiProvider and
+   * took down the whole conversation, not just the duplicated card. One
+   * repeated id from any of three CLIs, across any version, would do the same
+   * to a real user mid-session.
+   *
+   * So the id is made unique here. A result matches by id, and a repeated id
+   * could only ever match the wrong call anyway; pointing toolIndex at the
+   * newest is the same rule a human would apply reading the stream in order. */
+  const wanted = id || nextId();
+  let callId = wanted;
+  for (let n = 2; s.byPartId[callId]; n += 1) callId = `${wanted}#${n}`;
   const next = withMessage(s, s.openIndex, (content) => {
     content.push({
       type: "tool-call",
@@ -178,12 +203,27 @@ function addToolCall(state, { id, name, args }, root) {
       toolName: name || "tool",
       args: trimRoot(args, root) ?? {},
       argsText: JSON.stringify(trimRoot(args, root) ?? {}, null, 2),
+      /* WHEN, so a turn can be drawn as a trace rather than a list.
+       * Nothing else records this: the CLIs do not timestamp their events, so
+       * the only honest clock is the one on the machine reading them, and the
+       * only honest claim is "this is when zevet SAW it". That is exactly what
+       * a waterfall of the turn needs, and it is not the agent's own timing. */
+      startedAt: now(),
     });
     return content;
   });
+  const at = { message: s.openIndex, part: next.messages[s.openIndex].content.length - 1 };
   return {
     ...next,
-    toolIndex: { ...next.toolIndex, [callId]: { message: s.openIndex, part: next.messages[s.openIndex].content.length - 1 } },
+    /* The AGENT's id points at the NEWEST call with that id.
+     *
+     * The part's own id is made unique so React can key it, but a result
+     * arrives carrying the id the agent sent — and a result that arrives after
+     * a second call with the same id belongs to the second one. Repointing is
+     * the rule a person reading the stream in order would apply; leaving the
+     * old entry in place put the second call's output on the first card. */
+    toolIndex: { ...next.toolIndex, [wanted]: at },
+    byPartId: { ...s.byPartId, [callId]: true },
   };
 }
 
@@ -193,7 +233,7 @@ function setToolResult(state, callId, result, isError) {
   return withMessage(state, at.message, (content) => {
     const part = content[at.part];
     if (!part || part.type !== "tool-call") return content;
-    content[at.part] = { ...part, result, isError: Boolean(isError) };
+    content[at.part] = { ...part, result, isError: Boolean(isError), endedAt: now() };
     return content;
   });
 }

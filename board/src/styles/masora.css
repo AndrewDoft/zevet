@@ -814,3 +814,58 @@
   .person-status [data-slot="agent-status-trailing"] { display: none; }
 
   .thinking-row { padding: 0 22px 8px; flex: none; }
+
+  /* The collapsed detail rows under the conversation. Same shape as
+     .run-meters, which they sit beside. */
+  .turn-detail, .prompt-shelf { border-top: 1px solid var(--line); flex: none; }
+  .turn-detail-body, .prompt-shelf-body {
+    display: flex; flex-direction: column; gap: 14px;
+    padding: 4px 22px 16px;
+    max-height: 46vh; overflow-y: auto;
+  }
+  .turn-detail-body > *, .prompt-shelf-body > * { max-width: none; width: 100%; }
+
+  /* ---- People, at rail width ------------------------------------------
+     ⚠️ SubagentList and AgentCard are panel components: card padding, an
+     avatar, a trailing chevron and a 14.5rem minimum. Dropped into a 180px
+     rail as-is they truncated "andrew" to "andr…" and the expanded card
+     pushed the other two teammates off screen — the run-meters mistake in a
+     narrower place.
+
+     The elements stay (they carry the status vocabulary and the shared
+     look); what is removed here is the chrome that assumes a panel. */
+  #people [data-slot="subagent-list"] {
+    min-height: 0;
+    gap: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+  }
+  #people [data-slot="subagent-list"] > * {
+    padding: 0;
+    background: none;
+    border: 0;
+  }
+  /* The name is the one thing that must never truncate: it is how you tell
+     two teammates apart. */
+  #people [data-slot="subagent-list"] .truncate,
+  #people [data-slot="agent-card"] .truncate {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    max-width: none;
+  }
+  #people [data-slot="agent-card"] {
+    max-width: none;
+    padding: 8px 10px;
+    background: none;
+    border: 0;
+    box-shadow: none;
+  }
+  /* The avatar block is 40px of a 180px rail and says nothing the hue dot on
+     the row does not already say. */
+  #people [data-slot="agent-card"] img,
+  #people [data-slot="agent-card"] [class*="size-10"],
+  #people [data-slot="agent-card"] [class*="size-9"] {
+    display: none;
+  }

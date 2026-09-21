@@ -3,6 +3,8 @@ import { PeoplePane } from "./components/people";
 import { WorkspacesPane } from "./components/workspaces";
 import { Strip } from "./components/strip";
 import { ConnBanner } from "./components/conn";
+import { BackgroundInbox } from "./components/inbox";
+import { Palette } from "./components/palette";
 import { UpdateRow } from "./components/updaterow";
 import { Consoles } from "./components/consoles";
 import { Conversation } from "./components/conversation";
@@ -117,6 +119,7 @@ function App() {
               </>
             ) : null}
           </div>
+          <BackgroundInbox />
           <ConnBanner />
           <Strip />
           <UpdateRow />
@@ -145,6 +148,7 @@ function App() {
         </div>
       </div>
       <SettingsSheet />
+      <Palette />
     </ConsoleRuntimeProvider>
   );
 }

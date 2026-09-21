@@ -105,9 +105,14 @@ describe("follow mode", () => {
 });
 
 describe("roster rendering", () => {
-  test("rows show marks and expand to mission plus current", () => {
+  test("rows name the agent and expand to mission plus current", () => {
     const people = src("components/people.tsx");
-    assert.ok(people.includes("agentBadge("), "the row lost its mark");
+    // Which agent a teammate is running is on the row. It used to be the
+    // agentBadge icon; SubagentList carries it as text in `model`.
+    assert.ok(
+      people.includes("agentBadge(") || /model: r\.lastEvent\?\.agent/.test(people),
+      "the row no longer says which agent the teammate is running",
+    );
     assert.ok(people.includes("missionOf(r)"), "the row lost its mission");
     assert.ok(people.includes("currentOf(r)"), "the row lost its current command");
   });

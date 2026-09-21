@@ -18,6 +18,8 @@ import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { Launcher } from "./launcher";
 import { RunMeters } from "./runmeters";
+import { TurnDetail } from "./turndetail";
+import { PromptShelf } from "./promptshelf";
 
 function Blank({ title, note }: { title: string; note: string }) {
   return (
@@ -120,6 +122,11 @@ export function Conversation() {
       <Thinking />
       {/* Under the transcript, in the column that has room for it. The rail's
           strip keeps the same numbers at a glance. */}
+      {/* Three collapsed rows, all closed. Everything here is derived from the
+          transcript already on screen, and the conversation keeps its height —
+          which is the lesson the run meters cost the first time. */}
+      <TurnDetail />
+      <PromptShelf />
       <RunMeters />
     </div>
   );

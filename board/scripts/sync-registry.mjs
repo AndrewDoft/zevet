@@ -58,6 +58,11 @@ export const ITEMS = [
   "elements-regenerate-menu", "elements-edit-message", "elements-quote-reply",
   "elements-trace-waterfall", "elements-message-queue",
   "elements-document-reference", "elements-inline-citation",
+  "elements-agent-plan", "elements-task-card", "elements-recommendation-card",
+  "elements-artifact-card", "elements-agent-card", "elements-agent-handoff",
+  "elements-background-inbox", "elements-schedule-card", "elements-draft-restore",
+  "elements-prompt-library", "elements-command-palette", "elements-checkpoint-history",
+  "elements-thinking-indicator", "elements-mcp-server-panel",
 ];
 
 const manifestUrl = (name) =>

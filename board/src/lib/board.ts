@@ -127,6 +127,17 @@ interface BoardState {
    *  it; null means "the newest one", so a freshly started agent is in front
    *  without anything having to select it. */
   activeConsole: number | null;
+  /** When each console was last in front. A console that finished while you
+   *  were reading another one is the thing the background inbox exists to
+   *  surface, and nothing else in the store knows you looked away. */
+  seenConsole: Record<number, number>;
+  /** Commits observed while zevet was watching, newest last. Built from the
+   *  repo status poll, which already runs — this only remembers that the sha
+   *  moved, which is the one thing the poll throws away. */
+  checkpoints: { sha: string; branch: string; ts: number }[];
+  /** MCP servers the agent reported at startup, by console key. Read off
+   *  claude's init payload; absent for a CLI that does not announce them. */
+  mcpServers: Record<number, { name: string; status: string; tools: string[] }[]>;
   /** Show the launcher instead of a thread. Separate from activeConsole
    *  BECAUSE null there already means "the newest one" — overloading it made
    *  the launcher unreachable the moment a console existed. */
@@ -180,6 +191,7 @@ interface BoardState {
   startAgent: (name: string) => void;
   closeConsole: (key: number) => void;
   setActiveConsole: (key: number | null) => void;
+  markConsoleSeen: (key: number) => void;
   openLauncher: () => void;
   stopConsole: (key: number) => void;
   sendPrompt: (key: number, text: string) => void;
@@ -323,6 +335,9 @@ export const useBoard = create<BoardState>((set, get) => ({
   myConsoles: [],
   activeConsole: null,
   launching: false,
+  seenConsole: {},
+  checkpoints: [],
+  mcpServers: {},
   launchModel: "",
   launchEffort: "",
   launchMode: "auto",
@@ -446,7 +461,12 @@ export const useBoard = create<BoardState>((set, get) => ({
       root,
       hue: get().myConsoles.length % 5,
     };
-    set((g) => ({ myConsoles: [...g.myConsoles, c], activeConsole: c.key, launching: false }));
+    set((g) => ({
+      myConsoles: [...g.myConsoles, c],
+      activeConsole: c.key,
+      launching: false,
+      seenConsole: { ...g.seenConsole, [c.key]: Date.now() },
+    }));
     br.startAgent(name, root, { model: get().launchModel, mode: get().launchMode }).then((r) => {
       if (!r || !r.ok) {
         c.running = false;
@@ -458,7 +478,14 @@ export const useBoard = create<BoardState>((set, get) => ({
     });
   },
 
-  setActiveConsole: (key) => set({ activeConsole: key, launching: false }),
+  setActiveConsole: (key) =>
+    set((g) => ({
+      activeConsole: key,
+      launching: false,
+      seenConsole: key == null ? g.seenConsole : { ...g.seenConsole, [key]: Date.now() },
+    })),
+  markConsoleSeen: (key) =>
+    set((g) => ({ seenConsole: { ...g.seenConsole, [key]: Date.now() } })),
   openLauncher: () => set({ launching: true }),
 
   closeConsole: (key) => {
@@ -624,7 +651,22 @@ export const useBoard = create<BoardState>((set, get) => ({
   setDocStatus: (room, st) => set((g) => ({ docStatus: { ...g.docStatus, [room]: st } })),
   syncDocStatus: () => set((g) => ({ docStatus: { ...g.docStatus } })),
   setStripLive: (patch) => set((g) => ({ strip: { ...g.strip, live: { ...g.strip.live, ...patch } } })),
-  setStripMachine: (m) => set((g) => ({ strip: { ...g.strip, machine: m } })),
+  setStripMachine: (m) =>
+    set((g) => {
+      // A commit that happened while zevet was watching. The status poll
+      // already runs and already carries the sha; it just throws away the fact
+      // that it MOVED, which is the only part worth keeping.
+      const repo = m && (m.repo as { sha?: string; branch?: string } | undefined);
+      const sha = repo && typeof repo.sha === "string" ? repo.sha : null;
+      const last = g.checkpoints[g.checkpoints.length - 1];
+      const moved = sha && (!last || last.sha !== sha);
+      return {
+        strip: { ...g.strip, machine: m },
+        checkpoints: moved
+          ? [...g.checkpoints, { sha, branch: String((repo && repo.branch) || ""), ts: Date.now() }].slice(-40)
+          : g.checkpoints,
+      };
+    }),
 
   tick: 0,
   bumpTick: () => set((g) => ({ tick: (g.tick + 1) % 1_000_000 })),
@@ -797,6 +839,26 @@ function ingressAgentEvent(evt: { id?: string; type: string; code?: number | nul
   if (evt.type === "agent") {
     const payload = (evt.payload || {}) as { type?: string; model?: string; total_cost_usd?: number };
     if (payload.type === "system" && typeof payload.model === "string") useBoard.getState().setStripLive({ model: payload.model });
+    // claude announces its MCP servers in the same init line. Nothing else
+    // reports them, and which tools an agent can actually reach is worth
+    // seeing before you trust what it says it cannot do.
+    const announced = (payload as { mcp_servers?: unknown }).mcp_servers;
+    if (Array.isArray(announced) && announced.length) {
+      const c0 = consoleById(evt.id);
+      if (c0) {
+        const servers = announced
+          .map((raw) => {
+            const o = (raw || {}) as { name?: unknown; status?: unknown; tools?: unknown };
+            return {
+              name: String(o.name ?? "server"),
+              status: String(o.status ?? "connected"),
+              tools: Array.isArray(o.tools) ? o.tools.map((t) => String(t)) : [],
+            };
+          })
+          .filter((s) => s.name);
+        useBoard.setState((g) => ({ mcpServers: { ...g.mcpServers, [c0.key]: servers } }));
+      }
+    }
     const u = usageOf(payload);
     if (u) {
       useBoard.getState().setStripLive({ context: u.context, ...(u.cacheHit != null ? { cacheHit: u.cacheHit } : {}), ...(u.model ? { model: u.model } : {}) });

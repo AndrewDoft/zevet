@@ -84,7 +84,17 @@ describe("sending is refused only where it would go nowhere", () => {
     // codex and opencode close stdin after one prompt (agent-console.js
     // § send, facts 4 and 5). Refusing from the start would be the same bug
     // again, in a narrower form: the first prompt is the one that works.
-    assert.match(value, /oneShot && sent > 0/);
+    //
+    // `sent > 0` now sits inside the one-shot branch rather than beside it,
+    // because a multi-turn agent gets a queue and no longer refuses mid-turn.
+    assert.match(value, /oneShot && \(streaming \|\| sent > 0\)/);
+  });
+
+  test("a turn in flight only refuses where there is no queue to catch it", () => {
+    // The queue is the whole point: the composer used to make you wait with a
+    // thought you had already had.
+    const runtime = readFileSync(path.join(BOARD, "lib", "runtime.tsx"), "utf8");
+    assert.match(runtime, /queue: oneShot \? undefined : queue\.adapter/);
   });
 
   test("MULTI_TURN is the one place that knows which agents keep talking", () => {

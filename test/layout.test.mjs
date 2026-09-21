@@ -12,7 +12,7 @@
 // the rules rather than about pixels.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { ROOT } from "./helpers.mjs";
 
@@ -62,11 +62,29 @@ describe("agent view gives the conversation the width", () => {
 describe("no control is offered that zevet cannot honour", () => {
   // Same class as ToolError's Retry: the registry ships affordances for a
   // product that drives the agent loop. zevet does not.
-  test("AgentStatus's pause/retry trailing is suppressed", () => {
-    for (const f of ["consoles.tsx", "people.tsx"]) {
-      const src = readFileSync(path.join(BOARD, "components", f), "utf8");
+  test("AgentStatus's pause/retry trailing is suppressed wherever it is used", () => {
+    // Conditional, not a literal check on a fixed list: people.tsx renders
+    // SubagentList now and does not use AgentStatus at all, which satisfies
+    // the rule vacuously. The rule is about the element, not the file — a
+    // hard-coded list turned a correct refactor into a red gate.
+    for (const f of ["consoles.tsx", "people.tsx", "inbox.tsx"]) {
+      const full = path.join(BOARD, "components", f);
+      if (!existsSync(full)) continue;
+      const src = readFileSync(full, "utf8");
+      if (!/<AgentStatus\b/.test(src)) continue;
       assert.match(src, /trailing=\{null\}/, `${f} renders AgentStatus's default Pause/Retry icon`);
     }
+  });
+
+  test("SubagentList carries no control of its own", () => {
+    // It is used in the People rail for teammates on other machines. If
+    // upstream ever gives it a button, zevet would be offering to act on
+    // somebody else's agent, which it cannot do.
+    const el = readFileSync(
+      path.join(BOARD, "components", "assistant-ui", "elements", "subagent-list.tsx"),
+      "utf8",
+    );
+    assert.ok(!/<button/.test(el), "SubagentList grew a control that zevet cannot honour");
   });
 });
 

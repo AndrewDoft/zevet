@@ -1,9 +1,9 @@
 import { type CSSProperties, useEffect, useState } from "react";
 import { hueOf, isIdle, selectRoster, serverNow, useBoard } from "../lib/board";
 import type { RosterEntry } from "../lib/types";
-import { agoText, currentOf, folderOf, missionOf, turnOf, verbFor } from "../lib/text";
-import { agentBadge } from "./marks";
-import { AgentStatus, type AgentState } from "./assistant-ui/elements/agent-status";
+import { agoText, currentOf, missionOf, turnOf } from "../lib/text";
+import { SubagentList, type SubagentItem } from "./assistant-ui/elements/subagent-list";
+import type { AgentState } from "./assistant-ui/elements/agent-status";
 
 function expandedStored(): string[] {
   try {
@@ -77,8 +77,8 @@ export function PeoplePane() {
       {roster.map((r) => {
         const idle = isIdle(r, now);
         const open = expanded.indexOf(r.actor) >= 0;
-        const lastAgent = r.lastEvent && r.lastEvent.agent;
-        const last = r.lastEvent;
+        const state = stateOf(r, idle);
+        const item: SubagentItem = { name: r.actor, model: r.lastEvent?.agent ?? "" };
         return (
           <div className="person-wrap" key={r.actor}>
             <button
@@ -95,24 +95,21 @@ export function PeoplePane() {
                 toggleExpanded(r.actor, !open);
               }}
             >
-              {agentBadge(lastAgent)}
-              <span>
-                <span className="nm">{r.actor}</span>
-                <span className="sub">
-                  {/* The same working / waiting / done vocabulary the rail's
-                      own consoles use, so one person's state reads the same
-                      whether they are on this machine or another. */}
-                  <AgentStatus
-                    className="person-status"
-                    state={stateOf(r, idle)}
-                    label={last ? verbFor(last) : "idle"}
-                    elapsed={idle ? agoText(now, r.lastTs) : folderOf(last) || undefined}
-                    // No pause or retry affordance: zevet cannot do either to
-                    // somebody else's agent on somebody else's machine.
-                    trailing={null}
-                  />
-                </span>
-              </span>
+              {/* col-span-2 escapes .person's 10px/1fr badge grid now that
+                  the row has one child, not a badge and a text column.
+                  min-h-0 drops the element's 14.5rem floor, sized for a
+                  standalone panel, not a rail row repeated per teammate.
+                  Progress only fills at 100 on completion: nothing upstream
+                  gives a fractional signal, and the spinner already reads
+                  as "in progress" without one. */}
+              <SubagentList
+                className="col-span-2 min-h-0 w-full max-w-none"
+                agents={[item]}
+                completedCount={state === "done" ? 1 : 0}
+                progress={[state === "done" ? 100 : 0]}
+                showSummary={false}
+                summaryAgent={item}
+              />
             </button>
             {open ? <PersonDetail r={r} now={now} /> : null}
           </div>

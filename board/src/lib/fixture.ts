@@ -250,6 +250,27 @@ const SAMPLE = `export function liveActorsOf(events, now) {
 }
 `;
 
+/**
+ * A replay of the same script with fresh tool ids.
+ *
+ * The scripts hard-code t1..t7, and a second prompt replays one into the same
+ * transcript — which is how the duplicate-toolCallId crash was found. A real
+ * CLI mints new ids per turn; the fixture now does too, so it keeps testing
+ * the case rather than re-creating a bug the code already handles.
+ */
+function freshIds(script: unknown[], run: number): unknown[] {
+  if (run <= 1) return script;
+  const swap = (v: unknown): unknown => {
+    if (typeof v === "string") return /^t\d+$/.test(v) ? `${v}r${run}` : v;
+    if (Array.isArray(v)) return v.map(swap);
+    if (v && typeof v === "object") {
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, swap(x)]));
+    }
+    return v;
+  };
+  return script.map(swap);
+}
+
 /** Installs the fake bridge. Returns false if it declined to. */
 export function installFixtureBridge(): boolean {
   if (!import.meta.env.DEV) return false;
@@ -263,8 +284,10 @@ export function installFixtureBridge(): boolean {
   /** Replay a script at a pace you can actually read, so streaming, the
    *  running spinner and the scroll anchor are all exercised rather than
    *  arriving in one frame. */
+  let replay = 0;
+
   function play(id: string, agent: string) {
-    const script = SCRIPTS[agent] ?? CLAUDE_SCRIPT;
+    const script = freshIds(SCRIPTS[agent] ?? CLAUDE_SCRIPT, ++replay);
     script.forEach((payload, i) => {
       setTimeout(() => emit({ id, type: "agent", payload }), 220 * (i + 1));
     });

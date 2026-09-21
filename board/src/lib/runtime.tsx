@@ -18,11 +18,13 @@
  * The provider wraps the whole shell rather than just the chat column, because
  * the rail's agent cards and the strip's meters read thread state too.
  */
-import { type PropsWithChildren, useMemo } from "react";
+import { type PropsWithChildren, useEffect, useMemo, useRef } from "react";
 import {
   AssistantRuntimeProvider,
   CompositeAttachmentAdapter,
   SimpleTextAttachmentAdapter,
+  WebSpeechDictationAdapter,
+  createMessageQueue,
   type AppendMessage,
   type ExternalStoreThreadData,
   type ThreadMessageLike,
@@ -92,11 +94,63 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     [consoles],
   );
 
+  /* DICTATION.
+   *
+   * Built once, not per render: it holds a SpeechRecognition session, and a new
+   * adapter on every render would drop the one that is listening.
+   *
+   * ⚠️ THIS IS NOT MASORA. Masora's dictation is a local service that types
+   * into whatever field has focus, so it already works with this composer and
+   * needs nothing from zevet; its HTTP surface is enrollment and key renewal,
+   * not transcription. What this adds is a mic IN the composer, which works
+   * without Masora installed. Pointing it at a transcription endpoint later is
+   * a change to this one line. */
+  const dictation = useMemo(() => new WebSpeechDictationAdapter(), []);
+
   const messages = active?.transcript.messages ?? NO_MESSAGES;
   /** An assistant message is open, so the agent is mid-answer. */
   const streaming = (active?.transcript.openIndex ?? -1) >= 0;
   const oneShot = Boolean(active) && !MULTI_TURN.has(active!.agent);
   const sent = messages.reduce((n, m) => n + (m.role === "user" ? 1 : 0), 0);
+
+  /* QUEUING, and only where it can be honoured.
+   *
+   * The composer refuses to send mid-turn, which is correct but makes you sit
+   * and wait with a thought you have already had. A queue takes it now and
+   * sends it when the turn settles.
+   *
+   * ⚠️ MULTI-TURN AGENTS ONLY. codex and opencode close stdin after one prompt
+   * (agent-console.js § send, facts 4 and 5), so a queued second prompt would
+   * be accepted by the UI and delivered to a closed pipe — the exact class of
+   * lie isSendDisabled exists to prevent. They get no queue and keep the
+   * refusal. */
+  const sendRef = useRef<(text: string) => void>(() => {});
+  sendRef.current = (text: string) => {
+    if (active) sendPrompt(active.key, text);
+  };
+  const stopRef = useRef<() => void>(() => {});
+  stopRef.current = () => {
+    if (active) stopConsole(active.key);
+  };
+
+  const queue = useMemo(
+    () =>
+      createMessageQueue({
+        run: (message) => {
+          const text = textOf(message);
+          if (text) sendRef.current(text);
+        },
+        cancel: () => stopRef.current(),
+      }),
+    [],
+  );
+
+  // The queue advances on the run's edges, and nothing else tells it. A turn
+  // that opened is busy; a turn that closed is idle and releases the next one.
+  useEffect(() => {
+    if (streaming) queue.notifyBusy();
+    else queue.notifyIdle();
+  }, [streaming, queue]);
 
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages,
@@ -126,8 +180,12 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     // one-prompt agent the second prompt is the one that goes nowhere, and the
     // first must still be allowed through.
     isDisabled: !active,
-    isSendDisabled:
-      !active?.running || streaming || (oneShot && sent > 0),
+    // `streaming` is no longer a refusal for a multi-turn agent: the queue
+    // takes the prompt and sends it when the turn settles. A one-shot agent
+    // keeps it, because for that one there is no later.
+    isSendDisabled: !active?.running || (oneShot && (streaming || sent > 0)),
+
+    queue: oneShot ? undefined : queue.adapter,
 
     onNew: async (message) => {
       if (!active) return;
@@ -145,6 +203,8 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
        * image, and an attachment that silently contributes nothing is worse
        * than one the composer refuses. */
       attachments: new CompositeAttachmentAdapter([new SimpleTextAttachmentAdapter()]),
+
+      dictation,
 
       threadList: {
         threadId: active ? threadIdOf(active) : undefined,

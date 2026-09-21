@@ -10,8 +10,12 @@ export interface TranscriptState {
   messages: ThreadMessageLike[];
   /** Index of the assistant message being streamed into, or -1. */
   openIndex: number;
-  /** toolCallId -> where that call's part lives, so a result can find it. */
+  /** The id the AGENT sent -> where the NEWEST call with that id lives, so a
+   *  result finds the call it belongs to. */
   toolIndex: Record<string, ToolIndexEntry>;
+  /** Every part id already handed out, so a repeated one can be made unique.
+   *  assistant-ui keys parts by toolCallId and throws on a duplicate. */
+  byPartId: Record<string, true>;
   running: boolean;
 }
 
