@@ -181,6 +181,11 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   },
   status: (root) => ipcRenderer.invoke("local:status", { root }),
   stats: (root, relPaths) => ipcRenderer.invoke("local:stats", { root, relPaths }),
+  commits: (root, limit) => ipcRenderer.invoke("local:commits", { root, limit }),
+  schedules: () => ipcRenderer.invoke("local:schedules"),
+  scheduleSave: (s) => ipcRenderer.invoke("local:scheduleSave", { schedule: s }),
+  scheduleRemove: (id) => ipcRenderer.invoke("local:scheduleRemove", { id }),
+  scheduleToggle: (id) => ipcRenderer.invoke("local:scheduleToggle", { id }),
   /**
    * Tell me when something else changes this file on disk.
    *

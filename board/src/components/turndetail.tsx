@@ -20,6 +20,7 @@ import {
   TaskCards,
   TurnTrace,
 } from "./agentviews";
+import { CommandRuns, NextStep, Pages, StoppedRuns } from "./moreviews";
 import { McpServerPanel } from "./assistant-ui/elements/mcp-server-panel";
 import { selectActiveConsole, useBoard } from "../lib/board";
 
@@ -74,8 +75,14 @@ export function TurnDetail() {
 
       {open ? (
         <div className="turn-detail-body">
+          {/* Ordered the way you would ask: what was the plan, what stopped
+              it, what is next, how long did each step take, then the detail. */}
           <AgentPlanView />
+          <StoppedRuns />
+          <NextStep />
           <TurnTrace />
+          <CommandRuns />
+          <Pages />
           <TaskCards />
           <Handoffs />
           <Artifacts />

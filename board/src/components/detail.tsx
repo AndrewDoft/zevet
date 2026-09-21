@@ -10,6 +10,7 @@ import {
 } from "../lib/board";
 import type { EditorViewState } from "../lib/board";
 import { bridge } from "../lib/bridge";
+import { Checkpoints, Schedules } from "./repoviews";
 import { agoText, hhmm, verbFor } from "../lib/text";
 
 function CollideBars() {
@@ -122,6 +123,13 @@ export function DetailPane({ blanked }: { blanked?: boolean }) {
       <div className="blank">
         <h2>Pick a file.</h2>
         <p>Select a file to see recent activity.</p>
+        {/* This pane is wide and otherwise empty until a file is picked, and
+            these two are about the repo rather than about any one file. Both
+            render nothing when there is nothing to say. */}
+        <div className="blank-repo">
+          <Checkpoints />
+          <Schedules />
+        </div>
       </div>
     );
   } else {

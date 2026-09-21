@@ -329,6 +329,60 @@ async function branchState(rootDir) {
   };
 }
 
+/**
+ * The last few commits, with how many files each one touched.
+ *
+ * ⚠️ WHY THIS EXISTS. The board recorded that HEAD had MOVED — the status poll
+ * already carried the sha — but not what moved in it. elements-checkpoint-history
+ * wants a files-changed count per commit, and there is no way to recover one
+ * from a live diff: `diffStats` describes the working tree against HEAD, not
+ * what any past commit contained. Rather than put an invented number on screen,
+ * the count is read from git.
+ *
+ * READ ONLY, and that is not incidental. zevet's contract is that it does not
+ * touch your git history; this runs `log`, and nothing here can check out,
+ * reset or restore anything. The UI offers no restore for the same reason.
+ *
+ * Returns `[{ sha, subject, at, files }]`, newest first, or `[]` when git
+ * says nothing useful — the same "carry on without badges" rule the rest of
+ * this file follows.
+ */
+async function commits(rootDir, limit = 20) {
+  const n = Math.max(1, Math.min(100, Number(limit) || 20));
+  // A unit separator between fields and a record separator between commits:
+  // a subject line can contain anything a person typed, including tabs and
+  // pipes, and splitting on one of those is how a commit message breaks a
+  // parser.
+  const out = await git(rootDir, [
+    "log",
+    `-n`,
+    String(n),
+    "--no-merges",
+    "--shortstat",
+    "--format=%x1e%H%x1f%s%x1f%ct",
+  ]);
+  if (out == null) return [];
+
+  const list = [];
+  for (const record of out.split("\u001e")) {
+    if (!record.trim()) continue;
+    const [head, ...rest] = record.split("\n");
+    const [sha, subject, ts] = head.split("\u001f");
+    if (!sha) continue;
+    // " 3 files changed, 12 insertions(+), 4 deletions(-)" — or absent
+    // entirely for a commit that changed nothing git counts.
+    const stat = rest.join(" ");
+    const m = /(\d+) files? changed/.exec(stat);
+    list.push({
+      sha: sha.trim(),
+      subject: String(subject || "").slice(0, 200),
+      at: Number(ts) * 1000 || 0,
+      files: m ? Number(m[1]) : 0,
+    });
+  }
+  return list;
+}
+
 module.exports = {
-  diffStats, branchState, diffHunks, parseHunks, LineCounter, countLines, renamedTo, EMPTY_TREE, MAX_COUNT_BYTES,
+  diffStats, branchState, diffHunks, parseHunks, LineCounter, countLines, renamedTo, commits, EMPTY_TREE, MAX_COUNT_BYTES,
 };

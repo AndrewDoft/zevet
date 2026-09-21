@@ -28,6 +28,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu } = requi
 const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
 const repoStats = require("./repo-stats.js");
+const schedule = require("./schedule.js");
 const statusSources = require("./status-sources.js");
 const crypto = require("node:crypto");
 const indexCapability = require("./index-capability.js");
@@ -1424,6 +1425,135 @@ ipcMain.handle("local:status", async (_e, arg) => {
   };
 });
 
+/* ---------------------------------------------------------------------------
+ * SCHEDULES
+ *
+ * An agent run on a timer. The same spawn local:startAgent performs, so this
+ * adds no capability the app did not have — only a delay. schedule.js holds
+ * the pure parts and the one refusal (a schedule may not run in `dangerous`
+ * mode; see the note there).
+ * ------------------------------------------------------------------------- */
+
+const SCHEDULES = path.join(HOME, "schedules.json");
+
+function readSchedules() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SCHEDULES, "utf8"));
+    return Array.isArray(raw) ? raw.map((s) => schedule.sanitise(s)) : [];
+  } catch {
+    // No file yet, or one somebody edited into something else. Neither is an
+    // error: there are simply no schedules.
+    return [];
+  }
+}
+
+function writeSchedules(list) {
+  try {
+    fs.mkdirSync(HOME, { recursive: true });
+    fs.writeFileSync(SCHEDULES, `${JSON.stringify(list, null, 2)}\n`, "utf8");
+  } catch (err) {
+    console.error(`zevet: could not save schedules: ${err.message}`);
+  }
+}
+
+/** Fire everything due. Called on a slow timer — the cadences are minutes, so
+ *  checking once a minute is as precise as the feature claims to be. */
+async function runDueSchedules() {
+  const list = readSchedules();
+  const ready = schedule.due(list, Date.now());
+  if (!ready.length) return;
+
+  let changed = false;
+  for (const s of ready) {
+    const dir = knownRoot(s.root);
+    // The folder was closed or moved since the schedule was made. Advance it
+    // anyway rather than retrying every minute forever.
+    let ok = false;
+    if (dir && s.prompt) {
+      try {
+        await runtimeReady;
+        const started = agentConsole.startConsole({
+          agent: s.agent,
+          cwd: dir,
+          model: s.model,
+          mode: s.mode,
+          onEvent: (evt) => {
+            if (evt && evt.type === "agent") noteBurn(evt.payload, null);
+            if (boardWindow && !boardWindow.isDestroyed()) {
+              boardWindow.webContents.send("local:agentEvent", { ...evt, scheduled: s.id });
+            }
+          },
+        });
+        if (started && started.ok) {
+          started.send(s.prompt);
+          ok = true;
+        }
+      } catch (err) {
+        console.error(`zevet: scheduled run "${s.name}" failed: ${err.message}`);
+      }
+    }
+    const i = list.findIndex((x) => x.id === s.id);
+    if (i >= 0) list[i] = schedule.advance(list[i], ok);
+    changed = true;
+  }
+  if (changed) {
+    writeSchedules(list);
+    if (boardWindow && !boardWindow.isDestroyed()) {
+      boardWindow.webContents.send("local:schedulesChanged", list);
+    }
+  }
+}
+
+let scheduleTimer = null;
+function startScheduler() {
+  if (scheduleTimer) return;
+  // Once a minute. The shortest cadence offered is fifteen.
+  scheduleTimer = setInterval(() => void runDueSchedules(), 60_000);
+  if (typeof scheduleTimer.unref === "function") scheduleTimer.unref();
+}
+
+ipcMain.handle("local:schedules", () => ({ ok: true, schedules: readSchedules() }));
+
+ipcMain.handle("local:scheduleSave", (_e, arg) => {
+  const incoming = schedule.sanitise(arg && arg.schedule);
+  if (!incoming.prompt) return { ok: false, error: "a schedule needs a prompt" };
+  if (!knownRoot(incoming.root)) return { ok: false, error: "not an opened workspace" };
+  const list = readSchedules();
+  const i = list.findIndex((s) => s.id === incoming.id);
+  if (i >= 0) list[i] = incoming;
+  else list.push(incoming);
+  writeSchedules(list);
+  return { ok: true, schedules: list };
+});
+
+ipcMain.handle("local:scheduleRemove", (_e, arg) => {
+  const id = String((arg && arg.id) || "");
+  const list = readSchedules().filter((s) => s.id !== id);
+  writeSchedules(list);
+  return { ok: true, schedules: list };
+});
+
+ipcMain.handle("local:scheduleToggle", (_e, arg) => {
+  const id = String((arg && arg.id) || "");
+  const list = readSchedules().map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s));
+  writeSchedules(list);
+  return { ok: true, schedules: list };
+});
+
+/** The last few commits in a folder the person has opened. Read only: it
+ *  runs `git log` and nothing else, and there is no counterpart that writes. */
+ipcMain.handle("local:commits", async (_e, arg) => {
+  const dir = knownRoot(arg && arg.root);
+  if (!dir) return { ok: false, commits: [] };
+  try {
+    return { ok: true, commits: await repoStats.commits(dir, arg && arg.limit) };
+  } catch {
+    // Same rule as every other git call here: no history is a board without
+    // a checkpoint list, not an error worth showing.
+    return { ok: false, commits: [] };
+  }
+});
+
 ipcMain.handle("local:stats", async (_e, { root, relPaths }) => {
   // knownRoot FIRST, exactly as every handler above does it, and for the same
   // reason: without it `C:\` is a valid root and the counter walks the disk.
@@ -1850,6 +1980,7 @@ ipcMain.handle("app:updateInstall", () => appUpdater.install());
 
 app.whenReady().then(() => {
   buildMenu();
+  startScheduler();
   // After the window, never before it: an update check that delayed the
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();

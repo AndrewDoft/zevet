@@ -2,7 +2,7 @@
   "name": "zevet-desktop",
   "version": "0.2.14",
   "private": true,
-  "description": "zevet — watch your team's coding agents",
+  "description": "zevet \u2014 watch your team's coding agents",
   "main": "main.js",
   "author": "Andrew Doft",
   "scripts": {
@@ -25,7 +25,7 @@
     "afterPack": "./sign-macos.cjs",
     "appId": "com.andrewdoft.zevet",
     "productName": "zevet",
-    "copyright": "Copyright © 2026 Andrew Doft",
+    "copyright": "Copyright \u00a9 2026 Andrew Doft",
     "directories": {
       "output": "out",
       "buildResources": "build"
@@ -38,6 +38,7 @@
       "agent-console.js",
       "doc-sync.js",
       "repo-stats.js",
+      "schedule.js",
       "file-watch.js",
       "status-sources.js",
       "embedder.js",

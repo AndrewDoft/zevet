@@ -63,6 +63,7 @@ export const ITEMS = [
   "elements-background-inbox", "elements-schedule-card", "elements-draft-restore",
   "elements-prompt-library", "elements-command-palette", "elements-checkpoint-history",
   "elements-thinking-indicator", "elements-mcp-server-panel",
+  "elements-computer-use", "elements-code-runner",
 ];
 
 const manifestUrl = (name) =>
@@ -162,6 +163,13 @@ const COPY = [
     // on somebody's own machine — the opposite claim, and the reassuring one.
     from: "Connection lost. The run kept going on the server.",
     to: "Lost the hub. Your agents keep running on their own machines.",
+  },
+  {
+    file: "components/assistant-ui/elements/checkpoint-history.tsx",
+    // A commit that touched one file said "1 files". Not a false claim, but
+    // the count beside it is read off git and the sloppiness undercuts it.
+    from: "{checkpoint.at} · {checkpoint.files} files",
+    to: '{checkpoint.at} · {checkpoint.files} {checkpoint.files === 1 ? "file" : "files"}',
   },
 ];
 

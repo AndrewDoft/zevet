@@ -23,6 +23,48 @@ export interface StatsResult {
   error?: string;
 }
 
+export interface ScheduleRunRecord {
+  id: string;
+  at: number;
+  ok: boolean;
+}
+
+export interface AgentSchedule {
+  id: string;
+  name: string;
+  prompt: string;
+  agent: string;
+  model: string;
+  /** Never "dangerous": schedule.js downgrades it. Unattended and unprompted
+   *  at the same time is the combination that is refused. */
+  mode: string;
+  root: string;
+  cadence: string;
+  enabled: boolean;
+  /** ms since epoch. */
+  nextAt: number;
+  history: ScheduleRunRecord[];
+}
+
+export interface SchedulesResult {
+  ok: boolean;
+  schedules?: AgentSchedule[];
+  error?: string;
+}
+
+export interface RepoCommit {
+  sha: string;
+  subject: string;
+  /** ms since epoch. */
+  at: number;
+  files: number;
+}
+
+export interface CommitsResult {
+  ok: boolean;
+  commits?: RepoCommit[];
+}
+
 export interface StatusResult {
   ok: boolean;
   repo?: { branch?: string; sha?: string; ahead?: number | null; behind?: number | null };
@@ -44,6 +86,14 @@ export interface LocalBridge {
   onFileChanged: (cb: (p: { root: string; relPath: string; text?: string; bom?: boolean; eol?: string }) => void) => () => void;
   onAgentEvent: (cb: (evt: { id?: string; type: string; code?: number | null; signal?: string | null; text?: string; payload?: unknown }) => void) => () => void;
   stats: (root: string, paths: string[]) => Promise<StatsResult>;
+  /** The last few commits, newest first. Read only — there is no restore. */
+  commits?: (root: string, limit?: number) => Promise<CommitsResult>;
+  /** Agent runs on a timer. Optional: an older desktop build does not have
+   *  them, and the hub serves this board to whatever version is installed. */
+  schedules?: () => Promise<SchedulesResult>;
+  scheduleSave?: (s: Partial<AgentSchedule>) => Promise<SchedulesResult>;
+  scheduleRemove?: (id: string) => Promise<SchedulesResult>;
+  scheduleToggle?: (id: string) => Promise<SchedulesResult>;
   status: (root: string | null) => Promise<StatusResult>;
   chrome: (spec: ColorThemeSpec) => void;
   addWorkspace: () => Promise<LocalWorkspace | null>;

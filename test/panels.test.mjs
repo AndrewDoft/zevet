@@ -61,29 +61,43 @@ describe("a panel with nothing to say says nothing", () => {
 });
 
 describe("nothing is invented", () => {
-  test("checkpoint history is deliberately not built", () => {
-    // elements-checkpoint-history requires `files: number` per commit. The
-    // status poll that records a moved sha has no file count and there is no
-    // per-commit diff to recover one from, so any number there would read as
-    // real and be fabricated. Recorded here so the absence is a decision
-    // rather than an oversight — if a files-changed count is ever added to
-    // `checkpoints`, this test is the note saying it can now be built.
-    const src = existsSync(path.join(BOARD, "components", "inbox.tsx"))
-      ? read("components", "inbox.tsx")
-      : "";
-    assert.ok(
-      !/CheckpointHistory[^a-zA-Z]/.test(src),
-      "CheckpointHistory is rendered, but zevet has no per-commit file count to give it",
-    );
+  // 0.2.14 left checkpoint-history and schedule-card unbuilt because the
+  // elements ask for facts zevet did not have. 0.2.15 built the facts rather
+  // than the fiction; what these now check is that the facts are real.
+  const repoviews = read("components", "repoviews.tsx");
+
+  test("the checkpoint file count comes from git, not from the board", () => {
+    // The status poll only ever knew the sha had MOVED. A count derived from
+    // `stats.diff` would describe the working tree, not the commit, and would
+    // read as a per-commit number while being something else entirely.
+    assert.match(repoviews, /files: c\.files/);
+    const rs = readFileSync(path.join(ROOT, "desktop", "repo-stats.js"), "utf8");
+    assert.match(rs, /async function commits\(/);
+    assert.match(rs, /--shortstat/);
+    assert.match(rs, /files? changed/);
   });
 
-  test("the schedule card is deliberately not built", () => {
-    // zevet runs nothing on a schedule. A schedule card would be a prop.
-    const all = ["turndetail.tsx", "inbox.tsx", "conversation.tsx", "promptshelf.tsx"]
-      .filter((f) => existsSync(path.join(BOARD, "components", f)))
-      .map((f) => read("components", f))
-      .join("\n");
-    assert.ok(!/ScheduleCard/.test(all));
+  test("reading the history cannot write to it", () => {
+    // zevet's contract is that it does not touch your git history. The
+    // element offers a restore; there is no bridge call that could perform
+    // one, and the UI does not pretend otherwise.
+    // Comments name the thing they rule out, so they are stripped first —
+    // otherwise the note explaining why there is no restore fails the test
+    // for offering one. (Second time this pattern has bitten; see
+    // layout.test.mjs.)
+    const code = repoviews.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    assert.ok(!/onRestore/.test(code), "the checkpoint list offers a restore zevet cannot perform");
+    const rs = readFileSync(path.join(ROOT, "desktop", "repo-stats.js"), "utf8");
+    const fn = rs.slice(rs.indexOf("async function commits("), rs.indexOf("module.exports"));
+    for (const dangerous of ["checkout", "reset", "restore", "revert"]) {
+      assert.ok(!fn.includes(dangerous), `commits() runs git ${dangerous}`);
+    }
+  });
+
+  test("a schedule's next run is not claimed while it is paused", () => {
+    // A disabled schedule keeps a nextAt in its record; printing it would say
+    // it is about to run when it is not.
+    assert.match(repoviews, /s\.enabled \? whenText\(s\.nextAt\) : "paused"/);
   });
 });
 

@@ -869,3 +869,11 @@
   #people [data-slot="agent-card"] [class*="size-9"] {
     display: none;
   }
+
+  /* The repo's own history and its scheduled runs, in the pane that is empty
+     until a file is picked. */
+  .blank-repo {
+    display: flex; flex-direction: column; gap: 14px;
+    margin-top: 26px; max-width: 46rem;
+  }
+  .blank-repo > * { max-width: none; width: 100%; }

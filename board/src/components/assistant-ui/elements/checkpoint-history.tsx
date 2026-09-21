@@ -71,7 +71,7 @@ export function CheckpointHistory({
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate text-[13px]">{checkpoint.label}</span>
               <span className={cn(mono, "text-foreground/30")}>
-                {checkpoint.at} · {checkpoint.files} files
+                {checkpoint.at} · {checkpoint.files} {checkpoint.files === 1 ? "file" : "files"}
               </span>
             </span>
 

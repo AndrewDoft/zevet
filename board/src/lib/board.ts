@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { bridge, type StatusResult } from "./bridge";
+import { bridge, type AgentSchedule, type RepoCommit, type StatusResult } from "./bridge";
 import { shortInput } from "./fmt";
 import {
   appendAgentPayload,
@@ -135,6 +135,14 @@ interface BoardState {
    *  repo status poll, which already runs — this only remembers that the sha
    *  moved, which is the one thing the poll throws away. */
   checkpoints: { sha: string; branch: string; ts: number }[];
+  /** The repo's actual last few commits, with a real files-changed count read
+   *  from `git log`. `checkpoints` above only knows the sha moved; this knows
+   *  what moved in it, which is what a checkpoint list has to say to be worth
+   *  showing. Refreshed when the sha changes, never on a timer. */
+  repoCommits: RepoCommit[];
+  /** Agent runs on a timer, as the desktop app holds them. Empty on a build
+   *  that does not have the capability, which is not an error. */
+  schedules: AgentSchedule[];
   /** MCP servers the agent reported at startup, by console key. Read off
    *  claude's init payload; absent for a CLI that does not announce them. */
   mcpServers: Record<number, { name: string; status: string; tools: string[] }[]>;
@@ -337,6 +345,8 @@ export const useBoard = create<BoardState>((set, get) => ({
   launching: false,
   seenConsole: {},
   checkpoints: [],
+  repoCommits: [],
+  schedules: [],
   mcpServers: {},
   launchModel: "",
   launchEffort: "",
@@ -578,6 +588,8 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   refreshStats: (force) => {
+    void refreshCommits();
+    void refreshSchedules();
     const g = get();
     if (!bridge.local || !g.localRoot || !g.localEntries) return;
     const now = Date.now();
@@ -660,6 +672,9 @@ export const useBoard = create<BoardState>((set, get) => ({
       const sha = repo && typeof repo.sha === "string" ? repo.sha : null;
       const last = g.checkpoints[g.checkpoints.length - 1];
       const moved = sha && (!last || last.sha !== sha);
+      // Only on the edge: a commit is rare and `git log` is a process spawn,
+      // so it is read when the sha moves and never on the 4s poll itself.
+      if (moved) void refreshCommits();
       return {
         strip: { ...g.strip, machine: m },
         checkpoints: moved
@@ -1753,6 +1768,52 @@ export function applyTheme(): ColorThemeSent {
 }
 
 type ColorThemeSent = { theme: Theme; paper: string; ink: string; cerulean: string; line: string };
+
+/**
+ * Read the repo's commits, if this build can.
+ *
+ * `commits` is optional on the bridge: an older desktop app does not have it,
+ * and the board is served to whatever version is installed. An absent method
+ * means no checkpoint list, not an error — the same rule every other optional
+ * bridge capability follows here.
+ */
+export async function refreshCommits(): Promise<void> {
+  const br = bridge.local;
+  const root = useBoard.getState().localRoot;
+  if (!br || !root || typeof br.commits !== "function") return;
+  try {
+    const r = await br.commits(root, 20);
+    if (r && r.ok && Array.isArray(r.commits)) useBoard.setState({ repoCommits: r.commits });
+  } catch {
+    // A folder that is not a repo, or a git that is not installed. Neither is
+    // worth a message: the list simply does not appear.
+  }
+}
+
+/** Read the schedules the desktop app holds, if this build has them. */
+export async function refreshSchedules(): Promise<void> {
+  const br = bridge.local;
+  if (!br || typeof br.schedules !== "function") return;
+  try {
+    const r = await br.schedules();
+    if (r && r.ok && Array.isArray(r.schedules)) useBoard.setState({ schedules: r.schedules });
+  } catch {
+    // An older desktop build, or no store yet. No schedules, no message.
+  }
+}
+
+/** Flip one on or off. The desktop app owns the list, so its answer replaces
+ *  ours rather than the board guessing what the new state is. */
+export async function toggleSchedule(id: string): Promise<void> {
+  const br = bridge.local;
+  if (!br || typeof br.scheduleToggle !== "function") return;
+  try {
+    const r = await br.scheduleToggle(id);
+    if (r && r.ok && Array.isArray(r.schedules)) useBoard.setState({ schedules: r.schedules });
+  } catch {
+    // Left as it was; the next refresh corrects it.
+  }
+}
 
 export function applyView(): void {
   const g = useBoard.getState();
