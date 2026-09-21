@@ -12,8 +12,6 @@
  * number here is already in the store, put there by `usageOf` off the agent's
  * own usage payloads.
  */
-import { useState } from "react";
-import { ChevronRightIcon } from "lucide-react";
 import { ContextBreakdown, type ContextSegment } from "./assistant-ui/elements/context-breakdown";
 import { CostMeter } from "./assistant-ui/elements/cost-meter";
 import { MessageTiming } from "./assistant-ui/elements/message-timing";
@@ -31,10 +29,16 @@ const CONTEXT_LIMIT = 200_000;
 
 const money = (n: number | null) => (n == null ? "$0.00" : `$${n.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`);
 
-export function RunMeters() {
+/**
+ * ⚠️ NO LONGER A COLLAPSED ROW UNDER THE COMPOSER. It was one of five stacked
+ * under the chat box, each of which pushed it up when opened — Andrew: "the
+ * chatbox ... should never change positions or resize autonomously". The
+ * numbers are the same; what changed is that they now live inside the card
+ * `ComposerExtras` opens over the transcript, anchored to its own button.
+ */
+export function RunMeterCard() {
   const { live } = useBoard(selectStrip);
   const active = useBoard(selectActiveConsole);
-  const [open, setOpen] = useState(false);
 
   // Nothing has reported usage yet. An empty meter is worse than no meter —
   // it reads as "zero tokens", which is never true of a running agent.
@@ -61,23 +65,13 @@ export function RunMeters() {
   );
 
   return (
-    <div className="run-meters">
-      <button
-        type="button"
-        className="run-meters-toggle"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <ChevronRightIcon className="chev size-3.5 shrink-0 opacity-60" />
-        <span>Context, cost and timing</span>
-        <span className="spacer" />
-        {/* The one number worth carrying on the closed row: how full the
-            window is, which is what makes a long session go wrong. */}
-        <span className="tabular-nums">{Math.round((context / window) * 100)}% of {tokens(window)}</span>
-      </button>
-
-      {!open ? null : (
-      <div className="run-meters-body">
+    <div className="run-meters-body">
+      {/* The one number worth leading with: how full the window is, which is
+          what makes a long session go wrong. It was the label on the row this
+          card replaced. */}
+      <div className="run-meters-lead tabular-nums">
+        {Math.round((context / window) * 100)}% of {tokens(window)}
+      </div>
       <ContextBreakdown className="max-w-none" segments={segments} limit={window} />
 
       {/* The same window, three ways, because they answer different questions:
@@ -120,8 +114,6 @@ export function RunMeters() {
       {/* Every console, not just this one. With three agents running the
           question is which of them is burning the window. */}
       <RunUsageTable />
-      </div>
-      )}
     </div>
   );
 }

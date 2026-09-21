@@ -79,23 +79,19 @@ test("Checkpoints slices repoCommits rather than rendering all 200", () => {
 // "backtick backtick backtick mermaid flowchart L R A open square bracket
 // agent stdout". speakable strips fenced code blocks before the text is
 // split into words, and wordsOf goes through it.
-test("read-aloud strips fenced code before splitting into words", () => {
-  const speech = read("components", "speech.tsx");
-  assert.match(speech, /const speakable = \(text: string\): string =>/);
-  assert.match(speech, /\.replace\(\/```\[\\s\\S\]\*\?```\/g, " "\)/);
-  assert.match(speech, /const wordsOf = /);
-  assert.match(speech, /speakable\(textOf\(content\)\)/);
-});
+/* ⚠️ THE READ-ALOUD SHELF IS GONE, and so is the test that pinned it.
+   components/speech.tsx was deleted on 2026-09-21 — Andrew: "delete what it
+   did, find, and read aloud". The rule it pinned (a fenced block is not read
+   out word by word) belonged to that file alone; there is no other reader. */
 
 // The find shelf counts text, not messages. The first gate was
 // messages.length < 2 and the row never appeared against a real run,
 // because transcript.mjs keeps ONE assistant message open across a whole
 // turn and appends parts to it.
-test("the find shelf gates on character count, not message count", () => {
-  const src = read("components", "findshelf.tsx");
-  assert.match(src, /words < 80/);
-  assert.ok(!/messages\.length < 2/.test(src), "the find shelf still gates on message count");
-});
+/* ⚠️ THE FIND SHELF IS GONE too, same change and same reason. Search over a
+   transcript still exists — components/findviews.tsx, hosted where it is
+   useful — but the collapsed row under the composer that opened into it does
+   not, so the threshold this pinned no longer has a caller. */
 
 // Panels in a collapsed row may not be crushed. The bug: those bodies are
 // flex columns with a max-height, so a panel whose height comes from a

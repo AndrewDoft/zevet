@@ -26,6 +26,38 @@ const WINDOW_LABEL: Record<string, string> = {
   seven_day: "7d",
 };
 
+/**
+ * The same window, as a chip for the composer's own row.
+ *
+ * ⚠️ THE BANNER IS GONE FROM ABOVE THE TRANSCRIPT. Andrew: "a weird usage bar
+ * under that skip permissions thing which should be in the chatbox next to
+ * 126k/1.0M $0.1376". He is right that it belongs with the other two numbers
+ * about this run — they answer one question together ("can I keep going"),
+ * and a full-width banner over the conversation answers it far louder than it
+ * deserves. Same data, same "fullest window only" rule, one chip.
+ */
+export function QuotaChip() {
+  const active = useBoard(selectActiveConsole);
+  const limits = active?.limits ?? [];
+  if (!limits.length) return null;
+  const fullest = limits.reduce((a, b) => (b.utilization > a.utilization ? b : a));
+  const resetsIn = whenText(fullest.resetsAt);
+  if (!resetsIn) return null;
+  const used = Math.round(fullest.utilization * 100);
+  const label = WINDOW_LABEL[fullest.key] ?? fullest.key;
+  return (
+    <span
+      className="quota-chip"
+      /* Coloured only when it is close enough to matter. A permanently amber
+         number is a number nobody reads. */
+      data-hot={String(used >= 80)}
+      title={`${used}% of the ${label} window used, resets ${resetsIn}`}
+    >
+      {label} {used}%
+    </span>
+  );
+}
+
 export function QuotaNotice() {
   const active = useBoard(selectActiveConsole);
   const limits = active?.limits ?? [];

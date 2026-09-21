@@ -16,6 +16,7 @@ import { Memories } from "./runspec";
 import { IndexSearch } from "./search";
 import { Readiness } from "./readiness";
 import { AgentSettings } from "./agentsettings";
+import { TurnDetail } from "./turndetail";
 import { agoText, hhmm, verbFor } from "../lib/text";
 
 function CollideBars() {
@@ -136,6 +137,20 @@ export function DetailPane({ blanked }: { blanked?: boolean }) {
             Search goes first because it is the only one you come here to USE;
             the rest are there to be read. */}
         <div className="blank-repo">
+          {/* ⚠️ THIS USED TO BE A COLLAPSED ROW UNDER THE CHAT BOX, and it
+              opened downward into the conversation. Andrew: "all of those
+              dropdowns pop up under the chatbox, which are all superfluous.
+              delete what it did, find, and read aloud."
+
+              Find and read-aloud are deleted. This one is MOVED rather than
+              deleted, and the difference is worth saying: it is not a panel,
+              it is the host for eighteen of them — what the turn read, what it
+              cited, what it ran, its raw output, its subagents, its run spec,
+              and asking again from here. Deleting it would have taken all
+              eighteen with it. This column is the one built for exactly that,
+              and it is no longer under the chat box either way. Say the word
+              and it goes. */}
+          <TurnDetail />
           <IndexSearch />
           <RepoTimeline />
           <Checkpoints />

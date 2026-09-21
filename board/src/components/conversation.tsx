@@ -17,17 +17,11 @@ import { useEffect, useState } from "react";
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { Launcher } from "./launcher";
+import { QuoteToComposer } from "./guards";
 import { VoiceHint } from "./voicedialog";
-import { ListenShelf } from "./speech";
-import { PostureNotice, QuoteToComposer } from "./guards";
-import { QuotaNotice } from "./quota";
 import { PermitPrompt, PermitQueue } from "./permits";
 import { DraftRestore } from "./findviews";
-import { FindShelf } from "./findshelf";
 import { ThreadMap } from "./mapviews";
-import { RunMeters } from "./runmeters";
-import { TurnDetail } from "./turndetail";
-import { PromptShelf } from "./promptshelf";
 import { SessionBanner } from "./sessions";
 
 function Blank({ title, note }: { title: string; note: string }) {
@@ -143,15 +137,17 @@ export function Conversation() {
           <Launcher />
         </div>
       ) : null}
-      {/* What this console may and may not do, said once at the top rather
-          than discovered when an edit does not land. The posture is a flag
-          fixed at launch, so this is a standing fact about the run, not a
-          state that changes under you. */}
-      {reading ? null : <PostureNotice />}
-      {/* The provider's own rate-limit windows, when the agent reports them.
-          It is the one number that decides whether to start another run, so it
-          is at the top rather than behind a row. */}
-      {reading ? null : <QuotaNotice />}
+      {/* ⚠️ THE POSTURE NOTICE AND THE QUOTA BANNER ARE GONE FROM HERE.
+          Andrew: "a weird pop up for skip permissions that can go. and a weird
+          usage bar under that skip permissions thing which should be in the
+          chatbox next to 126k/1.0M $0.1376."
+
+          Neither fact was wrong, both were in the wrong place. The posture is
+          already on the composer's own row, beside the picker that sets it
+          (composercontrols.tsx) — said twice, one of them as a banner over the
+          conversation. The rate-limit window is now a chip next to the context
+          and cost numbers, which is the question it actually belongs to: can
+          this run keep going. */}
       {/* An agent is BLOCKED on this. It goes above the transcript, not behind
           a row, because the run does not continue until it is answered — and
           the ask-server denies on timeout, so ignoring it is a refusal. */}
@@ -183,18 +179,19 @@ export function Conversation() {
           composer is empty, so it never overwrites what you are typing. */}
       <DraftRestore />
       {reading ? null : <Thinking />}
-      {/* Under the transcript, in the column that has room for it. The rail's
-          strip keeps the same numbers at a glance. */}
-      {/* Three collapsed rows, all closed. Everything here is derived from the
-          transcript already on screen, and the conversation keeps its height —
-          which is the lesson the run meters cost the first time. */}
-      <TurnDetail />
-      <FindShelf />
-      {/* Speech out, behind a row. Speech in is the mic in the composer;
-          neither is a voice session — both are the browser's own. */}
-      <ListenShelf />
-      <PromptShelf />
-      <RunMeters />
+      {/* ⚠️ FIVE COLLAPSED ROWS USED TO SIT HERE — turn detail, find, read
+          aloud, prompts and the run meters — and every one of them pushed the
+          chat box up when it opened. Andrew: "all of those dropdowns pop up
+          under the chatbox, which are all superfluous. delete what it did,
+          find, and read aloud. keep prompts but include a much more subtle
+          button 'see past prompts'. and keep the context stuff as well ... the
+          chatbox (and all of the windows and stuff for that matter) should
+          never change positions or resize autonomously."
+
+          Three are deleted. The two that are kept became buttons at either end
+          of the composer's own action row, each opening a card ANCHORED TO ITS
+          BUTTON and out of the flow, so nothing moves when one is opened —
+          components/composercards.tsx. */}
     </div>
   );
 }

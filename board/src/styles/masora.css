@@ -830,6 +830,47 @@
   }
   .session-banner-close:hover { border-color: var(--cerulean); }
 
+  /* TWO SUBTLE BUTTONS AND THEIR CARDS, at either end of the composer's own
+     action row. The card is ABSOLUTELY POSITIONED above its button, so
+     opening one moves nothing: "the chatbox (and all of the windows and stuff
+     for that matter) should never change positions or resize autonomously".
+     See components/composercards.tsx. */
+  .composer-card-wrap { position: relative; flex: none; }
+  .composer-card-btn {
+    font: inherit; font-size: 11.5px; line-height: 1;
+    color: var(--subtle); background: transparent;
+    border: 0; border-radius: 999px; padding: 6px 8px; cursor: pointer;
+    white-space: nowrap;
+  }
+  .composer-card-btn:hover { color: var(--ink); background: var(--raise-soft); }
+  .composer-card-btn[aria-expanded="true"] { color: var(--cerulean); }
+  .composer-card {
+    position: absolute; bottom: calc(100% + 8px); z-index: 40;
+    width: min(420px, 74vw); max-height: 52vh; overflow: auto;
+    border-radius: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.28);
+  }
+  .composer-card[data-align="start"] { left: 0; }
+  .composer-card[data-align="end"] { right: 0; }
+  .composer-card-head {
+    position: sticky; top: 0; z-index: 1;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 8px 12px; font-size: 12px; color: var(--ink-muted);
+    background: inherit; border-bottom: 1px solid var(--line);
+  }
+  .composer-card-head button {
+    font: inherit; font-size: 14px; line-height: 1; color: var(--subtle);
+    background: none; border: 0; cursor: pointer;
+  }
+  .composer-card-head button:hover { color: var(--ink); }
+  .composer-card-body { padding: 10px 12px 12px; }
+
+  /* The provider's rate-limit window, beside the context and cost numbers. */
+  .quota-chip {
+    flex: none; font-size: 11px; color: var(--subtle);
+    border: 1px solid var(--line); border-radius: 999px; padding: 1px 6px;
+  }
+  .quota-chip[data-hot="true"] { color: var(--alert); border-color: var(--alert); }
+
   /* The conversation column: the Thread fills it, the launcher scrolls. */
   /* `relative` is what `.voice-hint` anchors to. Without it that overlay
      escapes to the viewport and lands over the file tree. */

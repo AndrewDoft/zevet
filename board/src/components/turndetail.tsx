@@ -28,7 +28,6 @@ import { RawOutput } from "./rawoutput";
 import { ResearchReportView, SubagentGraph } from "./graphviews";
 import { RunSpec } from "./runspec";
 import { AskAgain, Branches, EditAndAsk } from "./rewind";
-import { Speakers } from "./speech";
 import { McpServerPanel } from "./assistant-ui/elements/mcp-server-panel";
 import { selectActiveConsole, useBoard } from "../lib/board";
 
@@ -110,7 +109,6 @@ export function TurnDetail() {
           <Artifacts />
           <McpServers />
           <RawOutput />
-          <Speakers />
           {/* Asking again, from here. A fork leaves this run where it is and
               starts a branch — see rewind.tsx, and note that it is not a
               rewind into the middle of the conversation, which neither CLI

@@ -196,17 +196,22 @@ const COPY = [
     // stays two lines: the vendored file is re-fetched on every re-install,
     // and the more of it we rewrite the more of it we have to re-check.
     from: 'import { File } from "@/components/assistant-ui/elements/file";',
-    to: 'import { File } from "@/components/assistant-ui/elements/file";\nimport { ComposerControls } from "@/components/composercontrols";',
+    to: 'import { File } from "@/components/assistant-ui/elements/file";\nimport { ComposerControls, ComposerExtras } from "@/components/composercontrols";',
   },
   {
     file: "components/assistant-ui/elements/thread.aui.tsx",
     from: `      <ComposerAddAttachment />
       <div className="flex items-center gap-1.5">`,
+    // ComposerExtras is the RIGHT end of the same row: context and spend,
+    // behind a button, as a card. Andrew asked for the two kept panels to be
+    // "subtle buttons that show up on either side of the chatbox" — this is
+    // the other side, and it costs the same patch rather than a second one.
     to: `      <div className="flex min-w-0 items-center gap-1.5">
         <ComposerAddAttachment />
         <ComposerControls />
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">`,
+      <div className="flex shrink-0 items-center gap-1.5">
+        <ComposerExtras />`,
   },
   {
     file: "components/assistant-ui/elements/permission-grant.tsx",

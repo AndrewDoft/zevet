@@ -28,14 +28,23 @@ describe("the conversation fills its column", () => {
     assert.match(rule, /--thread-max-width:[^;]*!important/);
   });
 
-  test("the meters are a strip, not a block", () => {
-    // Three stacked cards under the transcript took two thirds of the pane's
-    // height and left the conversation a strip at the top — the exact inverse
-    // of what the view is for.
+  test("the meters take no height in the column at all", () => {
+    /* ⚠️ THIS USED TO PIN "closed by default", and closed-by-default was not
+       enough. Three stacked cards under the transcript took two thirds of the
+       pane; collapsing them fixed that, but opening one still pushed the chat
+       box up. Andrew, 2026-09-21: "the chatbox (and all of the windows and
+       stuff for that matter) should never change positions or resize
+       autonomously."
+
+       So the meters are no longer in the column's flow in either state. They
+       are the body of a card anchored to its own button in the composer row —
+       absolutely positioned, so open and closed are the same height: none. */
     const rm = readFileSync(path.join(BOARD, "components", "runmeters.tsx"), "utf8");
-    assert.match(rm, /useState\(false\)/, "the meters must default to closed");
-    assert.match(rm, /aria-expanded=\{open\}/);
+    assert.doesNotMatch(rm, /useState/, "the meters must not own an open/closed state any more");
+    assert.match(rm, /export function RunMeterCard/, "the meters must be a card body");
     assert.match(css, /\.run-meters-body \{/);
+    // The card itself is what must be out of flow.
+    assert.match(css, /\.composer-card \{[^}]*position: absolute/);
   });
 });
 

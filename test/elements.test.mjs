@@ -39,8 +39,19 @@ const ELEMENTS = path.join(SRC, "components", "assistant-ui", "elements");
  *                  these are wired to state nothing here fills. The
  *                  plain-props sibling is used instead wherever zevet has the
  *                  fact to give it.
+ *   "removed with" — it WAS on screen, and the surface that held it was taken
+ *                  out. Distinct from the four above because it is the only
+ *                  kind that records a decision about the product rather than
+ *                  about the element, and the only one where the element is
+ *                  still perfectly usable — it just has nowhere to be.
  * ------------------------------------------------------------------------- */
 const UNRENDERED = {
+  /* --- the panel that hosted them was deleted --------------------------- */
+  "read-aloud.tsx":
+    "removed with: its host, the read-aloud shelf under the composer, was one of five collapsed rows that each pushed the chat box up when opened. It was the body of that shelf. Andrew, 2026-09-21: \"delete what it did, find, and read aloud\". Speaking the transcript aloud was browser speech synthesis over text already on screen, so nothing zevet measures is lost with it.",
+  "speaker-identity.tsx":
+    "removed with: the same host as read-aloud. It labelled which turn of a read-aloud was being spoken, so without the reading there is no speaker to identify. It is the only element here whose data was produced by another element rather than by an agent.",
+
   /* --- no data ---------------------------------------------------------- */
   "approval-card.tsx":
     "not the shape: it models ONE command awaiting approval — one state, one command string, one button row, with nowhere to put a second. zevet's permits arrive as a queue, so permission-grant shows the oldest and permits.tsx counts the rest. Rendering this card N times would just be that panel again, duplicated.",
@@ -114,7 +125,7 @@ const UNRENDERED = {
   "tool-group.tsx":
     "superseded: the Thread imports tool-group.aui, the runtime-bound variant of the same thing.",
   "tool-timeline.tsx":
-    "superseded: trace-waterfall carries the same per-call timings, with durations, in turndetail.",
+    "superseded: trace-waterfall carries the same per-call timings, with durations, in turndetail (which lives in the detail column now, not under the chat box).",
   "reasoning-panel.tsx":
     "superseded: the Thread imports reasoning.aui, which reads the reasoning parts transcript.mjs records.",
   "sources.aui.tsx":
@@ -239,13 +250,14 @@ describe("every installed element is on screen or explained", () => {
   });
 
   test("every reason says which kind of reason it is", () => {
-    // "no data", "not the shape" or "superseded" — the three are different
-    // decisions and only one of them is ever worth revisiting cheaply.
+    // The kinds are different decisions, and only some of them are ever worth
+    // revisiting cheaply. "removed with" is the newest and the cheapest to
+    // reverse: the element still works, it just has no host.
     for (const [file, why] of Object.entries(UNRENDERED)) {
       assert.match(
         why,
-        /^(no data|not the shape|superseded|runtime-bound):/,
-        `${file}'s reason does not start with one of the three kinds`,
+        /^(no data|not the shape|superseded|runtime-bound|removed with):/,
+        `${file}'s reason does not start with one of the kinds`,
       );
       assert.ok(why.length > 60, `${file}'s reason is too short to be a reason`);
     }

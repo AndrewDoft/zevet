@@ -18,11 +18,13 @@ const BOARD = path.join(ROOT, "board", "src");
 const read = (...p) => readFileSync(path.join(BOARD, ...p), "utf8");
 
 describe("every added panel is closed by default", () => {
-  for (const [file, label] of [
-    ["turndetail.tsx", "What it did"],
-    ["promptshelf.tsx", "Prompts"],
-    ["runmeters.tsx", "Context, cost and timing"],
-  ]) {
+  /* ⚠️ runmeters.tsx IS NO LONGER IN THIS LIST, and not because the rule was
+     relaxed. It stopped being a collapsed row: it is the body of a card the
+     composer opens over the transcript, absolutely positioned, so it has no
+     open/closed height to default. layout.test.mjs pins that directly.
+     turndetail.tsx is still a collapsed row and still starts closed — it just
+     lives in the detail column now rather than under the chat box. */
+  for (const [file, label] of [["turndetail.tsx", "What it did"]]) {
     test(`${label} starts collapsed`, () => {
       const src = read("components", file);
       assert.match(src, /useState\(false\)/, `${file} does not default to closed`);
@@ -30,16 +32,26 @@ describe("every added panel is closed by default", () => {
     });
   }
 
-  test("the conversation mounts them under the thread, not inside it", () => {
-    // Inside the Thread they would scroll with the transcript and take its
-    // height; the column is a flex column so they sit beneath it.
+  test("the conversation mounts nothing under the thread any more", () => {
+    /* ⚠️ THIS TEST USED TO REQUIRE THE OPPOSITE: that TurnDetail, PromptShelf
+       and RunMeters were all mounted BELOW `chat-thread-body`, on the
+       reasoning that inside the Thread they would scroll with the transcript
+       and take its height. Below it they still took height — just at the
+       bottom, where it pushed the chat box up every time one opened.
+
+       Andrew, 2026-09-21: "all of those dropdowns pop up under the chatbox,
+       which are all superfluous ... the chatbox (and all of the windows and
+       stuff for that matter) should never change positions or resize
+       autonomously." Two were deleted, TurnDetail moved to the detail column,
+       and the two kept panels became cards anchored to buttons in the
+       composer's own row. So the rule now is that NONE of them is here. */
     const c = read("components", "conversation.tsx");
-    const body = c.indexOf("chat-thread-body");
-    assert.ok(body > 0);
-    for (const tag of ["<TurnDetail />", "<PromptShelf />", "<RunMeters />"]) {
-      assert.ok(c.includes(tag), `${tag} is not mounted`);
-      assert.ok(c.indexOf(tag) > body, `${tag} is inside the thread body`);
+    assert.ok(c.indexOf("chat-thread-body") > 0);
+    for (const tag of ["<TurnDetail />", "<PromptShelf />", "<RunMeters />", "<FindShelf />", "<ListenShelf />"]) {
+      assert.ok(!c.includes(tag), `${tag} is still mounted under the chat box`);
     }
+    // The detail column is where the one that survived went.
+    assert.match(read("components", "detail.tsx"), /<TurnDetail \/>/);
   });
 });
 

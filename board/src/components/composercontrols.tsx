@@ -23,6 +23,10 @@
  * console running.
  */
 import { AgentLogo } from "./brand";
+import { ContextCardButton, PastPromptsButton } from "./composercards";
+import { PromptLibraryPanel } from "./promptlib";
+import { QuotaChip } from "./quota";
+import { RunMeterCard } from "./runmeters";
 import { ModelChoice } from "./model-choice";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { mono } from "./assistant-ui/elements/surfaces";
@@ -119,6 +123,9 @@ export function ComposerControls() {
               </span>
             )}
             {usage.cost != null && <span className="shrink-0">{money(usage.cost)}</span>}
+            {/* The provider's own rate-limit window, beside the two numbers it
+                belongs with rather than as a banner over the transcript. */}
+            <QuotaChip />
           </span>
         );
       })()
@@ -131,6 +138,14 @@ export function ComposerControls() {
 
   return (
     <div className="flex min-w-0 items-center gap-1.5">
+      {/* Left of the chat box: the prompts you have written before. A button,
+          not a collapsed row — see composercards.tsx for why the card is an
+          overlay and not a dropdown. */}
+      {active ? (
+        <PastPromptsButton>
+          <PromptLibraryPanel />
+        </PastPromptsButton>
+      ) : null}
       <div className={compactModelChoice}>
         <ModelChoice agents={usable} />
       </div>
@@ -159,5 +174,26 @@ export function ComposerControls() {
 
       {facts}
     </div>
+  );
+}
+
+/**
+ * The right end of the composer's action row: context and spend, behind a
+ * button, as a card.
+ *
+ * Separate from ComposerControls because the row has two groups and this one
+ * belongs in the other — see the COPY patch in board/scripts/sync-registry.mjs
+ * that hosts both. It renders nothing until the run has reported usage, for
+ * the same reason RunMeterCard does: an empty meter reads as "zero tokens",
+ * which is never true of a running agent.
+ */
+export function ComposerExtras() {
+  const active = useBoard(selectActiveConsole);
+  const live = useBoard((s) => s.strip.live);
+  if (!active || live.context == null) return null;
+  return (
+    <ContextCardButton>
+      <RunMeterCard />
+    </ContextCardButton>
   );
 }
