@@ -304,3 +304,76 @@ describe("assembleTranscript", () => {
     assert.equal(assembleTranscript(undefined).messages.length, 0);
   });
 });
+
+/* A bare ordered-list marker is a real answer, and markdown eats it.
+ *
+ * Asked "what is 17 times 3?", claude replied exactly `51.` — and every
+ * markdown renderer, correctly by the spec, turns a line of `51.` with nothing
+ * after it into an EMPTY ordered list starting at 51. Measured in the running
+ * app on 2026-09-21: the DOM held `<ol start="51"><li></li></ol>` and the
+ * answer was invisible. Andrew: "the response looked super weird."
+ *
+ * What is pinned: that the escape happens, that a REAL list never gets it, and
+ * — the part that is easy to get wrong — that it is idempotent under
+ * streaming, because the text arrives in pieces and `51.` becomes
+ * `51. something` one delta later. */
+describe("a bare number and a full stop is not a list", () => {
+  const first = (state) => state.messages[0].content[0].text;
+  const stream = (...chunks) =>
+    assembleTranscript(
+      chunks.map((text) => ({
+        type: "agent",
+        payload: { type: "assistant", message: { content: [{ type: "text", text }] } },
+      })),
+    );
+
+  test("an answer that is only a marker is escaped", () => {
+    assert.equal(first(stream("51.")), "51" + String.fromCharCode(92) + ".");
+  });
+
+  test("and unescaped again once the sentence continues", () => {
+    // The escape must not survive into text that no longer needs it: a stray
+    // backslash would reach copy and the raw-output panel.
+    assert.equal(first(stream("51.", " Three times seventeen.")), "51. Three times seventeen.");
+  });
+
+  test("a real numbered list is untouched", () => {
+    assert.equal(first(stream("1. one\n2. two")), "1. one\n2. two");
+  });
+
+  test("a number mid-sentence is untouched", () => {
+    assert.equal(first(stream("it cost 51. then more")), "it cost 51. then more");
+  });
+
+  test("reasoning is not markdown, so it is not rewritten", () => {
+    const s = assembleTranscript([
+      { type: "agent", payload: { type: "assistant", message: { content: [{ type: "thinking", thinking: "51." }] } } },
+    ]);
+    assert.equal(s.messages[0].content[0].text, "51.");
+  });
+});
+
+/* Payloads that are real, understood, and deliberately not transcript content.
+ *
+ * ⚠️ `stream_event` WAS THE BUG ANDREW SAW. --include-partial-messages wraps
+ * every raw SSE event in one, nothing read them, and each printed the literal
+ * `[claude: stream_event]` into the assistant's own message — a one-sentence
+ * answer came back as dozens of them. The flag is gone from the invocation
+ * (agent-console.test.mjs pins its absence); this pins that an older desktop
+ * build still degrades to silence rather than to garbage. */
+describe("claude payloads that are not transcript content", () => {
+  for (const type of ["stream_event", "rate_limit_event", "system"]) {
+    test(`${type} adds nothing to the transcript`, () => {
+      const before = emptyTranscript();
+      const after = appendAgentPayload(before, { type, event: { type: "content_block_delta" } });
+      assert.equal(after.messages.length, 0, `${type} put something on screen`);
+    });
+  }
+
+  test("but a type nobody has seen is still shown", () => {
+    // The fallback is not the bug and must stay: an event silently dropped is
+    // how you end up believing an agent did nothing for thirty seconds.
+    const after = appendAgentPayload(emptyTranscript(), { type: "something_new" });
+    assert.match(after.messages[0].content[0].text, /something_new/);
+  });
+});

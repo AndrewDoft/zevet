@@ -2,24 +2,17 @@ import { Fragment, type ReactNode } from "react";
 import { useBoard, selectStrip } from "../lib/board";
 import type { Conn } from "../lib/types";
 
-const BLOCKS = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588";
-
-function bar(pct: number, width = 8) {
-  const w = width;
-  const filled = Math.max(0, Math.min(w, Math.round((pct / 100) * w)));
-  let out = "";
-  for (let i = 0; i < w; i += 1) out += i < filled ? BLOCKS[BLOCKS.length - 1] : BLOCKS[0];
-  return out;
-}
+/* `bar` and `tint` went with ctx and cache. They drew the sparkline and the
+   ok/warn/bad colour for exactly those two segments, and both moved to the
+   composer's row - where the numbers belong to one console rather than to
+   whichever agent spoke last. Nothing else on this strip is a proportion, so
+   a bar helper with no caller is the kind of thing that gets re-used badly
+   later. Deleted rather than left behind. */
 
 function tokens(n: number | null | undefined) {
   if (n == null) return "";
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
   return (n / 1000).toFixed(0) + "k";
-}
-
-function tint(v: number, warn: number, bad: number) {
-  return v >= bad ? "bad" : v >= warn ? "warn" : "ok";
 }
 
 export function connLabel(c: Conn) {
@@ -52,27 +45,18 @@ export function Strip() {
     segs.push(<Seg key="repo">{r}</Seg>);
   }
 
-  if (live.context != null) {
-    const k = live.context / 1000;
-    const c = tint(k, 180, 300);
-    segs.push(
-      <Seg key="ctx">
-        <Sp cls="k" text="ctx" />
-        <Sp cls={c} text={tokens(live.context)} />
-        <Sp cls={"bar " + c} text={bar(Math.min(100, k / 3))} />
-      </Seg>,
-    );
-  }
-
-  if (live.cacheHit != null) {
-    const h = live.cacheHit;
-    segs.push(
-      <Seg key="cache">
-        <Sp cls="k" text="cache" />
-        <Sp cls={h < 50 ? "bad" : h < 85 ? "warn" : "ok"} text={h.toFixed(0) + "%"} />
-      </Seg>,
-    );
-  }
+  /* ⚠️ ctx AND cache ARE GONE FROM HERE. Both are now on the composer's own
+     row, where the run they describe is — context against the model's real
+     window, and the cache share of it. Andrew: "now that context (x/1M) is in
+     the chatbox, you can remove it from the side bar. same with cache if you
+     can add it to the chatbox."
+     They were also the two segments that were WRONG here whenever more than
+     one console was running: `live` is one global set of numbers, whichever
+     agent spoke last, so in a 258px rail they silently described a different
+     run from the one you were reading. The composer's copy is attributed to
+     its own console (ConsoleEntry.usage) and cannot do that.
+     What stays on the strip is what belongs to the machine or the repo rather
+     than to one run: branch, ahead/behind, spend windows. */
 
   const burn = machine && (machine.burn as { "5h"?: { tokens?: number }; "7d"?: { tokens?: number }; cost?: number } | undefined);
   if (burn) {

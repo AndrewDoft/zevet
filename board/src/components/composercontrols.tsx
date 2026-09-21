@@ -122,6 +122,14 @@ export function ComposerControls() {
                 {tokens(usage.context)}/{tokens(window)}
               </span>
             )}
+            {/* Cache hit, moved off the rail's strip: it belongs with the
+                context number it is a share OF. Andrew: "same with cache if
+                you can add it to the chatbox". */}
+            {usage.cacheHit != null && (
+              <span className="shrink-0" title="share of the context served from cache">
+                {Math.round(usage.cacheHit)}% cached
+              </span>
+            )}
             {usage.cost != null && <span className="shrink-0">{money(usage.cost)}</span>}
             {/* The provider's own rate-limit window, beside the two numbers it
                 belongs with rather than as a banner over the transcript. */}

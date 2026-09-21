@@ -23,6 +23,8 @@
  * new state, sharing every message it did not touch.
  */
 
+import { mdSafe } from "./prose.mjs";
+
 /** @typedef {import("./transcript.d.mts").TranscriptState} TranscriptState */
 
 let seq = 0;
@@ -82,10 +84,18 @@ function appendStreamed(state, kind, text) {
   const s = openAssistant(state);
   return withMessage(s, s.openIndex, (content) => {
     const last = content[content.length - 1];
+    /* ⚠️ mdSafe RUNS ON THE ACCUMULATED TEXT, NEVER ON THE DELTA. It escapes a
+     * line that is a bare ordered-list marker with nothing after it — `51.`,
+     * which markdown renders as an empty <ol start="51"> and which is a real
+     * answer claude gives. Applied to a fragment it would escape the marker of
+     * a list whose first item simply had not streamed in yet; applied to the
+     * whole string, `51. something` stops matching and nothing is escaped.
+     * Prose only: reasoning is not rendered as markdown. */
+    const md = kind === "text" ? mdSafe : (v) => v;
     if (last && last.type === kind) {
-      content[content.length - 1] = { ...last, text: last.text + text };
+      content[content.length - 1] = { ...last, text: md(last.text + text) };
     } else {
-      content.push({ type: kind, text });
+      content.push({ type: kind, text: md(text) });
     }
     return content;
   });
