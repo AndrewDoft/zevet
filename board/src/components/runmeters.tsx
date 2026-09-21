@@ -15,7 +15,7 @@
 import { ContextBreakdown, type ContextSegment } from "./assistant-ui/elements/context-breakdown";
 import { CostMeter } from "./assistant-ui/elements/cost-meter";
 import { MessageTiming } from "./assistant-ui/elements/message-timing";
-import { selectActiveConsole, selectStrip, useBoard } from "../lib/board";
+import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
 import { ContextChart, ContextTicker, RunUsageTable } from "./usageviews";
 import { ContextGauge } from "./mapviews";
 import { tokens } from "../lib/fmt";
@@ -27,7 +27,7 @@ import { tokens } from "../lib/fmt";
  *  drawn against it undersells rather than oversells how full it is. */
 const CONTEXT_LIMIT = 200_000;
 
-const money = (n: number | null) => (n == null ? "$0.00" : `$${n.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`);
+const money = (n: number) => `$${n.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".00")}`;
 
 /**
  * ⚠️ NO LONGER A COLLAPSED ROW UNDER THE COMPOSER. It was one of five stacked
@@ -37,18 +37,38 @@ const money = (n: number | null) => (n == null ? "$0.00" : `$${n.toFixed(4).repl
  * `ComposerExtras` opens over the transcript, anchored to its own button.
  */
 export function RunMeterCard() {
-  const { live } = useBoard(selectStrip);
   const active = useBoard(selectActiveConsole);
+  const all = useBoard(selectMyConsoles);
+
+  /* ⚠️ THIS READS THE CONSOLE'S OWN usage, NOT strip.live. It used to read the
+     strip, and `lib/types.ts` already said why that is wrong: "there is only
+     one of it: with three consoles running, whichever spoke last owns the
+     strip and the meters under a different thread read as that thread's."
+
+     Worse than stale — never cleared. board.ts only ever PATCHES strip.live,
+     so switching to a console that has not run yet left the last agent's
+     context in place and this card claimed those tokens for a thread that had
+     spent none. Two consoles running the same agent made it obvious. */
+  if (!active) return null;
+  const usage = active.usage;
 
   // Nothing has reported usage yet. An empty meter is worse than no meter —
   // it reads as "zero tokens", which is never true of a running agent.
-  if (!active || live.context == null) return null;
+  if (usage.context == null) return null;
 
-  const context = live.context;
+  const context = usage.context;
   // The console's own reported window, when it said — see the CONTEXT_LIMIT
   // comment above.
-  const window = active.usage.window ?? CONTEXT_LIMIT;
-  const cached = live.cacheHit != null ? Math.round(context * (live.cacheHit / 100)) : 0;
+  const window = usage.window ?? CONTEXT_LIMIT;
+  /* The number the agent GAVE, when it gave one. Recovering it from a rounded
+     percentage is what the ConsoleUsage doc warns against, and it only ever
+     got used because the strip carries the percentage and not the parts. */
+  const cached =
+    usage.cachedInput != null
+      ? usage.cachedInput
+      : usage.cacheHit != null
+        ? Math.round(context * (usage.cacheHit / 100))
+        : 0;
   const fresh = Math.max(0, context - cached);
 
   const segments: ContextSegment[] = [
@@ -56,7 +76,7 @@ export function RunMeterCard() {
     { label: "prompt", tokens: fresh, tint: "var(--chart-1)" },
   ].filter((s) => s.tokens > 0);
 
-  const model = live.model || active.model || active.agent;
+  const model = usage.model || active.model || active.agent;
   const messages = active.transcript.messages.length;
   // ThreadMessageLike allows content to be a bare string, which has no parts.
   const tools = active.transcript.messages.reduce(
@@ -83,20 +103,27 @@ export function RunMeterCard() {
       <ContextChart />
       <ContextTicker />
 
-      <CostMeter
-        className="max-w-none"
-        runCost={money(live.cost)}
-        sessionCost={money(live.cost)}
-        lines={[
-          {
-            model,
-            inputTokens: context,
-            outputTokens: 0,
-            cost: money(live.cost),
-            share: 1,
-          },
-        ]}
-      />
+      {/* ⚠️ ONLY WHEN THE COST IS KNOWN. `money(null)` printed "$0.00", which
+          is the same lie the context gate above exists to prevent — a running
+          agent has never spent nothing. And run and session were the SAME
+          number, so the one distinction this meter exists to draw could not
+          appear: the run is this console, the session is every console. */}
+      {usage.cost != null ? (
+        <CostMeter
+          className="max-w-none"
+          runCost={money(usage.cost)}
+          sessionCost={money(all.reduce((t, c) => t + (c.usage.cost ?? 0), 0))}
+          lines={[
+            {
+              model,
+              inputTokens: fresh,
+              outputTokens: usage.output ?? 0,
+              cost: money(usage.cost),
+              share: 1,
+            },
+          ]}
+        />
+      ) : null}
 
       <MessageTiming
         className="max-w-none"
@@ -106,7 +133,7 @@ export function RunMeterCard() {
           { label: "tool calls", value: String(tools) },
           // cacheHit is a raw ratio off the usage payload; printing it
           // unrounded put "70.74109720885467%" on screen.
-          ...(live.cacheHit != null ? [{ label: "cache", value: `${Math.round(live.cacheHit)}%` }] : []),
+          ...(usage.cacheHit != null ? [{ label: "cache", value: `${Math.round(usage.cacheHit)}%` }] : []),
           { label: "posture", value: active.mode },
         ]}
       />

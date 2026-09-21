@@ -23,6 +23,31 @@ import { selectActiveConsole, selectLaunching, selectMyConsoles, useBoard } from
 import { bridge } from "../lib/bridge";
 import type { ConsoleEntry } from "../lib/types";
 
+/**
+ * What this console was asked to do, for the row's second line.
+ *
+ * ⚠️ WITHOUT THIS, TWO CONSOLES ARE THE SAME ROW. The row says agent, state
+ * and posture, so two claude consoles on Auto read "working claude Auto"
+ * twice and the only difference on screen is the 2px hue on the left edge.
+ * Measured with two running 2026-09-21; the rail is how you choose a thread,
+ * and it could not tell them apart.
+ *
+ * ThreadMessageLike allows `content` to be a bare string, which has no parts —
+ * the same shape trap RunMeterCard's tool count works around.
+ */
+function taskOf(c: ConsoleEntry): string {
+  const first = c.transcript.messages.find((m) => m.role === "user");
+  if (!first) return "";
+  const text =
+    typeof first.content === "string"
+      ? first.content
+      : first.content
+          .filter((p): p is { type: "text"; text: string } => p.type === "text")
+          .map((p) => p.text)
+          .join(" ");
+  return text.replace(/\s+/g, " ").trim();
+}
+
 /** A console's state in the element's vocabulary. `running` is the process, so
  *  an agent that has finished speaking but not exited still reads as working —
  *  the same rule the runtime's isRunning follows. */
@@ -39,6 +64,7 @@ function ConsoleRow({ c }: { c: ConsoleEntry }) {
   const closeConsole = useBoard((s) => s.closeConsole);
   const isActive = active?.key === c.key;
   const state = stateOf(c);
+  const task = taskOf(c);
 
   return (
     <div
@@ -69,6 +95,14 @@ function ConsoleRow({ c }: { c: ConsoleEntry }) {
         <span className={cn(mono, "console-row-mode")} data-danger={String(c.mode === "dangerous")}>
           {MODE_LABEL[c.mode] || c.mode}
         </span>
+        {/* `title` and not a tooltip component: the row is 180px at its
+            narrowest, so the line is always truncated and the full prompt has
+            to be readable somehow. */}
+        {task ? (
+          <span className="console-row-task" title={task}>
+            {task}
+          </span>
+        ) : null}
       </button>
       <button
         type="button"

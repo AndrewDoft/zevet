@@ -148,12 +148,22 @@ export function ComposerControls() {
     <div className="flex min-w-0 items-center gap-1.5">
       {/* Left of the chat box: the prompts you have written before. A button,
           not a collapsed row — see composercards.tsx for why the card is an
-          overlay and not a dropdown. */}
-      {active ? (
-        <PastPromptsButton>
-          <PromptLibraryPanel />
-        </PastPromptsButton>
-      ) : null}
+          overlay and not a dropdown.
+
+          ⚠️ ALWAYS MOUNTED. It was gated on `active`, and that gate was the
+          last thing moving the chat box on its own: with no console the row
+          held the model picker and Send, and the moment a run started this
+          button and ComposerExtras appeared on either side of them, growing
+          the row and pushing the box 16px down. Measured in the running app
+          2026-09-21 — composer top 669 empty, 685 with the buttons.
+
+          Nothing needed relaxing to fix it. PromptLibraryPanel was already
+          written for a null console: it disables Save and says "No active
+          console to save from". The gate was preventing a state the panel
+          already handled. */}
+      <PastPromptsButton>
+        <PromptLibraryPanel />
+      </PastPromptsButton>
       <div className={compactModelChoice}>
         <ModelChoice agents={usable} />
       </div>
@@ -191,17 +201,29 @@ export function ComposerControls() {
  *
  * Separate from ComposerControls because the row has two groups and this one
  * belongs in the other — see the COPY patch in board/scripts/sync-registry.mjs
- * that hosts both. It renders nothing until the run has reported usage, for
- * the same reason RunMeterCard does: an empty meter reads as "zero tokens",
- * which is never true of a running agent.
+ * that hosts both.
+ *
+ * ⚠️ THE BUTTON IS ALWAYS HERE; only its CONTENTS wait for usage. It used to
+ * return null until a run reported numbers, which meant the composer's action
+ * row grew by a button the moment an agent started and the chat box slid down
+ * with it — "the chatbox ... should never change positions or resize
+ * autonomously", broken by the very row built to obey it.
+ *
+ * And the gate read `strip.live`, which is ONE set of numbers for however many
+ * consoles are running and which board.ts only ever patches — never clears. So
+ * once any agent had run, a brand-new console inherited the button and the
+ * card under it showed the other agent's context. RunMeterCard reads the
+ * console's own usage now and says so there.
  */
 export function ComposerExtras() {
   const active = useBoard(selectActiveConsole);
-  const live = useBoard((s) => s.strip.live);
-  if (!active || live.context == null) return null;
   return (
     <ContextCardButton>
-      <RunMeterCard />
+      {active && active.usage.context != null ? (
+        <RunMeterCard />
+      ) : (
+        <p className="text-foreground/50 text-xs">Nothing reported yet — this fills in once the agent speaks.</p>
+      )}
     </ContextCardButton>
   );
 }

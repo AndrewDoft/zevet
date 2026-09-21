@@ -713,6 +713,15 @@
     text-align: left; background: none; border: 0; padding: 0; cursor: pointer;
   }
   .console-row-status { flex: 0 1 auto; min-width: 0; }
+  /* The first thing this console was asked. Two claude consoles on Auto were
+     otherwise the same three words twice, with only the hue on the left edge
+     telling them apart — and the rail's whole job is knowing which thread is
+     which. Full width, so it wraps under rather than squeezing the name. */
+  .console-row-task {
+    flex: 1 0 100%; min-width: 0;
+    font-size: 11.5px; color: var(--subtle);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .console-row-mode { color: var(--subtle); }
   .console-row-mode[data-danger="true"] { color: var(--alert); }
   .console-row-close {
@@ -1103,10 +1112,17 @@
      composer's top edge, and guessing the composer's height is how it breaks
      the first time somebody types three lines. Reserving the space is exact.
      The strip is the height of one line and is empty most of the time. */
+  /* ⚠️ A FIXED HEIGHT AND A ROW, not min-height and a column. As a column it
+     stacked its children, and it has three — the quote button, the draft
+     offer and the "working" indicator. Any two together (select a line of the
+     transcript while the agent is running, which is the ordinary way to read
+     one) grew the strip and pushed the chat box up, which is exactly what the
+     strip was added to stop. Side by side in a fixed line they cannot. */
   .chat-underline {
-    flex: none; min-height: 22px;
-    display: flex; flex-direction: column; justify-content: flex-end;
+    flex: none; height: 22px; overflow: hidden;
+    display: flex; flex-direction: row; align-items: flex-end; gap: 10px;
   }
+  .chat-underline > * { min-width: 0; }
   .thinking-row { padding: 0 22px 8px; }
 
   /* The collapsed detail rows under the conversation. Same shape as

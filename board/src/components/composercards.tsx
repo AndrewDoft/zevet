@@ -45,16 +45,29 @@ function CardButton({
 }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  const card = useRef<HTMLDivElement>(null);
 
-  // Click-away and Escape, because a card with no way out that does not move
-  // the page is a card you cannot get rid of.
+  /* ⚠️ A role="dialog" THAT NOBODY FOCUSES IS A TRAP FOR A KEYBOARD USER, and
+     it was one here: opening the card left focus on the trigger, so Tab walked
+     into the transcript BEHIND the card, and closing it with the X unmounted
+     the focused button and dropped focus onto <body> — from which Tab starts
+     again at the top of the document, several hundred file-tree rows away from
+     the chat box. Found by an agent running inside zevet, 2026-09-21.
+
+     So: focus the card when it opens, and hand focus BACK to the trigger on
+     every deliberate close. Clicking away deliberately does not, because the
+     click has already put focus where the person aimed it. */
   useEffect(() => {
     if (!open) return;
+    card.current?.focus();
     const onDown = (e: MouseEvent) => {
       if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      btn.current?.focus();
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -64,22 +77,37 @@ function CardButton({
     };
   }, [open]);
 
+  // Every deliberate close returns focus to the button that opened the card.
+  const dismiss = () => {
+    setOpen(false);
+    btn.current?.focus();
+  };
+
   return (
     <div className="composer-card-wrap" ref={wrap}>
       <button
         type="button"
         className="composer-card-btn"
+        ref={btn}
         aria-expanded={open}
+        aria-haspopup="dialog"
         title={title}
         onClick={() => setOpen((v) => !v)}
       >
         {label}
       </button>
       {open ? (
-        <div className={cn(paper, "composer-card")} data-align={align} role="dialog" aria-label={title}>
+        <div
+          className={cn(paper, "composer-card")}
+          data-align={align}
+          role="dialog"
+          aria-label={title}
+          ref={card}
+          tabIndex={-1}
+        >
           <div className="composer-card-head">
             <span>{title}</span>
-            <button type="button" onClick={() => setOpen(false)} aria-label="Close">
+            <button type="button" onClick={dismiss} aria-label="Close">
               ×
             </button>
           </div>
