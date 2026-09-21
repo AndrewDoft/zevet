@@ -65,13 +65,16 @@ export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
           const notes = [from, note, trains ? "may train on prompts" : null].filter(Boolean);
           return {
             id: `${a.name}:${alias}`,
-            // Including "" — describeModel calls that one "CLI Choice", so the
-            // name comes from one place for every row and every surface.
+            // The name comes from one place for every row and every surface.
             name: label,
             description: notes.join(" · ") || undefined,
             // The raw id is what someone types when they are looking for
             // `inkling` inside `openrouter/thinkingmachines/inkling:free`.
-            keywords: alias ? [alias, a.name] : [a.name, "default"],
+            // No "" row reaches here any more (constants.ts MODELS dropped
+            // it), so alias is always a real model id — the old `alias ?
+            // ... : [...]` fallback for the empty-alias row is unreachable
+            // and gone.
+            keywords: [alias, a.name],
             // The provider's own mark, where one is honest. opencode fronts a
             // dozen providers, so the MODEL is what identifies it, not the CLI.
             icon: <AgentLogo agent={a.name} model={alias} className="size-3.5" />,

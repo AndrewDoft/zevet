@@ -19,7 +19,7 @@ import { AgentLogo } from "./brand";
 import { ghostButton, mono } from "./assistant-ui/elements/surfaces";
 import { cn } from "@/lib/utils";
 import { MODE_LABEL } from "../lib/constants";
-import { selectActiveConsole, selectLaunching, selectMyConsoles, useBoard } from "../lib/board";
+import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import type { ConsoleEntry } from "../lib/types";
 
@@ -122,9 +122,6 @@ function ConsoleRow({ c }: { c: ConsoleEntry }) {
 
 export function Consoles() {
   const consoles = useBoard(selectMyConsoles);
-  const launching = useBoard(selectLaunching);
-  const openLauncher = useBoard((s) => s.openLauncher);
-  const localRoot = useBoard((s) => s.localRoot);
 
   if (!bridge.local) return null;
 
@@ -133,21 +130,12 @@ export function Consoles() {
       {consoles.map((c) => (
         <ConsoleRow c={c} key={c.key} />
       ))}
-      {/* ⚠️ aria-expanded, NOT aria-pressed. `launching` is whether the
-          launcher panel is open, and this button opens it — a disclosure.
-          aria-pressed told a screen reader it was a toggle that was on or
-          off, which is a control zevet does not have. */}
-      {localRoot ? (
-        <button
-          type="button"
-          className="console-new"
-          aria-expanded={launching}
-          aria-haspopup="dialog"
-          onClick={openLauncher}
-        >
-          {consoles.length ? "Start another…" : "Start an agent…"}
-        </button>
-      ) : null}
+      {/* ⚠️ THE "Start an agent…" ROW IS GONE FROM HERE. It was a full text
+          row of the rail spent on a verb, under a heading that is already
+          about starting things. Andrew: "there is also no need for like the
+          new agent thing, you can put a plus sign somewhere else." The plus is
+          in the People header now — App.tsx § RailHead — which is one line
+          higher and costs no row at all. */}
     </>
   );
 }

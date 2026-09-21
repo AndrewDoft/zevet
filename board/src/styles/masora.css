@@ -222,26 +222,84 @@
   .pane-body { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 
   /* ---- people rail ---------------------------------------------------- */
-  .person {
-    display: grid; grid-template-columns: 10px 1fr; gap: 10px;
-    align-items: start;
+  /* ⚠️ ONE LINE PER PERSON, and the grid that used to host a badge column and
+     a two-line text column is gone with the card it was holding. What this
+     row says now is who, and whether they are working — everything else was
+     tool use, which left the rail. */
+  .person-row {
+    display: flex; align-items: center; gap: 9px;
     width: 100%; text-align: left;
-    padding: 9px 16px;
+    padding: 8px 16px;
     border-left: 2px solid transparent;
+    font-size: 13.5px; letter-spacing: 0.01em;
   }
-  .person:hover { background: var(--raise-soft); }
-  .person[data-sel="true"] { background: var(--raise); border-left-color: var(--who); }
-  .person .bead { width: 9px; height: 9px; border-radius: 50%; background: var(--who); margin-top: 5px; }
-  .person[data-idle="true"] .bead { opacity: 0.3; }
-  .person .nm { display: block; font-size: 13.5px; letter-spacing: 0.01em; }
-  .person[data-idle="true"] .nm { color: var(--ink-muted); }
-  .person .sub {
-    display: block;
+  button.person-row { cursor: pointer; background: none; border-width: 0 0 0 2px; }
+  button.person-row:hover { background: var(--raise-soft); }
+  .person-row[data-sel="true"] { background: var(--raise); border-left-color: var(--who); }
+  .person-row-dot {
+    width: 9px; height: 9px; border-radius: 50%; flex: none;
+    background: var(--who);
+  }
+  .person-row[data-idle="true"] .person-row-dot { opacity: 0.3; }
+  .person-row-name {
+    flex: 1 1 auto; min-width: 0; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .person-row[data-idle="true"] .person-row-name { color: var(--ink-muted); }
+  .person-row-state {
+    flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle);
+  }
+
+  /* ---- one CLI, and the sessions of it still being written to -------------
+     Indented under the person like a file tree, and with no folder icon: the
+     agent has a mark of its own and a second glyph beside it would say less,
+     not more. */
+  .agent-group > summary.agent-group-head {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 10px 5px 30px; cursor: pointer; list-style: none;
     font-size: 11.5px; color: var(--ink-muted);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .person .sub .verb { margin-right: 6px; }
-  .person .sub .verb { color: var(--ink); }
+  .agent-group > summary::-webkit-details-marker { display: none; }
+  .agent-group > summary.agent-group-head::before {
+    content: "▸"; flex: none; font-size: 9px; color: var(--subtle);
+    margin-left: -12px; transition: transform 120ms ease;
+  }
+  .agent-group[open] > summary.agent-group-head::before { transform: rotate(90deg); }
+  .agent-group > summary.agent-group-head:hover { background: var(--raise-soft); }
+  .agent-group-mark { flex: none; }
+  .agent-group-name {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .agent-group-count { flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle); }
+  .agent-session {
+    display: flex; align-items: baseline; gap: 8px;
+    width: 100%; text-align: left; cursor: pointer;
+    padding: 4px 10px 4px 46px;
+    background: none; border: 0; border-left: 2px solid transparent;
+    font-size: 12px; color: var(--ink-muted);
+  }
+  .agent-session:hover { background: var(--raise-soft); color: var(--ink); }
+  .agent-session[data-active="true"] { background: var(--raise); border-left-color: var(--who); color: var(--ink); }
+  .agent-session-name {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .agent-session-ago {
+    flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle);
+  }
+
+  /* The launcher, as a plus in the People header rather than a row of its own. */
+  .rail-new {
+    margin-left: auto; margin-right: 8px;
+    width: 18px; height: 18px; flex: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 15px; line-height: 1;
+    color: var(--ink-muted); background: none; border: 0; cursor: pointer;
+    border-radius: 4px;
+  }
+  .rail-new:hover { color: var(--ink); background: var(--raise-soft); }
+  .pane-title.row > .rail-new + .follow { margin-left: 0; }
 
   /* ---- a teammate who is not live ---------------------------------------
      On the allowlist, no events yet. Two states and they are not the same
@@ -285,23 +343,18 @@
      pixel even with every group collapsed, and the teammates under it were
      pushed to the bottom of the pane behind a band of empty rail. `0 1 auto`
      takes the height the rows actually need and gives back the rest. */
-  .person-sessions { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0; }
-  .person-sessions > .pane-title { padding-left: 26px; flex: none; }
-  .person-sessions > .pane-body { min-height: 0; }
+  /* The history list, in the repo column. It brings its own pane chrome, which
+     is right in a rail and wrong here: a pane-body inside a scrolling column
+     gets a second scrollbar and a height of its own. */
+  .repo-sessions > .pane-body { overflow: visible; }
+  .repo-sessions > .pane-title { padding-left: 0; }
 
-  /* ⚠️ THE ONE LIST THAT SCROLLS IS MINE, AND THE PEOPLE AROUND IT DO NOT MOVE.
-     There are three teammates and four hundred sessions. With `#people` as a
-     plain scrolling block the sessions pushed everybody below them off the
-     bottom of the pane — a teammate you had just invited was rendered and
-     unreachable. So `#people` becomes a column: every person row keeps its own
-     height, and my session list takes whatever is left and scrolls inside it.
-     Nothing here is a pixel value; it all follows the splitter. */
-  #people { display: flex; flex-direction: column; overflow: hidden; }
-  #people > * { flex: none; }
-  #people > .person-wrap:has(.person-sessions) {
-    display: flex; flex-direction: column;
-    flex: 0 1 auto; min-height: 0;
-  }
+  /* ⚠️ A PLAIN SCROLLING BLOCK AGAIN. It was a flex column so that a session
+     list nested under my own row could scroll inside it while the teammates
+     below stayed put. Nothing nests here any more — the history left for the
+     repo column and what remains is a handful of live rows — so the column,
+     its per-child flex overrides and the `:has()` rule that drove them are all
+     deleted rather than left behind to confuse the next person. */
 
   /* The rail's last row. It had a "Repos" header above it and 10px under it;
      both are gone, so the folder picker sits right on the bottom edge with
@@ -310,6 +363,14 @@
   /* The folder picker takes the rail's width rather than the follow control's
      content width — it is the only thing in its section. */
   .ws-pick { width: 100%; justify-content: space-between; }
+  /* In the strip it is one segment among several, not a section of its own, so
+     it takes its content width and the strip's own type. */
+  .strip .ws-pick {
+    width: auto; justify-content: flex-start; gap: 3px;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--ink); padding: 0;
+  }
+  .strip .ws-pick:hover { color: var(--cerulean); }
   .ws-pick-row { display: inline-flex; align-items: center; gap: 6px; }
   .ws-item {
     display: block; width: 100%; text-align: left;
@@ -824,14 +885,6 @@
   .console-row-err {
     flex: 1 0 100%; font-size: 11.5px; color: var(--alert); padding-top: 4px;
   }
-  .console-new {
-    display: block; width: 100%; text-align: left;
-    padding: 9px 16px; font-size: 12.5px; color: var(--cerulean);
-    background: none; border: 0; border-bottom: 1px solid var(--line);
-    cursor: pointer;
-  }
-  .console-new:hover { background: var(--raise-soft); }
-  .console-new[aria-pressed="true"] { background: var(--raise); }
 
   /* SESSIONS — what has run on this machine, not what is running.
      Denser than a console row on purpose: there are 127 of these and 3 of
@@ -1162,11 +1215,6 @@
   }
 
   /* The teammate's agent, in their colour, above their recent steps. */
-  .person-agent {
-    display: flex; align-items: center; gap: 6px;
-    color: var(--who); padding-bottom: 2px;
-  }
-  .person-agent .mono { color: var(--subtle); }
 
   .conn-banner { padding: 10px 12px; border-bottom: 1px solid var(--line); }
   /* ⚠️ THE RAIL IS 258px AND THE ELEMENT IS ONE FLEX ROW: icon, sentence,
@@ -1208,7 +1256,6 @@
     .run-meters-body > * { flex: 1 1 auto; width: 100%; }
   }
 
-  .person .person-status { padding: 2px 4px 2px 8px; font-size: 11px; background: none; border: 0; }
 
   /* ToolError ships Skip and Retry. zevet drives no agent's loop — it cannot
      retry a tool call any more than it can end a turn — and a control that
@@ -1283,51 +1330,6 @@
      shorter than its content; the column scrolls instead. */
   .turn-detail-body > *, .prompt-shelf-body > *, .find-shelf-body > *, .listen-shelf-body > *, .raw-output-body > * {
     max-width: none; width: 100%; flex: none;
-  }
-
-  /* ---- People, at rail width ------------------------------------------
-     ⚠️ SubagentList and AgentCard are panel components: card padding, an
-     avatar, a trailing chevron and a 14.5rem minimum. Dropped into a 180px
-     rail as-is they truncated "andrew" to "andr…" and the expanded card
-     pushed the other two teammates off screen — the run-meters mistake in a
-     narrower place.
-
-     The elements stay (they carry the status vocabulary and the shared
-     look); what is removed here is the chrome that assumes a panel. */
-  #people [data-slot="subagent-list"] {
-    min-height: 0;
-    gap: 0;
-    padding: 0;
-    background: none;
-    border: 0;
-  }
-  #people [data-slot="subagent-list"] > * {
-    padding: 0;
-    background: none;
-    border: 0;
-  }
-  /* The name is the one thing that must never truncate: it is how you tell
-     two teammates apart. */
-  #people [data-slot="subagent-list"] .truncate,
-  #people [data-slot="agent-card"] .truncate {
-    overflow: visible;
-    text-overflow: clip;
-    white-space: normal;
-    max-width: none;
-  }
-  #people [data-slot="agent-card"] {
-    max-width: none;
-    padding: 8px 10px;
-    background: none;
-    border: 0;
-    box-shadow: none;
-  }
-  /* The avatar block is 40px of a 180px rail and says nothing the hue dot on
-     the row does not already say. */
-  #people [data-slot="agent-card"] img,
-  #people [data-slot="agent-card"] [class*="size-10"],
-  #people [data-slot="agent-card"] [class*="size-9"] {
-    display: none;
   }
 
   /* The repo's own history and its scheduled runs, in the pane that is empty

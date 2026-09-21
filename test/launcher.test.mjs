@@ -44,8 +44,10 @@ describe("the model selector states agent facts once", () => {
 
   test("search matches the raw id, not just the label", () => {
     // The label is the model name; someone looking for `inkling` is typing a
-    // fragment of `openrouter/thinkingmachines/inkling:free`.
-    assert.match(choice, /keywords: alias \? \[alias, a\.name\]/);
+    // fragment of `openrouter/thinkingmachines/inkling:free`. There is no ""
+    // row left to fall back for (constants.ts MODELS dropped it, so alias is
+    // always a real id here) — just the id and the agent name, unconditionally.
+    assert.match(choice, /keywords: \[alias, a\.name\]/);
   });
 
   test("reasoning effort is offered only where a CLI takes the flag", () => {

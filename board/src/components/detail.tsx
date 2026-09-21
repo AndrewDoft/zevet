@@ -11,6 +11,7 @@ import {
 import type { EditorViewState } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { Checkpoints, Schedules } from "./repoviews";
+import { SessionsPane } from "./sessions";
 import { CommitActivity, RepoTimeline } from "./historyviews";
 import { Memories } from "./runspec";
 import { IndexSearch } from "./search";
@@ -168,6 +169,15 @@ export function DetailPane({ blanked }: { blanked?: boolean }) {
               and it goes. */}
           <TurnDetail />
           <IndexSearch />
+          {/* ⚠️ EVERY SESSION EVER RUN ON THIS MACHINE, and it is here rather
+              than in the rail because it is four hundred rows and this is the
+              column with room for them. Andrew: "once agents are done, they
+              should go somewhere like to history — they should not stay
+              visualizable in people." People keeps the handful that are still
+              being written to; everything else is read here. */}
+          <div className="repo-sessions">
+            <SessionsPane />
+          </div>
           <RepoTimeline />
           <Checkpoints />
           <CommitActivity />

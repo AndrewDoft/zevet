@@ -47,11 +47,13 @@ export function aliasOf(id) {
  * @returns {{ label: string, from: string, note: string, trains: boolean }}
  */
 export function describeModel(alias) {
-  /* "" is not "no model" — it is the real, and usual, choice of letting the
-     CLI pick. It said "default", which reads as a placeholder for something
-     missing. Andrew: "you can retitle whatever the cli picks to just 'CLI
-     Choice' across the board". */
-  if (!alias) return { label: "CLI Choice", from: "", note: "", trains: false };
+  /* "" is no longer a pickable row (constants.ts dropped it from MODELS), but
+     it still reaches here: a resumed console legitimately carries no model
+     (desktop/main.js), and this function has to stay total for that case
+     rather than throw. Empty everything, deliberately — no invented label
+     like "CLI Choice" for a thing nobody chose. Callers fall back to
+     whatever they already fall back to (e.g. the raw id). */
+  if (!alias) return { label: "", from: "", note: "", trains: false };
   const known = CATALOGUE.get(alias);
   if (known) return { label: known.name, from: "", note: known.note, trains: false };
   const parts = alias.split("/");

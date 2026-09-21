@@ -28,11 +28,15 @@ export const MODE_LABEL: Record<string, string> = Object.fromEntries(
  *  its free ids churn weekly, so those come from `node scripts/sync-models.mjs`
  *  and its allowlist rules. */
 export const MODELS: Record<string, string[]> = {
-  // "" first, everywhere: letting the CLI choose is a real choice, and the
-  // picker labels it "CLI Choice" rather than hiding it.
-  claude: ["", ...CLAUDE_MODELS.map((m) => m.id)],
-  codex: ["", ...CODEX_MODELS.map((m) => m.id)],
-  opencode: ["", ...OPENCODE_FREE_MODELS],
+  // No "" row here any more. Andrew: "I don't know how CLI choice works as a
+  // model selector, but I know that it's not offered by Anthropic... I
+  // wouldn't keep it, I would just delete it." `""` still MEANS "pass no
+  // --model/-m flag" internally (agent-console.js) — a resumed console
+  // legitimately arrives with no model — it is just no longer a row you can
+  // pick from this list.
+  claude: CLAUDE_MODELS.map((m) => m.id),
+  codex: CODEX_MODELS.map((m) => m.id),
+  opencode: [...OPENCODE_FREE_MODELS],
 };
 
 /** claude reads stream-json line by line and stays open for as many prompts as
@@ -44,6 +48,24 @@ export const STATUS_EVERY_MS = 4000;
 export const STATS_EVERY_MS = 2500;
 export const STATS_MAX_PATHS = 1200;
 export const IDLE_FALLBACK = 90000;
+
+/**
+ * How recently a session file must have been written to for People to call it
+ * one of the agents that is running.
+ *
+ * ⚠️ THIS IS A WINDOW, NOT A FACT. A session found by scanning
+ * ~/.claude/projects and ~/.codex/sessions has no pid attached and neither CLI
+ * writes anything when it exits, so there is no way to know a session ended —
+ * only that nothing has been appended for a while. Fifteen minutes is wide
+ * enough to survive a person reading a diff between turns and narrow enough
+ * that yesterday's work is gone from the rail.
+ *
+ * Deliberately NOT `IDLE_FALLBACK`: that one is the hub's own answer about a
+ * live event stream, where silence really does mean idle within 90 seconds. A
+ * transcript on disk is a much coarser signal and borrowing the number would
+ * quietly claim it is the same kind of evidence.
+ */
+export const LIVE_SESSION_MS = 15 * 60 * 1000;
 
 export const PANE_LIMITS: Record<string, [number, number]> = {
   rail: [180, 420],

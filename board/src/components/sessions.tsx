@@ -19,7 +19,7 @@
  * transcript on this machine; a list that opens on all of them is a list
  * nobody reads. "All" is one click away and is what the filter box is for.
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { AgentLogo } from "./brand";
 import { mono } from "./assistant-ui/elements/surfaces";
@@ -157,7 +157,6 @@ function hereName(root: string | null | undefined) {
 export function SessionsPane({ hue }: { hue?: number } = {}) {
   const sessions = useBoard((st) => st.sessions);
   const setSessionQuery = useBoard((st) => st.setSessionQuery);
-  const refreshSessions = useBoard((st) => st.refreshSessions);
   const localRoot = useBoard((st) => st.localRoot);
   /* ⚠️ OPEN STATE LIVES IN REACT, NOT IN THE DOM. `<details open={...}>` is an
      attribute React re-applies on every render, and this component re-renders
@@ -166,12 +165,11 @@ export function SessionsPane({ hue }: { hue?: number } = {}) {
      actually toggled that group; everything else falls back to the default. */
   const [opened, setOpened] = useState<Record<string, boolean>>({});
 
-  // Fetched on first paint and again when the open folder changes under a
-  // repo-scoped list — the scope is a query the desktop side runs, not a
-  // filter over something already in hand.
-  useEffect(() => {
-    refreshSessions(true);
-  }, [refreshSessions, localRoot]);
+  /* ⚠️ NO FETCH HERE ANY MORE — components/people.tsx owns it. This pane now
+     lives in the repo column, which only renders while nothing is selected, so
+     a fetch driven from here stopped happening the moment somebody clicked a
+     file, and the live tree in People went stale behind it. People is always
+     mounted, so that is where the refresh belongs. */
 
   if (!bridge.local || typeof bridge.local.sessions !== "function") return null;
 

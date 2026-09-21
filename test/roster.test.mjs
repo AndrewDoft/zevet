@@ -106,22 +106,46 @@ describe("follow mode", () => {
 });
 
 describe("roster rendering", () => {
-  test("rows name the agent and expand to mission plus current", () => {
+  test("the rail says who and what is running, and never a tool call", () => {
     const people = src("components/people.tsx");
-    // Which agent a teammate is running is on the row. It used to be the
-    // agentBadge icon; SubagentList carries it as text in `model`.
-    assert.ok(
-      people.includes("agentBadge(") || /model: r\.lastEvent\?\.agent/.test(people),
-      "the row no longer says which agent the teammate is running",
-    );
+    // ⚠️ THE TOOL TRACE IS GONE ON PURPOSE. Seven rows of `currentOf`/`turnOf`
+    // per teammate was the single biggest thing the rail spent height on, and
+    // the conversation column shows the same work in full. Andrew: "there's no
+    // need in this People thing on the side to show any sort of tool use, I
+    // think that just takes up too much space."
+    assert.ok(!people.includes("currentOf"), "the tool trace came back to the rail");
+    assert.ok(!people.includes("turnOf"), "the turn trace came back to the rail");
+    // What a teammate is working on, in their own words, survives.
     assert.ok(people.includes("missionOf(r)"), "the row lost its mission");
-    assert.ok(people.includes("currentOf(r)"), "the row lost its current command");
+    // Which agent is running is named by its own group now, not by the person
+    // row: one disclosure per CLI, with that CLI's mark.
+    assert.ok(people.includes("<AgentGroup"), "the agent-type groups are gone");
+    assert.ok(people.includes("<AgentLogo"), "the agent mark is gone");
+  });
+
+  test("People shows only sessions still being written to", () => {
+    const people = src("components/people.tsx");
+    const constants = src("lib/constants.ts");
+    // ⚠️ RECENCY, NOT LIVENESS — a session on disk has no pid and no end
+    // marker, so the window is the whole of the evidence. Andrew: "once agents
+    // are done, they should go somewhere like to history."
+    assert.ok(people.includes("LIVE_SESSION_MS"), "the live window is not applied");
+    assert.ok(
+      /now - Number\(s\.updated \|\| 0\) >= LIVE_SESSION_MS/.test(people),
+      "a session must be dropped once it goes quiet",
+    );
+    assert.ok(/LIVE_SESSION_MS = \d+ \* 60 \* 1000/.test(constants), "the window lost its units");
+    // The full history belongs to the repo column, not the rail.
+    // The rendered list, not the word — people.tsx's comments still name the
+    // component it took the fetch away from.
+    assert.ok(!people.includes("<SessionsPane"), "the whole session list came back to the rail");
+    assert.ok(src("components/detail.tsx").includes("<SessionsPane />"), "the history has no home");
   });
 
   test("clicking a row expands it and persists the choice", () => {
     const people = src("components/people.tsx");
     assert.ok(people.includes('"zevet.expanded.v1"'), "the expansion key is gone");
-    assert.ok(people.includes("JSON.stringify(list)"), "expansion must persist the whole list");
+    assert.ok(people.includes("JSON.stringify(next)"), "expansion must persist the whole list");
   });
 
   test("repos carry one dot per live actor", () => {

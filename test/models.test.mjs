@@ -183,14 +183,19 @@ test("no model list is typed by hand any more", () => {
   assert.deepEqual(literals, [], `hand-written model ids are back: ${literals.join(", ")}`);
 });
 
-test("letting the CLI choose is named, not left blank", () => {
-  // "" is the usual choice, not a missing one. It read as "default", which
-  // looks like a placeholder for something that failed to load.
-  assert.deepEqual(describeModel(""), { label: "CLI Choice", from: "", note: "", trains: false });
-  // Every agent leads with it, so it is never the option you scroll to find.
+test("CLI choice is not a pickable row any more", () => {
+  // Andrew: "I don't know how CLI choice works as a model selector, but I
+  // know that it's not offered by Anthropic... I wouldn't keep it, I would
+  // just delete it." "" still MEANS "pass no --model/-m flag" internally
+  // (agent-console.js) for a resumed console, so describeModel("") has to
+  // stay total rather than throw — it just no longer invents a label for a
+  // thing nobody chose.
+  assert.deepEqual(describeModel(""), { label: "", from: "", note: "", trains: false });
+  // None of the three agents leads its list with "" — there is no picker row
+  // for it left to find.
   const block = CONSTANTS.match(/export const MODELS[^;]+;/s)[0];
   const leads = block.match(/\[\s*""\s*,/g) ?? [];
-  assert.equal(leads.length, 3, "an agent does not offer the CLI's own choice first");
+  assert.equal(leads.length, 0, "an agent still offers the CLI's own choice as a row");
 });
 
 test("no two generated models render the same label", () => {

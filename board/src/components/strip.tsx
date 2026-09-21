@@ -1,5 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import { useBoard, selectStrip } from "../lib/board";
+import { bridge } from "../lib/bridge";
+import { WorkspacePicker } from "./workspaces";
 import type { Conn } from "../lib/types";
 
 /* `bar` and `tint` went with ctx and cache. They drew the sparkline and the
@@ -35,6 +37,7 @@ function Sp({ cls, text }: { cls?: string; text: string | number }) {
 export function Strip() {
   const { live, machine } = useBoard(selectStrip);
   const conn = useBoard((s) => s.conn);
+  const localError = useBoard((s) => s.localError);
   /* ⚠️ THREE LINES, NOT ONE SEGMENT PER LINE. `.strip` is a column, so every
      segment used to take a row of its own and the rail's corner was four
      stacked words. The grouping is by what a glance is actually asking:
@@ -46,6 +49,16 @@ export function Strip() {
   const where: ReactNode[] = [];
   const health: ReactNode[] = [];
   const rest: ReactNode[] = [];
+
+  /* ⚠️ THE FOLDER PICKER LIVES HERE NOW, at the head of the line that is about
+     the repo. It had a row of its own in the rails bottom corner, which named
+     the repo a second time a few pixels under the branch that belongs to it.
+     Andrew: "just put it to the left of main in that block above with a little
+     dropdown next to it ... it is much cleaner and it will take up a lot less
+     space."
+     Desktop only: with no bridge there is no folder to open, and
+     WorkspacesPane still renders the browser repo filter in the rail. */
+  if (bridge.local) where.push(<Seg key="repo-pick"><WorkspacePicker /></Seg>);
 
   if (live.model) rest.push(<Seg key="model"><Sp cls="dim" text={live.model} /></Seg>);
 
@@ -118,6 +131,10 @@ export function Strip() {
     }
     health.push(<Seg key="graph">{gs}</Seg>);
   }
+
+  /* The folder error came here with the picker. It used to sit directly under
+     it as a "ws-note" row, and that row went with the block. */
+  if (localError) rest.push(<Seg key="wserr"><Sp cls="bad" text={localError} /></Seg>);
 
   const hook = machine && (machine.hook as { failedAgo?: number } | undefined);
   if (hook && hook.failedAgo != null) {

@@ -22,6 +22,7 @@ import {
   boot,
   buildSplits,
   positionSplits,
+  selectMyConsoles,
   selectRoster,
   selectTheme,
   selectViewMode,
@@ -78,6 +79,9 @@ function App() {
   const localRoot = useBoard((s) => s.localRoot);
 
   const roster = useBoard(selectRoster);
+  const myConsoles = useBoard(selectMyConsoles);
+  const launching = useBoard((s) => s.launching);
+  const openLauncher = useBoard((s) => s.openLauncher);
   const local = Boolean(bridge.local);
   const blanked = !roster.length && !(local && localRoot);
 
@@ -124,6 +128,28 @@ function App() {
               position: mine/all/off says whose work to watch. */}
           <div className="pane-title row">
             <span>People</span>
+            {/* ⚠️ THE PLUS IS THE LAUNCHER. It used to be a full text row at
+                the bottom of the You list reading "Start an agent…", which is
+                a whole line of a 250px rail spent on a verb. Andrew: "there is
+                also no need for like the new agent thing, you can put a plus
+                sign somewhere else." Here it costs nothing: the title row was
+                already this tall for the follow control beside it.
+                Gated on an open folder for the same reason the row was — with
+                no repo there is nothing to start an agent IN, and a launcher
+                that opens onto that is a dead end. */}
+            {bridge.local && localRoot ? (
+              <button
+                type="button"
+                className="rail-new"
+                aria-expanded={launching}
+                aria-haspopup="dialog"
+                aria-label="Start an agent"
+                title="Start an agent"
+                onClick={openLauncher}
+              >
+                +
+              </button>
+            ) : null}
             <FollowControl blanked={blanked} />
           </div>
           <div className="pane-body" id="people">
@@ -142,12 +168,19 @@ function App() {
               test/board.test.mjs asserts that directly against consoles.tsx —
               no textarea, no sendPrompt — which is the rule that actually
               matters. The list is navigation in both views. */}
-          <div id="consolesSlot">
-            <div className="pane-title">You</div>
-            <div className="pane-body" id="consoles">
-              <Consoles />
+          {/* ⚠️ NOT RENDERED EMPTY. The launcher row that used to sit under
+              this heading is gone (it is the plus in the People header now),
+              so with no console running this was a section title with nothing
+              beneath it — a heading that promises a list and then does not
+              have one. */}
+          {myConsoles.length ? (
+            <div id="consolesSlot">
+              <div className="pane-title">You</div>
+              <div className="pane-body" id="consoles">
+                <Consoles />
+              </div>
             </div>
-          </div>
+          ) : null}
           {/* ⚠️ THE SESSIONS LIST IS NOT A RAIL SECTION ANY MORE. What has run
               on this machine is MY work — every file it reads comes out of
               this machine's own ~/.claude and ~/.codex — so it now hangs under

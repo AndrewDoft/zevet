@@ -17,9 +17,13 @@ export function RunSpec() {
 
   // One naming of a model, everywhere: describeModel reads the CLIs' own
   // catalogues, so this says "Opus 5" like the picker does rather than the
-  // raw id — and "CLI Choice" when nothing was pinned.
+  // raw id. `raw` can be "" — no --model/-m flag was passed, e.g. a resumed
+  // console (desktop/main.js) — and describeModel("").label is now "" too,
+  // so `|| raw` leaves an empty string rather than falling back to anything.
+  // "CLI default" says plainly what happened instead of inventing a name for
+  // a model nobody picked.
   const raw = active.usage.model || active.model;
-  const model = describeModel(raw).label || raw;
+  const model = describeModel(raw).label || raw || "CLI default";
   const repo = String(active.root).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || active.root;
 
   const rows: SpecRow[] = [
