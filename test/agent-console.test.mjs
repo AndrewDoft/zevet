@@ -513,6 +513,42 @@ describe("startConsole — stopping", () => {
     }
   });
 
+  test("a kill that FAILED leaves stop() retryable", (t) => {
+    if (!IS_WINDOWS) {
+      t.skip("drives the taskkill branch; the POSIX branch signals a real process group and this fake deliberately cannot");
+      return;
+    }
+    /* ⚠️ THE ONE CASE WHERE IDEMPOTENCE IS WRONG. `stopped` used to be
+       set one line ABOVE the kill attempt, so a taskkill that could not be
+       started marked the console stopped anyway — and the button, the window
+       close and app quit all answered {ok:true, alreadyStopped:true} from then
+       on while the tree was still running. Unkillable from every entry point
+       at once, reported as success, and still spending. */
+    let allow = false;
+    const child = fakeChild({ pid: 4242 });
+    const spawnFn = (command, args, opts) => {
+      if (command === "taskkill" && !allow) throw new Error("taskkill is not on PATH");
+      return fakeSpawn(child)(command, args, opts);
+    };
+    spawnFn.calls = [];
+    const { handle } = start(t, { child, spawn: spawnFn });
+    assert.equal(handle.ok, true, handle.error);
+
+    const failed = handle.stop();
+    assert.equal(failed.ok, false, "a taskkill that could not start must report failure");
+    assert.match(failed.error, /taskkill/);
+
+    // The door is still open: a second attempt must really try again rather
+    // than claim the console is already stopped.
+    allow = true;
+    const retried = handle.stop();
+    assert.equal(retried.ok, true, retried.error);
+    assert.notEqual(retried.alreadyStopped, true, "a failed kill must not latch stopped");
+
+    // And once it has worked, it latches as before.
+    assert.equal(handle.stop().alreadyStopped, true);
+  });
+
   test("kills the whole tree, not just the process we started", (t) => {
     if (!IS_WINDOWS) {
       t.skip("the tree kill is taskkill /T on Windows; on POSIX it is a process-group signal, which this fake deliberately cannot exercise safely");

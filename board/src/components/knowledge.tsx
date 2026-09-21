@@ -79,7 +79,9 @@ function allToolCalls(
   const out: ToolCallLike[] = [];
   for (const m of messages) {
     for (const c of toolCalls(m.content)) {
-      if (match(c.toolName.toLowerCase())) out.push(c);
+      // `toolCalls` casts; a part with no toolName threw here and took the
+      // whole Citations/Reads panel down with it.
+      if (typeof c.toolName === "string" && match(c.toolName.toLowerCase())) out.push(c);
     }
   }
   return out;
@@ -292,7 +294,8 @@ export function Reads() {
           page: r.offset,
           quote: firstQuote(r.text),
         }));
-        const pages = Math.max(...reads.map((r) => maxLineNumberIn(r.text) ?? r.offset + r.limit));
+        // offset + limit - 1: a read of L1 with limit 2000 ends at L2000.
+        const pages = Math.max(...reads.map((r) => maxLineNumberIn(r.text) ?? r.offset + r.limit - 1));
         const activePage = reads[reads.length - 1]!.offset;
         const relPath = relPathForJump(path, localRoot);
 

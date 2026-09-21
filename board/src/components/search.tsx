@@ -87,6 +87,9 @@ export function IndexSearch() {
       <input
         value={typed}
         onChange={(event) => setTyped(event.target.value)}
+        // A placeholder is not an accessible name — it is announced as a hint
+        // and vanishes the moment there is text in the field.
+        aria-label="Search the code index"
         placeholder="Search the code index"
         className={cn(
           field,

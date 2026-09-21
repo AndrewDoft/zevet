@@ -479,8 +479,9 @@ class AppUpdater {
     }
 
     if (this.platform === "win32") {
+      let child;
       try {
-        const child = this.spawnImpl(this.state.file, INSTALL_ARGS, {
+        child = this.spawnImpl(this.state.file, INSTALL_ARGS, {
           detached: true,
           stdio: "ignore",
           windowsHide: true,
@@ -490,7 +491,28 @@ class AppUpdater {
         return { ok: false, error: `could not start the installer: ${err.message}` };
       }
       // A beat, so the installer is running before the app it replaces is not.
-      setTimeout(() => this.quitImpl(), 600);
+      const timer = setTimeout(() => this.quitImpl(), 600);
+      /* ⚠️ THE ASYNCHRONOUS SPAWN FAILURE, which the try/catch above cannot
+         see. On Windows the ordinary cause is antivirus quarantining or
+         locking the freshly downloaded .exe between verification and this
+         spawn. It arrives as an 'error' EVENT, and an EventEmitter with no
+         'error' listener rethrows — in the main process that is fatal, and
+         there is no uncaughtException handler anywhere in desktop/. So the
+         person clicks "restart to install", is told {ok:true, restarting:true},
+         and the app disappears with the update never applied.
+
+         agent-console.js § startConsole handles this exact hazard for the
+         agent it spawns, deliberately and with a comment. This call site did
+         not. Cancelling the quit matters as much as catching the throw: there
+         is no point closing the app to make way for an installer that is not
+         going to run. */
+      if (child && typeof child.on === "function") {
+        child.on("error", (err) => {
+          clearTimeout(timer);
+          const error = `could not start the installer: ${err && err.message ? err.message : String(err)}`;
+          this._set({ phase: "error", canInstall: true, error });
+        });
+      }
       return { ok: true, restarting: true };
     }
 

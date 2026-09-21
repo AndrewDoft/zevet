@@ -854,8 +854,19 @@ function startConsole(opts) {
      */
     stop() {
       if (stopped) return { ok: true, alreadyStopped: true };
-      stopped = true;
-      if (exited) return { ok: true, alreadyStopped: true };
+      if (exited) {
+        stopped = true;
+        return { ok: true, alreadyStopped: true };
+      }
+      /* NOTE: `stopped` is NOT set here. It used to be, one line above the
+         kill attempt, which made a FAILED kill permanent: killTree returning
+         {ok:false} — taskkill not spawnable, or process.kill failing for
+         anything other than ESRCH — left `stopped` true, so the button, the
+         window close and app quit all short-circuited to
+         {ok:true, alreadyStopped:true} from then on while the agent tree was
+         still running. Unkillable from every entry point at once, reported as
+         success, and still spending. Only a kill that worked closes the
+         door. */
       try {
         if (child.stdin && !child.stdin.destroyed && !child.stdin.writableEnded) child.stdin.end();
       } catch {
@@ -863,7 +874,9 @@ function startConsole(opts) {
         // fine — we are about to kill it anyway. The kill result is what gets
         // reported to the caller.
       }
-      return killTree(child, spawnFn);
+      const killed = killTree(child, spawnFn);
+      if (!killed || killed.ok !== false) stopped = true;
+      return killed;
     },
   };
 }

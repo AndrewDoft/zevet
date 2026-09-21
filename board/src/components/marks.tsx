@@ -6,8 +6,16 @@ export const FILE_SVG =
   '<path d="M9 1.5V5a.5.5 0 0 0 .5.5H13"/></svg>';
 
 export function agentMark(agent: string | null | undefined) {
-  const d = agent && AGENT_MARKS[agent];
-  if (!d) return null;
+  /* An object lookup answers for the WHOLE PROTOTYPE CHAIN, and `agent` here
+     is a string off a hub roster event — it comes from another machine. There
+     are three own keys; "constructor" returns a function, "__proto__" returns
+     Object.prototype, and both are truthy, so the `if (!d)` guard below let
+     them straight into dangerouslySetInnerHTML. Own-property AND a string, in
+     that order: the second is what actually keeps a non-string out of innerHTML
+     and it is cheap enough to keep even though the first makes it unreachable
+     today. */
+  const d = agent && Object.hasOwn(AGENT_MARKS, agent) ? AGENT_MARKS[agent] : null;
+  if (typeof d !== "string" || !d) return null;
   return <span className="mark" dangerouslySetInnerHTML={{ __html: d }} />;
 }
 
