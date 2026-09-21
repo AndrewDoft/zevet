@@ -461,3 +461,85 @@ retry a tool call any more than it can end a turn, so the row is hidden.
 - Zoom persists across an app restart: restored at 2, two steps took it to 3.
 - Auto-update: a 0.2.9 machine downloads and checksums 0.2.10 and reports
   ready.
+
+---
+
+## 11. 0.2.14 — the agent panels
+
+Andrew's list of 26 elements, done where there was something real behind them.
+
+### Data that did not exist before
+
+Several of these elements needed facts zevet was not recording. Built first,
+because a panel fed invented data is worse than no panel:
+
+- **Tool timings.** `tool-call` parts carry `startedAt`/`endedAt`. The CLIs do
+  not timestamp their own events, so the only honest clock is the one on the
+  machine reading them and the only honest claim is "when zevet saw it" — which
+  is exactly what a waterfall of a turn needs.
+- **`seenConsole`** — when each console was last in front. Nothing else knew you
+  had looked away, which is the whole premise of a background inbox.
+- **`checkpoints`** — the shas the status poll watched move. The poll already
+  carried the sha and threw away the fact that it changed.
+- **`mcpServers`** — read off claude's init line, which announces them and which
+  nothing was reading.
+
+### Panels
+
+| Surface | Elements |
+|---|---|
+| "What it did" (collapsed) | `agent-plan`, `trace-waterfall`, `task-card`, `agent-handoff`, `artifact-card`, `mcp-server-panel` |
+| "Prompts" (collapsed) | `prompt-library`, persisted to localStorage |
+| People rail | `subagent-list` — what Andrew asked for there |
+| Rail | `background-inbox`, which renders nothing when nothing finished unseen |
+| Global | `command-palette` on Ctrl/Cmd+K over threads, repos, touched files, actions |
+| Composer | dictation (`WebSpeechDictationAdapter`) and a message queue |
+
+Every added panel is **closed by default**, and `panels.test.mjs` asserts it.
+The run meters already cost that lesson once: three cards always open took two
+thirds of the pane's height and left the conversation a strip.
+
+### The crash this found
+
+Sending a second prompt replays a turn whose tool ids repeat, and assistant-ui
+keys message parts by `toolCallId`:
+
+    Error: Duplicate key toolCallId-t2 in useResources
+
+thrown inside `AuiProvider` — the whole conversation gone, not one card. Any of
+three CLIs reusing an id does the same to somebody mid-session, and zevet does
+not control those ids. Ids are unique per transcript now.
+
+The first fix broke result routing: the agent sends a result keyed by its
+original id, so pointing that id at the older call put the second call's output
+on the first card. The agent's id now points at the **newest** call with that
+id — the rule a person reading the stream in order would apply.
+
+### Not built, deliberately
+
+- **`checkpoint-history`** wants `files: number` per commit. The status poll has
+  no file count and there is no per-commit diff to recover one from. Any number
+  there would read as real and be fabricated.
+- **`schedule-card`** wants scheduled runs. zevet has none.
+- **`computer-use`, `code-runner`, `recommendation-card`** have no zevet data
+  behind them.
+
+Both absences are pinned by tests, so they read as decisions rather than
+oversights — and as the note saying what would have to exist first.
+
+**`AgentCard` was tried in the People rail and reverted.** Measured at a 180px
+rail: six fields overlapped their own text and one expanded teammate pushed the
+other two off a 197px pane. That was a brief I wrote, not a fault in the
+element.
+
+### Masora voice
+
+Masora's dictation is a local service that types into whatever field has focus,
+so it already works with this composer and needs nothing from zevet; its HTTP
+surface is enrollment and key renewal, not transcription. What 0.2.14 adds is a
+mic **in** the composer, which works without Masora installed. Pointing it at a
+transcription endpoint later is a change to one line in `runtime.tsx`.
+
+### Measured
+
+Gate **1014** green, from 987. Bundle 1,203,076 bytes / 357 kB gzipped.
