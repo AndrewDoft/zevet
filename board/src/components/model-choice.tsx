@@ -60,7 +60,11 @@ export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
     () =>
       agents.map((a) => ({
         agent: a,
-        models: (MODELS[a.name] ?? []).map((alias): ModelOption => {
+        // What the CLI knows today, when the desktop app could read it;
+        // otherwise what zevet shipped with. Catalogue order is kept: both
+        // CLIs lead with their newest flagship, which is what all[0] below
+        // makes the default — never an id typed here.
+        models: (a.models?.map((m) => m.id) ?? MODELS[a.name] ?? []).map((alias): ModelOption => {
           const { label, from, note, trains } = describeModel(alias);
           const notes = [from, note, trains ? "may train on prompts" : null].filter(Boolean);
           return {

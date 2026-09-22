@@ -7,10 +7,11 @@
 // "opus/sonnet/haiku" with no Fable, and codex "gpt-5/gpt-5-codex/o3", none of
 // which exist any more.
 //
-// Generated 2026-09-21 — 4 claude, 5 codex.
+// Generated 2026-09-22 — 5 claude, 7 codex.
 
 /** Models `claude --model` accepts, with the names Claude Code shows. */
 export const CLAUDE_MODELS = [
+  { id: "claude-opus-5-5", name: "Opus 5.5", note: "For complex tasks" },
   { id: "claude-opus-5", name: "Opus 5", note: "For complex tasks" },
   { id: "claude-fable-5-1", name: "Fable 5.1", note: "For your toughest challenges" },
   { id: "claude-sonnet-5", name: "Sonnet 5", note: "Most efficient for everyday tasks" },
@@ -20,6 +21,8 @@ export const CLAUDE_MODELS = [
 /** Models `codex -m` accepts, with the names codex shows. */
 export const CODEX_MODELS = [
   { id: "gpt-6-astra", name: "GPT-6-Astra", note: "Our most capable model for complex, demanding work." },
+  { id: "gpt-6-sol", name: "GPT-6-Sol", note: "GPT-6 Sol Codex model." },
+  { id: "gpt-6-luna", name: "GPT-6-Luna", note: "GPT-6 Luna Codex model." },
   { id: "gpt-5.6-sol", name: "GPT-5.6-Sol", note: "Reliable agentic workhorse for everyday tasks." },
   { id: "gpt-5.6-terra", name: "GPT-5.6-Terra", note: "Balanced agentic coding model for everyday work." },
   { id: "gpt-5.6-luna", name: "GPT-5.6-Luna", note: "Fast and affordable agentic coding model." },

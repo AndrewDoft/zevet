@@ -162,6 +162,16 @@ export interface UsableAgent {
   ok: boolean;
   signedIn: boolean;
   detail: string;
+  /** The CLI's own model list, read from its cache on this machine. Absent
+   *  on a browser board or a machine with no cache; the shipped list stands in. */
+  models?: CatalogModel[];
+}
+
+/** One row of a CLI's catalogue, as agent-models.generated.mjs spells it. */
+export interface CatalogModel {
+  id: string;
+  name: string;
+  note: string;
 }
 
 export interface LocalAgent extends UsableAgent {}

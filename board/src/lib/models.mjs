@@ -26,6 +26,18 @@ const CATALOGUE = new Map(
 );
 
 /**
+ * Names for models the desktop app read from the CLIs' caches just now
+ * (desktop/main.js `local:agents`). Newer than the generated file, so they
+ * win; nothing is forgotten, because a running console may still be on a
+ * model the CLI has since dropped.
+ *
+ * @param {Array<{ id: string, name: string, note: string }>} list
+ */
+export function learnModels(list) {
+  for (const m of list) if (m && typeof m.id === "string") CATALOGUE.set(m.id, m);
+}
+
+/**
  * The model string a picker row stands for, recovered from its `<family>:<alias>` id.
  *
  * Splits on the FIRST colon only: an alias may contain colons of its own, as

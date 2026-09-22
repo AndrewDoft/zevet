@@ -42,6 +42,7 @@ const { GithubSignIn } = require("./github-signin.js");
 const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
+const agentCatalogs = require("./agent-catalogs.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -2135,6 +2136,11 @@ ipcMain.handle("local:agents", async () => {
   await runtimeReady;
   const detect = await loadDetect();
   const found = detect ? detect.detectAgents() : [];
+  // The CLIs' own model lists, read fresh from their caches on every call, so
+  // a model claude or codex learned about this morning is offered without a
+  // zevet release. null when there is no cache: the board then keeps the list
+  // it shipped with (board/src/lib/agent-models.generated.mjs, same reader).
+  const catalogs = { claude: agentCatalogs.claudeModels(), codex: agentCatalogs.codexModels() };
   return ["claude", "codex", "opencode"].map((name) => {
     const r = agentConsole.resolveAgent(name);
     const id = name === "claude" ? "claude-code" : name;
@@ -2144,6 +2150,7 @@ ipcMain.handle("local:agents", async () => {
       ok: Boolean(r.ok),
       detail: r.ok ? r.file : r.error,
       signedIn: Boolean(d.signedIn),
+      models: catalogs[name] || undefined,
       // "unverified" for codex means the hook path is unproven; the CONSOLE
       // path below is what this launcher uses, and that is separate.
       hooks: d.hooks === undefined ? null : d.hooks,

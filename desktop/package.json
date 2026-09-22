@@ -50,6 +50,7 @@
       "app-update.js",
       "zevet-voice.js",
       "agent-sessions.js",
+      "agent-catalogs.js",
       "github-signin.js",
       "google-signin.js",
       "setup.html",

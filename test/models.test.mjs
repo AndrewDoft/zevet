@@ -19,7 +19,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OPENCODE_FREE_MODELS as MODELS } from "../board/src/lib/models.generated.mjs";
-import { aliasOf, describeModel } from "../board/src/lib/models.mjs";
+import { aliasOf, describeModel, learnModels } from "../board/src/lib/models.mjs";
 import { CLAUDE_MODELS, CODEX_MODELS } from "../board/src/lib/agent-models.generated.mjs";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -163,6 +163,34 @@ test("claude and codex models are named the way their own CLIs name them", () =>
     // and the generator fell through to its own fallback.
     assert.notEqual(m.name, m.id, `${m.id} has no display name`);
   }
+});
+
+test("the claude list leads with the newest Opus, and that is not typed anywhere", () => {
+  // The picker defaults to the first row of the first agent (model-choice.tsx
+  // `all[0]`), so what leads this list is what a fresh install starts on.
+  // Claude Code's own catalogue leads with its newest flagship; if a future
+  // catalogue does not, this says so rather than a hard-coded id papering
+  // over it.
+  const version = (id) => (id.match(/^claude-opus-([\d-]+)/)?.[1] ?? "").split("-").map(Number);
+  const opus = CLAUDE_MODELS.filter((m) => version(m.id).length);
+  assert.ok(opus.length, "no Opus in the claude catalogue");
+  const newest = opus.reduce((a, b) => {
+    const va = version(a.id), vb = version(b.id);
+    for (let i = 0; i < Math.max(va.length, vb.length); i++) {
+      if ((va[i] ?? 0) !== (vb[i] ?? 0)) return (va[i] ?? 0) > (vb[i] ?? 0) ? a : b;
+    }
+    return a;
+  });
+  assert.equal(CLAUDE_MODELS[0].id, newest.id);
+});
+
+test("a model the desktop app read from the CLI's cache is named the way that CLI names it", () => {
+  // The bridge hands the board the CLI's live catalogue (main.js
+  // `local:agents`); a model newer than the generated file must not fall
+  // through to the id-derived label that produced "claude-opus-5" in a picker.
+  assert.equal(describeModel("claude-opus-9").label, "claude-opus-9");
+  learnModels([{ id: "claude-opus-9", name: "Opus 9", note: "Later" }]);
+  assert.deepEqual(describeModel("claude-opus-9"), { label: "Opus 9", from: "", note: "Later", trains: false });
 });
 
 test("no model list is typed by hand any more", () => {
