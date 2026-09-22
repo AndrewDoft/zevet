@@ -197,6 +197,16 @@ export function appendAgentPayload(state, payload, opts = {}) {
 export function closeTranscript(state, { code = null, error = null } = {}) {
   let s = { ...state, running: false };
   if (s.openIndex < 0 && !error) return s;
+  /* ⚠️ A FAILED RUN CLOSES TWICE. codex emits both an `error` event and a
+   * `turn.failed` event for the same failure, and each one closes the
+   * transcript with the same error. The first close leaves no open turn, so
+   * the second opened a NEW assistant message carrying the same
+   * status.error — and the conversation drew the error line twice in a row.
+   * A turn that already ended keeps its ending; the first error wins. */
+  if (s.openIndex < 0) {
+    const last = s.messages[s.messages.length - 1];
+    if (last && last.role === "assistant" && last.status && last.status.type !== "running") return s;
+  }
   s = openAssistant(s);
   const index = s.openIndex;
   s = { ...s, openIndex: -1 };
