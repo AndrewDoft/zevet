@@ -14,7 +14,9 @@ const css = read("styles", "masora.css");
 const rule = (sel) => css.slice(css.indexOf(sel + " {"), css.indexOf("}", css.indexOf(sel + " {")));
 
 test("a row is mark, title and time; Stop is an icon over the time slot", () => {
-  assert.ok(!people.includes('"Stop" : "Close"}\n'), "Stop is text on the row again");
+  // A bare text child, on a line of its own, is the regression; the aria-label
+  // and title attributes carrying the same words are fine.
+  assert.ok(!/^\s*\{c\.running \? "Stop" : "Close"\}\s*$/m.test(people), "Stop is text on the row again");
   assert.match(people, /<SquareIcon/);
   assert.match(rule("  .agent-row-stop"), /position: absolute/);
   assert.match(rule("  .agent-row-stop"), /opacity: 0/);
