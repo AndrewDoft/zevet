@@ -44,7 +44,9 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
         // on a follow-up either.
         meta: prev ? { ...meta, startedAt: prev.meta.startedAt } : meta,
         running: true,
-        events: prev ? prev.events : [],
+        // Re-stamped with the new id: the board replays them against the
+        // console that now answers to it, and drops what matches no console.
+        events: prev ? prev.events.map((e) => ({ ...e, id })) : [],
         dropped: prev ? prev.dropped : 0,
       });
     },

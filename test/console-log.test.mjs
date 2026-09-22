@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -74,6 +75,9 @@ test("a resumed console continues the same thread under its new id", () => {
   assert.equal(c.mode, "plan");
   assert.equal(c.startedAt, 1, "the thread's start moved to the follow-up's");
   assert.deepEqual(c.events.map((e) => e.type), ["agent", "exit", "agent"]);
+  // The board replays each event against the console with that id; one still
+  // stamped with the old process's id matches nothing and is dropped.
+  assert.deepEqual(c.events.map((e) => e.id), ["b", "b", "b"], "the turns before the follow-up are lost on reload");
 });
 
 test("a forgotten console, or one never opened, is not replayed", () => {
@@ -90,4 +94,21 @@ test("clear empties it, for window close and quit", () => {
   log.open("a", META);
   log.clear();
   assert.deepEqual(log.snapshot().consoles, []);
+});
+
+// main.js and board.ts are not loadable under node --test (Electron; TS), so
+// these two are pinned against the source, as board.test.mjs does.
+const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
+const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
+
+test("a follow-up drops the old process's handle", () => {
+  const resume = main.slice(main.indexOf('ipcMain.handle("local:resumeAgent"'), main.indexOf('ipcMain.handle("local:sendToAgent"'));
+  assert.match(resume, /consoles\.delete\(continues\)/, "every follow-up leaks the exited handle");
+});
+
+test("a console closed while starting stops the process it was waiting for", () => {
+  assert.match(board, /function closedMeanwhile\([^)]*\)[^{]*\{[^}]*myConsoles\.some\(\(x\) => x\.key === c\.key\)/);
+  assert.match(board, /stopAgent\(String\(id\)\);\s*void bridge\.local\?\.forgetAgent\?\.\(String\(id\)\)/);
+  // startAgent and both resume paths: every place a new process id lands.
+  assert.equal(board.match(/if \(closedMeanwhile\(c, r\.id\)\) return;\s*(\/\/[^\n]*\s*)*c\.id = r\.id/g)?.length, 3);
 });
