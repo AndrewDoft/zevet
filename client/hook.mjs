@@ -264,6 +264,26 @@ async function flushOutbox() {
 }
 
 /**
+ * The repo a zevet-made worktree belongs to, or null for any other folder.
+ *
+ * desktop/agent-worktree.js gives a second agent in one repo a worktree of its
+ * own, beside a record of which repo it is. To everyone watching it IS that
+ * repo: same name, same branch, same checkout, so its file activity is not
+ * dropped as some other checkout's. Keep in sync with the copy in opencode-plugin.mjs.
+ */
+function zevetOrigin(dir) {
+  const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+  const same = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+  if (!same(path.dirname(dir), path.resolve(home, "worktrees"))) return null;
+  try {
+    const { repo } = JSON.parse(readFileSync(`${dir}.json`, "utf8"));
+    return typeof repo === "string" && repo ? path.resolve(repo) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Repo root, name and branch, straight off the filesystem.
  *
  * No `git` subprocess: this runs before every single tool call, on both
@@ -291,6 +311,9 @@ function repoInfo(startDir) {
         } catch (err) {
           warn(`could not read HEAD: ${err.code || err.message}`);
         }
+        const origin = zevetOrigin(dir);
+        // `root` stays the worktree: it is where the agent's files are.
+        if (origin) return { ...repoInfo(origin), root: dir, origin };
         return { repo: path.basename(dir), branch, root: dir };
       }
       const up = path.dirname(dir);
@@ -415,14 +438,14 @@ async function main() {
   //    permission_mode, stop_hook_active, last_assistant_message}
   // Payload first, flag second, process cwd last.
   const cwd = p.cwd || REPO_FLAG || process.cwd();
-  const { repo, branch, root } = repoInfo(cwd);
+  const { repo, branch, root, origin } = repoInfo(cwd);
 
   // Codex's hooks live in the GLOBAL config (a repo-local block never fires),
   // so this hook is invoked for every project on the machine. The opt-in list
   // is what keeps zevet from publishing unrelated work to a shared hub: no
   // entry, no event, no noise. Claude Code is wired per repo and needs no such
   // filter -- if its hook ran, somebody installed it there on purpose.
-  if (isCodex && !repoIsOptedIn(root || cwd)) return;
+  if (isCodex && !repoIsOptedIn(origin || root || cwd)) return;
 
   // full  — prompts and commands as typed, with secrets scrubbed (default)
   // brief — the first word of a command, no prompt bodies
@@ -457,7 +480,7 @@ async function main() {
   // knows exactly which config file it wrote the command into.
   const agent = isCodex ? "codex" : "claude-code";
 
-  const payload = { ...body, actor: ACTOR, machine, repo, branch, agent, checkout: checkoutId(root) };
+  const payload = { ...body, actor: ACTOR, machine, repo, branch, agent, checkout: checkoutId(origin || root) };
 
   // The backlog goes first (oldest first, budgeted), so a teammate who was
   // offline reappears in order rather than as a gap followed by now.

@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, chmodSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { startHub, runScript, state, tempDir, TOKEN, ROOT } from "./helpers.mjs";
 import { deriveAuthToken } from "../client/secret.mjs";
 
@@ -201,6 +202,26 @@ describe("what the hook reports", () => {
     const root = repo.dir.replaceAll("\\", "/");
     assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
     assert.ok(!e.target.includes("\\"), "must use forward slashes on every platform");
+  });
+
+  test("an agent in a zevet-made worktree reports the repo it was made from", async () => {
+    // desktop/agent-worktree.js: a second agent in one repo works in a worktree
+    // under the zevet home. Its activity is still that repo's, down to the
+    // checkout, or the board drops it as another checkout's.
+    const { createAgentWorktrees } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "agent-worktree.js"));
+    const wts = createAgentWorktrees({ home: home.dir });
+    const wt = await wts.create(repo.dir);
+    assert.ok(wt);
+    try {
+      const e = await send({ cwd: wt.dir, hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: path.join(wt.dir, "src", "db.ts") } });
+      assert.equal(e.repo, path.basename(repo.dir));
+      assert.equal(e.branch, "feature/invites");
+      assert.equal(e.target, "src/db.ts");
+      const root = repo.dir.replaceAll("\\", "/");
+      assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
+    } finally {
+      await wts.release(wt);
+    }
   });
 
   test("relative file paths resolve from the agent working directory", async () => {
