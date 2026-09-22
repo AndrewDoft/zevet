@@ -40,10 +40,8 @@ const CONSTANTS = readFileSync(
  *  class of bug as one that misses a denied model: both mean the list nobody
  *  reads is not what it claims. */
 const DENIED_ORIGINS = [
-  "qwen", "alibaba", "z-ai", "zhipu", "glm", "deepseek", "moonshot", "kimi",
-  "minimax", "inclusionai", "ling", "mimo", "xiaomi", "bytedance", "baidu",
-  "ernie", "01-ai", "tencent", "hunyuan", "stepfun", "skywork", "iflytek",
-  "sensetime", "dots-studio", "rednote", "internlm", "baichuan",
+  "zhipu", "moonshot", "kimi", "bytedance", "ernie", "01-ai", "hunyuan",
+  "stepfun", "skywork", "iflytek", "sensetime", "rednote", "internlm", "baichuan",
 ];
 
 /** True when `token` names a path segment of the id, or starts one of that

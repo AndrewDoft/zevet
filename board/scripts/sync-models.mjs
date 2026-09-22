@@ -52,6 +52,9 @@ const ORG_ALLOW = new Set([
   "thinkingmachines", "mistralai", "liquid", "allenai", "ai2", "microsoft",
   "ibm", "granite", "amazon", "apple", "xai", "openai", "anthropic",
   "perplexity", "reka", "nousresearch", "arcee", "sarvam",
+  "qwen", "z-ai", "xiaomi", "inclusionai", "deepseek", "moonshotai",
+  "minimax", "dots-studio", "nex-agi", "stepfun", "baidu", "tencent",
+  "bytedance", "alibaba",
 ]);
 
 /** opencode's own ids carry no org prefix, so origin comes from the name.
@@ -67,6 +70,9 @@ const NAME_ORG = [
   ["inkling", "thinkingmachines"], ["mimo", "xiaomi"], ["ling", "inclusionai"],
   ["qwen", "qwen"], ["glm", "z-ai"], ["deepseek", "deepseek"],
   ["kimi", "moonshotai"], ["minimax", "minimax"], ["dots", "dots-studio"],
+  ["nex", "nex-agi"], ["step", "stepfun"], ["ernie", "baidu"],
+  ["hunyuan", "tencent"], ["doubao", "bytedance"], ["yi", "01-ai"],
+  ["internlm", "internlm"], ["baichuan", "baichuan"],
 ];
 
 /** True when `frag` starts a dash-separated word of `name`, or is all of it.
@@ -90,7 +96,7 @@ const NOT_GENERAL = ["lyria", "content-safety", "guard", "moderation", "embed",
 
 /** Active params for models whose id does not state them. Without this a sparse
  *  model ships behind a marketing name: Lightning is 3B active. */
-const ACTIVE_OVERRIDE = [["lightning", 3], ["muse-glimmer", 3]];
+const ACTIVE_OVERRIDE = [["lightning", 3], ["muse-glimmer", 3], ["ling-3.0-flash", 5], ["nex-n2.5-mini", 3]];
 
 const orgOf = (id) => {
   const slash = id.indexOf("/");
@@ -128,7 +134,13 @@ function verdict(id, outputModalities) {
 /** OpenRouter's own display name, minus its "Lab: " prefix and "(free)"
  *  suffix: "Google: Gemma 4 31B (free)" -> "Gemma 4 31B". */
 const cleanName = (name) =>
-  name.replace(/^[^:]*:\s*/, "").replace(/\(free\)\s*$/i, "").replace(/\s+/g, " ").trim();
+  name
+    .replace(/^[^:]*:\s*/, "")
+    .replace(/\(free\)\s*$/i, "")
+    .replace(/-/g, " ")
+    .replace(/([a-z])(\d)/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
 
 /** The model's own id with the free-tier and build suffixes off:
  *  "opencode/muse-spark-1.2-contributor-free" -> "muse-spark-1.2". */

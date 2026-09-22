@@ -4,35 +4,45 @@
 //
 // Free models the launcher offers for opencode, derived from OpenRouter and
 // `opencode models`, filtered by rule: free, emits text, made by a lab on an
-// allowlist, and at least 6B active params. 20 candidate(s) were dropped;
+// allowlist, and at least 6B active params. 15 candidate(s) were dropped;
 // run with --dry-run to see each one and why.
 //
-// Generated 2026-09-22 — 10 model(s).
+// Generated 2026-09-22 — 15 model(s).
 
 /** Model ids `opencode run -m <id>` accepts, vetted and free. */
 export const OPENCODE_FREE_MODELS = [
+  "opencode/mimo-v2.6-flash-free",
   "opencode/muse-spark-1.2-contributor-free",
   "opencode/muse-spark-1.3-contributor-free",
   "opencode/nemotron-3-ultra-free",
   "openrouter/cohere/north-mini-code:free",
+  "openrouter/dots-studio/dots-3-note-preview:free",
   "openrouter/google/gemma-4-31b-it:free",
+  "openrouter/nex-agi/nex-n2.5-pro:free",
   "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
   "openrouter/poolside/laguna-s-2.1:free",
   "openrouter/poolside/laguna-xs-2.1:free",
+  "openrouter/qwen/qwen3.8-27b:free",
   "openrouter/thinkingmachines/inkling-small:free",
   "openrouter/thinkingmachines/inkling:free",
+  "openrouter/z-ai/glm-5.2:free",
 ];
 
 /** What a person reads for each of those ids. */
 export const OPENCODE_MODEL_NAMES = {
+  "opencode/mimo-v2.6-flash-free": "MiMo V2.6 Flash",
   "opencode/muse-spark-1.2-contributor-free": "Muse Spark 1.2",
   "opencode/muse-spark-1.3-contributor-free": "Muse Spark 1.3",
   "opencode/nemotron-3-ultra-free": "Nemotron 3 Ultra",
   "openrouter/cohere/north-mini-code:free": "North Mini Code",
+  "openrouter/dots-studio/dots-3-note-preview:free": "Dots 3 Note Preview",
   "openrouter/google/gemma-4-31b-it:free": "Gemma 4 31B",
+  "openrouter/nex-agi/nex-n2.5-pro:free": "Nex N2.5 Pro",
   "openrouter/nvidia/nemotron-3-super-120b-a12b:free": "Nemotron 3 Super",
   "openrouter/poolside/laguna-s-2.1:free": "Laguna S 2.1",
   "openrouter/poolside/laguna-xs-2.1:free": "Laguna XS 2.1",
+  "openrouter/qwen/qwen3.8-27b:free": "Qwen 3.8 27B",
   "openrouter/thinkingmachines/inkling-small:free": "Inkling Small",
   "openrouter/thinkingmachines/inkling:free": "Inkling",
+  "openrouter/z-ai/glm-5.2:free": "GLM 5.2",
 };
