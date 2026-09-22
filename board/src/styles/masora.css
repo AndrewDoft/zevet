@@ -797,6 +797,34 @@
      drawn for a name the agent announced — see components/slashtext.tsx. */
   .slash-said { color: var(--who); font-weight: 600; }
 
+  /* A `!` command run in the terminal, and whatever it printed. Both are
+     recorded as user messages, so both land inside the sender's bubble —
+     which is right for the command and wrong for its output, so the bubble
+     steps back out of the way when it is holding one. See
+     components/slashtext.tsx and lib/envelope.mjs. */
+  .ran-said {
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  .ran-said::before { content: "❯ "; opacity: 0.45; }
+  .aui-user-message-content:has(.local-out) {
+    background: none; padding: 0;
+  }
+  .local-out {
+    font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5;
+    color: var(--ink-muted); text-align: left;
+    max-width: 52ch; overflow: hidden;
+  }
+  .local-out[data-error] { color: var(--alert); }
+  .local-out > summary {
+    cursor: pointer; list-style: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .local-out > summary::-webkit-details-marker { display: none; }
+  .local-out > pre {
+    margin: 2px 0 0; white-space: pre-wrap; word-break: break-word;
+    max-height: 18em; overflow: auto;
+  }
+
   .strip-line {
     display: flex; flex-wrap: wrap; align-items: baseline;
     gap: 4px 10px; max-width: 100%;

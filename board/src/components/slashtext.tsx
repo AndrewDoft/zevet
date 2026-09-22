@@ -13,11 +13,38 @@
  * The composer itself cannot do this — it is a `<textarea>`, and a textarea
  * has no way to style part of its value — so the confirmation lands on the
  * message once it is sent, which is also where it stays readable afterwards.
+ *
+ * A RECORDED session brings its own proof. Running `/model` in a terminal
+ * writes `<command-name>/model</command-name>` — the command ran, that is what
+ * the record IS — so those chip unconditionally, no list to check against.
+ * What the command printed, and a `!` command with its output, are the same
+ * envelope and are drawn here too: muted, collapsed, and never as markdown.
+ * See lib/envelope.mjs for the shapes and where they were measured.
  */
 import { type CSSProperties, useMemo } from "react";
 import type { TextMessagePartComponent } from "@assistant-ui/react";
 import { hueOf, selectActiveConsole, useBoard } from "@/lib/board";
+import { readEnvelope } from "@/lib/envelope.mjs";
 import { commandsFor, slashLead } from "@/lib/slash.mjs";
+
+/** What a local command printed. One muted line; the rest behind it. */
+function LocalOut({ text, error }: { text: string; error: boolean }) {
+  const lines = text.split("\n");
+  const head = lines[0];
+  if (lines.length === 1) {
+    return (
+      <div className="local-out" data-error={error || undefined}>
+        {head}
+      </div>
+    );
+  }
+  return (
+    <details className="local-out" data-error={error || undefined}>
+      <summary>{head}</summary>
+      <pre>{lines.slice(1).join("\n")}</pre>
+    </details>
+  );
+}
 
 export const UserText: TextMessagePartComponent = ({ text }) => {
   const active = useBoard(selectActiveConsole);
@@ -31,6 +58,23 @@ export const UserText: TextMessagePartComponent = ({ text }) => {
   const agent = active?.agent ?? reading?.source ?? null;
   const announced = active?.slashCommands;
   const known = useMemo(() => commandsFor(agent, announced), [agent, announced]);
+  const env = useMemo(() => readEnvelope(text), [text]);
+
+  if (env) {
+    /* Dropped upstream by transcript.mjs; handled here too, because the one
+       thing worse than losing a message is reading our plumbing out loud. */
+    if (env.kind === "noise") return null;
+    if (env.kind === "out") return <LocalOut text={env.text} error={env.error} />;
+    if (env.kind === "bash") return <code className="ran-said">{env.command}</code>;
+    return (
+      <>
+        <span className="slash-said" style={{ "--who": hueOf(myActor) } as CSSProperties}>
+          {env.name}
+        </span>
+        {env.args ? ` ${env.args}` : null}
+      </>
+    );
+  }
 
   /* The rule lives in slash.mjs beside its siblings, and is tested there:
      a first token, and only a name this agent actually offers. */

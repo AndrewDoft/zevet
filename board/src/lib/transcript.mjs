@@ -23,6 +23,7 @@
  * new state, sharing every message it did not touch.
  */
 
+import { readEnvelope } from "./envelope.mjs";
 import { mdSafe } from "./prose.mjs";
 
 /** @typedef {import("./transcript.d.mts").TranscriptState} TranscriptState */
@@ -105,15 +106,41 @@ function appendStreamed(state, kind, text) {
  * Public API
  * ------------------------------------------------------------------------- */
 
-/** A prompt the person sent. Closes whatever turn was open. */
+/**
+ * A prompt the person sent. Closes whatever turn was open.
+ *
+ * ⚠️ NOT EVERY `user` RECORD IS A PERSON. A terminal session writes a caveat,
+ * a system reminder and a task notification as user messages, and each one
+ * says in so many words that it is not input. They are dropped here rather
+ * than at any of the four call sites, so a live console and a session read off
+ * disk cannot disagree about it. What IS kept — a slash command, a `!` command
+ * and what either printed — stays as its own message and is drawn as a chip or
+ * a collapsed line by components/slashtext.tsx.
+ *
+ * A reminder that trails a real prompt is cut out of it instead, because the
+ * words in front of it are somebody's ask.
+ */
 export function appendUserText(state, text) {
   if (typeof text !== "string" || !text.length) return state;
+  const env = readEnvelope(text);
+  if (env && env.kind === "noise") return state;
+  const said = env ? text : withoutNoise(text);
+  if (!said) return state;
   const closed = { ...state, openIndex: -1 };
   return pushMessage(closed, {
     id: nextId(),
     role: "user",
-    content: [{ type: "text", text }],
+    content: [{ type: "text", text: said }],
   });
+}
+
+/* Only a CLOSED block, so a prompt that merely names `<system-reminder>` in
+   prose — which a compaction summary does — keeps its words. */
+const NOISE_BLOCK =
+  /<(local-command-caveat|system-reminder|task-notification)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g;
+
+function withoutNoise(text) {
+  return text.includes("<") ? text.replace(NOISE_BLOCK, "").trim() : text;
 }
 
 /**
