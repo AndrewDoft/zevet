@@ -25,6 +25,7 @@
 
 import { readEnvelope } from "./envelope.mjs";
 import { mdSafe } from "./prose.mjs";
+import { describeModel } from "./models.mjs";
 
 /** @typedef {import("./transcript.d.mts").TranscriptState} TranscriptState */
 
@@ -144,32 +145,15 @@ function withoutNoise(text) {
 }
 
 /**
- * A line the agent printed that was not JSON, or anything it wrote to stderr.
- *
- * These are NOT errors by default. All three CLIs print update banners, auth
- * notices and progress to the same streams, and a reader that treats the first
- * one as a failure is a reader that dies on a Tuesday (the same reasoning as
- * `agent-console.js`'s line splitter). They become plain text on the open
- * assistant message so nothing is ever silently dropped.
- */
-export function appendRaw(state, text) {
-  return appendStreamed(state, "text", String(text ?? ""));
-}
-
-/**
  * A COMPLETE line or notice, rather than a streaming fragment.
  *
  * ⚠️ appendStreamed DELIBERATELY ADDS NO SEPARATOR, because a token stream
  * must not gain whitespace it was never sent. Everything that arrives whole
- * went through it anyway, so consecutive stdout lines were run together:
- * "npm notice new version availablenpm notice run npm i -g npm", measured, and
- * a codex error notice landed inside the sentence before it —
- * "The fix is in place.codex: skill descriptions shortenedAnything else?".
+ * went through it anyway, so two completed codex messages were run together:
+ * "The fix is in place.Anything else?".
  *
  * So a unit that is already a whole line says so, and gets a newline in front
- * of it when the text it is joining does not already end in one. stderr keeps
- * using appendRaw: it is NOT line-split on the desktop side, on purpose,
- * because progress bars and ANSI do not survive being cut at newlines.
+ * of it when the text it is joining does not already end in one.
  */
 export function appendLine(state, text) {
   const t = String(text ?? "");
@@ -184,10 +168,11 @@ export function appendLine(state, text) {
 /**
  * One `{type:"agent", payload}` event.
  *
- * `agent` selects the vocabulary. An unrecognised payload is NOT dropped — it
- * is rendered as text naming its own type, because a transcript that quietly
- * omits what it did not understand is how you end up believing an agent did
- * nothing for thirty seconds.
+ * `agent` selects the vocabulary. ⚠️ AN UNRECOGNISED PAYLOAD IS DROPPED. It
+ * used to be drawn as `[codex: <type>]` in the agent's own voice, which is CLI
+ * plumbing presented as the reply. The process's own output is kept for
+ * debugging in the raw-output view (`lines`, components/rawoutput.tsx); the
+ * conversation shows only the conversation.
  */
 export function appendAgentPayload(state, payload, opts = {}) {
   if (!payload || typeof payload !== "object") return state;
@@ -196,18 +181,23 @@ export function appendAgentPayload(state, payload, opts = {}) {
 
   const handler =
     agent === "codex" ? fromCodex : agent === "opencode" ? fromOpencode : fromClaude;
-  const handled = handler(state, payload, root);
-  if (handled !== null) return handled;
-
-  // Unknown, but real. Show it rather than lose it.
-  const label = typeof payload.type === "string" ? payload.type : "event";
-  return appendStreamed(state, "text", `[${agent}: ${label}]\n`);
+  return handler(state, payload, root, opts.model || "");
 }
 
-/** The process ended. Closes the open turn and records how it went. */
+/**
+ * The process ended. Closes the open turn and records how it went.
+ *
+ * ⚠️ AN ERROR ALWAYS LANDS ON A MESSAGE. A run that fails before saying
+ * anything — opencode on an OpenRouter model past its free daily limit sends
+ * nothing but an `error` event — has no open turn, and returning early here
+ * left the screen blank: no reply, no error, no sign it had ended. So an error
+ * opens a turn to carry it. A run that ends with no output and NO error still
+ * adds nothing.
+ */
 export function closeTranscript(state, { code = null, error = null } = {}) {
   let s = { ...state, running: false };
-  if (s.openIndex < 0) return s;
+  if (s.openIndex < 0 && !error) return s;
+  s = openAssistant(s);
   const index = s.openIndex;
   s = { ...s, openIndex: -1 };
   const messages = s.messages.slice();
@@ -215,10 +205,33 @@ export function closeTranscript(state, { code = null, error = null } = {}) {
     ...messages[index],
     status:
       error || (code !== null && code !== 0)
-        ? { type: "incomplete", reason: "error", error: error || `exited ${code}` }
+        ? { type: "incomplete", reason: "error", error: error || "The run stopped." }
         : { type: "complete", reason: "stop" },
   };
   return { ...s, messages };
+}
+
+/**
+ * Whatever a CLI or provider said went wrong, as one sentence a person can read.
+ *
+ * The raw text is a provider payload more often than not — opencode's
+ * OpenRouter 429 carries every response header and a JSON body — and it was
+ * shown verbatim, in the thread and on the rail. It stays in the raw-output
+ * view; this is what is shown instead. Unrecognised input gets `fallback`,
+ * never the input itself.
+ *
+ * @param {unknown} raw
+ * @param {{ model?: string | null, fallback?: string }} [opts]
+ */
+export function plainError(raw, opts = {}) {
+  const s = String(raw ?? "");
+  const name = describeModel(opts.model || "").label || "The model";
+  if (/free-models-per-day/i.test(s)) return `${name} hit its free daily limit.`;
+  if (/rate.?limit|\b429\b|too many requests|usage limit|quota/i.test(s)) return `${name} hit its usage limit.`;
+  if (/\b401\b|unauthori[sz]ed|api.?key|not logged in|authenticat/i.test(s)) return "Not signed in.";
+  const missing = /could not find (\w+) on this machine/i.exec(s);
+  if (missing) return `${missing[1][0].toUpperCase()}${missing[1].slice(1)} isn't installed.`;
+  return opts.fallback || "The model returned an error.";
 }
 
 /** Convenience for tests and for rebuilding a console from its stored events. */
@@ -228,8 +241,6 @@ export function assembleTranscript(events, opts = {}) {
     if (!e) continue;
     if (e.type === "you") state = appendUserText(state, e.text);
     else if (e.type === "agent") state = appendAgentPayload(state, e.payload, opts);
-    else if (e.type === "stdout-line") state = appendLine(state, e.line);
-    else if (e.type === "stderr") state = appendRaw(state, e.text);
     else if (e.type === "exit") state = closeTranscript(state, e);
   }
   return state;
@@ -326,7 +337,7 @@ function trimRoot(value, root) {
  * existed; `classifyAgentPayloadLine` reads the same fields.
  * ------------------------------------------------------------------------- */
 
-function fromClaude(state, p, root) {
+function fromClaude(state, p, root, model) {
   if (p.type === "assistant" && p.message && Array.isArray(p.message.content)) {
     let s = state;
     for (const part of p.message.content) {
@@ -355,7 +366,9 @@ function fromClaude(state, p, root) {
   }
 
   if (p.type === "result") {
-    return closeTranscript(state, { code: p.is_error ? 1 : 0 });
+    return p.is_error
+      ? closeTranscript(state, { error: plainError(p.result, { model }) })
+      : closeTranscript(state, { code: 0 });
   }
 
   // `system`/`init` carries the model and the session id. The strip already
@@ -390,7 +403,7 @@ function fromClaude(state, p, root) {
    * it used to print `[claude: rate_limit_event]` for the same reason. */
   if (p.type === "rate_limit_event") return state;
 
-  return null;
+  return state;
 }
 
 /* ---------------------------------------------------------------------------
@@ -400,7 +413,7 @@ function fromClaude(state, p, root) {
  * per line, {type:"step_start"|"text"|"tool_use"|"step_finish"|"error"}.
  * ------------------------------------------------------------------------- */
 
-function fromOpencode(state, p, root) {
+function fromOpencode(state, p, root, model) {
   const part = p.part || {};
 
   if (p.type === "step_start") return state;
@@ -428,14 +441,26 @@ function fromOpencode(state, p, root) {
     return s;
   }
 
-  if (p.type === "step_finish") return closeTranscript(state, { code: 0 });
-
-  if (p.type === "error") {
-    const e = p.error || {};
-    return closeTranscript(state, { error: e.message || e.name || "agent error" });
+  /* ⚠️ A STEP IS NOT A TURN. opencode ends every model call with a
+     step_finish, and one that called a tool says `reason:"tool-calls"` and
+     carries straight on with another step. Closing on each of those made
+     every tool call its own assistant message — a run with 18 calls showed
+     "1 tool call" eighteen times. Measured 2026-09-22, `opencode run --format
+     json` reading three files: four steps ending "tool-calls", then one
+     ending "stop". Only a step that is not handing off to a tool ends it. */
+  if (p.type === "step_finish") {
+    return part.reason === "tool-calls" ? state : closeTranscript(state, { code: 0 });
   }
 
-  return null;
+  /* MEASURED 2026-09-22, an OpenRouter free model past its daily cap: the
+     message is at `error.data.message`, beside the response headers and body.
+     `error.message` does not exist. */
+  if (p.type === "error") {
+    const e = p.error || {};
+    return closeTranscript(state, { error: plainError((e.data && e.data.message) || e.message || e.name, { model }) });
+  }
+
+  return state;
 }
 
 /* ---------------------------------------------------------------------------
@@ -475,13 +500,10 @@ function fromOpencode(state, p, root) {
  *      `cache_read_input_tokens` — see `usageOf` in lib/board.ts, which read
  *      zero and reported every codex turn as a 0% cache hit.
  *
- * It is still written to fail VISIBLY: an event whose name is not below falls
- * through to the `[codex: <type>]` line in appendAgentPayload rather than
- * disappearing, so a vocabulary change shows up in the transcript instead of
- * going quiet.
+ * An event whose name is not below is dropped (see appendAgentPayload).
  * ------------------------------------------------------------------------- */
 
-function fromCodex(state, p, root) {
+function fromCodex(state, p, root, model) {
   if (p.type === "thread.started" || p.type === "turn.started") return state;
 
   if (p.type === "agent_message_delta" || p.type === "agent_message") {
@@ -496,21 +518,21 @@ function fromCodex(state, p, root) {
     const item = p.item || {};
     if (item.type === "agent_message") {
       const text = String(item.text ?? "");
-      // A COMPLETED item is a whole message and needs a line of its own — it
-      // is what lands either side of a `codex:` notice. `started`/`updated`
-      // may still be filling in, so those keep the streaming join.
+      // A COMPLETED item is a whole message and needs a line of its own.
+      // `started`/`updated` may still be filling in, so those keep the
+      // streaming join.
       return p.type === "item.completed" ? appendLine(state, text) : appendStreamed(state, "text", text);
     }
     if (item.type === "reasoning") {
       return appendStreamed(state, "reasoning", String(item.text ?? ""));
     }
-    /* A notice from codex itself, not from the model. Non-fatal — the one in
-       the capture was about skill descriptions being shortened and the turn
-       finished normally — so it is shown rather than used to end the turn. */
-    if (item.type === "error") {
-      const message = String(item.message ?? "");
-      return message ? appendLine(state, `codex: ${message}`) : state;
-    }
+    /* A notice from codex itself, not from the model, and not fatal —
+       measured 2026-09-22 it is "Skill descriptions were shortened to fit the
+       skills context budget…" and the turn completes normally. Drawn, it was
+       the first line of the reply and so the run's one-line summary in
+       "Running elsewhere". Housekeeping: dropped. A real failure arrives as
+       `turn.failed` or a top-level `error`, below. */
+    if (item.type === "error") return state;
     if (item.type === "command_execution" || item.type === "file_change" || item.type === "mcp_tool_call") {
       const callId = item.id || nextId();
       const name = item.type === "command_execution" ? "Bash" : item.type === "file_change" ? "Edit" : item.tool || "tool";
@@ -539,11 +561,11 @@ function fromCodex(state, p, root) {
 
   if (p.type === "turn.completed") return closeTranscript(state, { code: 0 });
   if (p.type === "turn.failed") {
-    return closeTranscript(state, { error: (p.error && p.error.message) || "turn failed" });
+    return closeTranscript(state, { error: plainError(p.error && p.error.message, { model }) });
   }
   if (p.type === "error") {
-    return closeTranscript(state, { error: (p.error && p.error.message) || p.message || "agent error" });
+    return closeTranscript(state, { error: plainError((p.error && p.error.message) || p.message, { model }) });
   }
 
-  return null;
+  return state;
 }

@@ -15,6 +15,7 @@ import {
 } from "./assistant-ui/elements/background-inbox";
 import { selectActiveConsole, selectMyConsoles, serverNow, useBoard } from "../lib/board";
 import { agoText } from "../lib/text";
+import { describeModel } from "../lib/models.mjs";
 import type { ConsoleEntry } from "../lib/types";
 
 function stateOf(c: ConsoleEntry): BackgroundState {
@@ -87,7 +88,7 @@ export function BackgroundInbox() {
     })
     .map((c) => ({
       id: String(c.key),
-      title: c.model ? `${c.agent} · ${c.model}` : c.agent,
+      title: describeModel(c.model ?? "").label || c.agent,
       state: stateOf(c),
       elapsed: agoText(now, finishedAtRef.current.get(c.key) ?? now),
       summary: lastAssistantText(c.transcript.messages),

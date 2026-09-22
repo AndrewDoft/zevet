@@ -3,7 +3,6 @@ import { bridge, type AgentSchedule, type AgentSettings, type AskRequest, type M
 import { shortInput } from "./fmt";
 import {
   appendAgentPayload,
-  appendRaw,
   appendUserText,
   closeTranscript,
   emptyTranscript,
@@ -688,6 +687,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       if (!r || !r.ok) {
         c.running = false;
         c.error = (r && r.error) || "could not start";
+        pushConsoleLine(c, "err", c.error);
       } else {
         c.id = r.id ? String(r.id) : null;
         // The prompt a fork was started to ask. It goes only after the spawn
@@ -1616,10 +1616,10 @@ function ingressAgentEvent(evt: { id?: string; type: string; code?: number | nul
     for (const [k, text] of classifyAgent(payload, localRoot)) {
       pushConsoleLine(c, k as ConsoleLine["kind"], text);
     }
-    c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: c.agent, localRoot });
+    c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: c.agent, localRoot, model: c.model });
   } else if (evt.type === "stdout-line") {
+    // Update banners and notices, not the conversation: the raw view only.
     pushConsoleLine(c, "out", evt.text || "");
-    c.transcript = appendRaw(c.transcript, evt.text || "");
   }
   signalConsolesChanged();
 }

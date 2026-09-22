@@ -10,8 +10,8 @@
 // and that a result finds the call it belongs to; that streamed deltas
 // concatenate instead of stacking; that reasoning stays separate from prose;
 // that a message is copied rather than mutated, because assistant-ui memoises
-// per message by reference; and — the one that matters most for an agent you
-// are watching — that an event nobody recognised still appears.
+// per message by reference; that CLI housekeeping never reaches the
+// conversation; and that a failed run always ends in one plain sentence.
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -21,11 +21,11 @@ import { ROOT } from "./helpers.mjs";
 const {
   _resetIds,
   appendAgentPayload,
-  appendRaw,
   appendUserText,
   assembleTranscript,
   closeTranscript,
   emptyTranscript,
+  plainError,
 } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "transcript.mjs")).href);
 
 beforeEach(() => _resetIds());
@@ -175,11 +175,31 @@ describe("endings", () => {
     assert.equal(s.openIndex, -1);
   });
 
-  test("a non-zero exit is incomplete and says why", () => {
+  test("a non-zero exit is incomplete, in words rather than an exit code", () => {
     let s = claude(text("half"));
     s = closeTranscript(s, { code: 1 });
     assert.equal(s.messages[0].status.type, "incomplete");
-    assert.match(s.messages[0].status.error, /exited 1/);
+    assert.equal(s.messages[0].status.error, "The run stopped.");
+  });
+
+  test("an error with nothing open still lands on a message", () => {
+    const s = closeTranscript(appendUserText(emptyTranscript(), "ok"), { error: "The model returned an error." });
+    assert.deepEqual(s.messages.map((m) => m.role), ["user", "assistant"]);
+    assert.equal(s.messages[1].status.error, "The model returned an error.");
+    assert.equal(s.openIndex, -1);
+  });
+
+  test("a run that ends with no output and no error adds nothing and is not running", () => {
+    const s = closeTranscript(appendUserText(emptyTranscript(), "ok"), { code: 0 });
+    assert.equal(s.messages.length, 1);
+    assert.equal(s.openIndex, -1);
+    assert.equal(s.running, false);
+  });
+
+  test("a claude result that is an error says so in one plain line", () => {
+    let s = claude(text("x"));
+    s = claude({ type: "result", is_error: true, result: 'API Error: 429 {"type":"rate_limit_error"}' }, s);
+    assert.equal(s.messages[0].status.error, "The model hit its usage limit.");
   });
 
   test("closing an already-closed transcript is a no-op", () => {
@@ -190,10 +210,12 @@ describe("endings", () => {
 });
 
 describe("raw output", () => {
-  test("a non-JSON line is kept as text, not treated as an error", () => {
-    const s = appendRaw(emptyTranscript(), "npm notice new version available");
-    assert.equal(s.messages[0].role, "assistant");
-    assert.equal(s.messages[0].content[0].type, "text");
+  test("stdout that is not JSON, and stderr, are not conversation", () => {
+    const s = assembleTranscript([
+      { type: "stdout-line", line: "npm notice new version available" },
+      { type: "stderr", text: "ERROR rmcp::transport::worker: worker quit" },
+    ]);
+    assert.equal(s.messages.length, 0);
   });
 });
 
@@ -215,14 +237,59 @@ describe("opencode", () => {
 
   test("step_finish closes the turn", () => {
     let s = oc({ type: "text", part: { type: "text", text: "x" } });
-    s = oc({ type: "step_finish", part: { reason: "done" } }, s);
+    s = oc({ type: "step_finish", part: { type: "step-finish", reason: "stop" } }, s);
     assert.equal(s.messages[0].status.type, "complete");
   });
 
-  test("an error ends the turn with its message", () => {
-    let s = oc({ type: "text", part: { type: "text", text: "x" } });
-    s = oc({ type: "error", error: { message: "rate limited" } }, s);
-    assert.equal(s.messages[0].status.error, "rate limited");
+  // Captured 2026-09-22: `opencode run --format json` asked to read three
+  // files. Every tool call is its own step, finishing with reason
+  // "tool-calls". They are one turn, so one "N tool calls" group.
+  test("steps that hand off to a tool stay one turn", () => {
+    const tool = (n) => [
+      { type: "step_start", part: { type: "step-start" } },
+      { type: "tool_use", part: { type: "tool", id: `prt_${n}`, callID: `call_${n}`, tool: "read", state: { status: "completed", input: { filePath: `${n}.txt` }, output: String(n) } } },
+      { type: "step_finish", part: { type: "step-finish", reason: "tool-calls" } },
+    ];
+    const payloads = [
+      ...[1, 2, 3, 4].flatMap(tool),
+      { type: "step_start", part: { type: "step-start" } },
+      { type: "text", part: { type: "text", text: "Done." } },
+      { type: "step_finish", part: { type: "step-finish", reason: "stop" } },
+    ];
+    const s = assembleTranscript(
+      [{ type: "you", text: "read them" }, ...payloads.map((payload) => ({ type: "agent", payload }))],
+      { agent: "opencode" },
+    );
+    assert.deepEqual(s.messages.map((m) => m.role), ["user", "assistant"]);
+    assert.equal(s.messages[1].content.filter((p) => p.type === "tool-call").length, 4);
+    assert.equal(s.messages[1].status.type, "complete");
+  });
+
+  // Captured 2026-09-22: openrouter/google/gemma-4-31b-it:free past the free
+  // daily cap. The whole stream is this one line (headers trimmed), then exit 1.
+  test("a provider error before any output ends in one plain line, not silence or the payload", () => {
+    const payload = {
+      type: "error",
+      timestamp: 1790108523032,
+      sessionID: "ses_f3538c910ffePe9VXNUXptNZI1",
+      error: {
+        name: "APIError",
+        data: {
+          message: "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day",
+          statusCode: 429,
+          isRetryable: true,
+          responseHeaders: { "x-ratelimit-limit": "50", "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1790121600000" },
+          responseBody: '{"error":{"message":"Rate limit exceeded: free-models-per-day.","code":429}}',
+          metadata: { url: "https://openrouter.ai/api/v1/chat/completions" },
+        },
+      },
+    };
+    let s = appendUserText(emptyTranscript(), "ok");
+    s = appendAgentPayload(s, payload, { agent: "opencode", model: "openrouter/google/gemma-4-31b-it:free" });
+    s = closeTranscript(s, { code: 1 });
+    assert.equal(s.messages.length, 2);
+    assert.equal(s.messages[1].status.error, "gemma-4-31b-it hit its free daily limit.");
+    assert.equal(s.openIndex, -1);
   });
 });
 
@@ -246,26 +313,36 @@ describe("codex", () => {
     assert.equal(part.result, "a\nb");
   });
 
-  test("turn.failed ends the turn with its reason", () => {
+  test("turn.failed ends the turn with a plain reason", () => {
     let s = cx({ type: "item.completed", item: { type: "agent_message", text: "x" } });
-    s = cx({ type: "turn.failed", error: { message: "no auth" } }, s);
-    assert.equal(s.messages[0].status.error, "no auth");
+    s = cx({ type: "turn.failed", error: { message: 'unexpected status 401 Unauthorized: {"detail":"x"}' } }, s);
+    assert.equal(s.messages[0].status.error, "Not signed in.");
+  });
+
+  // Captured 2026-09-22 from `codex exec --json`: a non-fatal notice from
+  // codex itself, first in the turn. It was drawn as the start of the reply.
+  test("codex's own notices are not the reply", () => {
+    let s = cx({ type: "turn.started" });
+    s = cx({ type: "item.completed", item: { id: "item_0", type: "error", message: "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest" } }, s);
+    s = cx({ type: "item.completed", item: { id: "item_1", type: "agent_message", text: "done" } }, s);
+    assert.deepEqual(s.messages[0].content, [{ type: "text", text: "done" }]);
   });
 });
 
-describe("nothing is silently dropped", () => {
-  // The point of the whole module. An agent that emitted something we do not
-  // model must still look like it did something, or you sit watching a blank
-  // pane wondering whether it hung.
-  test("an unrecognised payload is shown, naming its type", () => {
-    const s = appendAgentPayload(emptyTranscript(), { type: "some_future_event" }, { agent: "codex" });
-    assert.equal(s.messages.length, 1);
-    assert.match(s.messages[0].content[0].text, /some_future_event/);
+describe("CLI plumbing is not conversation", () => {
+  test("an unrecognised payload is not drawn", () => {
+    for (const agent of ["claude", "codex", "opencode"]) {
+      assert.equal(appendAgentPayload(emptyTranscript(), { type: "some_future_event" }, { agent }).messages.length, 0);
+      assert.equal(appendAgentPayload(emptyTranscript(), { nope: 1 }, { agent }).messages.length, 0);
+    }
   });
 
-  test("a payload with no type at all still produces something", () => {
-    const s = appendAgentPayload(emptyTranscript(), { nope: 1 }, { agent: "claude" });
-    assert.match(s.messages[0].content[0].text, /event/);
+  test("errors become one plain sentence, never the payload", () => {
+    assert.equal(plainError("Rate limit exceeded: free-models-per-day"), "The model hit its free daily limit.");
+    assert.equal(plainError("HTTP 429 Too Many Requests", { model: "x/y" }), "y hit its usage limit.");
+    assert.equal(plainError("Could not find codex on this machine. Looked in 9 directories"), "Codex isn't installed.");
+    assert.equal(plainError('{"error":{"code":500}}'), "The model returned an error.");
+    assert.equal(plainError("spawn EINVAL", { fallback: "Couldn't start." }), "Couldn't start.");
   });
 
   test("a non-object payload is ignored without throwing", () => {
@@ -369,11 +446,4 @@ describe("claude payloads that are not transcript content", () => {
       assert.equal(after.messages.length, 0, `${type} put something on screen`);
     });
   }
-
-  test("but a type nobody has seen is still shown", () => {
-    // The fallback is not the bug and must stay: an event silently dropped is
-    // how you end up believing an agent did nothing for thirty seconds.
-    const after = appendAgentPayload(emptyTranscript(), { type: "something_new" });
-    assert.match(after.messages[0].content[0].text, /something_new/);
-  });
 });
