@@ -226,18 +226,24 @@ describe("briefFor: C2, fails open", () => {
     assert.equal(r, null);
   });
 
-  test("a fetch that never resolves is no brief within the 2s budget", async () => {
+  test("a fetch that never resolves is no brief within its own budget", async () => {
     // A real `fetch` aborts itself when the `signal` it was given fires; a
     // stand-in fetchImpl has to honour that explicitly to be a fair fake of
     // one, same as `sleep`/`now` are injected as real functions elsewhere in
     // this suite rather than being no-ops.
+    //
+    // timeoutMs is injected (same pattern as fetchImpl/sleep/now) rather than
+    // waiting out the real 2000ms BRIEF_TIMEOUT_MS: that real wait raced the
+    // test runner's own process teardown under CI's constrained cores and
+    // was observed cancelling this test on both CI OSes, never locally. This
+    // still exercises the real AbortSignal.timeout/abort path end to end.
     const f = (_url, init) => new Promise((_resolve, reject) => {
       init.signal.addEventListener("abort", () => reject(new Error("aborted")));
     });
     const started = Date.now();
-    const r = await masora.briefFor({ baseUrl: "https://m", token: "t", prompt: "x", fetchImpl: f });
+    const r = await masora.briefFor({ baseUrl: "https://m", token: "t", prompt: "x", fetchImpl: f, timeoutMs: 50 });
     assert.equal(r, null);
-    assert.ok(Date.now() - started < 4000, "must not wait past its own timeout");
+    assert.ok(Date.now() - started < 2000, "must not wait past its own timeout");
   });
 
   test("no token means no call at all", async () => {

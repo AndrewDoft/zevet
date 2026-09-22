@@ -203,7 +203,7 @@ class MasoraPair {
  * 2s timeout the contract specifies -- a brief that cannot be fetched is no
  * brief, never a blocked agent start.
  */
-async function briefFor({ baseUrl, token, prompt, repository, fetchImpl } = {}) {
+async function briefFor({ baseUrl, token, prompt, repository, fetchImpl, timeoutMs } = {}) {
   if (!baseUrl || !token) return null;
   const f = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
   try {
@@ -215,7 +215,15 @@ async function briefFor({ baseUrl, token, prompt, repository, fetchImpl } = {}) 
         surface: "zevet",
         ...(repository ? { repository } : {}),
       }),
-      signal: AbortSignal.timeout(BRIEF_TIMEOUT_MS),
+      // Injectable, same as fetchImpl/sleep/now elsewhere in this file: a
+      // real 2000ms wall-clock wait here raced the test runner's own
+      // per-file process teardown under CI's constrained cores (~260
+      // concurrent suites on a 2-core runner), cancelling this test and
+      // everything queued after it before the real timer ever fired --
+      // reproduced on both CI OSes, never locally. The production path is
+      // unaffected: no caller passes timeoutMs, so it still defaults to
+      // BRIEF_TIMEOUT_MS.
+      signal: AbortSignal.timeout(typeof timeoutMs === "number" ? timeoutMs : BRIEF_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const body = await res.json();
