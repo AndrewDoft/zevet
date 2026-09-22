@@ -594,6 +594,135 @@ function VersionSection() {
   );
 }
 
+/**
+ * Pairing with Masora (T5, docs/contracts/cross_app_context.md). Settings
+ * row idiom per commit 27d7004: the closed row already says what this is set
+ * to -- "not paired", or the paired host -- so nothing needs opening to read
+ * the one fact this section exists for.
+ */
+function MasoraSection() {
+  const localWorkspaces = useBoard((s) => s.localWorkspaces);
+  const [cfg, setCfg] = useState<{ url: string; paired: boolean; repos: Record<string, boolean> } | null>(null);
+  const [urlDraft, setUrlDraft] = useState("");
+  const [pair, setPair] = useState<
+    | { phase: "idle" }
+    | { phase: "starting" }
+    | { phase: "waiting"; code: string }
+    | { phase: "fail"; message: string }
+  >({ phase: "idle" });
+
+  function refresh() {
+    window.zevet?.masoraConfig?.().then((c) => {
+      if (c) {
+        setCfg(c);
+        setUrlDraft(c.url);
+      }
+    });
+  }
+  useEffect(() => {
+    if (!cfg) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!bridge.local) return null;
+
+  function pairClick() {
+    if (pair.phase === "waiting") {
+      window.zevet?.masoraPairCancel?.();
+      setPair({ phase: "idle" });
+      return;
+    }
+    setPair({ phase: "starting" });
+    window.zevet?.masoraPairStart?.().then((r) => {
+      if (!r || !r.ok) {
+        setPair({ phase: "fail", message: (r && r.error) || "Could not start pairing." });
+        return;
+      }
+      setPair({ phase: "waiting", code: r.userCode || "" });
+      window.zevet?.masoraPairWait?.().then(
+        (done) => {
+          if (!done || !done.ok) {
+            if (done && done.cancelled) setPair({ phase: "idle" });
+            else setPair({ phase: "fail", message: (done && done.error) || "Pairing failed." });
+            return;
+          }
+          setPair({ phase: "idle" });
+          refresh();
+        },
+        (err) => setPair({ phase: "fail", message: (err && err.message) || "Pairing failed." }),
+      );
+    }, (err) => setPair({ phase: "fail", message: (err && err.message) || "Could not start pairing." }));
+  }
+
+  const summary = !cfg ? "loading…" : cfg.paired ? new URL(cfg.url).host : "not paired";
+
+  return (
+    <SSection title="Masora" summary={summary}>
+      <div className="srow">
+        <span className="k">URL</span>
+        <input
+          className="mono"
+          type="text"
+          value={urlDraft}
+          onChange={(ev) => setUrlDraft(ev.target.value)}
+          onBlur={() => {
+            if (cfg && urlDraft.trim() && urlDraft.trim() !== cfg.url) {
+              window.zevet?.masoraSaveUrl?.(urlDraft.trim()).then((c) => c && setCfg(c));
+            }
+          }}
+          disabled={Boolean(cfg && cfg.paired)}
+          spellCheck={false}
+        />
+      </div>
+      {cfg && cfg.paired ? (
+        <div className="srow">
+          <button
+            className={MAKE_BTN}
+            type="button"
+            onClick={() => window.zevet?.masoraUnpair?.().then(() => refresh())}
+          >
+            Unpair
+          </button>
+        </div>
+      ) : (
+        <div className="srow">
+          <button className={MAKE_BTN} type="button" disabled={pair.phase === "starting"} onClick={pairClick}>
+            {pair.phase === "waiting" ? "Cancel" : pair.phase === "starting" ? "Starting…" : "Pair with Masora"}
+          </button>
+          {pair.phase === "waiting" ? <span className="v mono">{pair.code}</span> : null}
+        </div>
+      )}
+      {pair.phase === "fail" ? <SNote style={{ color: "var(--bad)" }}>{pair.message}</SNote> : null}
+      {cfg && cfg.paired ? (
+        <>
+          <SNote>
+            Sessions push only from folders opted in below (C1: private by default, ACL closed to you).
+          </SNote>
+          {(localWorkspaces || []).map((w) => (
+            <div className="srow" key={w.dir}>
+              <span className="k">{w.name}</span>
+              <span className="v">
+                <button
+                  className={MAKE_BTN}
+                  type="button"
+                  aria-pressed={Boolean(cfg.repos[w.dir])}
+                  onClick={() =>
+                    window.zevetLocal
+                      ?.masoraRepoToggle?.(w.dir, !cfg.repos[w.dir])
+                      .then((r) => r && r.repos && setCfg({ ...cfg, repos: r.repos }))
+                  }
+                >
+                  {cfg.repos[w.dir] ? "Syncing" : "Off"}
+                </button>
+              </span>
+            </div>
+          ))}
+        </>
+      ) : null}
+    </SSection>
+  );
+}
+
 function credentialLabel() {
   const c = bridge.cfg;
   if (!c) return "unknown";
@@ -716,6 +845,7 @@ export function SettingsSheet() {
 
         <AccountSection />
         <IndexSection />
+        <MasoraSection />
 
         <SSection title="Connection" summary={credentialLabel()}>
           <SRow k="Hub" v={bridge.hub} mono />

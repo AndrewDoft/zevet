@@ -24,7 +24,7 @@
 // that root. See openBoard() for why the board is allowed a bridge at all
 // despite loading a remote origin, and local:write below for why a WRITE over
 // that same bridge is a bigger thing to hand out than a read.
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage } = require("electron");
 const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
 const repoStats = require("./repo-stats.js");
@@ -42,6 +42,8 @@ const { GithubSignIn } = require("./github-signin.js");
 const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
+const masora = require("./masora.js");
+const masoraPush = require("./masora-push.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -1129,6 +1131,61 @@ ipcMain.handle("zevet:done", () => {
   return true;
 });
 
+/* ── Pairing with Masora (T5, docs/contracts/cross_app_context.md) ─────────
+ *
+ * Same two-call device-flow shape as GithubSignIn above, against masora2's
+ * own /api/connector/register (the protocol its Go desktop connector uses --
+ * read from apps/connector/internal/register/register.go, not guessed). The
+ * token this ends with is a workspace-scoped connector bearer, encrypted at
+ * rest with safeStorage (desktop/masora.js) -- never handed to a renderer.
+ */
+let masoraPairSession = null;
+
+ipcMain.handle("zevet:masoraConfig", () => masora.readConfig());
+
+ipcMain.handle("zevet:masoraSaveUrl", (_e, { url } = {}) => masora.saveUrl(url));
+
+ipcMain.handle("zevet:masoraPairStart", async () => {
+  try {
+    if (masoraPairSession) masoraPairSession.cancel();
+    const { url } = masora.readConfig();
+    masoraPairSession = new masora.MasoraPair({ baseUrl: url });
+    const r = await masoraPairSession.start();
+    shell.openExternal(r.verifyUrl).catch(() => {});
+    return { ok: true, userCode: r.userCode, verifyUrl: r.verifyUrl };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle("zevet:masoraPairWait", async () => {
+  if (!masoraPairSession) return { ok: false, error: "Start pairing first." };
+  try {
+    const { token } = await masoraPairSession.wait(os.hostname(), process.platform);
+    if (!safeStorage.isEncryptionAvailable()) {
+      return { ok: false, error: "This machine's OS keychain is unavailable." };
+    }
+    masora.saveToken(token, (s) => safeStorage.encryptString(s));
+    return { ok: true };
+  } catch (err) {
+    const cancelled = err && err.message === "cancelled";
+    return { ok: false, cancelled, error: cancelled ? null : (err && err.message) || String(err) };
+  } finally {
+    masoraPairSession = null;
+  }
+});
+
+ipcMain.handle("zevet:masoraPairCancel", () => {
+  if (masoraPairSession) masoraPairSession.cancel();
+  masoraPairSession = null;
+  return true;
+});
+
+ipcMain.handle("zevet:masoraUnpair", () => {
+  masora.unpair();
+  return true;
+});
+
 // ---- the local workspace ---------------------------------------------------
 
 /** Folders this machine has opened. Stored beside the config, never on the hub. */
@@ -1176,6 +1233,16 @@ ipcMain.handle("local:addWorkspace", async () => {
   list.unshift(dir);
   writeWorkspaces(list.slice(0, 12));
   return { dir, name: path.basename(dir), repo: localFs.isProbablyRepo(dir) };
+});
+
+/** Per-repo opt-in for pushing agent sessions to Masora (C1: `zevet.masoraRepos`,
+ *  default none -- nothing is sent for a folder until this returns true for it). */
+ipcMain.handle("local:masoraRepos", () => masora.reposFor());
+
+ipcMain.handle("local:masoraRepoToggle", (_e, { root, on } = {}) => {
+  const dir = knownRoot(root);
+  if (!dir) return { ok: false, error: "not an opened workspace" };
+  return { ok: true, repos: masora.setRepoOpted(dir, Boolean(on)) };
 });
 
 ipcMain.handle("local:tree", (_e, root) => {
@@ -1706,6 +1773,37 @@ function startScheduler() {
   if (typeof scheduleTimer.unref === "function") scheduleTimer.unref();
 }
 
+/**
+ * C1: push agent sessions for opted-in repos (masora.reposFor(), default
+ * none) to Masora, once every five minutes. A cycle that errors (no
+ * keychain, network down, Masora unreachable) just tries again next tick --
+ * the outbox (masora-push.js) is what makes that safe: nothing already
+ * queued is lost between attempts.
+ */
+let masoraPushTimer = null;
+async function runMasoraPushOnce() {
+  const repos = masora.reposFor();
+  if (!Object.keys(repos).length) return;
+  const cfg = masora.readConfig();
+  if (!cfg.paired || !safeStorage.isEncryptionAvailable()) return;
+  const token = masora.loadToken((buf) => safeStorage.decryptString(buf));
+  if (!token) return;
+  try {
+    await masoraPush.runOnce({
+      repos, baseUrl: cfg.url, token,
+      listSessions: agentSessions.list, readSession: agentSessions.read,
+    });
+  } catch (err) {
+    console.error(`zevet: masora push failed: ${err.message}`);
+  }
+}
+function startMasoraPush() {
+  if (masoraPushTimer) return;
+  void runMasoraPushOnce();
+  masoraPushTimer = setInterval(() => void runMasoraPushOnce(), 5 * 60_000);
+  if (typeof masoraPushTimer.unref === "function") masoraPushTimer.unref();
+}
+
 ipcMain.handle("local:schedules", () => ({ ok: true, schedules: readSchedules() }));
 
 ipcMain.handle("local:scheduleSave", (_e, arg) => {
@@ -2216,29 +2314,58 @@ ipcMain.handle("local:permitAnswer", (_e, arg) => {
 });
 
 /**
- * The `--mcp-config` file for one console, or null when this repo has not
- * turned computer use on.
+ * The `--mcp-config` file for one console, or null when there is nothing to
+ * put in it (computer use is off for this repo AND Masora is not paired).
  *
  * ⚠️ `node` IS NOT ON THE PATH OF A PACKAGED APP. Electron's own binary is,
  * and with ELECTRON_RUN_AS_NODE it runs a script as plain node — which is the
  * only interpreter guaranteed to exist beside the app.
+ *
+ * C4 (docs/contracts/cross_app_context.md): the `masora` entry is an `http`
+ * server pointing at `<masoraUrl>/mcp` -- verified against the installed
+ * claude CLI itself (`claude mcp add-json`'s own written config, this
+ * session) rather than guessed: `{"type":"http","url":"..."}`. The OAuth
+ * handshake for that connection is the CLI's own job, not zevet's -- no
+ * token is written here, unlike the `zevet` stdio entry below.
  */
 async function mcpConfigFor(dir) {
-  if (!agentSettingsFor(dir).computerUse) return null;
-  if (!fs.existsSync(MCP_SERVER)) return null;
-  const { url, token } = await ensureAskServer();
-  const config = {
-    mcpServers: {
-      zevet: {
-        command: process.execPath,
-        args: [MCP_SERVER],
-        env: { ELECTRON_RUN_AS_NODE: "1", ZEVET_MCP_URL: url, ZEVET_MCP_TOKEN: token },
-      },
-    },
-  };
+  const servers = {};
+  let computerUse = false;
+  if (agentSettingsFor(dir).computerUse && fs.existsSync(MCP_SERVER)) {
+    const { url, token } = await ensureAskServer();
+    servers.zevet = {
+      command: process.execPath,
+      args: [MCP_SERVER],
+      env: { ELECTRON_RUN_AS_NODE: "1", ZEVET_MCP_URL: url, ZEVET_MCP_TOKEN: token },
+    };
+    computerUse = true;
+  }
+  const masoraCfg = masora.readConfig();
+  if (masoraCfg.paired) Object.assign(servers, masora.mcpServerEntry(masoraCfg.url));
+  if (!Object.keys(servers).length) return null;
   const file = path.join(app.getPath("temp"), `zevet-mcp-${process.pid}-${++permitSeq}.json`);
-  fs.writeFileSync(file, JSON.stringify(config), "utf8");
-  return file;
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }), "utf8");
+  // `computerUse` says whether the `zevet` tool server (and so its permission
+  // tool) is actually in this file -- a masora-only config must not claim a
+  // permission tool that config does not register.
+  return { file, computerUse };
+}
+
+/**
+ * C2/C4: "Context from Masora" at agent start. Only runs when Masora is
+ * paired AND the OS keychain can give back the token; any other outcome
+ * (unpaired, no prompt yet, fetch error, 2s timeout) is silently no brief --
+ * masora.briefFor() already fails open, this just skips the call it can't
+ * make (no token to send) rather than making a doomed one.
+ */
+async function masoraBriefFor(dir, prompt) {
+  const cfg = masora.readConfig();
+  if (!cfg.paired || !safeStorage.isEncryptionAvailable()) return null;
+  const token = masora.loadToken((buf) => safeStorage.decryptString(buf));
+  if (!token) return null;
+  const repository = await masoraPush.deriveRepository(dir);
+  const result = await masora.briefFor({ baseUrl: cfg.url, token, prompt, repository });
+  return result ? result.brief : null;
 }
 
 ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
@@ -2250,15 +2377,29 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   // flag for them (agent-console.js § invocationFor); the other two ignore the
   // option rather than being handed something they cannot use.
   const settings = agentSettingsFor(dir);
-  // And zevet's own MCP server, only if this repo turned computer use on, and
-  // only for the CLI that can be handed one. A failure to set it up must not
-  // stop the agent starting — it costs a capability, not the run.
+  let systemPrompt = settings.systemPrompt;
+  // C2/C4: the brief needs SOME prompt text to match against; when the
+  // renderer has not queued one yet (an interactive session where nobody has
+  // typed the first message), there is nothing to ask Masora and this is
+  // skipped rather than sent empty. A failure here costs context, not the run.
+  const firstPrompt = opts && typeof opts.prompt === "string" ? opts.prompt : "";
+  if (firstPrompt) {
+    try {
+      const brief = await masoraBriefFor(dir, firstPrompt);
+      if (brief) systemPrompt = masora.withBrief(systemPrompt, brief);
+    } catch (err) {
+      console.error(`zevet: could not fetch the Masora brief: ${err.message}`);
+    }
+  }
+  // And zevet's own MCP server / Masora's, only for the CLI that can be
+  // handed one. A failure to set either up must not stop the agent starting
+  // — it costs a capability, not the run.
   let mcpConfig = null;
   if (String(agent || "") === "claude") {
     try {
       mcpConfig = await mcpConfigFor(dir);
     } catch (err) {
-      console.error(`zevet: could not set up computer use: ${err.message}`);
+      console.error(`zevet: could not set up MCP servers: ${err.message}`);
     }
   }
 
@@ -2273,13 +2414,13 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
     cwd: dir,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
-    systemPrompt: settings.systemPrompt,
+    systemPrompt,
     ...(mcpConfig
       ? {
-          mcpConfig,
+          mcpConfig: mcpConfig.file,
           // claude names an MCP tool `mcp__<server>__<tool>`; the server is
-          // registered as `zevet` above.
-          permissionTool: "mcp__zevet__permission_prompt",
+          // registered as `zevet` above, only when computer use is actually on.
+          ...(mcpConfig.computerUse ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
         }
       : {}),
     /* ⚠️ ASKED FOR, AND ALLOWED, ARE TWO DIFFERENT THINGS. The renderer may
@@ -2340,7 +2481,12 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt: settings.systemPrompt,
     resumeFrom: resumeFrom.trim(),
-    ...(mcpConfig ? { mcpConfig, permissionTool: "mcp__zevet__permission_prompt" } : {}),
+    ...(mcpConfig
+      ? {
+          mcpConfig: mcpConfig.file,
+          ...(mcpConfig.computerUse ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
+        }
+      : {}),
     onEvent: (evt) => {
       if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
       toBoard("local:agentEvent", { id: handle.id, ...evt });
@@ -2466,6 +2612,7 @@ ipcMain.handle("app:updateInstall", () => appUpdater.install());
 app.whenReady().then(() => {
   buildMenu();
   startScheduler();
+  startMasoraPush();
   // After the window, never before it: an update check that delayed the
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();

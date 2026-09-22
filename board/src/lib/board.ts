@@ -642,6 +642,10 @@ export const useBoard = create<BoardState>((set, get) => ({
       model,
       mode,
       ...(launch && launch.forkFrom ? { forkFrom: launch.forkFrom } : {}),
+      // C2/C4: when a first prompt is already known (a fork's queued
+      // question), it goes to the main process too, so it can ask Masora for
+      // a brief before the CLI starts -- not just be sent to it afterward.
+      ...(launch && launch.prompt ? { prompt: launch.prompt } : {}),
     }).then((r) => {
       if (!r || !r.ok) {
         c.running = false;
