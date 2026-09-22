@@ -596,6 +596,10 @@
     border-right: 1px solid var(--line);
   }
   body[data-view="agent"] .chatcol { display: flex; }
+  /* In IDE view the main area follows the last explicit choice: agent actions
+     open the conversation, while selecting a file restores the detail pane. */
+  body[data-view="ide"][data-surface="conversation"] .chatcol { display: flex; border-right: 0; }
+  body[data-view="ide"][data-surface="conversation"] .detail { display: none; }
   /* The tree stays in both views now that the changed-file list is gone:
      hiding it in agent view would leave no way to reach a file. */
   /* ΓÜá∩╕Å THESE TRACKS ARE MATCHED TO DOM ORDER, WHICH IS treecol, chatcol,
