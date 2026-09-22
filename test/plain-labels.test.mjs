@@ -50,3 +50,16 @@ test("setup uses plain results while retaining sign-in and folder actions", () =
   for (const action of ["githubStart(hub)", "googleStart(hub)", "window.zevet.install(repo)", "window.zevet.save("]) assert.ok(setup.includes(action), action);
   new Function(setup.match(/<script>([\s\S]*?)<\/script>/)[1]);
 });
+
+test("token counts and cost are not shown by default", () => {
+  // The rail read "spent 5h 150k 7d 150k $0.16"; the composer a "$0.16" chip
+  // and "5h 50%" on every run.
+  const strip = src("strip.tsx");
+  for (const leak of ['text="spent"', "burn.cost", "live.cost"]) assert.ok(!strip.includes(leak), leak);
+  const controls = src("composercontrols.tsx");
+  assert.ok(!/<span[^>]*>\{money\(usage\.cost\)\}<\/span>/.test(controls), "the cost chip is back");
+  assert.match(controls, /usage\.cost != null \? money\(usage\.cost\) : null/);
+  const quota = src("quota.tsx");
+  assert.match(quota, /if \(used < 80\) return null;/);
+  assert.match(quota, /\{used\}% of \{label\} limit/);
+});

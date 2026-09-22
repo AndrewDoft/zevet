@@ -9,10 +9,10 @@
  *
  * The model/posture pickers are live whether or not a console is running:
  * they set the global launch state (`launchModel`/`launchAgent`/
- * `launchEffort`/`launchMode`), which is what the NEXT start reads — a fresh
- * one (`onNew` in lib/runtime.tsx, when there is no active console), a
- * launcher Start button, or a fork. Once a console exists, a small ring says
- * how full its context is (model and numbers in its tooltip), beside cost.
+ * `launchEffort`/`launchMode`), which is what the NEXT start reads. With a
+ * console in front, the model picker DISPLAYS the model that console runs.
+ * Once a console exists, a small ring says how full its context is (numbers
+ * and cost in its tooltip).
  * runmeters.tsx keeps the full breakdown behind its button; this is the
  * glance version.
  *
@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { CONTEXT_FLOOR, contextShare } from "../lib/meter.mjs";
 import { selectActiveConsole, useBoard } from "../lib/board";
-import { describeModel } from "../lib/models.mjs";
+import { runningModelName } from "../lib/models.mjs";
 import { money, tokens } from "../lib/fmt";
 import type { LaunchMode } from "../lib/types";
 
@@ -99,30 +99,32 @@ export function ComposerControls() {
    * (board.ts's `startAgent`). So the pickers stay live for the whole time a
    * console runs — Andrew: "you should still be able to choose model and
    * effort and posture". */
-  /* ⚠️ ONE MODEL LABEL. The picker already names a model; a second, mono
-     "GPT-5.6-Terra 354k/200k 78% cached" beside it read as two models and as
-     jargon. What THIS console runs, and how full its context is, sit in the
-     ring's tooltip; the posture picker follows the console in front (below),
-     so it cannot disagree with it. */
+  /* ⚠️ ONE MODEL LABEL, AND IT IS THIS CONSOLE'S. A second, mono
+     "GPT-5.6-Terra 354k/200k 78% cached" beside the picker read as two models
+     and as jargon — but folding the running model into the launch picker then
+     showed "Opus 5.5", the NEXT start's default, over a Sonnet 5 run. With a
+     console in front, the picker stays live but DISPLAYS what that console
+     runs (usage.model, else what it was started with); a pick still sets the
+     next start. Token counts and cost live in the ring's tooltip. */
+  const model = active ? runningModelName(active.usage.model, active.model) : "";
   const facts = active
     ? (() => {
         const { usage } = active;
-        const model = describeModel(active.model).label || active.model;
         const window = usage.window ?? CONTEXT_FLOOR;
         const share = contextShare(usage.context, usage.window);
         const detail = [
           model,
           usage.context != null ? `${tokens(usage.context)} of ${tokens(window)} context` : null,
           usage.cacheHit != null ? `${Math.round(usage.cacheHit)}% cached` : null,
+          usage.cost != null ? money(usage.cost) : null,
         ]
           .filter(Boolean)
           .join(" · ");
         return (
           <span className={cn(mono, "flex min-w-0 shrink items-center gap-1.5 text-foreground/50")}>
             {usage.context != null && <ContextRing share={share} label={detail} />}
-            {usage.cost != null && <span className="shrink-0">{money(usage.cost)}</span>}
-            {/* The provider's own rate-limit window, beside the two numbers it
-                belongs with rather than as a banner over the transcript. */}
+            {/* The provider's own rate-limit window — only once it is nearly
+                used up. */}
             <QuotaChip />
           </span>
         );
@@ -155,7 +157,14 @@ export function ComposerControls() {
         <PromptLibraryPanel />
       </PastPromptsButton>
       <div className={compactModelChoice}>
-        <ModelChoice agents={usable} />
+        <ModelChoice
+          agents={usable}
+          running={
+            active
+              ? { id: `${active.agent}:${active.usage.model || active.model}`, name: model || "Default" }
+              : undefined
+          }
+        />
       </div>
 
       {/* The console in front takes the pick on its next turn

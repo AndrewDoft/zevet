@@ -18,8 +18,8 @@
 // Regenerate, or fix the rule in sync-models.mjs — never edit the list by hand.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { OPENCODE_FREE_MODELS as MODELS } from "../board/src/lib/models.generated.mjs";
-import { aliasOf, describeModel, learnModels } from "../board/src/lib/models.mjs";
+import { OPENCODE_FREE_MODELS as MODELS, OPENCODE_MODEL_NAMES } from "../board/src/lib/models.generated.mjs";
+import { aliasOf, describeModel, learnModels, runningModelName } from "../board/src/lib/models.mjs";
 import { CLAUDE_MODELS, CODEX_MODELS } from "../board/src/lib/agent-models.generated.mjs";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -142,13 +142,36 @@ test("every generated id survives the id round trip", () => {
 
 test("describeModel names the model, not the path to it", () => {
   assert.deepEqual(describeModel("openrouter/thinkingmachines/inkling:free"),
-    { label: "inkling", from: "openrouter/thinkingmachines", note: "", trains: false });
+    { label: "Inkling", from: "openrouter/thinkingmachines", note: "", trains: false });
   assert.deepEqual(describeModel("openrouter/thinkingmachines/inkling-small:free"),
-    { label: "inkling-small", from: "openrouter/thinkingmachines", note: "", trains: false });
+    { label: "Inkling Small", from: "openrouter/thinkingmachines", note: "", trains: false });
   assert.deepEqual(describeModel("opencode/muse-spark-1.3-contributor-free"),
-    { label: "muse-spark-1.3", from: "opencode", note: "", trains: true });
+    { label: "Muse Spark 1.3", from: "opencode", note: "", trains: true });
   assert.deepEqual(describeModel("an-id-no-catalogue-knows"),
     { label: "an-id-no-catalogue-knows", from: "", note: "", trains: false });
+});
+
+test("every opencode model has a name a person would say", () => {
+  // The picker read "gemma-4-31b-it" and a failed run "gemma-4-31b-it hit its
+  // free daily limit." sync-models.mjs names each id from OpenRouter's own
+  // catalogue, or derives one for an id OpenRouter does not list.
+  for (const id of MODELS) {
+    const name = OPENCODE_MODEL_NAMES[id];
+    assert.ok(name, `${id} has no name`);
+    assert.equal(describeModel(id).label, name);
+    assert.doesNotMatch(name, /[/:_]|(free)|^[a-z]|-it/, `${id} is named "${name}"`);
+  }
+  assert.equal(OPENCODE_MODEL_NAMES["openrouter/google/gemma-4-31b-it:free"], "Gemma 4 31B");
+});
+
+test("a console is named by the model it runs, not the launch default", () => {
+  // A Sonnet 5 agent's composer read "Opus 5.5", the launch picker's default.
+  assert.equal(runningModelName("claude-sonnet-5", "claude-opus-5-5"), "Sonnet 5");
+  assert.equal(runningModelName(null, "claude-sonnet-5"), "Sonnet 5");
+  assert.equal(runningModelName(null, "gpt-5.6-sol"), "GPT-5.6-Sol");
+  // opencode reports no model of its own; the id it was started on names it.
+  assert.equal(runningModelName(null, "openrouter/google/gemma-4-31b-it:free"), "Gemma 4 31B");
+  assert.equal(runningModelName(null, ""), "");
 });
 
 test("claude and codex models are named the way their own CLIs name them", () => {

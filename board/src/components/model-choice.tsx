@@ -41,7 +41,16 @@ import type { UsableAgent } from "../lib/types";
 const HAS_EFFORT = new Set(["codex"]);
 
 
-export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
+/** `running`: the console in front, whose model the trigger shows instead of
+ *  the launch default — "Opus 5.5" over a Sonnet 5 run read as the wrong model.
+ *  Picking still only sets the next start. */
+export function ModelChoice({
+  agents,
+  running,
+}: {
+  agents: UsableAgent[];
+  running?: { id: string; name: string };
+}) {
   const launchModel = useBoard((s) => s.launchModel);
   const setLaunchAgent = useBoard((s) => s.setLaunchAgent);
   const setLaunchModel = useBoard((s) => s.setLaunchModel);
@@ -108,7 +117,7 @@ export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
   return (
     <ModelSelectorRoot
       models={all}
-      value={selected}
+      value={running && all.some((m) => m.id === running.id) ? running.id : selected}
       onValueChange={(id) => {
         // A ModelOption id is `<agent>:<alias>`, so picking a model picks the
         // CLI as well — which is what the composer starts when it is the first
@@ -121,7 +130,13 @@ export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
       onEffortChange={(e) => setLaunchEffort(e)}
     >
       <ModelSelectorTrigger className="w-full justify-between" variant="outline">
-        <ModelSelectorValue />
+        {running ? (
+          <span data-slot="model-selector-value" className="truncate">
+            {running.name}
+          </span>
+        ) : (
+          <ModelSelectorValue />
+        )}
       </ModelSelectorTrigger>
 
       <ModelSelectorContent className="w-(--radix-popover-trigger-width) min-w-[18rem]">
