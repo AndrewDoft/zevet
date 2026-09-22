@@ -189,10 +189,10 @@ describe("how a session that starts with a command is named", () => {
       sessionLabel({ prompt: "<command-name>/model</command-name><command-args>opus</command-args>" }),
       "/model opus",
     );
-    // The caveat names nothing, so the row falls through to the id rather than
-    // reading our own plumbing out loud.
-    assert.equal(sessionLabel({ prompt: CAVEAT, id: "abc" }), "abc");
-    assert.equal(sessionLabel({ prompt: COMPACTED, id: "abc" }), "abc");
+    // The caveat names nothing, so the row falls through to the provider rather than
+    // reading our own plumbing, or a raw id, out loud.
+    assert.equal(sessionLabel({ prompt: CAVEAT, id: "abc", source: "claude" }), "Claude session");
+    assert.equal(sessionLabel({ prompt: COMPACTED, id: "abc", source: "claude" }), "Claude session");
     // A `!` command is something a person ran, so it is allowed to name a row.
     assert.equal(sessionLabel({ prompt: "<bash-input>npm test</bash-input>" }), "! npm test");
     // And the mission line on the People rail is the same peel.
