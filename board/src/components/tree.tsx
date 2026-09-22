@@ -393,7 +393,7 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
             </div>
           ) : (
             <div className="empty-tree">
-              {needsToken ? "Sign in to see what the team is working on." : "No files touched yet. Shows where agents read and edit \u2014 never file contents."}
+              {needsToken ? "Sign in to see what the team is working on." : "No files touched yet."}
             </div>
           )}
           {/* The list is partial, said at the end of the list it is about.

@@ -86,7 +86,7 @@ function Thinking() {
 
   return (
     <div className="thinking-row">
-      <ThinkingIndicator label={`${active?.agent ?? "agent"} is working`} elapsed={`${secs}s`} />
+      <ThinkingIndicator label="Working" elapsed={`${secs}s`} />
     </div>
   );
 }
