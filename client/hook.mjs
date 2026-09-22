@@ -19,6 +19,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
+import { createHash } from "node:crypto";
 import { resolveAuth } from "./secret.mjs";
 
 /**
@@ -302,6 +303,15 @@ function repoInfo(startDir) {
   return { repo: "", branch: "", root: null };
 }
 
+// A checkout fingerprint distinguishes worktrees without publishing local paths.
+// Keep this normalization in sync with board.ts's checkoutId.
+function checkoutId(root) {
+  if (!root) return "";
+  let normalized = root.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (/^[a-z]:/i.test(normalized) || normalized.startsWith("//")) normalized = normalized.toLowerCase();
+  return createHash("sha256").update(normalized).digest("hex");
+}
+
 /**
  * A file path every teammate will spell the same way.
  *
@@ -311,17 +321,17 @@ function repoInfo(startDir) {
  * would silently never fire in exactly the mixed Windows/macOS setup it exists
  * for. Relative to the repo root, both are `src/db.ts`.
  *
- * A path outside the repo keeps its basename only; it is not ours to publish
- * someone's home directory layout to the team.
+ * Outside paths have no target: a basename invents a file at the repo root,
+ * and publishing someone's home directory layout is not ours to do.
  */
-function repoRelative(file, root) {
+function repoRelative(file, root, cwd = root) {
   try {
-    if (!root) return path.basename(file);
-    const rel = path.relative(root, path.resolve(root, file));
-    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return path.basename(file);
+    if (!root) return null;
+    const rel = path.relative(root, path.resolve(cwd || root, file));
+    if (!rel || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) return null;
     return rel.split(path.sep).join("/");
   } catch {
-    return path.basename(file);
+    return null;
   }
 }
 
@@ -432,7 +442,7 @@ async function main() {
     let shown = "";
     if (detailLevel === "full") shown = scrub(detail);
     else if (detailLevel === "brief") shown = String(detail || "").trim().split(/\s+/)[0] || "";
-    body = { kind: "tool", tool, target: file ? repoRelative(file, root) : null, detail: shown };
+    body = { kind: "tool", tool, target: file ? repoRelative(file, root, cwd) : null, detail: shown };
   }
 
   let machine = "";
@@ -447,7 +457,7 @@ async function main() {
   // knows exactly which config file it wrote the command into.
   const agent = isCodex ? "codex" : "claude-code";
 
-  const payload = { ...body, actor: ACTOR, machine, repo, branch, agent };
+  const payload = { ...body, actor: ACTOR, machine, repo, branch, agent, checkout: checkoutId(root) };
 
   // The backlog goes first (oldest first, budgeted), so a teammate who was
   // offline reappears in order rather than as a gap followed by now.

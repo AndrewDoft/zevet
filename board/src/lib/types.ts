@@ -16,6 +16,7 @@ export interface HubEvent {
   kind: EventKind | string;
   tool?: string;
   target?: string | null;
+  checkout?: string;
   detail?: string;
   agent?: string;
   machine?: string;

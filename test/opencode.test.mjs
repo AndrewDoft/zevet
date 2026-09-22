@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { startHub, state, tempDir, TOKEN, ROOT } from "./helpers.mjs";
 import {
   installOpencode,
@@ -173,6 +174,8 @@ describe("the plugin at runtime", () => {
       ["tool", "tool", "turn_end"],
     );
     assert.equal(fresh[0].target, "src/db.ts", "file path is not repo-relative");
+    const root = repo.replaceAll("\\", "/");
+    assert.equal(fresh[0].checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
     assert.equal(fresh[0].repo, "live", "repo did not come from the plugin directory");
   });
 

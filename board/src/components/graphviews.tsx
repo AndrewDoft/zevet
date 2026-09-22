@@ -96,11 +96,13 @@ export function SubagentGraph() {
     const kind = pick(c.args, "subagent_type", "agent", "type") || "agent";
     const label = pick(c.args, "description", "prompt", "task") || kind;
     const hasResult = c.result !== undefined && c.result !== null;
-    const state: FlowNodeState = hasResult
-      ? "done"
-      : Boolean(c.startedAt) && active.running
-        ? "active"
-        : "pending";
+    const state: FlowNodeState = c.isError
+      ? "failed"
+      : hasResult || !active.running || Boolean(c.endedAt)
+        ? "done"
+        : Boolean(c.startedAt)
+          ? "active"
+          : "pending";
     return {
       id: c.toolCallId || `task-${i}`,
       label: truncate(label, 14),
