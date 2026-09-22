@@ -74,6 +74,7 @@ function App() {
   const sheetOpen = useBoard((s) => s.sheetOpen);
   const closeSettings = useBoard((s) => s.closeSettings);
   const selectedPath = useBoard((s) => s.selectedPath);
+  const conversationOpen = useBoard((s) => s.conversationOpen);
   const localRoot = useBoard((s) => s.localRoot);
 
   const roster = useBoard(selectRoster);
@@ -92,7 +93,7 @@ function App() {
 
   useEffect(() => {
     applyView();
-  }, [viewMode, selectedPath]);
+  }, [viewMode, selectedPath, conversationOpen]);
 
   useEffect(() => {
     applyPanes();

@@ -11,6 +11,7 @@ import {
 import { sessionTranscript } from "./sessions.mjs";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
 import type { TranscriptState } from "./transcript.d.mts";
+import { mainSurface, showConversation, showFile } from "./view.mjs";
 import {
   canInstallState,
   createUpdateControl,
@@ -135,6 +136,9 @@ interface BoardState {
   selectedRepo: string | null;
   collapsed: Record<string, boolean>;
   selectedPath: string | null;
+  /** In IDE view, the last main-area choice was a conversation action. A file
+   *  selection takes the area back without changing the saved view mode. */
+  conversationOpen: boolean;
 
   followMode: "mine" | "all" | "off";
   viewMode: ViewMode;
@@ -417,6 +421,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   selectedRepo: null,
   collapsed: Object.create(null) as Record<string, boolean>,
   selectedPath: null,
+  conversationOpen: false,
 
   followMode: (() => {
     try {
@@ -637,6 +642,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       activeConsole: c.key,
       launching: false,
       seenConsole: { ...g.seenConsole, [c.key]: Date.now() },
+      ...showConversation(),
     }));
     br.startAgent(name, root, {
       model,
@@ -662,10 +668,11 @@ export const useBoard = create<BoardState>((set, get) => ({
       activeConsole: key,
       launching: false,
       seenConsole: key == null ? g.seenConsole : { ...g.seenConsole, [key]: Date.now() },
+      ...showConversation(),
     })),
   markConsoleSeen: (key) =>
     set((g) => ({ seenConsole: { ...g.seenConsole, [key]: Date.now() } })),
-  openLauncher: () => set({ launching: true }),
+  openLauncher: () => set({ launching: true, ...showConversation() }),
 
   closeConsole: (key) => {
     const del = get().myConsoles.find((x) => x.key === key);
@@ -1034,6 +1041,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   openSession: (summary) => {
     if (!bridge.local || typeof bridge.local.session !== "function") return;
     set((st) => ({
+      ...showConversation(),
       sessions: {
         ...st.sessions,
         open: summary,
@@ -1100,6 +1108,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     const parent = get().sessions.open;
     if (!parent || !bridge.local || typeof bridge.local.session !== "function") return;
     set((st) => ({
+      ...showConversation(),
       sessions: { ...st.sessions, openAgent: agent, openTranscript: null, openLoading: true },
     }));
     bridge.local
@@ -1808,7 +1817,7 @@ export function toggleSelection(path: string): void {
        `next` above could never come back null, so clicking the open file
        re-opened it instead of toggling it closed, which is the one thing this
        function is named for. */
-    useBoard.setState({ selectedPath: next });
+    useBoard.setState(showFile(next));
     if (window.zevetEditor) openEditor(next);
     else openLocalFile(next);
   } else {
@@ -2819,6 +2828,7 @@ export function applyView(): void {
   const g = useBoard.getState();
   document.body.setAttribute("data-view", g.viewMode);
   document.body.dataset.picked = String(Boolean(g.selectedPath));
+  document.body.dataset.surface = mainSurface(g.viewMode, g.selectedPath, g.conversationOpen);
   requestMeasureEditor();
 }
 
