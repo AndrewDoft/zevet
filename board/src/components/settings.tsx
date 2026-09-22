@@ -654,7 +654,15 @@ function MasoraSection() {
     }, (err) => setPair({ phase: "fail", message: (err && err.message) || "Could not start pairing." }));
   }
 
-  const summary = !cfg ? "loading…" : cfg.paired ? new URL(cfg.url).host : "not paired";
+  function hostOf(url: string): string {
+    try {
+      return new URL(url).host;
+    } catch {
+      return url; // the URL field can't be hand-edited once paired, but a
+      // malformed saved value must still render a row rather than crash one.
+    }
+  }
+  const summary = !cfg ? "loading…" : cfg.paired ? hostOf(cfg.url) : "not paired";
 
   return (
     <SSection title="Masora" summary={summary}>
