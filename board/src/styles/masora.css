@@ -1110,12 +1110,11 @@
   .composer-card-head button:hover { color: var(--ink); }
   .composer-card-body { padding: 10px 12px 12px; }
 
-  /* The provider's rate-limit window, beside the context and cost numbers. */
+  /* The provider's rate-limit window, shown only when it is nearly used up. */
   .quota-chip {
-    flex: none; font-size: 11px; color: var(--subtle);
-    border: 1px solid var(--line); border-radius: 999px; padding: 1px 6px;
+    flex: none; font-size: 11px; color: var(--alert);
+    border: 1px solid var(--alert); border-radius: 999px; padding: 1px 6px;
   }
-  .quota-chip[data-hot="true"] { color: var(--alert); border-color: var(--alert); }
 
   /* The conversation column: the Thread fills it, the launcher scrolls. */
   /* `relative` is what `.voice-hint` anchors to. Without it that overlay

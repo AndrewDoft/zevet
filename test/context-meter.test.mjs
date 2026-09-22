@@ -49,4 +49,10 @@ describe("the composer shows one model label", () => {
     assert.ok(!/\{tokens\(usage\.context\)\}\/\{tokens\(window\)\}/.test(controls), "the 354k/200k text is back");
     assert.match(controls, /<ContextRing share=\{share\} label=\{detail\} \/>/);
   });
+
+  test("with a console in front, the label is that console's model", () => {
+    // The launch picker's default read "Opus 5.5" over a Sonnet 5 run.
+    assert.match(controls, /runningModelName\(active\.usage\.model, active\.model\)/);
+    assert.match(controls, /\{active \? \([\s\S]*?\) : \([\s\S]*?<ModelChoice agents=\{usable\} \/>/);
+  });
 });

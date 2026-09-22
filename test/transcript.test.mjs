@@ -288,7 +288,7 @@ describe("opencode", () => {
     s = appendAgentPayload(s, payload, { agent: "opencode", model: "openrouter/google/gemma-4-31b-it:free" });
     s = closeTranscript(s, { code: 1 });
     assert.equal(s.messages.length, 2);
-    assert.equal(s.messages[1].status.error, "gemma-4-31b-it hit its free daily limit.");
+    assert.equal(s.messages[1].status.error, "Gemma 4 31B hit its free daily limit.");
     assert.equal(s.openIndex, -1);
   });
 });

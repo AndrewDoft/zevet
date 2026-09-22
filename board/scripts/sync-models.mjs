@@ -125,10 +125,45 @@ function verdict(id, outputModalities) {
   return "ok";
 }
 
+/** OpenRouter's own display name, minus its "Lab: " prefix and "(free)"
+ *  suffix: "Google: Gemma 4 31B (free)" -> "Gemma 4 31B". */
+const cleanName = (name) =>
+  name.replace(/^[^:]*:\s*/, "").replace(/\(free\)\s*$/i, "").replace(/\s+/g, " ").trim();
+
+/** The model's own id with the free-tier and build suffixes off:
+ *  "opencode/muse-spark-1.2-contributor-free" -> "muse-spark-1.2". */
+const baseOf = (id) => id.split("/").pop().replace(/(:free|-free)$/, "").replace(/-contributor$/, "");
+
+/** For an id OpenRouter does not list: "muse-spark-1.2" -> "Muse Spark 1.2". */
+const derivedName = (id) =>
+  baseOf(id)
+    .split("-")
+    .map((w) => (/^\d+(?:\.\d+)?b$/.test(w) ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)))
+    .join(" ");
+
+/** Every OpenRouter id -> its cleaned name, paid ones included: a zen model is
+ *  often listed there only as a paid build under a lab prefix. */
+let OR_NAMES = new Map();
+
+/** The name a person reads for a spawn id. The exact OpenRouter id first; then
+ *  the shortest OpenRouter id that extends its base, so zen's "nemotron-3-ultra"
+ *  finds "nvidia/nemotron-3-ultra-550b-a55b" and "muse-spark-1.3" beats
+ *  "muse-spark-1.3-contributor"; then one derived from the id. */
+function nameOf(m) {
+  const exact = OR_NAMES.get(m.id);
+  if (exact) return exact;
+  const base = baseOf(m.id);
+  const kin = [...OR_NAMES.keys()]
+    .filter((id) => id.split("/").pop().startsWith(base))
+    .sort((a, b) => a.length - b.length);
+  return kin.length ? OR_NAMES.get(kin[0]) : derivedName(m.id);
+}
+
 async function openrouterFree() {
   const res = await fetch(OR_MODELS_URL, { headers: { "user-agent": "zevet/sync-models" } });
   if (!res.ok) throw new Error(`OpenRouter returned ${res.status}`);
   const { data } = await res.json();
+  OR_NAMES = new Map(data.filter((m) => m.name).map((m) => [m.id, cleanName(m.name)]));
   return data
     .filter((m) => Number(m.pricing?.prompt ?? 1) === 0 && Number(m.pricing?.completion ?? 1) === 0)
     .map((m) => ({
@@ -178,10 +213,17 @@ const body = (rows) => `
 export const OPENCODE_FREE_MODELS = [
 ${rows.map((r) => `  ${JSON.stringify(r.spawn)},`).join("\n")}
 ];
+
+/** What a person reads for each of those ids. */
+export const OPENCODE_MODEL_NAMES = {
+${rows.map((r) => `  ${JSON.stringify(r.spawn)}: ${JSON.stringify(nameOf(r))},`).join("\n")}
+};
 `;
 
 const types = `/** Model ids \`opencode run -m <id>\` accepts, vetted and free. */
 export const OPENCODE_FREE_MODELS: readonly string[];
+/** What a person reads for each of those ids. */
+export const OPENCODE_MODEL_NAMES: Readonly<Record<string, string>>;
 `;
 
 const args = new Set(process.argv.slice(2));

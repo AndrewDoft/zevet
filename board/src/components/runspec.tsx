@@ -9,21 +9,17 @@ import { ComparisonCard, type ComparisonOption } from "./assistant-ui/elements/c
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { MODE_LABEL, MULTI_TURN } from "../lib/constants";
 import { whenText } from "../lib/when.mjs";
-import { describeModel } from "../lib/models.mjs";
+import { runningModelName } from "../lib/models.mjs";
 
 export function RunSpec() {
   const active = useBoard(selectActiveConsole);
   if (!active) return null;
 
-  // One naming of a model, everywhere: describeModel reads the CLIs' own
-  // catalogues, so this says "Opus 5" like the picker does rather than the
-  // raw id. `raw` can be "" — no --model/-m flag was passed, e.g. a resumed
-  // console (desktop/main.js) — and describeModel("").label is now "" too,
-  // so `|| raw` leaves an empty string rather than falling back to anything.
-  // "Default" says plainly what happened instead of inventing a name for
-  // a model nobody picked.
-  const raw = active.usage.model || active.model;
-  const model = describeModel(raw).label || raw || "Default";
+  // One naming of a model, everywhere — the composer's label uses the same
+  // call. It is "" when no --model/-m flag was passed, e.g. a resumed console
+  // (desktop/main.js); "Default" says plainly what happened instead of
+  // inventing a name for a model nobody picked.
+  const model = runningModelName(active.usage.model, active.model) || "Default";
   const repo = String(active.root).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || active.root;
 
   const rows: SpecRow[] = [

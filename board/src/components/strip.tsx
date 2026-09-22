@@ -11,15 +11,6 @@ import type { Conn } from "../lib/types";
    a bar helper with no caller is the kind of thing that gets re-used badly
    later. Deleted rather than left behind. */
 
-/** Same rounding as lib/fmt.ts § tokens, and for the same reason — see the
- *  warning there. This copy takes a nullable, which that one does not. */
-function tokens(n: number | null | undefined) {
-  if (n == null) return "";
-  if (n >= 999500) return (n / 1000000).toFixed(1) + "M";
-  if (n < 1000) return String(Math.round(n));
-  return (n / 1000).toFixed(0) + "k";
-}
-
 export function connLabel(c: Conn) {
   if (c === "live") return "live";
   if (c === "down") return "down";
@@ -35,7 +26,7 @@ function Sp({ cls, text }: { cls?: string; text: string | number }) {
 }
 
 export function Strip() {
-  const { live, machine } = useBoard(selectStrip);
+  const { machine } = useBoard(selectStrip);
   const conn = useBoard((s) => s.conn);
   const localError = useBoard((s) => s.localError);
   // The rail names the folder and connection. Service counters and hashes
@@ -73,24 +64,11 @@ export function Strip() {
      run from the one you were reading. The composer's copy is attributed to
      its own console (ConsoleEntry.usage) and cannot do that.
      What stays on the strip is what belongs to the machine or the repo rather
-     than to one run: branch, ahead/behind, spend windows. */
+     than to one run: branch, ahead/behind.
 
-  const burn = machine && (machine.burn as { "5h"?: { tokens?: number }; "7d"?: { tokens?: number }; cost?: number } | undefined);
-  if (burn) {
-    const b: ReactNode[] = [<Sp key="k" cls="k" text="spent" />];
-    (["5h", "7d"] as const).forEach((w) => {
-      if (burn[w] && burn[w].tokens) {
-        b.push(<Sp key={w} cls="dim" text={w} />);
-        b.push(<Sp key={w + "v"} cls="v" text={tokens(burn[w].tokens)} />);
-      }
-    });
-    if (b.length > 1) rest.push(<Seg key="spent">{b}</Seg>);
-  }
-
-  const cost = burn && typeof burn.cost === "number" && burn.cost > 0 ? burn.cost : live.cost;
-  if (typeof cost === "number" && cost > 0) {
-    rest.push(<Seg key="cost"><Sp cls="dim" text={"$" + cost.toFixed(2)} /></Seg>);
-  }
+     ⚠️ NO SPEND. "spent 5h 150k 7d 150k $0.16" sat here permanently: token
+     counts and cost are not something to show by default. A run's cost is in
+     the composer's context-ring tooltip. */
 
   if (conn) {
     const cls = conn === "live" ? "ok" : conn === "down" ? "bad" : "warn";

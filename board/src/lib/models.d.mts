@@ -8,3 +8,7 @@ export function describeModel(alias: string): { label: string; from: string; not
 /** Names for models the desktop app read from the CLIs' caches just now;
  *  they win over the generated list. */
 export function learnModels(list: ReadonlyArray<{ id: string; name: string; note: string }>): void;
+
+/** The name of the model a console is on: the one it reports, else the one it
+ *  was started with; "" when neither is known. */
+export function runningModelName(reported: string | null | undefined, started: string | null | undefined): string;

@@ -22,8 +22,8 @@ import { QuotaBanner } from "./assistant-ui/elements/quota-banner";
  *  keys them. An id this doesn't know falls back to itself rather than being
  *  mislabelled as one of these two. */
 const WINDOW_LABEL: Record<string, string> = {
-  five_hour: "5h",
-  seven_day: "7d",
+  five_hour: "5-hour",
+  seven_day: "7-day",
 };
 
 /**
@@ -47,20 +47,13 @@ export function QuotaChip() {
      reset is the footnote. Only the footnote is conditional now. */
   const resetsIn = whenText(fullest.resetsAt);
   const used = Math.round(fullest.utilization * 100);
+  /* ⚠️ ONLY WHEN CLOSE TO THE LIMIT. "5h 50%" sat on every composer, a usage
+     number nobody needed until it was near the cap. Below 80% it says nothing. */
+  if (used < 80) return null;
   const label = WINDOW_LABEL[fullest.key] ?? fullest.key;
   return (
-    <span
-      className="quota-chip"
-      /* Coloured only when it is close enough to matter. A permanently amber
-         number is a number nobody reads. */
-      data-hot={String(used >= 80)}
-      title={
-        resetsIn
-          ? `${used}% of the ${label} window used, resets ${resetsIn}`
-          : `${used}% of the ${label} window used`
-      }
-    >
-      {label} {used}%
+    <span className="quota-chip" title={resetsIn ? `Resets ${resetsIn}` : undefined}>
+      {used}% of {label} limit
     </span>
   );
 }
