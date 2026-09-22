@@ -152,8 +152,6 @@ export function codexItem(item) {
         },
       });
     }
-    case "ContextCompaction":
-      return { type: "stdout-line", line: "codex: context compacted" };
     /* SubAgentActivity is a start/finish marker with no content of its own —
        the subagent's work is in its own thread. Dropped rather than rendered
        as an empty card. */

@@ -22,6 +22,8 @@ export interface TranscriptState {
 export interface TranscriptOptions {
   agent?: string;
   localRoot?: string | null;
+  /** The console's model, so an error can name it. */
+  model?: string | null;
 }
 
 export type TranscriptEvent =
@@ -33,7 +35,6 @@ export type TranscriptEvent =
 
 export function emptyTranscript(): TranscriptState;
 export function appendUserText(state: TranscriptState, text: string): TranscriptState;
-export function appendRaw(state: TranscriptState, text: string): TranscriptState;
 export function appendLine(state: TranscriptState, text: string): TranscriptState;
 export function appendAgentPayload(
   state: TranscriptState,
@@ -48,4 +49,5 @@ export function assembleTranscript(
   events: TranscriptEvent[],
   opts?: TranscriptOptions,
 ): TranscriptState;
+export function plainError(raw: unknown, opts?: { model?: string | null; fallback?: string }): string;
 export function _resetIds(): void;

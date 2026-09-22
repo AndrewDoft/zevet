@@ -64,6 +64,7 @@ import type { ConsoleEntry } from "../lib/types";
 import { missionOf } from "../lib/text";
 import { agoLabel } from "../lib/fmt";
 import { sessionBlurb, sessionProject } from "../lib/sessions.mjs";
+import { plainError } from "../lib/transcript.mjs";
 import { AgentLogo } from "./brand";
 import { ghostButton, mono } from "./assistant-ui/elements/surfaces";
 import { cn } from "@/lib/utils";
@@ -322,7 +323,9 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
           <div className="agent-sub agent-sub-note">{loading ? "reading…" : "no subagents recorded"}</div>
         )
       ) : null}
-      {c && c.error ? <div className="agent-row-err">{c.error}</div> : null}
+      {c && c.error ? (
+        <div className="agent-row-err">{plainError(c.error, { model: c.model, fallback: "Couldn't start." })}</div>
+      ) : null}
     </div>
   );
 }
