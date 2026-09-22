@@ -236,7 +236,8 @@ describe("briefFor: C2, fails open", () => {
     // waiting out the real 2000ms BRIEF_TIMEOUT_MS: that real wait raced the
     // test runner's own process teardown under CI's constrained cores and
     // was observed cancelling this test on both CI OSes, never locally. This
-    // still exercises the real AbortSignal.timeout/abort path end to end.
+    // still exercises the real timer/abort path end to end, and that timer
+    // must be ref'd: an unref'd one let Node 22 drain the loop and cancel this.
     const f = (_url, init) => new Promise((_resolve, reject) => {
       init.signal.addEventListener("abort", () => reject(new Error("aborted")));
     });

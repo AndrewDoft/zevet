@@ -206,6 +206,12 @@ class MasoraPair {
 async function briefFor({ baseUrl, token, prompt, repository, fetchImpl, timeoutMs } = {}) {
   if (!baseUrl || !token) return null;
   const f = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
+  // A ref'd timer, not AbortSignal.timeout(): that one is unref'd by design,
+  // so a pending brief kept nothing alive and Node 22's test runner drained
+  // the loop and cancelled the test (and every test queued after it) before
+  // the deadline fired. A pending brief should hold the process open anyway.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), typeof timeoutMs === "number" ? timeoutMs : BRIEF_TIMEOUT_MS);
   try {
     const res = await f(`${String(baseUrl).replace(/\/+$/, "")}/api/v2/context/brief`, {
       method: "POST",
@@ -223,7 +229,7 @@ async function briefFor({ baseUrl, token, prompt, repository, fetchImpl, timeout
       // reproduced on both CI OSes, never locally. The production path is
       // unaffected: no caller passes timeoutMs, so it still defaults to
       // BRIEF_TIMEOUT_MS.
-      signal: AbortSignal.timeout(typeof timeoutMs === "number" ? timeoutMs : BRIEF_TIMEOUT_MS),
+      signal: ac.signal,
     });
     if (!res.ok) return null;
     const body = await res.json();
@@ -231,6 +237,8 @@ async function briefFor({ baseUrl, token, prompt, repository, fetchImpl, timeout
     return body;
   } catch {
     return null; // timeout, network error, bad JSON -- all the same: no brief.
+  } finally {
+    clearTimeout(timer);
   }
 }
 
