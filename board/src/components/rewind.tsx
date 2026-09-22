@@ -113,7 +113,7 @@ export function EditAndAsk() {
   /* ⚠️ THE EDIT IS KEYED TO THE CONSOLE IT BELONGS TO. It used to be a bare
      `editing` boolean and a bare string, and nothing remounts this on a
      console switch — so starting an edit and then changing runs (Branches
-     below, or the background inbox) left the old run's words in the box and
+     below, or the rail) left the old run's words in the box and
      saved them against the NEW console: `forkConsole(active.key, text)`
      branched a run you had not been editing, from a prompt that was not its
      own. Comparing the key makes the edit simply not apply to another run. */

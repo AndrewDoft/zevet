@@ -305,6 +305,13 @@
     flex: none; width: 6px; height: 6px; margin: 0 4px; border-radius: 50%;
     background: var(--who);
   }
+  /* Finished while you were elsewhere: ink, not the row's hue, so it cannot
+     be read as the live dot. */
+  .agent-row-unseen {
+    flex: none; width: 6px; height: 6px; margin: 0 4px; border-radius: 50%;
+    background: var(--ink);
+  }
+  .agent-row-unseen[data-failed="true"] { background: var(--alert); }
   /* Stop/Close: an icon laid OVER the time slot, shown on hover or keyboard
      focus. Out of flow, so it can appear without the title giving up width;
      transparent rather than hidden, so Tab still reaches it. */
@@ -337,12 +344,6 @@
   .agent-sub-note { cursor: default; font-style: italic; }
 
   /* The launcher, as a plus in the People header rather than a row of its own. */
-  /* The "Running elsewhere" card (components/inbox.tsx): a fixed share of the
-     rail that scrolls, never the agent list's space. */
-  .rail-inbox {
-    flex: none; max-height: 35%; overflow-y: auto;
-    margin: 6px 10px; width: auto;
-  }
   .rail-new {
     margin-left: auto; margin-right: 8px;
     width: 18px; height: 18px; flex: none;

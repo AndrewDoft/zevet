@@ -190,10 +190,15 @@ function firstPrompt(c: ConsoleEntry): string {
   return text.trim();
 }
 
-/** A console's title for anywhere it is listed — the rail row and the inbox
- *  say the same words. */
+/** A console's title for anywhere it is listed. */
 export function consoleBlurb(c: ConsoleEntry): string {
   return sessionBlurb({ title: c.title, prompt: firstPrompt(c), source: c.agent });
+}
+
+/** A run that ended badly: it never started, or its last message was cut off. */
+function runFailed(c: ConsoleEntry): boolean {
+  const last = c.transcript.messages[c.transcript.messages.length - 1];
+  return Boolean(c.error || (last && last.status && last.status.type === "incomplete"));
 }
 
 /** The repo a console belongs to: the last segment of where it is running.
@@ -229,11 +234,14 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
   const activeConsole = useBoard(selectActiveConsole);
   const setActiveConsole = useBoard((st) => st.setActiveConsole);
   const closeConsole = useBoard((st) => st.closeConsole);
+  const seenRuns = useBoard((st) => st.seenRuns);
   const now = serverNow();
 
   const c = row.console;
   const s = row.session;
   const isOpen = c ? activeConsole?.key === c.key : Boolean(s) && open?.id === s!.id && open?.source === s!.source;
+  // Finished while you were looking at something else; board.ts § seenRuns.
+  const unseen = Boolean(c && !c.running && c.id && !isOpen && !seenRuns.includes(c.id));
   const hasKids = Boolean(s) && Number(s!.children) > 0;
 
   return (
@@ -256,6 +264,13 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
           <span className="agent-row-name">{row.blurb}</span>
           {c && c.running ? (
             <span className="agent-row-live" role="img" aria-label="Running" />
+          ) : unseen ? (
+            <span
+              className="agent-row-unseen"
+              data-failed={String(runFailed(c!))}
+              role="img"
+              aria-label={runFailed(c!) ? "Failed" : "Finished"}
+            />
           ) : (
             <span className="agent-row-ago">{agoLabel(row.updated, now)}</span>
           )}

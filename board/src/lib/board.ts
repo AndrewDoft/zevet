@@ -194,10 +194,10 @@ interface BoardState {
    *  it; null means "the newest one", so a freshly started agent is in front
    *  without anything having to select it. */
   activeConsole: number | null;
-  /** When each console was last in front. A console that finished while you
-   *  were reading another one is the thing the background inbox exists to
-   *  surface, and nothing else in the store knows you looked away. */
-  seenConsole: Record<number, number>;
+  /** The runs (process ids) whose finish has been in front of you. A run that
+   *  finished while you were reading another one is not in here, and its rail
+   *  row carries a dot until you open it. Persisted: see `SEEN_RUNS_KEY`. */
+  seenRuns: string[];
   /** Commits observed while zevet was watching, newest last. Built from the
    *  repo status poll, which already runs — this only remembers that the sha
    *  moved, which is the one thing the poll throws away. */
@@ -324,7 +324,6 @@ interface BoardState {
   startAgent: (name: string, launch?: ForkLaunch) => void;
   closeConsole: (key: number) => void;
   setActiveConsole: (key: number | null) => void;
-  markConsoleSeen: (key: number) => void;
   openLauncher: () => void;
   stopConsole: (key: number) => void;
   sendPrompt: (key: number, text: string) => void;
@@ -440,6 +439,22 @@ let pendingAgentLine: { repo: string; target: string } | null = null;
 
 let consoleSeq = 0;
 
+/* ⚠️ KEYED BY PROCESS ID, AND KEPT ACROSS A RELOAD. A reload replays every
+   console's events (desktop/console-log.js), finished runs included, and gives
+   each a new `key` — so a key-based "seen" came back empty and re-flagged runs
+   you had already opened. The process id is a UUID that survives the replay,
+   and a follow-up is a new process, so each run is flagged once. */
+const SEEN_RUNS_KEY = "zevet.seenRuns.v1";
+const SEEN_RUNS_CAP = 200;
+function loadSeenRuns(): string[] {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(SEEN_RUNS_KEY) || "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export const useBoard = create<BoardState>((set, get) => ({
   conn: "init",
   needsToken: false,
@@ -484,7 +499,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   myConsoles: [],
   activeConsole: null,
   launching: false,
-  seenConsole: {},
+  seenRuns: loadSeenRuns(),
   checkpoints: [],
   repoCommits: [],
   schedules: [],
@@ -680,7 +695,6 @@ export const useBoard = create<BoardState>((set, get) => ({
       myConsoles: [...g.myConsoles, c],
       activeConsole: c.key,
       launching: false,
-      seenConsole: { ...g.seenConsole, [c.key]: Date.now() },
       ...showConversation(),
     }));
     br.startAgent(name, root, {
@@ -708,14 +722,11 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   setActiveConsole: (key) =>
-    set((g) => ({
+    set({
       activeConsole: key,
       launching: false,
-      seenConsole: key == null ? g.seenConsole : { ...g.seenConsole, [key]: Date.now() },
       ...showConversation(),
-    })),
-  markConsoleSeen: (key) =>
-    set((g) => ({ seenConsole: { ...g.seenConsole, [key]: Date.now() } })),
+    }),
   openLauncher: () => set({ launching: true, ...showConversation() }),
 
   closeConsole: (key) => {
@@ -1228,7 +1239,6 @@ export const useBoard = create<BoardState>((set, get) => ({
       set((g) => ({
         activeConsole: existing.key,
         launching: false,
-        seenConsole: { ...g.seenConsole, [existing.key]: Date.now() },
         sessions: {
           ...g.sessions,
           open: null,
@@ -1279,7 +1289,6 @@ export const useBoard = create<BoardState>((set, get) => ({
       myConsoles: [...g.myConsoles, c],
       activeConsole: c.key,
       launching: false,
-      seenConsole: { ...g.seenConsole, [c.key]: Date.now() },
       sessions: {
         ...g.sessions,
         open: null,
@@ -3113,6 +3122,23 @@ export const selectActiveConsole = (s: BoardState) =>
   s.launching
     ? undefined
     : (s.myConsoles.find((c) => c.key === s.activeConsole) ?? s.myConsoles[s.myConsoles.length - 1]);
+
+/* A finished run is seen the moment it is the one in front, however it got
+   there — picked on the rail, finished while you watched, or left in front by
+   a close. One subscription rather than a mark in every action that can
+   change what is in front. */
+useBoard.subscribe((s) => {
+  const c = selectActiveConsole(s);
+  if (!c || c.running || !c.id || s.seenRuns.includes(c.id)) return;
+  const seenRuns = [...s.seenRuns, c.id].slice(-SEEN_RUNS_CAP);
+  useBoard.setState({ seenRuns });
+  try {
+    window.localStorage.setItem(SEEN_RUNS_KEY, JSON.stringify(seenRuns));
+  } catch {
+    /* seen for this page only */
+  }
+});
+
 export const selectLaunching = (s: BoardState) => s.launching;
 export const selectPanes = (s: BoardState) => s.panes;
 export const selectStrip = (s: BoardState) => s.strip;

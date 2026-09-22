@@ -325,7 +325,7 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
      and drives both `data-stale` and every "… ago" title, and the only other
      subscription here is to events — so the marks stopped ageing at exactly
      the moment the agents went quiet, which is when you are looking to see
-     whether they have. people.tsx and inbox.tsx each keep their own interval;
+     whether they have. people.tsx keeps its own interval;
      the store already publishes one for everybody. */
   useBoard((s) => s.tick);
   const built = buildTree();

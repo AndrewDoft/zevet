@@ -529,8 +529,8 @@ function fromCodex(state, p, root, model) {
     /* A notice from codex itself, not from the model, and not fatal —
        measured 2026-09-22 it is "Skill descriptions were shortened to fit the
        skills context budget…" and the turn completes normally. Drawn, it was
-       the first line of the reply and so the run's one-line summary in
-       "Running elsewhere". Housekeeping: dropped. A real failure arrives as
+       the first line of the reply (and was once the run's summary in the
+       rail). Housekeeping: dropped. A real failure arrives as
        `turn.failed` or a top-level `error`, below. */
     if (item.type === "error") return state;
     if (item.type === "command_execution" || item.type === "file_change" || item.type === "mcp_tool_call") {

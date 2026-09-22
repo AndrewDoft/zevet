@@ -76,7 +76,7 @@ describe("no control is offered that zevet cannot honour", () => {
     // SubagentList now and does not use AgentStatus at all, which satisfies
     // the rule vacuously. The rule is about the element, not the file — a
     // hard-coded list turned a correct refactor into a red gate.
-    for (const f of ["consoles.tsx", "people.tsx", "inbox.tsx"]) {
+    for (const f of ["consoles.tsx", "people.tsx"]) {
       const full = path.join(BOARD, "components", f);
       if (!existsSync(full)) continue;
       const src = readFileSync(full, "utf8");
