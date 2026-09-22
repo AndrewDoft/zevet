@@ -97,7 +97,7 @@ export function JobProgress({
         <span
           className={cn(
             "block h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none",
-            finished ? "bg-emerald-500" : "bg-blue-500 dark:bg-blue-400",
+            finished ? "bg-emerald-500" : "bg-primary",
           )}
           style={{ width: `${overall}%` }}
         />

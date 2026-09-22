@@ -17,7 +17,7 @@ export interface TraceSpan {
 }
 
 const TONE: Record<SpanStatus, string> = {
-  running: "bg-blue-500 dark:bg-blue-400",
+  running: "bg-primary",
   completed: "bg-foreground/35",
   failed: "bg-red-500/80",
 };

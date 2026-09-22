@@ -131,7 +131,7 @@ export function ComposerBar({
       className={cn(
         paper,
         "flex w-full flex-col gap-2 rounded-[24px] p-2.5 transition-colors",
-        dragActive && "bg-blue-500/[0.04] dark:bg-blue-500/10",
+        dragActive && "bg-primary/[0.04] dark:bg-primary/10",
         className,
       )}
       {...props}
@@ -300,7 +300,7 @@ export function ComposerAttachmentChip({
       {attachment.state === "uploading" && (
         <span
           aria-hidden
-          className="absolute inset-x-0 bottom-0 h-0.5 bg-blue-500/70 transition-[width] duration-300 dark:bg-blue-400/70"
+          className="absolute inset-x-0 bottom-0 h-0.5 bg-primary/70 transition-[width] duration-300 dark:bg-primary/70"
           style={{ width: `${pct(attachment.progress ?? 0, 100)}%` }}
         />
       )}
@@ -324,7 +324,7 @@ export function ComposerInput({
         onSubmit?.();
       }}
       className={cn(
-        "placeholder:text-foreground/35 min-h-11 w-full bg-transparent px-3 text-[15px] caret-blue-500 outline-none dark:caret-blue-400",
+        "placeholder:text-foreground/35 min-h-11 w-full bg-transparent px-3 text-[15px] caret-primary outline-none dark:caret-primary",
         className,
       )}
       {...props}
@@ -351,7 +351,7 @@ export function ComposerVoice({
       {recording && (
         <span
           aria-hidden
-          className="size-1.5 animate-pulse rounded-full bg-blue-500 dark:bg-blue-400"
+          className="size-1.5 animate-pulse rounded-full bg-primary"
         />
       )}
       <div className="flex h-6 items-center gap-[3px]" aria-hidden>

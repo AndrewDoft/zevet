@@ -101,7 +101,7 @@ export function FlowGraph({
               node.state === "done" &&
                 "border-foreground/10 bg-foreground/[0.04] text-foreground/50",
               node.state === "active" &&
-                "text-foreground/90 border-blue-500/30 bg-blue-500/10 dark:border-blue-400/30",
+                "text-foreground/90 border-primary/30 bg-primary/10",
               node.state === "failed" &&
                 "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
               node.state === "pending" &&

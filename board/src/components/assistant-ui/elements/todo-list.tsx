@@ -58,7 +58,7 @@ export function TodoList({
                   <XIcon className="size-2.5 text-red-600 dark:text-red-400" />
                 </span>
               ) : item.status === "active" ? (
-                <Loader2Icon className="size-3.5 animate-spin text-blue-500 motion-reduce:animate-none dark:text-blue-400" />
+                <Loader2Icon className="size-3.5 animate-spin text-primary motion-reduce:animate-none dark:text-primary" />
               ) : (
                 <span className="border-foreground/15 size-3.5 rounded-[5px] border" />
               )}

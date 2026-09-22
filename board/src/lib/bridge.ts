@@ -182,7 +182,10 @@ export interface LocalBridge {
   read: (root: string, relPath: string) => Promise<ReadResult>;
   write: (root: string, relPath: string, text: string, opts: { bom?: boolean; eol?: string }) => Promise<{ ok: boolean; error?: string }>;
   agents: () => Promise<UsableAgent[]>;
-  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string }) => Promise<StartAgentResult>;
+  /* C1's per-repo opt-in, keyed by resolved folder path; default none. */
+  masoraRepos?: () => Promise<Record<string, boolean>>;
+  masoraRepoToggle?: (root: string, on: boolean) => Promise<{ ok: boolean; error?: string; repos?: Record<string, boolean> }>;
+  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string }) => Promise<StartAgentResult>;
   /** A follow-up to a console whose process has exited. All three CLIs can
    *  resume a session by id (measured 2026-09-21); codex and opencode need a
    *  new process to do it, which is what this is. Optional: an older desktop
@@ -307,6 +310,16 @@ export interface ZevetBridge {
   googleWait?: () => Promise<{ ok?: boolean; cancelled?: boolean; error?: string; login?: string; owner?: boolean }>;
   googleCancel?: () => void;
   googleLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
+  /* Pairing with Masora (T5, docs/contracts/cross_app_context.md). Same
+     start/wait/cancel shape as the GitHub/Google trio; `masoraPairWait`
+     never returns a token, only ok/error -- it is written straight to the
+     OS keychain in the main process. */
+  masoraConfig?: () => Promise<{ url: string; paired: boolean; repos: Record<string, boolean> }>;
+  masoraSaveUrl?: (url: string) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean> }>;
+  masoraPairStart?: () => Promise<{ ok: boolean; error?: string; userCode?: string; verifyUrl?: string }>;
+  masoraPairWait?: () => Promise<{ ok: boolean; cancelled?: boolean; error?: string | null }>;
+  masoraPairCancel?: () => void;
+  masoraUnpair?: () => Promise<boolean>;
 }
 
 declare global {

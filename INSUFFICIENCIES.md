@@ -221,3 +221,40 @@ and capture which process dies and why — Windows Error Reporting, or a
 `--trace-uncaught` on the child. Nobody has done that yet, and until somebody
 does, the cause above is an inference from the exit code and the isolation
 behaviour rather than an observation.
+
+---
+
+## INSUF-007 — T5's Masora pairing/push/brief were verified against unit fakes and a hand-checked CLI probe, never a live Masora — **OPEN**
+
+**What is missing.** `desktop/masora.js` and `desktop/masora-push.js` (device
+pairing, session push, the C2 brief) are exercised in `test/masora.test.mjs`
+and `test/masora-push.test.mjs` against injected `fetchImpl`s that mimic
+`POST /api/connector/register`, `/connector/ingest` and `/api/v2/context/brief`
+per masora2's own source (read this session, not guessed — devices.py,
+admin.py, cross_app_context.md). None of the three has been driven against a
+real, deployed Masora. The MCP entry's shape (`{"type":"http","url":"..."}`) IS
+verified — `claude mcp add-json` was run this session and its written
+`~/.claude.json` entry inspected directly — but the OAuth handshake the CLI
+performs against `<masoraUrl>/mcp` once that entry exists has not been
+observed; the brief endpoint (`POST /api/v2/context/brief`) is also being
+built concurrently on `andrew/t3` per the task brief, so there is nothing
+live to test against yet even in principle.
+
+**What was tried.** Full unit coverage of the client-side logic (40 tests,
+`node --test test/masora.test.mjs test/masora-push.test.mjs`), each of three
+core invariants (repository policy, the 200 KB cap equivalent on masora2's
+side, the ACL-close call) mutation-checked on the masora2 half; a real `git`
+repo built in a tempdir to prove `deriveRepository`; the `claude mcp add-json`
+probe against the real installed CLI (cleaned up afterward, not left in
+`~/.claude.json`).
+
+**Smallest thing that unblocks it.** A running masora2 instance (MOCK_MODE or
+live) reachable from this machine, and a paired device — then: pair for real,
+push one real session, confirm a document lands in masora2's `documents` table
+with `source_kind='zevet'` and the right ACL, and confirm `claude mcp list`
+shows `masora` as connected after the CLI's own OAuth flow completes.
+
+**Blast radius.** All of T5's zevet-side code paths that talk to a network
+Masora. The masora2-side half of the same contract (T5's other track) has its
+own request/response tests against the real FastAPI app in MOCK_MODE and is
+not blocked by this entry.

@@ -36,7 +36,7 @@ export function MessageTiming({
               mono,
               "tabular-nums",
               streaming
-                ? "text-blue-500 dark:text-blue-400"
+                ? "text-primary"
                 : "text-foreground/50",
             )}
           >

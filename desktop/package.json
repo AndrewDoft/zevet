@@ -1,6 +1,6 @@
 {
   "name": "zevet-desktop",
-  "version": "0.2.44",
+  "version": "0.2.46",
   "private": true,
   "description": "zevet — watch your team's coding agents",
   "main": "main.js",
@@ -54,6 +54,8 @@
       "agent-catalogs.js",
       "github-signin.js",
       "google-signin.js",
+      "masora.js",
+      "masora-push.js",
       "setup.html",
       "fonts/**",
       "build/icon.png",

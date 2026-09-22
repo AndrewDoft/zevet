@@ -95,6 +95,20 @@ contextBridge.exposeInMainWorld("zevet", {
    *  remember which provider minted it, so this is the same call as
    *  `githubLogout` under the name the Google button expects. */
   googleLogout: () => ipcRenderer.invoke("zevet:googleLogout"),
+  /**
+   * Pairing with Masora (T5, docs/contracts/cross_app_context.md). Same
+   * shape as the GitHub/Google trio above and the same reason for it: a code
+   * has to paint immediately and then the flow sits for up to fifteen
+   * minutes. `masoraPairWait` never returns the token -- it is written
+   * straight to the OS keychain in the main process (masora.js) and this
+   * bridge has no call that reads it back.
+   */
+  masoraConfig: () => ipcRenderer.invoke("zevet:masoraConfig"),
+  masoraSaveUrl: (url) => ipcRenderer.invoke("zevet:masoraSaveUrl", { url }),
+  masoraPairStart: () => ipcRenderer.invoke("zevet:masoraPairStart"),
+  masoraPairWait: () => ipcRenderer.invoke("zevet:masoraPairWait"),
+  masoraPairCancel: () => ipcRenderer.invoke("zevet:masoraPairCancel"),
+  masoraUnpair: () => ipcRenderer.invoke("zevet:masoraUnpair"),
   /** Native folder picker; resolves to a path or null. */
   pickRepo: () => ipcRenderer.invoke("zevet:pickRepo"),
   /** Install the hooks into that repo. */
@@ -122,6 +136,10 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   workspaces: () => ipcRenderer.invoke("local:workspaces"),
   /** Native folder picker; adds it to the list. */
   addWorkspace: () => ipcRenderer.invoke("local:addWorkspace"),
+  /** C1's per-repo opt-in (`zevet.masoraRepos`), keyed by resolved folder
+   *  path; default none. */
+  masoraRepos: () => ipcRenderer.invoke("local:masoraRepos"),
+  masoraRepoToggle: (root, on) => ipcRenderer.invoke("local:masoraRepoToggle", { root, on }),
   /** A file tree under one of those folders. */
   tree: (root) => ipcRenderer.invoke("local:tree", root),
   /** One text file, by path relative to its root. */

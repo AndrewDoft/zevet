@@ -122,7 +122,7 @@ export function Chart({
                 className={cn(
                   "fade-in animate-in fill-mode-both duration-300",
                   i === lastIndex
-                    ? "fill-blue-500 dark:fill-blue-400"
+                    ? "fill-primary"
                     : "fill-foreground/25",
                 )}
                 style={{ animationDelay: `${i * 40}ms` }}
@@ -134,7 +134,7 @@ export function Chart({
             {variant === "area" && shown.length > 1 && (
               <path
                 d={area}
-                className="fill-blue-500/12 dark:fill-blue-400/15"
+                className="fill-primary/12 dark:fill-primary/15"
               />
             )}
             <polyline
@@ -144,14 +144,14 @@ export function Chart({
               strokeLinecap="round"
               strokeLinejoin="round"
               vectorEffect="non-scaling-stroke"
-              className="stroke-blue-500 dark:stroke-blue-400"
+              className="stroke-primary"
             />
             {last && (
               <circle
                 cx={last.x}
                 cy={last.y}
                 r="3"
-                className="fill-blue-500 dark:fill-blue-400"
+                className="fill-primary"
               />
             )}
           </>

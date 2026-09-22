@@ -100,7 +100,7 @@ export function TerminalBlock({
         {!done && (
           <span
             aria-hidden
-            className="inline-block h-3 w-1.5 animate-pulse bg-blue-500/70 motion-reduce:animate-none dark:bg-blue-400/70"
+            className="inline-block h-3 w-1.5 animate-pulse bg-primary/70 motion-reduce:animate-none dark:bg-primary/70"
           />
         )}
       </div>

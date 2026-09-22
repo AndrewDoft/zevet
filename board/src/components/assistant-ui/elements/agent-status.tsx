@@ -45,7 +45,7 @@ export function AgentStatus({
           className={cn(
             "size-1.5 shrink-0 rounded-full motion-reduce:animate-none",
             state === "working"
-              ? "animate-pulse bg-blue-500 dark:bg-blue-400"
+              ? "animate-pulse bg-primary"
               : "border-foreground/35 border",
           )}
         />
