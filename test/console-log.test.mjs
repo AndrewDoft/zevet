@@ -91,3 +91,16 @@ test("clear empties it, for window close and quit", () => {
   log.clear();
   assert.deepEqual(log.snapshot().consoles, []);
 });
+
+test("a generated title is kept with the metadata and follows a continued thread", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  assert.equal(log.prompted("a"), false);
+  log.record("a", { type: "prompt", text: "hi" });
+  assert.equal(log.prompted("a"), true);
+  assert.equal(log.setTitle("a", "Greeting"), true);
+  assert.equal(log.snapshot().consoles[0].title, "Greeting");
+  log.open("b", META, "a");
+  assert.equal(log.snapshot().consoles[0].title, "Greeting");
+  assert.equal(log.setTitle("a", "Gone"), false);
+});

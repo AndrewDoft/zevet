@@ -164,6 +164,7 @@ export interface AgentEvent {
   text?: string;
   payload?: unknown;
   dropped?: number;
+  title?: string;
 }
 
 export interface HeldConsole {
@@ -173,6 +174,7 @@ export interface HeldConsole {
   model: string;
   mode: string;
   startedAt: number;
+  title?: string;
   running: boolean;
   events: AgentEvent[];
 }

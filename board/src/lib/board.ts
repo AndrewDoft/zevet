@@ -1577,6 +1577,7 @@ function reattachConsoles(held: HeldConsole[]): void {
       forkedFrom: null,
       startedAt: h.startedAt,
       exitCode: null,
+      ...(h.title ? { autoTitle: h.title } : {}),
     };
     useBoard.setState((g) => ({ myConsoles: [...g.myConsoles, c] }));
     for (const evt of h.events) ingressAgentEvent(evt);
@@ -1587,6 +1588,14 @@ function reattachConsoles(held: HeldConsole[]): void {
 
 /** Fold one decoded stream-json agent event into the store. */
 function ingressAgentEvent(evt: AgentEvent): void {
+  if (evt.type === "title") {
+    const ct = consoleById(evt.id);
+    if (ct && evt.title) {
+      ct.autoTitle = evt.title;
+      signalConsolesChanged();
+    }
+    return;
+  }
   if (evt.type === "agent") {
     const payload = (evt.payload || {}) as { type?: string; model?: string; total_cost_usd?: number };
     if (payload.type === "system" && typeof payload.model === "string") useBoard.getState().setStripLive({ model: payload.model });
