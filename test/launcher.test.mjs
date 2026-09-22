@@ -19,14 +19,13 @@ const launcher = read("components", "launcher.tsx");
 const conversation = read("components", "conversation.tsx");
 
 describe("the model selector states agent facts once", () => {
-  test("the per-agent note is built for a group, not for a row", () => {
-    // agentNote takes the AGENT. If it ever takes a model, the facts are back
-    // on every row.
-    assert.match(choice, /function agentNote\(a: UsableAgent\): string/);
-    const body = choice.slice(choice.indexOf("function agentNote"), choice.indexOf("export function ModelChoice"));
-    assert.match(body, /one prompt per run/);
-    assert.match(body, /keeps talking/);
-    assert.match(body, /signed in/);
+  test("the group header says only what is actionable", () => {
+    // "signed in · keeps talking" on every group was noise; only a missing
+    // sign-in is something you can act on.
+    assert.match(choice, /!agent\.signedIn && <span[^>]*>Not signed in<\/span>/);
+    for (const gone of ["keeps talking", "one prompt per run", "agentNote"]) {
+      assert.ok(!choice.includes(gone), `"${gone}" is back in the model picker`);
+    }
   });
 
   test("a model's own fields carry nothing about the agent", () => {

@@ -66,7 +66,8 @@ describe("the composer's Send button can appear", () => {
     // people.tsx's AgentRow, which folds a console into the same tree a
     // terminal session appears in — the Stop control came with it.
     const rail = readFileSync(path.join(BOARD, "components", "people.tsx"), "utf8");
-    assert.match(rail, /c\.running \? "Stop" : "Close"/);
+    // An icon now, shown on hover/focus, still named for a screen reader.
+    assert.match(rail, /aria-label=\{c\.running \? "Stop" : "Close"\}/);
     assert.match(rail, /closeConsole\(c\.key\)/);
   });
 });

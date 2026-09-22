@@ -11,18 +11,14 @@
  * they set the global launch state (`launchModel`/`launchAgent`/
  * `launchEffort`/`launchMode`), which is what the NEXT start reads — a fresh
  * one (`onNew` in lib/runtime.tsx, when there is no active console), a
- * launcher Start button, or a fork. A running console's own CLI cannot be
- * re-flagged mid-session, so what it actually launched with is shown
- * alongside as a FACT once one exists — provider mark, model name, posture —
- * plus what only exists once the run has reported usage: context against the
- * window, and cost. runmeters.tsx keeps the full breakdown behind its
- * collapsed row; this is the glance version, so it never repeats that — no
- * gauge, no chart, no table, one line.
+ * launcher Start button, or a fork. Once a console exists, a small ring says
+ * how full its context is (model and numbers in its tooltip), beside cost.
+ * runmeters.tsx keeps the full breakdown behind its button; this is the
+ * glance version.
  *
  * Renders nothing when it has nothing honest to say: no usable agents and no
  * console running.
  */
-import { AgentLogo } from "./brand";
 import { ContextCardButton, PastPromptsButton } from "./composercards";
 import { PromptLibraryPanel } from "./promptlib";
 import { QuotaChip } from "./quota";
@@ -32,21 +28,33 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { mono } from "./assistant-ui/elements/surfaces";
 import { cn } from "@/lib/utils";
 import { MODES, MODE_LABEL } from "../lib/constants";
+import { CONTEXT_FLOOR, contextShare } from "../lib/meter.mjs";
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { describeModel } from "../lib/models.mjs";
 import { money, tokens } from "../lib/fmt";
 import type { LaunchMode } from "../lib/types";
 
-/** The fallback context window — the same 200k floor runmeters.tsx's
- *  CONTEXT_LIMIT uses, duplicated rather than imported because that file
- *  does not export it (moreviews.tsx duplicates its own readers for the same
- *  reason). See runmeters.tsx's comment for why 200k and not the model's
- *  real one: it is the smallest common window, so a bar drawn against it
- *  undersells rather than oversells how full the context is. */
-const CONTEXT_LIMIT = 200_000;
-
-/** Same rounding as runmeters.tsx's `money`, minus the null branch — callers
- *  here only reach it once `usage.cost != null` has already been checked. */
+/** How full the context is, as a ring; the numbers are its tooltip. */
+function ContextRing({ share, label }: { share: number; label: string }) {
+  const c = 2 * Math.PI * 6;
+  return (
+    <span role="img" aria-label={label} title={label} className="shrink-0">
+      <svg viewBox="0 0 16 16" className="size-3.5 -rotate-90" aria-hidden="true">
+        <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2" />
+        <circle
+          cx="8"
+          cy="8"
+          r="6"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - share)}
+        />
+      </svg>
+    </span>
+  );
+}
 
 /** ModelChoice's trigger is sized for the launcher panel (h-9, w-full) — too
  *  tall for a composer row of size-7 icon buttons. Its own file is off
@@ -73,10 +81,13 @@ const compactModelChoice = cn(
 
 export function ComposerControls() {
   const active = useBoard(selectActiveConsole);
+  // Usage is mutated onto the console object in place (board.ts recordUsage);
+  // only the list itself is replaced, so that is what re-renders the ring.
+  useBoard((s) => s.myConsoles);
   const localAgents = useBoard((s) => s.localAgents);
   const launchMode = useBoard((s) => s.launchMode);
-  const launchModel = useBoard((s) => s.launchModel);
   const setLaunchMode = useBoard((s) => s.setLaunchMode);
+  const setConsoleMode = useBoard((s) => s.setConsoleMode);
   const usable = localAgents.filter((a) => a.ok);
 
   /* The pickers below set `launchModel`/`launchAgent`/`launchEffort`/
@@ -87,48 +98,28 @@ export function ComposerControls() {
    * console, the launcher's Start buttons read it, and a fork reads it too
    * (board.ts's `startAgent`). So the pickers stay live for the whole time a
    * console runs — Andrew: "you should still be able to choose model and
-   * effort and posture" — they are just no longer the only thing on the row:
-   * what THIS console actually launched with is added alongside as a fact,
-   * since the two can diverge the moment the pickers are touched again. */
-  /* ⚠️ ONLY WHAT DIVERGED. The fact row printed the model and the posture
-     unconditionally, beside the pickers that were showing the same two
-     values — "nemotron-3-ultra  Auto   nemotron-3-ultra Auto" on one line,
-     seen in a real run. It is worth saying only when this console is running
-     something other than what the pickers would start next; when they agree,
-     the pickers have already said it. The numbers (context, cost) belong to
-     the console alone and always show. */
-  const sameModel = Boolean(active) && active!.model === launchModel;
-  const sameMode = Boolean(active) && active!.mode === launchMode;
-
+   * effort and posture". */
+  /* ⚠️ ONE MODEL LABEL. The picker already names a model; a second, mono
+     "GPT-5.6-Terra 354k/200k 78% cached" beside it read as two models and as
+     jargon. What THIS console runs, and how full its context is, sit in the
+     ring's tooltip; the posture picker follows the console in front (below),
+     so it cannot disagree with it. */
   const facts = active
     ? (() => {
         const { usage } = active;
-        const window = usage.window ?? CONTEXT_LIMIT;
         const model = describeModel(active.model).label || active.model;
+        const window = usage.window ?? CONTEXT_FLOOR;
+        const share = contextShare(usage.context, usage.window);
+        const detail = [
+          model,
+          usage.context != null ? `${tokens(usage.context)} of ${tokens(window)} context` : null,
+          usage.cacheHit != null ? `${Math.round(usage.cacheHit)}% cached` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
         return (
           <span className={cn(mono, "flex min-w-0 shrink items-center gap-1.5 text-foreground/50")}>
-            {!sameModel && (
-              <>
-                <AgentLogo agent={active.agent} model={active.model} className="size-3.5 shrink-0" />
-                <span className="min-w-0 truncate">{model}</span>
-              </>
-            )}
-            {!sameMode && (
-              <span className="shrink-0 text-foreground/35">{MODE_LABEL[active.mode] ?? active.mode}</span>
-            )}
-            {usage.context != null && (
-              <span className="shrink-0">
-                {tokens(usage.context)}/{tokens(window)}
-              </span>
-            )}
-            {/* Cache hit, moved off the rail's strip: it belongs with the
-                context number it is a share OF. Andrew: "same with cache if
-                you can add it to the chatbox". */}
-            {usage.cacheHit != null && (
-              <span className="shrink-0" title="share of the context served from cache">
-                {Math.round(usage.cacheHit)}% cached
-              </span>
-            )}
+            {usage.context != null && <ContextRing share={share} label={detail} />}
             {usage.cost != null && <span className="shrink-0">{money(usage.cost)}</span>}
             {/* The provider's own rate-limit window, beside the two numbers it
                 belongs with rather than as a banner over the transcript. */}
@@ -167,10 +158,15 @@ export function ComposerControls() {
         <ModelChoice agents={usable} />
       </div>
 
+      {/* The console in front takes the pick on its next turn
+          (`setConsoleMode` parks it while a turn runs); the next start takes it
+          too. This is the only posture control — the rail's rows lost theirs. */}
       <Select
-        value={launchMode}
+        value={active ? active.nextMode ?? active.mode : launchMode}
         onValueChange={(v: string | null) => {
-          if (v) setLaunchMode(v as LaunchMode);
+          if (!v) return;
+          setLaunchMode(v as LaunchMode);
+          if (active) setConsoleMode(active.key, v);
         }}
       >
         <SelectTrigger

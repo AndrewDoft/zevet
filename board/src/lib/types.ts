@@ -109,6 +109,9 @@ export interface ConsoleEntry {
    *  takes, so it is the difference between being able to ask again from here
    *  and not. */
   sessionId: string | null;
+  /** The CLI's own title for this session, once it has written one to its
+   *  session file (claude's `ai-title`, codex's `thread_name`). */
+  title?: string;
   /** Slash commands the agent CLI announced in its init line (claude does;
    *  the others do not, and stay empty). Drives the composer's `/` menu. */
   slashCommands: string[];

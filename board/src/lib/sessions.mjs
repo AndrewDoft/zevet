@@ -297,7 +297,7 @@ function closeOpenTurn(state) {
  * @param {{ title?: string; prompt?: string; id?: string }} session
  */
 /**
- * The same session in two or three words, for a tree row rather than a list.
+ * The same session in one line, for a tree row rather than a list.
  *
  * ⚠️ THE CLI ALREADY WROTE ONE. Claude Code keeps an `ai-title` record and
  * rewrites it as the session goes (desktop/agent-sessions.js § describeClaude),
@@ -308,7 +308,6 @@ function closeOpenTurn(state) {
  * prompt is a paragraph and a rail row is not.
  *
  * @param {{ title?: string; prompt?: string; id?: string }} session
- * @param {number} words how many to keep when falling back to the prompt
  */
 // Recorded identifiers are metadata, never a conversation title.
 function sessionTitle(s) {
@@ -320,14 +319,19 @@ function sessionFallback(s) {
   return s.source === "codex" ? "Codex session" : s.source === "claude" ? "Claude session" : "Session";
 }
 
-export function sessionBlurb(session, words = 3) {
+/* ⚠️ THE FIRST SENTENCE, NOT THE FIRST THREE WORDS. A three-word cut titled
+   twenty agents started from "You are working in …" prompts "You are
+   working…", all alike. A sentence is what tells them apart; the row's own
+   ellipsis trims it to what fits, so the cap here only bounds a pasted wall. */
+export function sessionBlurb(session) {
   const s = session || {};
-  const titled = sessionTitle(s);
-  if (titled) return titled.length > 34 ? `${titled.slice(0, 33)}…` : titled;
-  const said = unwrapEnvelope(text(s.prompt)).replace(/\s+/g, " ").trim();
-  if (!said) return sessionFallback(s);
-  const cut = said.split(" ").slice(0, Math.max(1, words)).join(" ");
-  return cut.length < said.length ? `${cut}…` : cut;
+  const one = firstSentence(sessionTitle(s)) || firstSentence(unwrapEnvelope(text(s.prompt)));
+  if (!one) return sessionFallback(s);
+  return one.length > 80 ? `${one.slice(0, 79)}…` : one;
+}
+
+function firstSentence(said) {
+  return said.trim().split(/\n|(?<=[.!?])\s+(?=[A-Z])/)[0].replace(/\s+/g, " ").trim();
 }
 
 export function sessionLabel(session) {

@@ -210,6 +210,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
     ipcRenderer.invoke("local:session", { source, slug, id, child }),
   /** The subagents a claude session spawned, each openable as `session(..., child)`. */
   sessionAgents: (slug, id) => ipcRenderer.invoke("local:sessionAgents", { slug, id }),
+  /** A running console's title and (codex) real context, off its session file. */
+  sessionLive: (source, id) => ipcRenderer.invoke("local:sessionLive", { source, id }),
   // Masora Voice: is it installed, and start it so its flow bar comes up.
   // See desktop/masora-voice.js for why there is no "start recording".
   /* The permission posture a new agent starts with, saved beside the zoom in

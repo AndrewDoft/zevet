@@ -115,41 +115,17 @@ describe("sendPrompt applies a pending posture change before it resumes", () => 
   });
 });
 
-describe("people.tsx renders the pending change without resizing the row", () => {
-  test("a console row's posture control shows 'current → next' when nextMode is pending", () => {
-    assert.match(peopleSrc, /const pending = Boolean\(c && c\.nextMode && c\.nextMode !== c\.mode\);/);
-    assert.match(
-      peopleSrc,
-      /\{pending \? `\$\{MODE_LABEL\[c\.mode\] \|\| c\.mode\} → \$\{MODE_LABEL\[heading!\] \|\| heading\}` : MODE_LABEL\[c\.mode\] \|\| c\.mode\}/,
-    );
+describe("the posture lives in the composer, not on the rail's rows", () => {
+  const controlsSrc = readFileSync(path.join(ROOT, "board", "src", "components", "composercontrols.tsx"), "utf8");
+
+  test("an agent row carries no posture control", () => {
+    // A red posture label on every row squeezed titles to "You …".
+    assert.ok(!peopleSrc.includes("agent-row-mode"));
+    assert.ok(!peopleSrc.includes("setConsoleMode"));
   });
 
-  test("the posture slot is a <button> (a control, not a label) and stays reserved either way", () => {
-    assert.match(peopleSrc, /<button[\s\S]{0,200}className=\{cn\(mono, "agent-row-mode"\)\}/);
-    // Still the same reserved trailing slot a disk session's "ago" text used
-    // — the comment explaining that has to survive the rewrite.
-    assert.match(peopleSrc, /Reserved either way, so the row never grows or shrinks/);
-  });
-
-  test("clicking cycles MODES from wherever the console is actually headed", () => {
-    assert.match(peopleSrc, /const idx = MODES\.findIndex\(\(m\) => m\.id === heading\);/);
-    assert.match(peopleSrc, /setConsoleMode\(c\.key, next\.id\);/);
-  });
-
-  test("a disk session (no console) gets no posture control at all", () => {
-    // The mode button is gated on `c ? ... : null` — a session row's branch
-    // must not render it.
-    const modeBlock = peopleSrc.slice(
-      peopleSrc.indexOf("Cycles MODES on click"),
-      peopleSrc.indexOf("Only a console row gets this"),
-    );
-    assert.match(modeBlock, /\{c \? \(/);
-    assert.match(modeBlock, /\) : null\}/);
-  });
-
-  test("the CSS keeps the pending label on one line, so it cannot grow the row", () => {
-    const css = readFileSync(path.join(ROOT, "board", "src", "styles", "masora.css"), "utf8");
-    const rule = css.slice(css.indexOf(".agent-row-mode {"), css.indexOf(".agent-row-mode:hover"));
-    assert.match(rule, /white-space:\s*nowrap;/);
+  test("the composer's picker shows where the console is headed and parks the pick on it", () => {
+    assert.match(controlsSrc, /value=\{active \? active\.nextMode \?\? active\.mode : launchMode\}/);
+    assert.match(controlsSrc, /if \(active\) setConsoleMode\(active\.key, v\);/);
   });
 });

@@ -24,6 +24,8 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
+import os from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { ROOT } from "./helpers.mjs";
 
 const require = createRequire(import.meta.url);
@@ -245,19 +247,23 @@ describe("row helpers", () => {
     );
   });
 
-  test("the blurb is the CLI's own short title, or the first words of the ask", () => {
-    // Andrew: "the icon for the model type next to the 1-3 word blurb like
-    // what exists in claude code in the terminal." Claude Code already writes
-    // that title into the session file and rewrites it as the run goes, so a
-    // title is taken whole and only a prompt fallback gets cut.
+  test("the blurb is the CLI's own title, or the first sentence of the ask", () => {
+    // The CLI's title (claude's `ai-title`, codex's `thread_name`) wins; until
+    // one exists, the first sentence. A three-word cut titled twenty agents
+    // started from "You are working in …" prompts identically.
     assert.equal(sessionBlurb({ title: "Zevet bugs" }), "Zevet bugs");
-    assert.equal(sessionBlurb({ prompt: "run an agent in here so my terminal agent can watch" }), "run an agent…");
-    assert.equal(sessionBlurb({ prompt: "one two three four" }, 2), "one two…");
+    assert.equal(
+      sessionBlurb({ prompt: "You are working in a git worktree of zevet. Your branch is checked out." }),
+      "You are working in a git worktree of zevet.",
+    );
+    assert.equal(sessionBlurb({ prompt: "Fix the rail\nthen the composer" }), "Fix the rail");
+    // Not a sentence break: an abbreviation followed by lower case.
+    assert.equal(sessionBlurb({ prompt: "Use e.g. the fixture. Then test." }), "Use e.g. the fixture.");
     // Same envelope peel the full label gets, and the same fallbacks.
-    assert.equal(sessionBlurb({ title: "<task-notification><task-id>b1</task-id>", prompt: "ship it now please" }), "ship it now…");
+    assert.equal(sessionBlurb({ title: "<task-notification><task-id>b1</task-id>", prompt: "ship it now please" }), "ship it now please");
     assert.equal(sessionBlurb({ id: "abc" }), "Session");
-    // A title that is somehow a paragraph is still a rail row.
-    assert.equal(sessionBlurb({ title: "x".repeat(60) }).length, 34);
+    // A wall of pasted text is bounded; the row's ellipsis does the fitting.
+    assert.equal(sessionBlurb({ title: "x".repeat(200) }).length, 80);
   });
 
   test("the project is the last segment, of a path or of a slug", () => {
@@ -283,6 +289,43 @@ describe("row helpers", () => {
 });
 
 describe("desktop reader", () => {
+  test("live() adopts claude's latest ai-title and codex's real context", () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "zevet-live-"));
+    const was = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = process.env.USERPROFILE = home;
+    try {
+      const cdir = path.join(home, ".claude", "projects", "C--dev-zevet");
+      mkdirSync(cdir, { recursive: true });
+      const lines = (...o) => o.map((x) => `${JSON.stringify(x)}\n`).join("");
+      writeFileSync(
+        path.join(cdir, "abc-1.jsonl"),
+        lines({ type: "user", message: { role: "user", content: "hi" } }, { type: "ai-title", aiTitle: "Old" }, { type: "ai-title", aiTitle: "Fix the rail" }),
+      );
+      assert.deepEqual(reader.live("claude", "abc-1"), { title: "Fix the rail", context: null, cached: null, output: null, window: null });
+      assert.equal(reader.live("claude", "missing"), null);
+      assert.equal(reader.live("claude", "../x"), null);
+
+      // codex: the stream's `turn.completed` is a running total; the rollout's
+      // last_token_usage is what the model was sent last.
+      const xdir = path.join(home, ".codex", "sessions", "2026", "09", "22");
+      mkdirSync(xdir, { recursive: true });
+      const tok = (total, last) => ({
+        type: "event_msg",
+        payload: { type: "token_count", info: { total_token_usage: { input_tokens: total }, last_token_usage: last, model_context_window: 258400 } },
+      });
+      writeFileSync(
+        path.join(xdir, "rollout-2026-09-22T16-20-53-t-9.jsonl"),
+        lines(tok(20943, { input_tokens: 20943, cached_input_tokens: 13184, output_tokens: 255 }), tok(354000, { input_tokens: 39685, cached_input_tokens: 27904, output_tokens: 112 })),
+      );
+      writeFileSync(path.join(home, ".codex", "session_index.jsonl"), lines({ id: "t-9", thread_name: "Meter fix" }));
+      assert.deepEqual(reader.live("codex", "t-9"), { title: "Meter fix", context: 39685, cached: 27904, output: 112, window: 258400 });
+    } finally {
+      process.env.HOME = was.HOME;
+      process.env.USERPROFILE = was.USERPROFILE;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("a read handle that is not a path segment is refused", () => {
     // Containment by construction: these never reach the filesystem.
     for (const [slug, id] of [

@@ -252,6 +252,18 @@ export interface LocalBridge {
   /** The subagents a claude session spawned. Open one by passing its id as
    *  `session`'s fourth argument. */
   sessionAgents?: (slug: string, id: string) => Promise<SessionAgentsResult>;
+  /** A running console's own title and, for codex, its real context — see
+   *  desktop/agent-sessions.js § live. Null until the CLI has written a file. */
+  sessionLive?: (
+    source: string,
+    id: string,
+  ) => Promise<{
+    title: string;
+    context: number | null;
+    cached: number | null;
+    output: number | null;
+    window: number | null;
+  } | null>;
   /** Standing instructions for this repo, and which optional capabilities an
    *  agent started here is given. Optional: an older desktop build has none,
    *  and the panel that edits them renders nothing without it. */
