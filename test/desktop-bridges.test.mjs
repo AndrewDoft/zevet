@@ -251,6 +251,15 @@ describe("the key, the secret and the socket stay in the main process", () => {
     assert.match(preload, /forgetAgent: \(id\) => ipcRenderer\.invoke\("local:forgetAgent", id\)/);
   });
 
+  test("a scheduled run reattaches like any other console", () => {
+    const start = main.indexOf("async function runDueSchedules(");
+    const body = stripComments(main.slice(start, main.indexOf("\nlet scheduleTimer", start)));
+    assert.match(body, /consoleLog\.record\(handle\.id, evt\)/, "scheduled events bypass consoleLog and cannot reattach on reload");
+    assert.match(body, /consoleLog\.open\(started\.id/, "a scheduled console is never opened, so it is missing from the snapshot");
+    assert.match(body, /consoles\.set\(started\.id, started\)/, "a scheduled console is untracked, so local:stopAgent and quit cannot stop it");
+    assert.match(body, /scheduled: s\.id/, "the scheduled marker is dropped");
+  });
+
   test("the secret reaches DocSync and the derived token reaches the hub — never the other way round", () => {
     // Comments stripped: this file argues at length about `cfg.secret` in the
     // very comment that explains why `cfg.secret` is not used here, and a

@@ -1741,19 +1741,26 @@ async function runDueSchedules() {
     if (dir && s.prompt) {
       try {
         await runtimeReady;
+        // Same handle-indirection as local:startAgent: onEvent can fire before
+        // `started` is assigned, so the id it needs is read off a mutable box.
+        const handle = { id: null };
         const started = agentConsole.startConsole({
           agent: s.agent,
           cwd: dir,
           model: s.model,
           mode: s.mode,
           onEvent: (evt) => {
-            if (evt && evt.type === "agent") noteBurn(evt.payload, null);
-            if (boardWindow && !boardWindow.isDestroyed()) {
-              boardWindow.webContents.send("local:agentEvent", { ...evt, scheduled: s.id });
-            }
+            if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
+            // Routed through consoleLog like any other console, so a scheduled
+            // run reattaches on a board reload instead of vanishing from the
+            // rail — see console-log.js.
+            toBoard("local:agentEvent", { ...consoleLog.record(handle.id, evt), scheduled: s.id });
           },
         });
         if (started && started.ok) {
+          handle.id = started.id;
+          consoles.set(started.id, started);
+          consoleLog.open(started.id, { ...consoleMeta(s.agent, dir, { model: s.model, mode: s.mode }), scheduled: s.id });
           started.send(s.prompt);
           ok = true;
         }
