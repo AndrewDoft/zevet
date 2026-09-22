@@ -417,3 +417,86 @@ the right cost: the alternative is a checkbox that hands over the machine.
 means no MCP config is written and the agent is spawned exactly as before.
 Deleting `zevet-mcp.js` disables it everywhere, and nothing else in the app
 requires it.
+
+---
+
+## D-010 — the Masora device token is protected with `safeStorage`, a new dependency-free path, not a new keychain library
+
+**Decision.** T5 (docs/contracts/cross_app_context.md C1/C4): zevet has no
+keychain helper of its own — grepped this session, no `keytar`, no
+`safeStorage` anywhere before `desktop/masora.js`. `~/.zevet/config.json`'s
+own master secret is plaintext-on-disk-with-0600-permissions (`writeConfig`,
+main.js), which is a real, already-accepted posture for a shared team secret,
+but the Masora token is a personal, workspace-scoped bearer credential and
+warrants more. Electron's `safeStorage` (DPAPI on Windows, Keychain on macOS)
+needed no new dependency and satisfies zevet's Windows/macOS parity rule for
+free. `encrypt`/`decrypt` are injected into `masora.js`'s functions rather
+than required at the module's top, so the module — and its whole test file,
+`test/masora.test.mjs` — loads and runs under plain `node --test` with no
+Electron app running; only `main.js` passes the real `safeStorage`.
+
+**Alternatives.** A new dependency (`keytar`, deprecated upstream; `node-keytar`
+forks) — rejected, `safeStorage` already does the job. Store it the way
+`config.json` stores the hub secret (plaintext, 0600) — rejected: that secret
+is shared team-wide by design (D-007's whole argument is "the hub is now
+trusted with it"); a Masora device token is not shared and losing it grants
+read access to one person's workspace.
+
+**Reversibility.** Medium. A token already encrypted under one OS's
+`safeStorage` cannot be decrypted after a migration to a different keychain
+scheme without re-pairing; `loadToken` treats that as "not paired" rather
+than throwing (see `masora.test.mjs`: "loadToken fails closed").
+
+## D-011 — the C2 brief at agent start only fires when a prompt is already known
+
+**Decision.** C4 names `local:startAgent` as the call site for the "Context
+from Masora" brief. But `local:startAgent`'s own IPC payload has never carried
+the user's first prompt — `board.ts`'s `startAgent` action sends `{model,
+mode, forkFrom?}` only, and a queued first message (`launch.prompt`, a fork's
+follow-up question) is sent AFTER the spawn succeeds, over the separate
+`local:sendToAgent` channel, once the console exists. So for an ordinary
+interactive session — nobody has typed anything yet when the process starts —
+there is no prompt to send Masora and nothing to match a brief against. Rather
+than call C2 with an empty string (which would either mismatch the contract's
+intent or return `tier: none` every time for no reason), `board.ts` now also
+forwards `launch.prompt` when the caller already has one (a fork's queued
+question), and `local:startAgent` fetches a brief only then. An ordinary new
+session gets no brief at start; it is not asked to have one.
+
+**Alternatives.** Fetch the brief on the FIRST `local:sendToAgent` call
+instead, keyed off the console id (rejected: C4 literally names
+`local:startAgent`, and moving it would mean threading the brief into a
+follow-up append-system-prompt after the CLI has already started, which
+`agent-console.js`'s invocation shape does not support once a process is
+running). Send an empty prompt always (rejected: cheapens the contract's
+`prompt` field into a value that is never meaningfully populated for the
+common case).
+
+**Reversibility.** High. Moving the fetch to `local:sendToAgent`'s first call
+is a contained change to two files (`board.ts`, `main.js`) if C4 is ever
+revised to expect it there instead.
+
+## D-012 — session push is synchronous-per-cycle and outbox-durable, not queued through zevet's own hub
+
+**Decision.** `client/hook.mjs`'s existing outbox (`~/.zevet/outbox.jsonl`,
+store-and-forward to the hub's `/ingest`) was the obvious thing to point at
+Masora instead — the seams investigation (`zevet_seams.md` §D.3) flagged it as
+the smaller lift. Not reused: its auth is the shared-secret `x-zevet-token`,
+which has no workspace mapping, and repointing it would mean the hub's own
+ingest traffic and Masora's now share one outbox format and one failure mode.
+`desktop/masora-push.js` is a second, small, independent outbox
+(`~/.zevet/masora-outbox.jsonl`) instead — append before any network call,
+remove a line only once Masora has 202'd the batch it rode in on, cursor
+(`~/.zevet/masora-cursor.json`) keyed on each session's `updated` timestamp so
+an unchanged session is never re-read, let alone re-sent. A five-minute
+`setInterval` (`startMasoraPush`, main.js) drives it, mirroring
+`startScheduler`'s own pattern exactly.
+
+**Alternatives.** Reuse `client/hook.mjs`'s outbox (rejected, above). Push on
+every file save / every agent turn instead of on a timer (rejected: a session
+is one document per C1, and re-sending on every turn would mean re-deriving
+`git remote` and re-reading the whole transcript file on every message —
+the timer already only sends what actually changed).
+
+**Reversibility.** High. The outbox and cursor are their own files;
+deleting them starts push from a clean slate.
