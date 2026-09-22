@@ -19,22 +19,38 @@ const fn = (file, name) => read(file).match(new RegExp(`(?:export )?function ${n
 const board = 'board/src/lib/board.ts';
 const checkout = (root) => createHash('sha256').update(root.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()).digest('hex');
 
-test('tree and follow exclude unverified, outside and other-checkout activity', () => {
-  for (const target of ['agent-console.js', '../_findings/muse-spark-1.3-bugs.json', 'C:/dev/zw/_findings/muse.json', 'src/../../outside']) {
-    for (const origin of [undefined, checkout('C:/dev/zw/other'), ...(target === 'agent-console.js' ? [] : [checkout('C:/dev/zw/zevet')])]) {
-      const e = { kind: 'tool', repo: 'zevet', actor: 'me', ts: 1, target, checkout: origin };
-      const g = { localRoot: 'C:/dev/zw/zevet', localCheckout: checkout('C:/dev/zw/zevet'), localEntries: [], events: [e], selectedRepo: 'zevet', followMode: 'mine', myActor: 'me' };
-      const opened = [];
-      const context = { useBoard: { getState: () => g, setState: (p) => Object.assign(g, p) }, bridge: { local: {} }, serverNow: () => 2, scoped: () => g.events, revealPath: () => {}, toggleSelection: (p) => opened.push(p) };
-      // Run the production functions without importing the browser/store bootstrap.
-      const filter = read(board).includes('function fileEvents(') ? fn(board, 'fileEvents') : '';
-      const guard = read(board).includes('function localActivity(') ? fn(board, 'localActivity') : '';
-      run(`${guard}\n${filter}\n${fn(board, 'blankNode')}\n${fn(board, 'buildTree')}\n${fn(board, 'followEvent')}\nthis.tree = buildTree(); followEvent(e);`, Object.assign(context, { e }));
-      assert.deepEqual(Object.keys(context.tree.root.children), [], `${target} from ${origin}`);
-      assert.deepEqual(opened, []);
-      assert.equal(g.selectedPath, undefined);
-    }
-  }
+const activityCases = [
+  ['teammate, same repo, other checkout', { actor: 'teammate', machine: 'their-pc', checkout: checkout('/home/them/zevet') }, true],
+  ['me, other worktree', { machine: 'my-pc', checkout: checkout('C:/dev/zw/other') }, false],
+  ['me, same checkout', { machine: 'my-pc', checkout: checkout('C:/dev/zw/zevet') }, true],
+  ['old local client without checkout', { machine: 'my-pc' }, true],
+  ['old teammate client without checkout', { actor: 'teammate', machine: 'their-pc' }, true],
+  ['same actor on another machine', { machine: 'their-pc', checkout: checkout('/home/me/zevet') }, true],
+  ['another actor on this machine in another worktree', { actor: 'other', machine: 'my-pc', checkout: checkout('C:/dev/zw/other') }, false],
+  ['another repo with same checkout', { repo: 'other', machine: 'my-pc', checkout: checkout('C:/dev/zw/zevet') }, false],
+  ['another repo from teammate', { actor: 'teammate', repo: 'other', machine: 'their-pc' }, false],
+  ...['../_findings/muse.json', 'C:/dev/zw/_findings/muse.json', '/tmp/muse.json', 'src/../../outside', './detail.tsx', 'src//detail.tsx', 'src\\detail.tsx'].map((target) =>
+    [`unsafe path ${target}`, { actor: 'teammate', machine: 'their-pc', target }, false]),
+];
+
+for (const [label, fields, allowed] of activityCases) {
+  test(`tree and follow: ${label}`, () => {
+    const e = { kind: 'tool', repo: 'zevet', actor: 'me', ts: 1, target: 'detail.tsx', ...fields };
+    const g = { localRoot: 'C:/dev/zw/zevet/', localCheckout: checkout('C:/dev/zw/zevet'), localEntries: [], events: [e], selectedRepo: null, followMode: 'all', myActor: 'me', myMachine: 'my-pc' };
+    const opened = [];
+    const context = { e, useBoard: { getState: () => g, setState: (p) => Object.assign(g, p) }, bridge: { local: {} }, serverNow: () => 2, scoped: () => g.events, revealPath: () => {}, toggleSelection: (p) => opened.push(p), pendingAgentLine: null };
+    run(['localActivity', 'fileEvents', 'blankNode', 'buildTree', 'followEvent'].map((name) => fn(board, name)).join('\n') + '\nthis.tree = buildTree(); followEvent(e);', context);
+    assert.deepEqual(Object.keys(context.tree.root.children), allowed ? ['detail.tsx'] : []);
+    assert.deepEqual(opened, allowed ? ['detail.tsx'] : []);
+    assert.equal(g.selectedRepo, allowed ? 'zevet' : null);
+  });
+}
+
+test('desktop config supplies the event producers machine identity', () => {
+  const source = read('desktop/main.js').match(/ipcMain\.handle\("zevet:config", \(\) => \{[^]*?^\}\);/m)[0];
+  let config;
+  vm.runInNewContext(source, { ipcMain: { handle: (_name, handler) => { config = handler(); } }, readConfig: () => ({ actor: 'me' }), storedMode: () => '', os: { hostname: () => 'my-pc' } });
+  assert.equal(config.machine, 'my-pc');
 });
 
 test('hook and standalone plugin never collapse an outside path to a basename', () => {

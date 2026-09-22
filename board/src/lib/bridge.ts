@@ -242,6 +242,7 @@ export interface LocalBridge {
 export interface ZevetConfig {
   hub?: string;
   actor?: string;
+  machine?: string;
   /* The GitHub login this machine signed in as. `main.js` has always sent it
      (desktop/main.js § zevet:config); only the type did not say so. */
   login?: string;

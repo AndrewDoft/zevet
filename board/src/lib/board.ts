@@ -297,6 +297,7 @@ interface BoardState {
   };
 
   myActor: string | null;
+  myMachine: string | null;
 
   /* --- actions --- */
   setConn: (c: Conn, label?: string) => void;
@@ -542,6 +543,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   myActor: (bridge.cfg && bridge.cfg.actor) || null,
+  myMachine: bridge.cfg?.machine || null,
 
   setConn: (c) => set({ conn: c }),
   setNeedsToken: (v) => set({ needsToken: v }),
@@ -868,7 +870,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     }));
     checkoutId(dir).then((id) => {
       if (get().localRoot === dir) set({ localCheckout: id });
-    }).catch(() => {}); // Without a fingerprint, local activity stays unverified.
+    }).catch(() => {}); // Same-machine checkout events wait for a matching fingerprint.
     bridge.local?.tree(dir).then((r) => {
       if (r && r.ok) {
         /* A CUT-SHORT TREE IS NOT A FAILED ONE. This wrote the truncation
@@ -1433,11 +1435,12 @@ async function checkoutId(root: string): Promise<string> {
 
 function localActivity(e: HubEvent): boolean {
   const g = useBoard.getState();
-  // Old events lost their origin when outside paths became basenames. They
-  // cannot safely be joined to a local tree, even when the filename exists.
-  return Boolean(g.localCheckout && e.checkout === g.localCheckout && e.target &&
-    !/^[\\/]|:/.test(e.target) &&
-    !e.target.split(/[\\/]/).some((part) => !part || part === "." || part === ".."));
+  const repo = g.localRoot?.replaceAll("\\", "/").replace(/\/+$/, "").split("/").pop();
+  if (!repo || e.repo !== repo || !e.target || /[\\:]|^\//.test(e.target) ||
+    e.target.split("/").some((part) => !part || part === "." || part === "..")) return false;
+  // Teammates have different checkout paths. Only this machine's fingerprint
+  // distinguishes another worktree; older clients without one still belong.
+  return !(g.myMachine && e.machine === g.myMachine && e.checkout) || e.checkout === g.localCheckout;
 }
 
 export function fileEvents(): HubEvent[] {
@@ -2651,6 +2654,7 @@ export function boot(): void {
       window.__zevetCfg = c as never;
       window.__zevetHub = c.hub;
       if (c.actor) useBoard.getState().setMyActor(c.actor);
+      useBoard.setState({ myMachine: c.machine || null });
       /* The saved posture, applied as soon as it arrives. A value the CLI
          table does not know is ignored rather than passed on, so a
          hand-edited config cannot launch an agent with a flag nothing maps. */
@@ -2722,6 +2726,7 @@ export function boot(): void {
 interface ZevetConfigLike {
   hub?: string;
   actor?: string;
+  machine?: string;
   /** This user's default permission posture; see desktop/main.js storedMode. */
   mode?: string;
 }
