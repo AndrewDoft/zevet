@@ -44,6 +44,7 @@ const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
 const agentCatalogs = require("./agent-catalogs.js");
 const { createConsoleLog } = require("./console-log.js");
+const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const masoraPush = require("./masora-push.js");
@@ -1739,18 +1740,23 @@ async function runDueSchedules() {
     // anyway rather than retrying every minute forever.
     let ok = false;
     if (dir && s.prompt) {
+      let place = null;
       try {
         await runtimeReady;
+        place = await placeAgent(dir);
         // Same handle-indirection as local:startAgent: onEvent can fire before
         // `started` is assigned, so the id it needs is read off a mutable box.
         const handle = { id: null };
         const started = agentConsole.startConsole({
           agent: s.agent,
-          cwd: dir,
+          cwd: place.cwd,
           model: s.model,
           mode: s.mode,
           onEvent: (evt) => {
             if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
+            notePlacement(place, evt, handle.id);
+            // A scheduled run's worktree goes when the run ends.
+            if (evt && evt.type === "exit") void releasePlacement(place);
             // Routed through consoleLog like any other console, so a scheduled
             // run reattaches on a board reload instead of vanishing from the
             // rail — see console-log.js.
@@ -1759,14 +1765,17 @@ async function runDueSchedules() {
         });
         if (started && started.ok) {
           handle.id = started.id;
+          trackPlacement(place, started.id);
+          place.title = s.name;
           consoles.set(started.id, started);
-          consoleLog.open(started.id, { ...consoleMeta(s.agent, dir, { model: s.model, mode: s.mode }), scheduled: s.id });
+          consoleLog.open(started.id, { ...consoleMeta(s.agent, dir, { model: s.model, mode: s.mode }, place), scheduled: s.id });
           started.send(s.prompt);
           ok = true;
         }
       } catch (err) {
         console.error(`zevet: scheduled run "${s.name}" failed: ${err.message}`);
       }
+      if (!ok && place) void releasePlacement(place);
     }
     const i = list.findIndex((x) => x.id === s.id);
     if (i >= 0) list[i] = schedule.advance(list[i], ok);
@@ -2211,6 +2220,58 @@ const consoles = new Map();
  *  See console-log.js. */
 const consoleLog = createConsoleLog();
 
+const worktrees = createAgentWorktrees({ home: HOME });
+
+/**
+ * Where each open thread's agent works: its repo, or a worktree of it when
+ * another thread already had the repo (agent-worktree.js). Per thread, not per
+ * process — a follow-up resumes where its conversation lives — so a worktree
+ * goes when the thread closes, or when a scheduled run ends.
+ */
+const placements = new Set();
+
+function placementOf(id) {
+  for (const p of placements) if (p.id === id) return p;
+  return null;
+}
+
+/** Added BEFORE any await, so two agents started at once still see each
+ *  other. Any git failure leaves the agent in the repo, as before. */
+async function placeAgent(dir) {
+  const shared = [...placements].some((p) => p.root === dir);
+  const p = { id: null, root: dir, cwd: dir, worktree: null, session: "", title: "" };
+  placements.add(p);
+  if (shared) {
+    const wt = await worktrees.create(dir);
+    if (wt) Object.assign(p, { cwd: wt.cwd, worktree: wt });
+  }
+  return p;
+}
+
+/** A new process in the placement; its exit is what a release waits for. */
+function trackPlacement(p, id) {
+  p.id = id;
+  p.gone = new Promise((resolve) => (p.exited = resolve));
+}
+
+/** claude's session id is what a fork of it names, and claude finds a
+ *  session only from the folder it ran in. `id` is the process the event came
+ *  from: a replaced process exiting says nothing about its successor. */
+function notePlacement(p, evt, id) {
+  if (evt && evt.type === "exit" && p.exited && p.id === id) p.exited();
+  const sid = evt && evt.type === "agent" && evt.payload && evt.payload.session_id;
+  if (sid && !p.session) p.session = String(sid);
+}
+
+async function releasePlacement(p) {
+  if (!placements.delete(p) || !p.worktree) return;
+  // A fork shares its source's worktree; the last one out removes it.
+  if ([...placements].some((q) => q.worktree === p.worktree)) return;
+  // Not from under a process that may still have files open in it.
+  await Promise.race([p.gone, new Promise((r) => setTimeout(r, 5000))]);
+  await worktrees.release(p.worktree, p.title);
+}
+
 function toBoard(channel, payload) {
   if (boardWindow && !boardWindow.isDestroyed()) boardWindow.webContents.send(channel, payload);
 }
@@ -2392,6 +2453,15 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   const dir = knownRoot(cwd);
   if (!dir) return { ok: false, error: "not an opened workspace" };
 
+  // A claude fork has to start where its source session ran — claude finds a
+  // session only from that folder — so it joins its source's worktree rather
+  // than getting one of its own. Anything else is placed first, before the
+  // awaits below, so an agent started meanwhile sees this one.
+  const forkFrom = opts && typeof opts.forkFrom === "string" ? opts.forkFrom : "";
+  const source = forkFrom && String(agent || "") === "claude" ? [...placements].find((p) => p.session === forkFrom) : null;
+  const place = source ? { ...source, id: null, session: "", title: "" } : await placeAgent(dir);
+  if (source) placements.add(place);
+
   // Standing instructions for this repo, if any were saved. Only claude has a
   // flag for them (agent-console.js § invocationFor); the other two ignore the
   // option rather than being handed something they cannot use.
@@ -2430,7 +2500,7 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   const handle = { id: null };
   const started = agentConsole.startConsole({
     agent: String(agent || ""),
-    cwd: dir,
+    cwd: place.cwd,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt,
@@ -2446,7 +2516,7 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
        ask for a forked run; whether this repo may is decided here, against the
        saved settings, because the renderer is the untrusted side of the
        bridge. Same rule the workspace guard follows above. */
-    forkFrom: opts && typeof opts.forkFrom === "string" ? opts.forkFrom : "",
+    forkFrom,
     onEvent: (evt) => {
       // The status strip's rolling windows are fed HERE, in the main process,
       // and not in the renderer. The renderer shows the live figures off the
@@ -2454,25 +2524,32 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
       // started keep running -- so the only place a week's spend can actually
       // accumulate is this side of the bridge.
       if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
+      notePlacement(place, evt, handle.id);
       toBoard("local:agentEvent", consoleLog.record(handle.id, evt));
     },
   });
-  if (!started.ok) return { ok: false, error: started.error };
+  if (!started.ok) {
+    void releasePlacement(place);
+    return { ok: false, error: started.error };
+  }
 
   handle.id = started.id;
+  trackPlacement(place, started.id);
   consoles.set(started.id, started);
-  consoleLog.open(started.id, consoleMeta(agent, dir, opts));
+  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place));
   return { ok: true, id: started.id, agent, cwd: dir };
 });
 
-/** What a reloaded board needs to rebuild a console's rail entry. */
-function consoleMeta(agent, dir, opts) {
+/** What a reloaded board needs to rebuild a console's rail entry. `root` is
+ *  the repo the user picked even when the agent works in a worktree of it. */
+function consoleMeta(agent, dir, opts, place) {
   return {
     agent: String(agent || ""),
     root: dir,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     startedAt: Date.now(),
+    ...(place && place.worktree ? { worktree: place.worktree.dir, branch: place.worktree.branch } : {}),
   };
 }
 
@@ -2504,10 +2581,20 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
     }
   }
 
+  // A session resumes only from where it ran. A thread with no worktree left
+  // (a scheduled run that ended) is back in the repo.
+  const continues = opts && typeof opts.continues === "string" ? opts.continues : "";
+  let place = placementOf(continues);
+  if (!place || (place.worktree && !fs.existsSync(place.cwd))) {
+    if (place) placements.delete(place);
+    place = { id: null, root: dir, cwd: dir, worktree: null, session: "", title: "" };
+    placements.add(place);
+  }
+
   const handle = { id: null };
   const started = agentConsole.startConsole({
     agent: String(agent || ""),
-    cwd: dir,
+    cwd: place.cwd,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt: settings.systemPrompt,
@@ -2520,17 +2607,18 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
       : {}),
     onEvent: (evt) => {
       if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
+      notePlacement(place, evt, handle.id);
       toBoard("local:agentEvent", consoleLog.record(handle.id, evt));
     },
   });
   if (!started.ok) return { ok: false, error: started.error };
 
   handle.id = started.id;
+  trackPlacement(place, started.id);
   consoles.set(started.id, started);
   // The same thread, a new process: its history moves over rather than
   // coming back after a reload as a second thread, and the old handle goes.
-  const continues = opts && typeof opts.continues === "string" ? opts.continues : "";
-  consoleLog.open(started.id, consoleMeta(agent, dir, opts), continues);
+  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place), continues);
   const prev = consoles.get(continues);
   if (prev) {
     try {
@@ -2554,6 +2642,10 @@ ipcMain.handle("local:sendToAgent", (_e, { id, text }) => {
     // typed, and no CLI's own stream carries it back as a prompt.
     if (sent && sent.ok !== false) {
       consoleLog.record(id, { type: "prompt", text: String(text || "") });
+      // The commit message for a worktree's unfinished work, until a
+      // generated title replaces it.
+      const place = placementOf(id);
+      if (first && place && !place.title) place.title = String(text || "").trim().split("\n")[0].slice(0, 72);
       if (first) void nameConsole(id, String(text || "")).catch(() => {});
     }
     return sent;
@@ -2578,7 +2670,11 @@ async function nameConsole(id, text) {
       ? agentConsole._internals.buildShimInvocation(r.file, autoTitle.ARGS)
       : { command: r.file, args: autoTitle.ARGS, options: {} };
   const title = await autoTitle.titleFor(text, inv);
-  if (title && consoleLog.setTitle(id, title)) toBoard("local:agentEvent", { type: "title", id, title });
+  if (title && consoleLog.setTitle(id, title)) {
+    const place = placementOf(id);
+    if (place) place.title = title;
+    toBoard("local:agentEvent", { type: "title", id, title });
+  }
 }
 
 ipcMain.handle("local:stopAgent", (_e, id) => {
@@ -2599,6 +2695,8 @@ ipcMain.handle("local:consoles", () => consoleLog.snapshot());
 /** The board closed a thread; a reload should not bring it back. */
 ipcMain.handle("local:forgetAgent", (_e, id) => {
   consoleLog.forget(String(id || ""));
+  const place = placementOf(String(id || ""));
+  if (place) void releasePlacement(place);
   return { ok: true };
 });
 
@@ -2615,6 +2713,8 @@ function stopAllConsoles() {
   }
   consoles.clear();
   consoleLog.clear();
+  // Best effort: a quit may not wait for it, and the next start prunes.
+  for (const p of placements) void releasePlacement(p);
 }
 
 app.on("before-quit", stopAllConsoles);
@@ -2696,6 +2796,8 @@ ipcMain.handle("app:updateInstall", () => appUpdater.install());
 
 app.whenReady().then(() => {
   buildMenu();
+  // No console outlives the app, so neither does a worktree made for one.
+  void worktrees.prune();
   startScheduler();
   startMasoraPush();
   // After the window, never before it: an update check that delayed the

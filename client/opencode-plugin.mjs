@@ -95,13 +95,35 @@ function settings() {
   };
 }
 
+/**
+ * The repo a zevet-made worktree belongs to, or null for any other folder.
+ *
+ * desktop/agent-worktree.js gives a second agent in one repo a worktree of its
+ * own, beside a record of which repo it is. To everyone watching it IS that
+ * repo: same name, same branch, same checkout, so its file activity is not
+ * dropped as some other checkout's. Keep in sync with the copy in hook.mjs.
+ */
+function zevetOrigin(dir) {
+  const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+  const same = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+  if (!same(path.dirname(dir), path.resolve(home, "worktrees"))) return null;
+  try {
+    const { repo } = JSON.parse(readFileSync(`${dir}.json`, "utf8"));
+    return typeof repo === "string" && repo ? path.resolve(repo) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Repo root, name and branch, straight off the filesystem. No git subprocess. */
 function repoInfo(startDir) {
   try {
     let dir = path.resolve(startDir || process.cwd());
     for (let i = 0; i < 40; i++) {
       if (existsSync(path.join(dir, ".git"))) {
-        return { repo: path.basename(dir), root: dir };
+        const origin = zevetOrigin(dir);
+        // `root` stays the worktree: it is where the agent's files are.
+        return { repo: path.basename(origin || dir), root: dir, origin };
       }
       const up = path.dirname(dir);
       if (up === dir) break;
@@ -297,7 +319,7 @@ async function flushOutbox() {
  * started in — the same role --zevet-repo plays for the shell hook.
  */
 export const Zevet = async ({ directory } = {}) => {
-  const { repo, root } = repoInfo(directory);
+  const { repo, root, origin } = repoInfo(directory);
   const detailLevel = (process.env.ZEVET_DETAIL || "full").toLowerCase();
 
   return {
@@ -311,7 +333,7 @@ export const Zevet = async ({ directory } = {}) => {
         let shown = "";
         if (detailLevel === "full") shown = scrub(detail);
         else if (detailLevel === "brief") shown = String(detail || "").trim().split(/\s+/)[0] || "";
-        await post({ kind: "tool", tool, target: file ? repoRelative(file, root, directory) : null, detail: shown, repo, checkout: checkoutId(root) });
+        await post({ kind: "tool", tool, target: file ? repoRelative(file, root, directory) : null, detail: shown, repo, checkout: checkoutId(origin || root) });
       } catch (err) {
         // Rule 1. A watcher that can throw into tool.execute.before is a
         // watcher that can end somebody's turn.

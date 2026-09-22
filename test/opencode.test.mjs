@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { startHub, state, tempDir, TOKEN, ROOT } from "./helpers.mjs";
 import {
   installOpencode,
@@ -177,6 +178,32 @@ describe("the plugin at runtime", () => {
     const root = repo.replaceAll("\\", "/");
     assert.equal(fresh[0].checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
     assert.equal(fresh[0].repo, "live", "repo did not come from the plugin directory");
+  });
+
+  test("an agent in a zevet-made worktree reports the repo it was made from", async (t) => {
+    const home = tempDir("zevet-opencode-wt-");
+    t.after(() => home.cleanup());
+    writeFileSync(path.join(home.dir, "config.json"), JSON.stringify({ hub: hub.base, token: TOKEN, actor: "opencode-test" }));
+    const repo = makeRepo(t, "orig");
+    writeFileSync(path.join(repo, "a.ts"), "x\n");
+    execFileSync("git", ["add", "-A"], { cwd: repo, stdio: "pipe" });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: repo, stdio: "pipe" });
+    const { createAgentWorktrees } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "agent-worktree.js"));
+    const wts = createAgentWorktrees({ home: home.dir });
+    const wt = await wts.create(repo);
+    t.after(() => wts.release(wt));
+
+    const before = (await state(hub.base, TOKEN)).body.events.length;
+    await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
+      const mod = await import(`../client/opencode-plugin.mjs?wt=${Date.now()}`);
+      const hooks = await mod.Zevet({ directory: wt.dir });
+      await hooks["tool.execute.before"]({ tool: "write" }, { args: { file_path: "a.ts" } });
+    });
+    const [e] = (await state(hub.base, TOKEN)).body.events.slice(before);
+    assert.equal(e.repo, "orig");
+    assert.equal(e.target, "a.ts");
+    const root = repo.replaceAll("\\", "/");
+    assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
   });
 
   test("a dead hub never throws into the turn", async (t) => {

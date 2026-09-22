@@ -37,6 +37,7 @@
       "local-fs.js",
       "agent-console.js",
       "console-log.js",
+      "agent-worktree.js",
       "auto-title.js",
       "doc-sync.js",
       "repo-stats.js",
