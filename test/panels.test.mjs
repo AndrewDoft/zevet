@@ -66,10 +66,6 @@ describe("a panel with nothing to say says nothing", () => {
     const nulls = (src.match(/return null/g) || []).length;
     assert.ok(nulls >= 5, `only ${nulls} of the five views can return null`);
   });
-
-  test("the background inbox is absent when nothing finished unseen", () => {
-    assert.match(read("components", "inbox.tsx"), /return null/);
-  });
 });
 
 describe("nothing is invented", () => {

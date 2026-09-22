@@ -4,7 +4,6 @@ import { PeoplePane } from "./components/people";
 import { WorkspacesPane } from "./components/workspaces";
 import { Strip } from "./components/strip";
 import { ConnBanner } from "./components/conn";
-import { BackgroundInbox } from "./components/inbox";
 import { Palette } from "./components/palette";
 import { UpdateRow } from "./components/updaterow";
 import { Conversation } from "./components/conversation";
@@ -180,7 +179,6 @@ function App() {
               different view. they should be blue under me."
               It also gives the People pane back the height this section was
               using; see components/people.tsx. */}
-          <BackgroundInbox />
           <ConnBanner />
           <Strip />
           <UpdateRow />

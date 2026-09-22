@@ -1,15 +1,16 @@
-// The rail's rows, the inbox card and the user's bubble, as seen in the
-// running app 2026-09-22: titles squeezed to "You …", a card over the list,
-// and a multi-paragraph prompt flattened to one.
+// The rail's rows and the user's bubble, as seen in the running app
+// 2026-09-22: titles squeezed to "You …", a card over the list, and a
+// multi-paragraph prompt flattened to one.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { ROOT } from "./helpers.mjs";
 
 const read = (...p) => readFileSync(path.join(ROOT, "board", "src", ...p), "utf8");
 const people = read("components", "people.tsx");
-const inbox = read("components", "inbox.tsx");
+const board = read("lib", "board.ts");
+const app = read("App.tsx");
 const css = read("styles", "masora.css");
 const rule = (sel) => css.slice(css.indexOf(sel + " {"), css.indexOf("}", css.indexOf(sel + " {")));
 
@@ -24,18 +25,30 @@ test("a row is mark, title and time; Stop is an icon over the time slot", () => 
   assert.match(css, /\.agent-row-stop:focus-visible \{ opacity: 1; \}/);
 });
 
-test("a console row and the inbox use the CLI's title, never agent · model", () => {
+test("a console row uses the CLI's title, never agent · model", () => {
   assert.match(people, /blurb: consoleBlurb\(c\)/);
-  assert.match(inbox, /title: consoleBlurb\(c\)/);
-  assert.ok(!inbox.includes("`${c.agent} · ${c.model}`"));
 });
 
-test("the inbox card is bounded and scrolls instead of taking the list's space", () => {
-  assert.match(inbox, /className="rail-inbox"/);
-  const r = rule("  .rail-inbox");
-  assert.match(r, /flex: none/);
-  assert.match(r, /max-height:/);
-  assert.match(r, /overflow-y: auto/);
+test("no card duplicates the rail: a finished run is a dot on its own row", () => {
+  assert.ok(!existsSync(path.join(ROOT, "board", "src", "components", "inbox.tsx")));
+  assert.ok(!/BackgroundInbox|Running elsewhere/.test(app));
+  assert.ok(!css.includes(".rail-inbox"));
+  // A dot, not words, and only on a finished run you are not looking at.
+  assert.match(people, /c && !c\.running && c\.id && !isOpen && !seenRuns\.includes\(c\.id\)/);
+  assert.match(people, /className="agent-row-unseen"/);
+  assert.match(rule("  .agent-row-unseen"), /border-radius: 50%/);
+  assert.match(css, /\.agent-row-unseen\[data-failed="true"\] \{ background: var\(--alert\); \}/);
+});
+
+test("seen is per run, survives a reload, and is marked by what is in front", () => {
+  // Keyed by process id (stable across the console replay), not the
+  // per-page `key` a reload renumbers.
+  assert.match(board, /seenRuns: loadSeenRuns\(\)/);
+  assert.match(board, /localStorage\.setItem\(SEEN_RUNS_KEY/);
+  assert.ok(!/seenConsole/.test(board));
+  // One subscription marks the run in front, only once it has finished — a
+  // run you glanced at while it ran and then left still gets its dot.
+  assert.match(board, /useBoard\.subscribe\(\(s\) => \{\s*const c = selectActiveConsole\(s\);\s*if \(!c \|\| c\.running \|\| !c\.id/);
 });
 
 test("the user's bubble keeps its line breaks", () => {

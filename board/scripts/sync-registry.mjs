@@ -60,7 +60,7 @@ export const ITEMS = [
   "elements-document-reference", "elements-inline-citation",
   "elements-agent-plan", "elements-task-card", "elements-recommendation-card",
   "elements-artifact-card", "elements-agent-card", "elements-agent-handoff",
-  "elements-background-inbox", "elements-schedule-card", "elements-draft-restore",
+  "elements-schedule-card", "elements-draft-restore",
   "elements-prompt-library", "elements-command-palette", "elements-checkpoint-history",
   "elements-thinking-indicator", "elements-mcp-server-panel",
   "elements-computer-use", "elements-code-runner",
