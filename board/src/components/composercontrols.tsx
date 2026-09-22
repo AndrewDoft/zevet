@@ -176,7 +176,7 @@ export function ComposerControls() {
         <SelectTrigger
           size="sm"
           className="h-7 shrink-0 gap-1 rounded-full border-transparent bg-foreground/[0.04] px-2 text-xs"
-          aria-label="Permission posture"
+          aria-label="Permissions"
         >
           <SelectValue>{(v: string) => MODE_LABEL[v] ?? v}</SelectValue>
         </SelectTrigger>

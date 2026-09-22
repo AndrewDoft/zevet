@@ -58,7 +58,7 @@ export function SettingsPanel({
 
       {...props}
     >
-      <div className="flex flex-col gap-1.5">
+      {models.length > 0 && <div className="flex flex-col gap-1.5">
         <span className={cn(mono, "text-foreground/30")}>model</span>
         <div className={cn(field, "flex gap-0.5 rounded-full p-0.5")}>
           {models.map((option) => {
@@ -93,15 +93,15 @@ export function SettingsPanel({
             );
           })}
         </div>
-      </div>
+      </div>}
 
       <div className="flex flex-col gap-1.5">
-        <span className={cn(mono, "text-foreground/30")}>system prompt · claude only</span>
+        <span className={cn(mono, "text-foreground/30")}>Instructions · Claude</span>
         <textarea
           value={systemPrompt}
           onChange={(event) => onSystemPromptChange?.(event.target.value)}
           rows={3}
-          aria-label="System prompt"
+          aria-label="Instructions for Claude"
           className={cn(
             field,
             "text-foreground/80 focus-visible:ring-foreground/20 resize-none rounded-xl px-3 py-2 text-xs leading-relaxed outline-none focus-visible:ring-1",

@@ -100,8 +100,8 @@ export function sessionTranscript(
   opts?: { cwd?: string | null; source?: string },
 ): TranscriptState;
 export function unwrapEnvelope(prompt: string): string;
-export function sessionBlurb(session: { title?: string; prompt?: string; id?: string }, words?: number): string;
-export function sessionLabel(session: { title?: string; prompt?: string; id?: string }): string;
+export function sessionBlurb(session: { title?: string; prompt?: string; id?: string; source?: string }, words?: number): string;
+export function sessionLabel(session: { title?: string; prompt?: string; id?: string; source?: string }): string;
 export function sessionWhere(session: { surface?: string; origin?: string }): string;
 export function sessionProject(session: { cwd?: string; slug?: string }): string;
 export function sessionMatches(session: Record<string, unknown>, query: string): boolean;

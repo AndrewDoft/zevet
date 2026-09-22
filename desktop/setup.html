@@ -97,10 +97,10 @@
     </svg>
     <h1>Set up zevet</h1>
   </header>
-  <p class="lede">Connect to your team's hub.</p>
+  <p class="lede">Connect to your team.</p>
 
   <label>
-    <span class="lbl">Hub address</span>
+    <span class="lbl">Team address</span>
     <input id="hub" class="mono" placeholder="https://zevet.example.com" autocomplete="off" spellcheck="false" />
     <span class="hint">Use the address your team shared.</span>
   </label>
@@ -149,16 +149,16 @@
 
   <details id="manual">
     <summary>
-      Use a master secret instead
+      Use a team key instead
     </summary>
     <label>
-      <span class="lbl">Master secret</span>
-      <input id="token" class="mono" type="password" placeholder="Your team's master secret" autocomplete="off" spellcheck="false" />
+      <span class="lbl">Team key</span>
+      <input id="token" class="mono" type="password" placeholder="Your team key" autocomplete="off" spellcheck="false" />
       <!-- It is NOT "the token", and the difference is the whole security
            model: the hub is given SHA-256("zevet-auth" || this), and the key
            that encrypts shared editing is HKDF(this). The input id stays
            `token` so the script below keeps working. -->
-      <span class="hint">The master secret is never sent to the hub.</span>
+      <span class="hint">Your team key stays on this device.</span>
     </label>
     <div class="row">
       <button id="check">Connect</button>
@@ -172,7 +172,7 @@
   </label>
 
   <div class="row">
-    <button id="finish" class="primary" disabled>Open the board</button>
+    <button id="finish" class="primary" disabled>Open zevet</button>
   </div>
 
   <div id="msg" class="note" hidden></div>
@@ -222,8 +222,8 @@
 
   $("gh").addEventListener("click", async function () {
     var hub = $("hub").value.trim();
-    if (!hub) { say("bad", "Enter a hub address."); return; }
-    if (!/^https?:\/\//i.test(hub)) { say("bad", "Hub address needs https:// or http://."); return; }
+    if (!hub) { say("bad", "Enter a team address."); return; }
+    if (!/^https?:\/\//i.test(hub)) { say("bad", "Team address needs https:// or http://."); return; }
 
     say("", "Starting sign-in…");
     ghBusy(true);
@@ -233,7 +233,7 @@
       // The hub having no OAuth app is the likeliest failure on a self-hosted
       // hub, and it is not the user's fault -- point them at the fallback that
       // is sitting right there rather than leaving them at a dead end.
-      say("bad", started.error + "<br><br>Use your team's master secret below.");
+      say("bad", "Use your team key below.");
       $("manual").open = true;
       return;
     }
@@ -247,7 +247,7 @@
     ghBusy(false);
     if (!done.ok) {
       if (done.cancelled) { say("", "Sign-in cancelled."); return; }
-      say("bad", done.error);
+      say("bad", "Could not sign in.");
       return;
     }
 
@@ -280,8 +280,8 @@
 
   $("google").addEventListener("click", async function () {
     var hub = $("hub").value.trim();
-    if (!hub) { say("bad", "Enter a hub address."); return; }
-    if (!/^https?:\/\//i.test(hub)) { say("bad", "Hub address needs https:// or http://."); return; }
+    if (!hub) { say("bad", "Enter a team address."); return; }
+    if (!/^https?:\/\//i.test(hub)) { say("bad", "Team address needs https:// or http://."); return; }
 
     say("", "Starting sign-in…");
     googleBusy(true);
@@ -290,7 +290,7 @@
       googleBusy(false);
       // Same reasoning as the GitHub branch: a hub with no Google client is a
       // deployment problem, and the fallback is sitting right there.
-      say("bad", started.error + "<br><br>Use GitHub above, or your team's master secret below.");
+      say("bad", "Use GitHub above, or your team key below.");
       return;
     }
 
@@ -304,7 +304,7 @@
     googleBusy(false);
     if (!done.ok) {
       if (done.cancelled) { say("", "Sign-in cancelled."); return; }
-      say("bad", done.error);
+      say("bad", "Could not sign in.");
       return;
     }
 
@@ -326,10 +326,10 @@
   });
 
   function invalid() {
-    if (!$("hub").value.trim()) return "Enter a hub address.";
-    if (!$("token").value) return "Enter your team's master secret.";
+    if (!$("hub").value.trim()) return "Enter a team address.";
+    if (!$("token").value) return "Enter your team key.";
     if (!$("actor").value.trim()) return "Enter a display name.";
-    if (!/^https?:\/\//i.test($("hub").value.trim())) return "Hub address needs https:// or http://.";
+    if (!/^https?:\/\//i.test($("hub").value.trim())) return "Team address needs https:// or http://.";
     return null;
   }
 
@@ -341,18 +341,18 @@
     var hub = $("hub").value.trim();
     var res = await window.zevet.test(hub, $("token").value);
     $("check").disabled = false;
-    if (!res.ok) { verified = false; $("finish").disabled = true; say("bad", res.why); return; }
+    if (!res.ok) { verified = false; $("finish").disabled = true; say("bad", "Could not connect."); return; }
 
     verified = true;
     $("finish").disabled = false;
     var warn = "";
     if (/^http:\/\//i.test(hub) && !/^http:\/\/(127\.0\.0\.1|localhost)/i.test(hub)) {
       warn =
-        "<br><br><b>This hub uses HTTP.</b> Your token and activity are unencrypted. " +
+        "<br><br><b>This connection is unencrypted.</b> " +
         "Anyone who can alter the traffic could run code on this computer. " +
         "Use HTTPS outside a trusted network.";
     }
-    say(warn ? "warn" : "good", "Connected to zevet " + (res.version || "?") + "." + warn);
+    say(warn ? "warn" : "good", "Connected." + warn);
     await window.zevet.save(hub, $("token").value, $("actor").value.trim());
     $("repoStep").hidden = false;
   });
@@ -362,9 +362,9 @@
     if (!repo) return;
     var out = $("repoMsg");
     out.hidden = false;
-    out.textContent = "Connecting " + repo + "…";
+    out.textContent = "Connecting…";
     var r = await window.zevet.install(repo);
-    out.textContent = r.ok ? "Connected: " + repo : "Could not connect this folder: " + r.detail;
+    out.textContent = r.ok ? "Folder connected." : "Could not connect this folder.";
   });
 
   $("finish").addEventListener("click", async function () {

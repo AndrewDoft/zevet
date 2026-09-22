@@ -141,7 +141,7 @@ function SubagentRow({ a, hue }: { a: SessionAgent; hue: number }) {
           same agent, which reads as two different things rather than one
           agent and its children. */}
       <AgentLogo agent="claude" model={a.model} hue={hue} className="agent-sub-mark size-3" />
-      <span className="agent-sub-name">{a.title || a.kind || a.id}</span>
+      <span className="agent-sub-name">{a.title || "Agent"}</span>
     </button>
   );
 }
@@ -233,8 +233,8 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
   const isOpen = c ? activeConsole?.key === c.key : Boolean(s) && open?.id === s!.id && open?.source === s!.source;
   const hasKids = Boolean(s) && Number(s!.children) > 0;
   const title = c
-    ? c.root + (MODE_LABEL[c.mode] ? ` · ${MODE_LABEL[c.mode]}` : "")
-    : `${s!.cwd || s!.slug}${s!.branch ? ` · ${s!.branch}` : ""}`;
+    ? consoleProject(c) + (MODE_LABEL[c.mode] ? ` · ${MODE_LABEL[c.mode]}` : "")
+    : sessionBlurb(s!);
   // What the console is actually headed for: `nextMode` when one is parked
   // (see `ConsoleEntry.nextMode`), otherwise `mode` itself. Cycling from here
   // means a second click while a change is pending moves on from where it's
@@ -285,8 +285,8 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
             data-pending={String(pending)}
             title={
               pending
-                ? `Posture for the next turn — click to change. Currently ${MODE_LABEL[c.mode] || c.mode}, switching to ${MODE_LABEL[heading!] || heading}.`
-                : "Posture for the next turn — click to change."
+                ? `Permissions for the next turn — click to change. Currently ${MODE_LABEL[c.mode] || c.mode}, switching to ${MODE_LABEL[heading!] || heading}.`
+                : "Permissions for the next turn — click to change."
             }
             onClick={(e) => {
               e.stopPropagation();

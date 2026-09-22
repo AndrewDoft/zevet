@@ -312,7 +312,7 @@ describe("repo wording", () => {
     const app = src("App.tsx");
     const ws = src("components/workspaces.tsx");
     const tree = src("components/tree.tsx");
-    assert.ok(ws.includes("Open a repo"), "the folder picker no longer says repo");
+    assert.ok(ws.includes("Open a folder"), "the folder picker must name the folder action");
     assert.ok(!app.includes(">Workspaces"), "Workspaces title still present");
     assert.ok(tree.includes("Follow mine"), "follow control missing");
   });

@@ -42,7 +42,7 @@ function StatBadge({ path }: { path: string }) {
     if (d.added == null && d.removed == null) {
       parts.push(
         <span className="new" key="bin">
-          bin
+          binary
         </span>,
       );
     } else {
@@ -372,16 +372,14 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
                 </>
               ) : conn === "down" ? (
                 <>
-                  <h2>{"Can't reach the hub."}</h2>
-                  <p>Reconnecting… Check the hub if this continues.</p>
+                  <h2>{"Disconnected."}</h2>
+                  <p>Reconnecting…</p>
                 </>
               ) : (
                 <>
                   <h2>No activity yet</h2>
-                  <p>Open a folder or start an agent in a connected repo.</p>
-                  <p>
-                    To wire a repo: <code>node client/install.mjs &lt;repo&gt;</code>
-                  </p>
+                  <p>Open a folder to get started.</p>
+
                 </>
               )}
             </div>

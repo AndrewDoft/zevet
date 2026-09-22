@@ -1,3 +1,4 @@
+import { AgentSettings } from "./agentsettings";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { bridge } from "../lib/bridge";
 import { connectPhaseLabel, connectValue, disconnectValue } from "../lib/connect.mjs";
@@ -301,12 +302,12 @@ function AccountSection() {
           if (r.status === 200 && r.body.people) {
             useBoard.setState({ who: { state: { ...(whoState || {}), people: r.body.people } as never, busy: false } });
           } else {
-            setWhoErr(r.body.error || ("The hub answered " + r.status + "."));
+            setWhoErr(r.body.error || ("Could not sign in."));
           }
         },
         () => {
           setBusy(false);
-          setWhoErr("Could not reach the hub.");
+          setWhoErr("Could not connect.");
         },
       );
   }
@@ -417,7 +418,7 @@ function IndexSection() {
 
   /* ⚠️ THE DEPS WERE EMPTY, and two things this reads arrive after mount.
      `localRoot` is the one that mattered: the index status is a fact about a
-     FOLDER, and opening a different one never re-asked, so the Code index
+     FOLDER, and opening a different one never re-asked, so the Code search
      section went on describing the repo you had left. `stripMachine` is
      fetched too, so the guard above it was always evaluated against null on
      the one run this effect ever had. */
@@ -429,16 +430,16 @@ function IndexSection() {
   const m = stripMachine as (StatusResultView & { cindex?: boolean; cindexPort?: number }) | null;
   if (m && m.cindex === true) {
     return (
-      <SSection title="Code index" summary="external">
+      <SSection title="Code search" summary="external">
         <SNote>
-          External index on port {String(m.cindexPort || 8080)}. Stop it to use zevet's built-in index.
+          Managed externally.
         </SNote>
       </SSection>
     );
   }
   if (!bridge.local || typeof bridge.local.indexStatus !== "function") {
     return (
-      <SSection title="Code index" summary="unavailable">
+      <SSection title="Code search" summary="unavailable">
         <SNote>Not available in this build.</SNote>
       </SSection>
     );
@@ -446,7 +447,7 @@ function IndexSection() {
   const st = (indexStatus || null) as IndexStatusView | null;
   if (!st) {
     return (
-      <SSection title="Code index" summary="checking…">
+      <SSection title="Code search" summary="checking…">
         <SNote>Checking this machine…</SNote>
       </SSection>
     );
@@ -468,7 +469,7 @@ function IndexSection() {
     node.push(<SRow key="status" k="Status" v="not enabled on this machine" />);
     node.push(<SNote key="why">{st.reasons.join("  \u00b7  ")}</SNote>);
     return (
-      <SSection title="Code index" summary="off">{node}</SSection>
+      <SSection title="Code search" summary="off">{node}</SSection>
     );
   }
 
@@ -481,7 +482,7 @@ function IndexSection() {
     />,
   );
   node.push(
-    <SRow key="index" k="Index" v={stats ? stats.files + " files \u00b7 " + stats.chunks + " chunks" : "not built for this folder"} />,
+    <SRow key="index" k="Index" v={stats ? stats.files + " files" : "not built for this folder"} />,
   );
   node.push(
     <button
@@ -515,7 +516,7 @@ function IndexSection() {
     );
   }
   return (
-    <SSection title="Code index" summary={stats ? stats.files + " files" : "not built"}>{node}</SSection>
+    <SSection title="Code search" summary={stats ? stats.files + " files" : "not built"}>{node}</SSection>
   );
 }
 
@@ -597,7 +598,7 @@ function VersionSection() {
 function credentialLabel() {
   const c = bridge.cfg;
   if (!c) return "unknown";
-  if (c.legacy) return "legacy token \u00b7 run setup for shared editing";
+  if (c.legacy) return "Set up shared editing";
   if (c.session) return "GitHub sign-in" + (c.hasSecret ? " + team key" : " \u00b7 team key missing");
   return c.hasSecret ? "team key" : "none configured";
 }
@@ -668,11 +669,11 @@ export function SettingsSheet() {
             the duplicate here to go: "that's already represented outside of
             settings." Two controls for one piece of state is also two places
             for it to look wrong. */}
-        <SSection title="View" summary={viewMode === "ide" ? "IDE" : "Agent"}>
+        <SSection title="View" summary={viewMode === "ide" ? "Files" : "Agent"}>
           <div className="sbtn-row">
             {(
               [
-                ["ide", "IDE"],
+                ["ide", "Files"],
                 ["agent", "Agent"],
               ] as const
             ).map(([id, label]) => (
@@ -692,6 +693,7 @@ export function SettingsSheet() {
         </SSection>
 
         <PermissionSection />
+        <AgentSettings />
 
         <SSection
           title="Folders"
@@ -703,8 +705,7 @@ export function SettingsSheet() {
             <>
               {(localWorkspaces || []).map((w) => (
                 <div className="srow" key={w.dir}>
-                  <span className="k">{w.name + (w.repo ? "" : "  (not a git repo)")}</span>
-                  <span className="v mono">{w.dir}</span>
+                  <span className="k">{w.name + (w.repo ? "" : "  (folder)")}</span>
                 </div>
               ))}
               <button className={MAKE_BTN} type="button" style={{ marginTop: "10px" }} onClick={() => useBoard.getState().addWorkspace()}>
@@ -718,7 +719,7 @@ export function SettingsSheet() {
         <IndexSection />
 
         <SSection title="Connection" summary={credentialLabel()}>
-          <SRow k="Hub" v={bridge.hub} mono />
+          <SRow k="Team address" v={bridge.hub} mono />
           <SRow k="You" v={myActor || "unknown"} />
         </SSection>
 
