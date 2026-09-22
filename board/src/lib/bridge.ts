@@ -153,6 +153,30 @@ export interface AskRequest {
   options: Array<{ label: string; description: string }>;
 }
 
+/** One console event. `seq` orders it against a `consoles()` snapshot;
+ *  `prompt` and `gap` only ever arrive in one. */
+export interface AgentEvent {
+  id?: string;
+  seq?: number;
+  type: string;
+  code?: number | null;
+  signal?: string | null;
+  text?: string;
+  payload?: unknown;
+  dropped?: number;
+}
+
+export interface HeldConsole {
+  id: string;
+  agent: string;
+  root: string;
+  model: string;
+  mode: string;
+  startedAt: number;
+  running: boolean;
+  events: AgentEvent[];
+}
+
 export interface LocalBridge {
   available: boolean;
   read: (root: string, relPath: string) => Promise<ReadResult>;
@@ -167,15 +191,19 @@ export interface LocalBridge {
     name: string,
     root: string,
     resumeFrom: string,
-    opts: { model: string; mode: string },
+    opts: { model: string; mode: string; continues?: string },
   ) => Promise<StartAgentResult>;
   sendToAgent: (id: string, text: string) => Promise<{ ok: boolean; error?: string }>;
   stopAgent: (id: string) => Promise<unknown>;
+  /** What the app still holds from before a reload. Optional: an older desktop
+   *  build reaps its agents on reload instead. */
+  consoles?: () => Promise<{ seq: number; consoles: HeldConsole[] }>;
+  forgetAgent?: (id: string) => Promise<unknown>;
   watch: (root: string, relPath: string, lastWritten: string | null) => Promise<{ ok: boolean }>;
   unwatch: (root: string, relPath: string) => Promise<unknown>;
   diffHunks?: (root: string, rel: string) => Promise<{ ok: boolean; hunks?: Array<{ start?: number }> }>;
   onFileChanged: (cb: (p: { root: string; relPath: string; text?: string; bom?: boolean; eol?: string }) => void) => () => void;
-  onAgentEvent: (cb: (evt: { id?: string; type: string; code?: number | null; signal?: string | null; text?: string; payload?: unknown }) => void) => () => void;
+  onAgentEvent: (cb: (evt: AgentEvent) => void) => () => void;
   /** An agent is asking permission and is waiting on the answer. Optional: a
    *  build without computer use never sends one. */
   onPermitRequest?: (cb: (req: PermitRequest) => void) => () => void;

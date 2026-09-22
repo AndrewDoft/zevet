@@ -256,6 +256,10 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   startAgent: (agent, cwd, opts) => ipcRenderer.invoke("local:startAgent", { agent, cwd, opts }),
   sendToAgent: (id, text) => ipcRenderer.invoke("local:sendToAgent", { id, text }),
   stopAgent: (id) => ipcRenderer.invoke("local:stopAgent", id),
+  /** The consoles still held by this app, with every event each has sent —
+   *  what a reloaded board replays to pick them back up. */
+  consoles: () => ipcRenderer.invoke("local:consoles"),
+  forgetAgent: (id) => ipcRenderer.invoke("local:forgetAgent", id),
   /** Stream of console events; returns an unsubscribe function. */
   onAgentEvent: (fn) => {
     const handler = (_e, payload) => fn(payload);

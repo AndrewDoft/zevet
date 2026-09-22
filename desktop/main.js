@@ -43,6 +43,7 @@ const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
 const agentCatalogs = require("./agent-catalogs.js");
+const { createConsoleLog } = require("./console-log.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -523,6 +524,9 @@ function openBoard(cfg) {
     // a window that no longer exists; a FileWatch left behind holds an OS watch
     // handle per directory.
     releaseBoardResources();
+    // A reload re-attaches to the running agents; a CLOSE does not, because
+    // there is no page left to re-attach them to.
+    stopAllConsoles();
   });
 
   startCollisionWatch(cfg);
@@ -1923,23 +1927,17 @@ function releaseBoardResources() {
     docSync = null;
   }
   fileWatch.closeAll();
-  /* ⚠️ THE RUNNING AGENTS GO TOO, and they are the reason this matters more
-     than the watchers above. `myConsoles` is renderer state, built up from the
-     events of runs this window started, and it is initialised to [] — so a
-     reload gives you a fresh board with an empty rail while the child
-     processes it was showing keep running as children of this one.
+  /* ⚠️ THE RUNNING AGENTS DO NOT GO, and they used to. `myConsoles` is
+     renderer state, initialised to [], so a reload gave you an empty rail
+     while the child processes kept running as children of this one — measured
+     2026-09-21: three `claude.exe` still spawned from zevet.exe with the rail
+     showing nothing. The first fix reaped them here, which killed every run on
+     Ctrl+R, and would kill every run on anything else that reloads the page.
 
-     Measured 2026-09-21: three `claude.exe` still spawned from zevet.exe with
-     the rail showing nothing. Invisible, unstoppable from the UI, and still
-     spending. That is precisely what before-quit already refuses to allow —
-     "an agent outliving the window that started it is a process nobody can see
-     and nobody asked for" — and a reload replaces the window just as surely as
-     a quit does.
-
-     Reaping rather than re-announcing: the transcript is renderer state too,
-     so a rehydrated console would be a running agent with no history above it,
-     which is a worse thing to hand someone than a clean rail. */
-  stopAllConsoles();
+     They are RE-ATTACHED instead: `consoleLog` keeps what each console has
+     already sent, and the new page replays it (`local:consoles`). Closing the
+     window and quitting still stop them — see the `closed` handler in
+     openBoard() and `before-quit`. */
 }
 
 /**
@@ -2100,6 +2098,10 @@ function toBytes(value) {
  * without being asked.
  */
 const consoles = new Map();
+
+/** What every console has already sent the board, so a reload can replay it.
+ *  See console-log.js. */
+const consoleLog = createConsoleLog();
 
 function toBoard(channel, payload) {
   if (boardWindow && !boardWindow.isDestroyed()) boardWindow.webContents.send(channel, payload);
@@ -2301,15 +2303,27 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
       // started keep running -- so the only place a week's spend can actually
       // accumulate is this side of the bridge.
       if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
-      toBoard("local:agentEvent", { id: handle.id, ...evt });
+      toBoard("local:agentEvent", consoleLog.record(handle.id, evt));
     },
   });
   if (!started.ok) return { ok: false, error: started.error };
 
   handle.id = started.id;
   consoles.set(started.id, started);
+  consoleLog.open(started.id, consoleMeta(agent, dir, opts));
   return { ok: true, id: started.id, agent, cwd: dir };
 });
+
+/** What a reloaded board needs to rebuild a console's rail entry. */
+function consoleMeta(agent, dir, opts) {
+  return {
+    agent: String(agent || ""),
+    root: dir,
+    model: opts && typeof opts.model === "string" ? opts.model : "",
+    mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
+    startedAt: Date.now(),
+  };
+}
 
 /**
  * A follow-up prompt to a console whose process has already exited.
@@ -2350,13 +2364,16 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
     ...(mcpConfig ? { mcpConfig, permissionTool: "mcp__zevet__permission_prompt" } : {}),
     onEvent: (evt) => {
       if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
-      toBoard("local:agentEvent", { id: handle.id, ...evt });
+      toBoard("local:agentEvent", consoleLog.record(handle.id, evt));
     },
   });
   if (!started.ok) return { ok: false, error: started.error };
 
   handle.id = started.id;
   consoles.set(started.id, started);
+  // The same thread, a new process: its history moves over rather than
+  // coming back after a reload as a second thread.
+  consoleLog.open(started.id, consoleMeta(agent, dir, opts), opts && typeof opts.continues === "string" ? opts.continues : "");
   return { ok: true, id: started.id, agent, cwd: dir };
 });
 
@@ -2364,7 +2381,11 @@ ipcMain.handle("local:sendToAgent", (_e, { id, text }) => {
   const c = consoles.get(id);
   if (!c) return { ok: false, error: "no such console" };
   try {
-    return c.send(String(text || ""));
+    const sent = c.send(String(text || ""));
+    // Kept for a reload and NOT sent live: the board already shows what it
+    // typed, and no CLI's own stream carries it back as a prompt.
+    if (sent && sent.ok !== false) consoleLog.record(id, { type: "prompt", text: String(text || "") });
+    return sent;
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -2382,9 +2403,18 @@ ipcMain.handle("local:stopAgent", (_e, id) => {
   return { ok: true };
 });
 
+/** Every console a reloaded board should show again, with what it has said. */
+ipcMain.handle("local:consoles", () => consoleLog.snapshot());
+
+/** The board closed a thread; a reload should not bring it back. */
+ipcMain.handle("local:forgetAgent", (_e, id) => {
+  consoleLog.forget(String(id || ""));
+  return { ok: true };
+});
+
 // An agent outliving the window that started it is a process nobody can see
-// and nobody asked for. Called on quit, and on every reload — see
-// releaseBoardResources.
+// and nobody asked for. Called on quit and on window close — NOT on reload,
+// which re-attaches instead; see releaseBoardResources.
 function stopAllConsoles() {
   for (const c of consoles.values()) {
     try {
@@ -2394,6 +2424,7 @@ function stopAllConsoles() {
     }
   }
   consoles.clear();
+  consoleLog.clear();
 }
 
 app.on("before-quit", stopAllConsoles);

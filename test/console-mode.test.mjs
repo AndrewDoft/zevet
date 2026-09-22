@@ -92,7 +92,7 @@ describe("sendPrompt applies a pending posture change before it resumes", () => 
     const modeAssignIdx = fn.indexOf("c.mode = c.nextMode!;");
     const clearIdx = fn.indexOf("c.nextMode = null;");
     const resumeCheckIdx = fn.indexOf("if (!c.running && c.sessionId");
-    const resumeCallIdx = fn.indexOf("bridge.local.resumeAgent(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode })");
+    const resumeCallIdx = fn.indexOf("bridge.local.resumeAgent(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode,");
     assert.ok(swapIdx > -1 && modeAssignIdx > -1 && clearIdx > -1 && resumeCheckIdx > -1 && resumeCallIdx > -1);
     // ⚠️ THIS ORDERING IS THE WHOLE FEATURE. Reversing any of these — e.g.
     // reading c.mode into resumeAgent before the swap, or stopping AFTER the

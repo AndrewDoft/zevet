@@ -236,6 +236,21 @@ describe("the key, the secret and the socket stay in the main process", () => {
     assert.match(release.slice(0, 400), /docSync\.destroy\(\)[\s\S]*fileWatch\.closeAll\(\)/);
   });
 
+  test("a reload re-attaches to running agents; close and quit still stop them", () => {
+    const fn = main.slice(main.indexOf("function releaseBoardResources("));
+    const release = stripComments(fn.slice(0, fn.indexOf("\n}") + 2));
+    assert.doesNotMatch(release, /stopAllConsoles/, "a reload kills every running agent");
+    assert.match(
+      main,
+      /boardWindow\.on\("closed"[\s\S]{0,900}?stopAllConsoles\(\)/,
+      "closing the board window leaves its agents running",
+    );
+    assert.match(main, /app\.on\("before-quit", stopAllConsoles\)/, "quitting leaves agents running");
+    assert.match(main, /ipcMain\.handle\("local:consoles"/, "a reloaded board cannot ask for its consoles");
+    assert.match(preload, /consoles: \(\) => ipcRenderer\.invoke\("local:consoles"\)/);
+    assert.match(preload, /forgetAgent: \(id\) => ipcRenderer\.invoke\("local:forgetAgent", id\)/);
+  });
+
   test("the secret reaches DocSync and the derived token reaches the hub — never the other way round", () => {
     // Comments stripped: this file argues at length about `cfg.secret` in the
     // very comment that explains why `cfg.secret` is not used here, and a
