@@ -827,6 +827,8 @@ ipcMain.handle("zevet:config", () => {
   return {
     hub: cfg.hub,
     actor: cfg.actor || "",
+    // Same identity as hook events; actor names can be shared across machines.
+    machine: os.hostname().slice(0, 60),
     hasSecret,
     // Who is signed in, for the settings pane to show. A login is a public
     // name, not a credential -- it is on every commit this person has ever

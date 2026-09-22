@@ -176,6 +176,7 @@ interface BoardState {
   theme: Theme;
 
   localRoot: string | null;
+  localCheckout: string | null;
   localEntries: LocalEntry[] | null;
   localError: string | null;
   /** The tree was cut short. NOT an error - see openLocalRoot. */
@@ -295,6 +296,7 @@ interface BoardState {
   };
 
   myActor: string | null;
+  myMachine: string | null;
 
   /* --- actions --- */
   setConn: (c: Conn, label?: string) => void;
@@ -467,6 +469,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   theme: (pref("theme", "light") === "dark" ? "dark" : "light") as Theme,
 
   localRoot: null,
+  localCheckout: null,
   localEntries: null,
   localError: null,
   localTruncated: null,
@@ -539,6 +542,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   myActor: (bridge.cfg && bridge.cfg.actor) || null,
+  myMachine: bridge.cfg?.machine || null,
 
   setConn: (c) => set({ conn: c }),
   setNeedsToken: (v) => set({ needsToken: v }),
@@ -860,12 +864,16 @@ export const useBoard = create<BoardState>((set, get) => ({
     set((g) => ({
       stats: { lines: Object.create(null) as Stats["lines"], diff: null, root: null },
       localRoot: dir,
+      localCheckout: null,
       localEntries: null,
       localFile: null,
       localError: null,
       localTruncated: null,
       selectedPath: g.selectedPath,
     }));
+    checkoutId(dir).then((id) => {
+      if (get().localRoot === dir) set({ localCheckout: id });
+    }).catch(() => {}); // Same-machine checkout events wait for a matching fingerprint.
     bridge.local?.tree(dir).then((r) => {
       if (r && r.ok) {
         /* A CUT-SHORT TREE IS NOT A FAILED ONE. This wrote the truncation
@@ -905,7 +913,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     } catch {
       // See openLocalRoot.
     }
-    set({ localRoot: null, localEntries: null, localFile: null, selectedPath: null });
+    set({ localRoot: null, localCheckout: null, localEntries: null, localFile: null, selectedPath: null });
   },
 
   addWorkspace: () => {
@@ -1421,6 +1429,28 @@ function blankNode(name: string, kind: "dir" | "file"): TreeNode {
   return { name, kind, children: Object.create(null), who: Object.create(null), lastTs: 0 };
 }
 
+async function checkoutId(root: string): Promise<string> {
+  let normalized = root.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (/^[a-z]:/i.test(normalized) || normalized.startsWith("//")) normalized = normalized.toLowerCase();
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+  return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function localActivity(e: HubEvent): boolean {
+  const g = useBoard.getState();
+  const repo = g.localRoot?.replaceAll("\\", "/").replace(/\/+$/, "").split("/").pop();
+  if (!repo || e.repo !== repo || !e.target || /[\\:]|^\//.test(e.target) ||
+    e.target.split("/").some((part) => !part || part === "." || part === "..")) return false;
+  // Teammates have different checkout paths. Only this machine's fingerprint
+  // distinguishes another worktree; older clients without one still belong.
+  return !(g.myMachine && e.machine === g.myMachine && e.checkout) || e.checkout === g.localCheckout;
+}
+
+export function fileEvents(): HubEvent[] {
+  const g = useBoard.getState();
+  return scoped().filter((e) => !g.localRoot || localActivity(e));
+}
+
 export function buildTree(): { root: TreeNode; now: number } {
   const now = serverNow();
   const g = useBoard.getState();
@@ -1439,7 +1469,7 @@ export function buildTree(): { root: TreeNode; now: number } {
     });
   }
 
-  scoped().forEach((e) => {
+  fileEvents().forEach((e) => {
     if (!e.target || e.kind !== "tool") return;
     const parts = String(e.target).split("/").filter(Boolean);
     let node = root;
@@ -1931,13 +1961,12 @@ function followEvent(e: HubEvent): void {
   const g = useBoard.getState();
   if (g.followMode === "off") return;
   if (!e || e.kind !== "tool" || !e.target || !e.repo) return;
+  if (g.localRoot && !localActivity(e)) return;
   const myActor = g.myActor;
   if (g.followMode === "mine" && (!myActor || e.actor !== myActor)) return;
   const patch: Partial<BoardState> = {};
   if (g.selectedRepo !== e.repo) patch.selectedRepo = e.repo;
-  const canOpen =
-    bridge.local && g.localRoot &&
-    String(g.localRoot).split("\\").join("/").split("/").pop() === e.repo;
+  const canOpen = bridge.local && g.localRoot && localActivity(e);
   if (canOpen) revealPath(e.target);
   if (g.selectedPath === e.target) {
     if (Object.keys(patch).length) useBoard.setState(patch);
@@ -2536,7 +2565,7 @@ function followAllows(actor: string): boolean {
 }
 
 function lastToolFor(repoName: string, relPath: string): HubEvent | null {
-  return rosterLastToolFor(useBoard.getState().events, repoName, relPath) as HubEvent | null;
+  return rosterLastToolFor(fileEvents(), repoName, relPath) as HubEvent | null;
 }
 
 /** Scroll the editor so a 1-based line lands near the top. Pure geometry. */
@@ -2670,6 +2699,7 @@ export function boot(): void {
       window.__zevetCfg = c as never;
       window.__zevetHub = c.hub;
       if (c.actor) useBoard.getState().setMyActor(c.actor);
+      useBoard.setState({ myMachine: c.machine || null });
       /* The saved posture, applied as soon as it arrives. A value the CLI
          table does not know is ignored rather than passed on, so a
          hand-edited config cannot launch an agent with a flag nothing maps. */
@@ -2761,6 +2791,7 @@ export function boot(): void {
 interface ZevetConfigLike {
   hub?: string;
   actor?: string;
+  machine?: string;
   /** This user's default permission posture; see desktop/main.js storedMode. */
   mode?: string;
 }

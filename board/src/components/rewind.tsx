@@ -17,7 +17,7 @@
  * export them, same reasoning moreviews.tsx itself gives for duplicating out
  * of agentviews.tsx.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
 import { forkConsole, selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
 import type { ConsoleEntry } from "../lib/types";
@@ -78,6 +78,7 @@ const ASK_AGAIN_SUFFIX: Record<string, string> = {
 export function AskAgain() {
   const active = useBoard(selectActiveConsole);
   const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [active?.key]);
   const original = active ? textOf(lastUserMessage(active.transcript.messages)?.content) : "";
 
   // Nothing to re-ask without a session id to branch from, and forking a

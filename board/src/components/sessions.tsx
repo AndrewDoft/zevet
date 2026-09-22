@@ -35,6 +35,8 @@ import {
 import type { SessionSummary } from "../lib/sessions.d.mts";
 
 function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
+  // Reuse the board clock; all rows advance together once a minute.
+  useBoard((st) => Math.floor(st.tick / 60));
   const open = useBoard((st) => st.sessions.open);
   const openSession = useBoard((st) => st.openSession);
   const isOpen = open?.id === s.id && open?.source === s.source;

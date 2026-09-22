@@ -1064,6 +1064,7 @@ const server = createServer(async (req, res) => {
       actor: String(parsed.actor || "unknown").slice(0, 40),
       repo: String(parsed.repo || "").slice(0, 120),
       branch: String(parsed.branch || "").slice(0, 120),
+      checkout: typeof parsed.checkout === "string" && /^[a-f0-9]{64}$/.test(parsed.checkout) ? parsed.checkout : "",
       kind: ["prompt", "tool", "turn_end"].includes(parsed.kind) ? parsed.kind : "tool",
       tool: String(parsed.tool || "").slice(0, 60),
       target: parsed.target ? String(parsed.target).slice(0, 300) : null,

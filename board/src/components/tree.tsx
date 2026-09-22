@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { mono } from "./assistant-ui/elements/surfaces";
 import {
   buildTree,
+  fileEvents,
   collisionSet,
   hueOf,
   selectCollapsed,
@@ -318,6 +319,8 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
   const myActor = useBoard((s) => s.myActor);
   const selectedRepo = useBoard((s) => s.selectedRepo);
   const idleAfterMs = useBoard((s) => s.idleAfterMs);
+  const localCheckout = useBoard((s) => s.localCheckout);
+  const localRoot = useBoard((s) => s.localRoot);
   /* ⚠️ THE CLOCK, or `now` never moves. `built.now` is read once per render
      and drives both `data-stale` and every "… ago" title, and the only other
      subscription here is to events — so the marks stopped ageing at exactly
@@ -334,8 +337,8 @@ export function TreeFill({ blanked }: { blanked?: boolean }) {
      O(rows × events). `spritesByPath` walks `events` a single time; every row
      below just looks its own path up in the result. */
   const sprites = useMemo(
-    () => spritesByPath(events, { repoName: selectedRepo, followMode, myActor, now: built.now, idleAfterMs }),
-    [events, selectedRepo, followMode, myActor, built.now, idleAfterMs],
+    () => spritesByPath(fileEvents(), { repoName: selectedRepo, followMode, myActor, now: built.now, idleAfterMs }),
+    [events, selectedRepo, followMode, myActor, built.now, idleAfterMs, localCheckout, localRoot],
   );
 
   return (

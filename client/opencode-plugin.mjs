@@ -113,19 +113,28 @@ function repoInfo(startDir) {
   return { repo: "", root: null };
 }
 
+// A checkout fingerprint distinguishes worktrees without publishing local paths.
+// Keep this normalization in sync with board.ts's checkoutId.
+function checkoutId(root) {
+  if (!root) return "";
+  let normalized = root.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (/^[a-z]:/i.test(normalized) || normalized.startsWith("//")) normalized = normalized.toLowerCase();
+  return createHash("sha256").update(normalized).digest("hex");
+}
+
 /**
  * A file path every teammate spells the same way: relative to the repo root,
  * so Windows and macOS checkouts of one repo compare equal for the collision
- * check. Outside the repo, basename only — never a home directory layout.
+ * check. Outside paths have no target — never a made-up root file.
  */
-function repoRelative(file, root) {
+function repoRelative(file, root, cwd = root) {
   try {
-    if (!root) return path.basename(file);
-    const rel = path.relative(root, path.resolve(root, file));
-    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return path.basename(file);
+    if (!root) return null;
+    const rel = path.relative(root, path.resolve(cwd || root, file));
+    if (!rel || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) return null;
     return rel.split(path.sep).join("/");
   } catch {
-    return path.basename(file);
+    return null;
   }
 }
 
@@ -302,7 +311,7 @@ export const Zevet = async ({ directory } = {}) => {
         let shown = "";
         if (detailLevel === "full") shown = scrub(detail);
         else if (detailLevel === "brief") shown = String(detail || "").trim().split(/\s+/)[0] || "";
-        await post({ kind: "tool", tool, target: file ? repoRelative(file, root) : null, detail: shown, repo });
+        await post({ kind: "tool", tool, target: file ? repoRelative(file, root, directory) : null, detail: shown, repo, checkout: checkoutId(root) });
       } catch (err) {
         // Rule 1. A watcher that can throw into tool.execute.before is a
         // watcher that can end somebody's turn.

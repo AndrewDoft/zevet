@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, chmodSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { startHub, runScript, state, tempDir, TOKEN, ROOT } from "./helpers.mjs";
 import { deriveAuthToken } from "../client/secret.mjs";
 
@@ -197,14 +198,21 @@ describe("what the hook reports", () => {
     const abs = path.join(repo.dir, "src", "db.ts");
     const e = await send({ hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: abs } });
     assert.equal(e.target, "src/db.ts", "must not be an absolute path");
+    const root = repo.dir.replaceAll("\\", "/");
+    assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
     assert.ok(!e.target.includes("\\"), "must use forward slashes on every platform");
   });
 
-  test("a path outside the repo is reduced to its basename", async () => {
+  test("relative file paths resolve from the agent working directory", async () => {
+    const e = await send({ cwd: path.join(repo.dir, "src"), hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: "db.ts" } });
+    assert.equal(e.target, "src/db.ts");
+  });
+
+  test("a path outside the repo has no file target", async () => {
     // Publishing a teammate's home directory layout to the team is not ours to do.
     const outside = path.join(path.parse(repo.dir).root, "somewhere", "else", "secret.env");
     const e = await send({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: outside } });
-    assert.equal(e.target, "secret.env");
+    assert.equal(e.target, null);
   });
 
   test("reads the branch from .git/HEAD", async () => {
