@@ -232,12 +232,16 @@ describe("briefFor: C2, fails open", () => {
     // one, same as `sleep`/`now` are injected as real functions elsewhere in
     // this suite rather than being no-ops.
     //
-    // timeoutMs is injected (same pattern as fetchImpl/sleep/now) rather than
-    // waiting out the real 2000ms BRIEF_TIMEOUT_MS: that real wait raced the
-    // test runner's own process teardown under CI's constrained cores and
-    // was observed cancelling this test on both CI OSes, never locally. This
-    // still exercises the real timer/abort path end to end, and that timer
-    // must be ref'd: an unref'd one let Node 22 drain the loop and cancel this.
+    // timeoutMs is injected (same pattern as fetchImpl/sleep/now) so this
+    // doesn't wait out the real 2000ms budget -- but the value was never the
+    // bug. briefFor() used to arm AbortSignal.timeout(), whose internal timer
+    // is unref'd by design and so never fires in an otherwise-idle process:
+    // reproduced on Node 22 (what CI runs) via `node --test` on this file
+    // alone -- this test's promise never settles and node --test reports it
+    // (and everything queued after it) cancelled, on every run, at ANY
+    // timeoutMs. Node 24 (this dev machine before the fix) never showed it.
+    // briefFor() now arms its own ref'd setTimeout()/AbortController, which
+    // fires reliably regardless of what else the process is doing.
     const f = (_url, init) => new Promise((_resolve, reject) => {
       init.signal.addEventListener("abort", () => reject(new Error("aborted")));
     });

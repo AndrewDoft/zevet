@@ -206,12 +206,19 @@ class MasoraPair {
 async function briefFor({ baseUrl, token, prompt, repository, fetchImpl, timeoutMs } = {}) {
   if (!baseUrl || !token) return null;
   const f = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
-  // A ref'd timer, not AbortSignal.timeout(): that one is unref'd by design,
-  // so a pending brief kept nothing alive and Node 22's test runner drained
-  // the loop and cancelled the test (and every test queued after it) before
-  // the deadline fired. A pending brief should hold the process open anyway.
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), typeof timeoutMs === "number" ? timeoutMs : BRIEF_TIMEOUT_MS);
+  // Not AbortSignal.timeout(): its internal timer is unref'd by design, so it
+  // never fires in an otherwise-idle process -- reproduced on Node 22 (what
+  // CI runs; the workflow asked for 20, GitHub forced 22) with `node --test`
+  // on this file alone: the timer simply never elapses and node --test
+  // reports the still-pending promise as a cancelled/dangling test, on EVERY
+  // run, regardless of the timeout value (proved at both 2000ms and 50ms).
+  // Node 24 (this dev machine) does not show it, which is why it was invisible
+  // locally. A manual, ref'd timer fires reliably either way, which is also
+  // the more honest implementation of "fails open on ITS OWN timeout" --
+  // production never depended on the process going idle to fire it, but
+  // nothing was actually holding it to that promise before.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), typeof timeoutMs === "number" ? timeoutMs : BRIEF_TIMEOUT_MS);
   try {
     const res = await f(`${String(baseUrl).replace(/\/+$/, "")}/api/v2/context/brief`, {
       method: "POST",
@@ -221,15 +228,7 @@ async function briefFor({ baseUrl, token, prompt, repository, fetchImpl, timeout
         surface: "zevet",
         ...(repository ? { repository } : {}),
       }),
-      // Injectable, same as fetchImpl/sleep/now elsewhere in this file: a
-      // real 2000ms wall-clock wait here raced the test runner's own
-      // per-file process teardown under CI's constrained cores (~260
-      // concurrent suites on a 2-core runner), cancelling this test and
-      // everything queued after it before the real timer ever fired --
-      // reproduced on both CI OSes, never locally. The production path is
-      // unaffected: no caller passes timeoutMs, so it still defaults to
-      // BRIEF_TIMEOUT_MS.
-      signal: ac.signal,
+      signal: controller.signal,
     });
     if (!res.ok) return null;
     const body = await res.json();
