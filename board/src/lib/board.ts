@@ -697,6 +697,7 @@ export const useBoard = create<BoardState>((set, get) => ({
         c.error = (r && r.error) || "could not start";
         pushConsoleLine(c, "err", c.error);
       } else {
+        if (closedMeanwhile(c, r.id)) return;
         c.id = r.id ? String(r.id) : null;
         // The prompt a fork was started to ask. It goes only after the spawn
         // succeeded, because a prompt sent to a console with no process is the
@@ -822,6 +823,7 @@ export const useBoard = create<BoardState>((set, get) => ({
           signalConsolesChanged();
           return;
         }
+        if (closedMeanwhile(c, r.id)) return;
         // The events for this turn arrive under the NEW process id, so the
         // console has to answer to it — `consoleById` matches on `c.id`.
         c.id = r.id ? String(r.id) : null;
@@ -1300,6 +1302,7 @@ export const useBoard = create<BoardState>((set, get) => ({
         signalConsolesChanged();
         return;
       }
+      if (closedMeanwhile(c, r.id)) return;
       // The events for this turn arrive under the NEW process id, so the
       // console has to answer to it — `consoleById` matches on `c.id`.
       c.id = r.id ? String(r.id) : null;
@@ -1538,6 +1541,19 @@ function consoleById(id: string | null | undefined): ConsoleEntry | undefined {
   if (exact) return exact;
   const pending = list.filter((c) => c.id === null);
   return pending.length === 1 ? pending[0] : undefined;
+}
+
+/**
+ * The console was closed while its process was still starting, so the process
+ * has no thread to answer to: stop it, and keep a reload from bringing it back.
+ */
+function closedMeanwhile(c: ConsoleEntry, id: string | null | undefined): boolean {
+  if (useBoard.getState().myConsoles.some((x) => x.key === c.key)) return false;
+  if (id) {
+    void bridge.local?.stopAgent(String(id));
+    void bridge.local?.forgetAgent?.(String(id));
+  }
+  return true;
 }
 
 /**

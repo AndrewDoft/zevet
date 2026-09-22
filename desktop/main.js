@@ -2520,8 +2520,19 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
   handle.id = started.id;
   consoles.set(started.id, started);
   // The same thread, a new process: its history moves over rather than
-  // coming back after a reload as a second thread.
-  consoleLog.open(started.id, consoleMeta(agent, dir, opts), opts && typeof opts.continues === "string" ? opts.continues : "");
+  // coming back after a reload as a second thread, and the old handle goes.
+  const continues = opts && typeof opts.continues === "string" ? opts.continues : "";
+  consoleLog.open(started.id, consoleMeta(agent, dir, opts), continues);
+  const prev = consoles.get(continues);
+  if (prev) {
+    try {
+      prev.stop();
+    } catch {
+      // Already gone, which is the expected case: a follow-up only ever
+      // replaces a process that has exited.
+    }
+    consoles.delete(continues);
+  }
   return { ok: true, id: started.id, agent, cwd: dir };
 });
 
