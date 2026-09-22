@@ -30,8 +30,11 @@ import { bridge } from "./lib/bridge";
 function RailFoot() {
   const theme = useBoard(selectTheme);
   const setTheme = useBoard((s) => s.setTheme);
+  const viewMode = useBoard(selectViewMode);
+  const setView = useBoard((s) => s.setView);
   const openSettings = useBoard((s) => s.openSettings);
   const isDark = theme === "dark";
+  const isAgent = viewMode === "agent";
   return (
     <>
       <button
@@ -49,6 +52,23 @@ function RailFoot() {
         <span className="lbl" id="themeLabel">
           {isDark ? "Dark" : "Light"}
         </span>
+      </button>
+      {/* Same idiom as the theme switch beside it - one pill, two states -
+          rather than a settings row, now that both live here instead of in
+          the sheet. See settings.tsx for why the View section left. */}
+      <button
+        type="button"
+        className="themer"
+        id="viewToggle"
+        aria-label={isAgent ? "IDE view" : "Agent view"}
+        aria-pressed={isAgent}
+        title="IDE or agent view"
+        onClick={() => setView(isAgent ? "ide" : "agent")}
+      >
+        <span className="sky" aria-hidden="true">
+          <span className="sky-circle" />
+        </span>
+        <span className="lbl">{isAgent ? "Agent" : "IDE"}</span>
       </button>
       {/* A gear, not the word. Andrew: "get a gear thing instead of the word
           settings". The label moves to the tooltip and the accessible name,

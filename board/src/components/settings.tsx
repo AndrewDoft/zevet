@@ -4,7 +4,6 @@ import { bridge } from "../lib/bridge";
 import { connectPhaseLabel, connectValue, disconnectValue } from "../lib/connect.mjs";
 import {
   selectUpdates,
-  selectViewMode,
   useBoard,
 } from "../lib/board";
 import { updateCommand, updatePercent, updateStatusText } from "../lib/update.mjs";
@@ -743,8 +742,6 @@ function credentialLabel() {
 export function SettingsSheet() {
   const sheetOpen = useBoard((s) => s.sheetOpen);
   const closeSettings = useBoard((s) => s.closeSettings);
-  const viewMode = useBoard(selectViewMode);
-  const setView = useBoard((s) => s.setView);
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
   const myActor = useBoard((s) => s.myActor);
 
@@ -801,34 +798,11 @@ export function SettingsSheet() {
           </button>
         </div>
 
-        {/* ⚠️ NO APPEARANCE SECTION. The light/dark toggle lives in the strip,
-            where it is one click away instead of three, and Andrew asked for
-            the duplicate here to go: "that's already represented outside of
-            settings." Two controls for one piece of state is also two places
-            for it to look wrong. */}
-        <SSection title="View" summary={viewMode === "ide" ? "Files" : "Agent"}>
-          <div className="sbtn-row">
-            {(
-              [
-                ["ide", "Files"],
-                ["agent", "Agent"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                className={MAKE_BTN}
-                id={"settingsView-" + id}
-                key={id}
-                type="button"
-                aria-pressed={viewMode === id}
-                disabled={viewMode === id}
-                onClick={() => setView(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </SSection>
-
+        {/* ⚠️ NO APPEARANCE SECTION, AND NO VIEW SECTION EITHER NOW. Theme
+            already lived in the strip; the ide/agent toggle joins it there
+            (App.tsx's RailFoot) rather than growing a second control here.
+            Two controls for one piece of state is two places for it to
+            look wrong. */}
         <PermissionSection />
         <AgentSettings />
 

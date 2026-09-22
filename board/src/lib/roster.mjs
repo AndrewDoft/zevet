@@ -117,6 +117,31 @@ export function agoText(now, ts) {
   return ago(now - ts) + " ago";
 }
 
+const DAY_MS = 86400000;
+
+/** Real per-day event counts, oldest to newest, for a heat-map style widget.
+ *  `days` is a display window, not a claim about how much history exists —
+ *  the hub only ever keeps a rolling few hundred events (see hub/server.mjs),
+ *  so a quiet day is legitimately 0 rather than omitted. Nothing here is
+ *  invented: a day with no events in it reads as a day with no events in it. */
+export function dailyActivity(events, days, now) {
+  const span = Math.max(1, Math.floor(days) || 14);
+  const end = Math.floor((now == null ? Date.now() : now) / DAY_MS);
+  const start = end - (span - 1);
+  const counts = new Map();
+  (events || []).forEach((e) => {
+    if (!e || typeof e.ts !== "number") return;
+    const day = Math.floor(e.ts / DAY_MS);
+    if (day < start || day > end) return;
+    counts.set(day, (counts.get(day) || 0) + 1);
+  });
+  const out = [];
+  for (let day = start; day <= end; day++) {
+    out.push({ date: new Date(day * DAY_MS).toISOString().slice(0, 10), count: counts.get(day) || 0 });
+  }
+  return out;
+}
+
 /** The active collaborators whose last event is in a repo — one dot each. */
 export function liveActorsOf(roster, repoName) {
   if (!repoName) return [];

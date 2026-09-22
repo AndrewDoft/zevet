@@ -646,9 +646,15 @@
   /* ---- the rail's footer: theme, and a way into settings ------------------
       Above the Repos header, where Andrew asked for it. */
   .railfoot {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    display: flex; align-items: center; gap: 14px;
     padding: 7px 16px; border-top: 1px solid var(--line);
   }
+  /* Was `justify-content: space-between`, which only ever had two children to
+     split apart. A third control (the ide/agent toggle) landed dead center
+     between them instead of beside the theme switch it was asked to sit next
+     to. The gear alone gets pushed to the row's far edge now; everything
+     else reads left to right in the order it is written. */
+  .railfoot .settings-link { margin-left: auto; }
 
   /* ---- the update row ----------------------------------------------------
      Above the theme toggle, at the bottom of the rail: present enough to be
