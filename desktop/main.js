@@ -44,6 +44,7 @@ const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
 const agentCatalogs = require("./agent-catalogs.js");
 const { createConsoleLog } = require("./console-log.js");
+const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const masoraPush = require("./masora-push.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
@@ -2540,15 +2541,38 @@ ipcMain.handle("local:sendToAgent", (_e, { id, text }) => {
   const c = consoles.get(id);
   if (!c) return { ok: false, error: "no such console" };
   try {
+    const first = !consoleLog.prompted(id);
     const sent = c.send(String(text || ""));
     // Kept for a reload and NOT sent live: the board already shows what it
     // typed, and no CLI's own stream carries it back as a prompt.
-    if (sent && sent.ok !== false) consoleLog.record(id, { type: "prompt", text: String(text || "") });
+    if (sent && sent.ok !== false) {
+      consoleLog.record(id, { type: "prompt", text: String(text || "") });
+      if (first) void nameConsole(id, String(text || "")).catch(() => {});
+    }
     return sent;
   } catch (err) {
     return { ok: false, error: err.message };
   }
 });
+
+/**
+ * A few generated words for a console's title, from its first prompt. Not
+ * awaited by anything: the agent is already running, and on any failure the
+ * board keeps titling it by the prompt's first sentence. See auto-title.js.
+ */
+async function nameConsole(id, text) {
+  const detect = await loadDetect();
+  const claude = detect ? detect.detectAgents().find((a) => a.id === "claude-code") : null;
+  if (!claude || !claude.signedIn) return;
+  const r = agentConsole.resolveAgent("claude");
+  if (!r.ok) return;
+  const inv =
+    r.kind === "shim"
+      ? agentConsole._internals.buildShimInvocation(r.file, autoTitle.ARGS)
+      : { command: r.file, args: autoTitle.ARGS, options: {} };
+  const title = await autoTitle.titleFor(text, inv);
+  if (title && consoleLog.setTitle(id, title)) toBoard("local:agentEvent", { type: "title", id, title });
+}
 
 ipcMain.handle("local:stopAgent", (_e, id) => {
   const c = consoles.get(id);

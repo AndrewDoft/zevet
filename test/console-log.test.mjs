@@ -112,3 +112,16 @@ test("a console closed while starting stops the process it was waiting for", () 
   // startAgent and both resume paths: every place a new process id lands.
   assert.equal(board.match(/if \(closedMeanwhile\(c, r\.id\)\) return;\s*(\/\/[^\n]*\s*)*c\.id = r\.id/g)?.length, 3);
 });
+
+test("a generated title is kept with the metadata and follows a continued thread", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  assert.equal(log.prompted("a"), false);
+  log.record("a", { type: "prompt", text: "hi" });
+  assert.equal(log.prompted("a"), true);
+  assert.equal(log.setTitle("a", "Greeting"), true);
+  assert.equal(log.snapshot().consoles[0].title, "Greeting");
+  log.open("b", META, "a");
+  assert.equal(log.snapshot().consoles[0].title, "Greeting");
+  assert.equal(log.setTitle("a", "Gone"), false);
+});

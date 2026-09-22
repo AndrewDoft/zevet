@@ -112,6 +112,9 @@ export interface ConsoleEntry {
   /** The CLI's own title for this session, once it has written one to its
    *  session file (claude's `ai-title`, codex's `thread_name`). */
   title?: string;
+  /** A few words a small model made of the first prompt (desktop/auto-title.js).
+   *  Only a fallback: `title` wins whenever there is one. */
+  autoTitle?: string;
   /** Slash commands the agent CLI announced in its init line (claude does;
    *  the others do not, and stay empty). Drives the composer's `/` menu. */
   slashCommands: string[];

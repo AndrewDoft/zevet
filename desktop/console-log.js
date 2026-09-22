@@ -41,8 +41,8 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
       entries.set(id, {
         id,
         // The thread's start, not this process's: the board's does not move
-        // on a follow-up either.
-        meta: prev ? { ...meta, startedAt: prev.meta.startedAt } : meta,
+        // on a follow-up either. Nor does its generated title.
+        meta: prev ? { ...meta, startedAt: prev.meta.startedAt, ...(prev.meta.title ? { title: prev.meta.title } : {}) } : meta,
         running: true,
         // Re-stamped with the new id: the board replays them against the
         // console that now answers to it, and drops what matches no console.
@@ -66,6 +66,22 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
         }
       }
       return out;
+    },
+
+    /** Whether the thread has been sent a prompt yet: the first one is what
+     *  gets it a title (desktop/auto-title.js). */
+    prompted(id) {
+      const e = entries.get(id);
+      return Boolean(e && e.events.some((evt) => evt.type === "prompt"));
+    },
+
+    /** A generated title, kept with the metadata so a reload shows it again.
+     *  False when the console is gone. */
+    setTitle(id, title) {
+      const e = entries.get(id);
+      if (!e) return false;
+      e.meta = { ...e.meta, title };
+      return true;
     },
 
     /** The board closed the thread. A finished console is otherwise kept, so a
