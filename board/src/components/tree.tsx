@@ -24,13 +24,12 @@ function StatBadge({ path }: { path: string }) {
   const localRoot = useBoard((s) => s.localRoot);
   const local = Boolean(bridge.local);
   if (!local || stats.root !== localRoot) return null;
-  const lines = stats.lines[path];
   const d = stats.diff && stats.diff[path];
-  if (lines == null && !d) return null;
+  if (!d) return null;
 
   // The diff-stat treatment is elements/file-tree's: tabular numerals, its
   // emerald/red pair, and the same order. zevet adds the two things that
-  // element has no notion of — an untracked file, and a line count.
+  // element has no notion of — an untracked file.
   const parts: ReactNode[] = [];
   if (d && d.status === "untracked") {
     parts.push(
@@ -60,11 +59,6 @@ function StatBadge({ path }: { path: string }) {
         );
     }
   }
-  if (lines != null) parts.push(
-    <span className="loc" key="loc">
-      {lines}
-    </span>,
-  );
   if (!parts.length) return null;
   return <span className={cn(mono, "stat shrink-0 tabular-nums")}>{parts}</span>;
 }

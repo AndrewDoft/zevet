@@ -156,6 +156,15 @@ describe("the board page", () => {
     assert.ok((src.match(/toggleSelection\(/g) || []).length >= 3, "expected one definition and two call sites");
   });
 
+  test("the file tree starts folders closed, remembers each repo, and reveals followed files", () => {
+    const board = readFileSync(path.join(SRC, "lib", "board.ts"), "utf8");
+    const tree = readFileSync(path.join(SRC, "components", "tree.tsx"), "utf8");
+    assert.ok(board.includes("zevet.tree-collapsed.v1"), "folder state is not saved per repository");
+    assert.ok(board.includes("collapseForEntries"), "new folders do not start collapsed");
+    assert.ok(board.includes("revealPath(e.target)"), "following an agent can leave its file hidden");
+    assert.ok(!tree.includes('className="loc"'), "an unlabeled line count is still shown beside file names");
+  });
+
   test("the composer is a textarea, so a prompt can have newlines in it", () => {
     // The composer is the registry's now rather than a hand-rolled textarea,
     // so the claim is checked where it lives. ComposerPrimitive.Input renders
