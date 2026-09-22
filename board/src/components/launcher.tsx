@@ -38,7 +38,7 @@ function ModeSelector() {
   return (
     <div className="flex w-full flex-col gap-2.5">
       <div className="flex items-baseline justify-between">
-        <span className="text-[13.5px] font-medium">Posture</span>
+        <span className="text-[13.5px] font-medium">Permissions</span>
         <span className={cn(mono, "text-foreground/35")}>{launchMode}</span>
       </div>
 
@@ -54,7 +54,7 @@ function ModeSelector() {
       <div
         className={cn(field, "flex gap-0.5 rounded-full p-0.5")}
         role="radiogroup"
-        aria-label="Permission posture"
+        aria-label="Permissions"
         onKeyDown={(e) => {
           const i = MODES.findIndex((m) => m.id === launchMode);
           const step =

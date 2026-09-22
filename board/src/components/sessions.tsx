@@ -31,30 +31,13 @@ import {
   sessionLabel,
   sessionMatches,
   sessionProject,
-  sessionWhere,
 } from "../lib/sessions.mjs";
 import type { SessionSummary } from "../lib/sessions.d.mts";
-
-/**
- * Where it was typed, as a badge.
- *
- * ⚠️ THE EMPTY CASE IS NOT "cli". A session file that recorded no provenance
- * tells us nothing, and printing the most likely answer turns a gap into a
- * claim. The badge is simply absent — which is also what happens for an older
- * CLI that did not write the field at all.
- */
-const WHERE_LABEL: Record<string, string> = {
-  cli: "terminal",
-  desktop: "desktop",
-  ide: "editor",
-  sdk: "sdk",
-};
 
 function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
   const open = useBoard((st) => st.sessions.open);
   const openSession = useBoard((st) => st.openSession);
   const isOpen = open?.id === s.id && open?.source === s.source;
-  const where = sessionWhere(s);
   const project = sessionProject(s);
 
   return (
@@ -64,7 +47,7 @@ function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
       data-active={String(isOpen)}
       aria-current={isOpen ? "true" : undefined}
       onClick={() => openSession(s)}
-      title={`${s.cwd || s.slug}${s.branch ? ` · ${s.branch}` : ""}`}
+      title={sessionLabel(s)}
     >
       {/* ⚠️ THE OWNER'S COLOUR, NOT THE CLI'S. It used to take the agent's own
           mark ("a session has no seat in the roster"), which was true of the
@@ -77,11 +60,6 @@ function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
       <span className="session-row-title">{sessionLabel(s)}</span>
       <span className={cn(mono, "session-row-meta")}>
         {project ? <span className="session-row-project">{project}</span> : null}
-        {where ? (
-          <span className="session-row-where" data-where={where}>
-            {WHERE_LABEL[where] || where}
-          </span>
-        ) : null}
         <span className="session-row-ago">{agoLabel(s.updated, Date.now())}</span>
       </span>
     </button>
@@ -105,7 +83,7 @@ function ScopeControl() {
         disabled={!localRoot}
         onClick={() => setSessionScope("repo")}
       >
-        This repo
+        This project
       </button>
       <button
         type="button"
@@ -210,7 +188,7 @@ export function SessionsPane({ hue }: { hue?: number } = {}) {
               ? "Nothing matches that."
               : sessions.scope === "repo" && localRoot
                 ? "No sessions in this folder yet."
-                : "No claude or codex sessions on this machine."}
+                : "No sessions yet."}
           </div>
         ) : null}
         {groups.map((g) => {
@@ -240,12 +218,10 @@ export function SessionsPane({ hue }: { hue?: number } = {}) {
             </details>
           );
         })}
-        {/* `total` counts every session file found, before the cap and before
-            the filter — so a list that stops at 400 says so rather than
-            looking complete. */}
+        {/* Keep the size of the loaded history without a dashboard total. */}
         {sessions.total > sessions.list.length ? (
           <div className="session-empty">
-            Showing {sessions.list.length} of {sessions.total}.
+            {sessions.list.length} sessions
           </div>
         ) : null}
       </div>
@@ -268,7 +244,6 @@ export function SessionBanner() {
   const continueSession = useBoard((st) => st.continueSession);
   if (!open) return null;
 
-  const where = sessionWhere(open);
   // `resumeIdForSession` is the SAME function `continueSession` guards on in
   // board.ts — asked here rather than re-deriving the claude/codex split, so
   // the button and the action can never disagree about what is resumable.
@@ -283,13 +258,11 @@ export function SessionBanner() {
       <div className="session-banner">
         <AgentLogo agent={open.source} className="size-3.5" />
         <span className="session-banner-title">
-          {openAgent ? openAgent.title : sessionLabel(open)}
+          {openAgent ? openAgent.title || "Agent" : sessionLabel(open)}
         </span>
         <span className={cn(mono, "session-banner-meta")}>
-          {openAgent ? [openAgent.kind, openAgent.model].filter(Boolean).join(" · ") : open.source}
-          {!openAgent && where ? ` · ${WHERE_LABEL[where] || where}` : ""}
+          {open.source === "codex" ? "Codex" : "Claude"}
           {!openAgent && open.branch ? ` · ${open.branch}` : ""}
-          {!openAgent && open.version ? ` · ${open.version}` : ""}
           {loading ? " · reading…" : ""}
           {truncated ? " · earliest turns trimmed" : ""}
         </span>

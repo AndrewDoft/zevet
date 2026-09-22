@@ -185,7 +185,7 @@ describe("row helpers", () => {
   test("the label prefers the CLI's own title, then the first prompt", () => {
     assert.equal(sessionLabel({ title: "Fix the parser", prompt: "p", id: "x" }), "Fix the parser");
     assert.equal(sessionLabel({ prompt: "make it faster", id: "x" }), "make it faster");
-    assert.equal(sessionLabel({ id: "abc" }), "abc");
+    assert.equal(sessionLabel({ id: "abc" }), "Session");
     assert.equal(sessionLabel({ title: "x".repeat(200) }).length, 72);
   });
 
@@ -207,7 +207,7 @@ describe("row helpers", () => {
     assert.equal(sessionLabel({ prompt: '<pasted_content id="7">junk</pasted_content>\nreal ask' }), "real ask");
     // A prompt that is ONLY an envelope means nobody typed anything, so the
     // label falls through to the id rather than reading our plumbing out loud.
-    assert.equal(sessionLabel({ prompt: "<system-reminder>be nice</system-reminder>", id: "abc" }), "abc");
+    assert.equal(sessionLabel({ prompt: "<system-reminder>be nice</system-reminder>", id: "abc" }), "Session");
     // And a title that is all envelope does not take the prompt down with it.
     assert.equal(
       sessionLabel({ title: "<task-notification><task-id>b1</task-id></task-notification>", prompt: "ship it" }),
@@ -230,13 +230,13 @@ describe("row helpers", () => {
     // With nothing human after the machine blocks, there is nothing to show.
     assert.equal(
       sessionLabel({ prompt: "<task-notification>\n<task-id>b1</task-id>", id: "zz" }),
-      "zz",
+      "Session",
     );
     // Cut INSIDE the envelope's own closing tag, which is what the rail
     // actually showed after the first truncation fix: "</task-notifi".
     assert.equal(
       sessionLabel({ prompt: "<task-notification>\n<task-id>b1</task-id>\n</task-notifi", id: "zz" }),
-      "zz",
+      "Session",
     );
     // But markup with words around it is somebody's question, not an envelope.
     assert.equal(
@@ -255,7 +255,7 @@ describe("row helpers", () => {
     assert.equal(sessionBlurb({ prompt: "one two three four" }, 2), "one two…");
     // Same envelope peel the full label gets, and the same fallbacks.
     assert.equal(sessionBlurb({ title: "<task-notification><task-id>b1</task-id>", prompt: "ship it now please" }), "ship it now…");
-    assert.equal(sessionBlurb({ id: "abc" }), "abc");
+    assert.equal(sessionBlurb({ id: "abc" }), "Session");
     // A title that is somehow a paragraph is still a rail row.
     assert.equal(sessionBlurb({ title: "x".repeat(60) }).length, 34);
   });

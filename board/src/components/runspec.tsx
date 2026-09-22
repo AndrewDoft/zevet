@@ -20,28 +20,28 @@ export function RunSpec() {
   // raw id. `raw` can be "" — no --model/-m flag was passed, e.g. a resumed
   // console (desktop/main.js) — and describeModel("").label is now "" too,
   // so `|| raw` leaves an empty string rather than falling back to anything.
-  // "CLI default" says plainly what happened instead of inventing a name for
+  // "Default" says plainly what happened instead of inventing a name for
   // a model nobody picked.
   const raw = active.usage.model || active.model;
-  const model = describeModel(raw).label || raw || "CLI default";
+  const model = describeModel(raw).label || raw || "Default";
   const repo = String(active.root).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || active.root;
 
   const rows: SpecRow[] = [
     { label: "agent", value: active.agent },
     { label: "model", value: model },
-    { label: "posture", value: MODE_LABEL[active.mode] ?? active.mode, emphasis: active.mode === "dangerous" },
-    { label: "repo", value: repo },
+    { label: "permissions", value: MODE_LABEL[active.mode] ?? active.mode, emphasis: active.mode === "dangerous" },
+    { label: "project", value: repo },
     { label: "started", value: whenText(active.startedAt) },
   ];
   if (active.exitCode != null) {
-    rows.push({ label: "exit", value: String(active.exitCode) });
+    rows.push({ label: "status", value: active.exitCode === 0 ? "Finished" : "Failed" });
   }
 
   return (
     <SpecSheet
       className="max-w-none"
       title={active.agent}
-      subtitle={active.usage.model || active.model || undefined}
+      subtitle={undefined}
       rows={rows}
       visibleCount={rows.length}
     />

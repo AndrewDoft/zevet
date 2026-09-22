@@ -10,6 +10,7 @@ import { Timeline, type TimelineEvent } from "./assistant-ui/elements/timeline";
 import { ActivityGraph } from "./assistant-ui/elements/activity-graph";
 import type { DataPoint } from "heat-graph";
 import { cadenceLabel, whenText } from "../lib/when.mjs";
+import { MODE_LABEL } from "../lib/constants";
 import { useBoard } from "../lib/board";
 
 function fileCount(n: number) {
@@ -48,7 +49,7 @@ export function RepoTimeline() {
       when: "now",
       time: whenText(c.startedAt),
       title: `${c.agent} running`,
-      detail: c.mode,
+      detail: MODE_LABEL[c.mode],
     }));
 
   // repoviews.tsx's Schedules keeps a disabled schedule and prints "paused"

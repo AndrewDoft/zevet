@@ -12,25 +12,15 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { SettingsPanel, type SettingToggle } from "./assistant-ui/elements/settings-panel";
-import { describeModel } from "../lib/models.mjs";
 import { bridge } from "../lib/bridge";
 import {
   saveAgentSettings,
-  selectActiveConsole,
-  selectTheme,
-  selectViewMode,
   useBoard,
 } from "../lib/board";
 
 export function AgentSettings() {
   const localRoot = useBoard((s) => s.localRoot);
   const agentSettings = useBoard((s) => s.agentSettings);
-  const active = useBoard(selectActiveConsole);
-  const launchModel = useBoard((s) => s.launchModel);
-  const theme = useBoard(selectTheme);
-  const viewMode = useBoard(selectViewMode);
-  const setTheme = useBoard((s) => s.setTheme);
-  const setView = useBoard((s) => s.setView);
 
   // Local draft + a short debounce, so typing isn't a save-to-disk per
   // keystroke and the textarea isn't a controlled value that snaps back
@@ -87,56 +77,25 @@ export function AgentSettings() {
     }, 500);
   }
 
-  // Model: read-only. `AgentSettings` (the store type) has no model field —
-  // there is nowhere here to save a choice to. The real picker is
-  // model-choice.tsx's ModelSelector: grouped per CLI, searchable, carrying
-  // codex's reasoning effort. This panel's model row is a flat single-select
-  // with none of that; wiring it to change anything would be a second,
-  // divergent picker rather than an honest one. So it shows the one true
-  // fact — what's actually running here, or what the launcher will use next —
-  // with nothing to click.
-  const rawModel = (active && (active.usage.model || active.model)) || launchModel;
-  const model = describeModel(rawModel).label || rawModel;
-
-  // followMode ("mine" | "all" | "off") is a real, persisted setting too, but
-  // it is three-way. A switch has two positions; showing it as one would mean
-  // "off" either reads as "on" or can't be reached at all, and that is
-  // inventing behavior the control doesn't have. Left out rather than lying
-  // about it. `s.conn` was also considered and rejected — that's the hub
-  // connection, state nobody chose, not a setting.
+  // Only the per-project controls live here; model, view and theme have their own homes.
   const toggles: SettingToggle[] = [
     {
       key: "computerUse",
       label: "Computer use",
-      detail:
-        "Gives the agent zevet's own MCP server for this machine: it can see the screen and move the mouse. Off unless turned on here.",
+      detail: "",
       on: agentSettings.computerUse,
-    },
-    {
-      key: "agentView",
-      label: "Agent view",
-      detail: "Agent conversations with a compact editor, instead of files and the IDE layout.",
-      on: viewMode === "agent",
-    },
-    {
-      key: "darkTheme",
-      label: "Dark theme",
-      detail: "The board's own color theme. Nothing the agent sees.",
-      on: theme === "dark",
     },
   ];
 
   function onToggle(key: string) {
     if (key === "computerUse") void saveAgentSettings({ computerUse: !agentSettings!.computerUse });
-    else if (key === "agentView") setView(viewMode === "agent" ? "ide" : "agent");
-    else if (key === "darkTheme") setTheme(theme === "dark" ? "light" : "dark");
   }
 
   return (
     <SettingsPanel
       className="max-w-none"
-      model={model}
-      models={[model]}
+      model=""
+      models={[]}
       systemPrompt={draft}
       onSystemPromptChange={onSystemPromptChange}
       toggles={toggles}

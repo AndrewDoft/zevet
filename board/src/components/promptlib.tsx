@@ -132,7 +132,7 @@ export function PromptLibraryPanel() {
           <input
             value={draftName}
             onChange={(event) => setDraftName(event.target.value)}
-            placeholder={active ? "Name the current draft to save it" : "No active console to save from"}
+            placeholder={active ? "Name the current draft to save it" : "Start a conversation first"}
             disabled={!active}
             className={cn(
               field,

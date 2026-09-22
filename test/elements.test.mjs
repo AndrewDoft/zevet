@@ -46,6 +46,7 @@ const ELEMENTS = path.join(SRC, "components", "assistant-ui", "elements");
  *                  still perfectly usable — it just has nowhere to be.
  * ------------------------------------------------------------------------- */
 const UNRENDERED = {
+  "score-breakdown.tsx": "removed with: the empty-pane readiness dashboard; setup and connection controls remain in Settings.",
   /* --- the panel that hosted them was deleted --------------------------- */
   "read-aloud.tsx":
     "removed with: its host, the read-aloud shelf under the composer, was one of five collapsed rows that each pushed the chat box up when opened. It was the body of that shelf. Andrew, 2026-09-21: \"delete what it did, find, and read aloud\". Speaking the transcript aloud was browser speech synthesis over text already on screen, so nothing zevet measures is lost with it.",

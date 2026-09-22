@@ -15,8 +15,6 @@ import { SessionsPane } from "./sessions";
 import { CommitActivity, RepoTimeline } from "./historyviews";
 import { Memories } from "./runspec";
 import { IndexSearch } from "./search";
-import { Readiness } from "./readiness";
-import { AgentSettings } from "./agentsettings";
 import { TurnDetail } from "./turndetail";
 import { agoText, hhmm, verbFor } from "../lib/text";
 
@@ -54,7 +52,7 @@ function EditorPane({ e }: { e: EditorViewState }) {
     st.state === "open" ? "shared" :
     st.state === "connecting" ? "connecting" :
     st.state === "retrying" ? "reconnecting" :
-    st.state === "undecipherable" ? "a frame would not open" :
+    st.state === "undecipherable" ? "could not sync" :
     st.state === "error" ? (st.detail || "not shared") : st.state;
 
   return (
@@ -145,15 +143,11 @@ export function DetailPane({ blanked }: { blanked?: boolean }) {
     body = (
       <div className="blank">
         <h2>Pick a file.</h2>
-        <p>Select a file to see recent activity.</p>
-        {/* This pane is wide and otherwise empty until a file is picked, and
-            none of these is about any one file — they are about the repo. Every
-            one renders nothing when it has nothing to say, so on a folder that
-            is not a repo this is still a blank pane.
-
-            Search goes first because it is the only one you come here to USE;
-            the rest are there to be read. */}
-        <div className="blank-repo">
+        {/* Keep repository tools available without turning the empty pane into
+            a dashboard. Settings has the editable preferences; connection
+            notices already report setup problems without a readiness score. */}
+        <details className="blank-repo">
+          <summary>Project</summary>
           {/* ⚠️ THIS USED TO BE A COLLAPSED ROW UNDER THE CHAT BOX, and it
               opened downward into the conversation. Andrew: "all of those
               dropdowns pop up under the chatbox, which are all superfluous.
@@ -183,13 +177,7 @@ export function DetailPane({ blanked }: { blanked?: boolean }) {
           <CommitActivity />
           <Schedules />
           <Memories />
-          {/* Per-repo, like the schedules above it: standing instructions for
-              an agent started here, and which optional capabilities it gets. */}
-          <AgentSettings />
-          {/* Last, because it is about the machine rather than the repo, and
-              because on a machine that is set up it says the least. */}
-          <Readiness />
-        </div>
+        </details>
       </div>
     );
   } else {

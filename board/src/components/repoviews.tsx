@@ -31,7 +31,7 @@ export function Checkpoints() {
      checkpoint list is the last few. */
   const items: Checkpoint[] = commits.slice(0, 8).map((c) => ({
     id: c.sha,
-    label: c.subject || c.sha.slice(0, 8),
+    label: c.subject || "Commit",
     at: whenText(c.at),
     files: c.files,
   }));
