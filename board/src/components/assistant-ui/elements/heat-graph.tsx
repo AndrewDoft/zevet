@@ -2,7 +2,16 @@
 
 import * as HeatGraphPrimitive from "heat-graph";
 
-const COLORS = ["#ebedf0", "#c6d7f9", "#8fb0f3", "#5888e8", "#2563eb"];
+// Zevet Cerulean ramp: opacity steps of --cerulean over --paper, so it stays
+// monotonic and legible in both themes (--cerulean/--paper flip together).
+// Level 0 (no activity) uses the neutral --fill token instead of the ramp.
+const COLORS = [
+  "var(--fill)",
+  "color-mix(in oklab, var(--cerulean) 25%, var(--paper))",
+  "color-mix(in oklab, var(--cerulean) 50%, var(--paper))",
+  "color-mix(in oklab, var(--cerulean) 75%, var(--paper))",
+  "var(--cerulean)",
+];
 
 export function HeatGraph({ data }: { data: HeatGraphPrimitive.DataPoint[] }) {
   return (

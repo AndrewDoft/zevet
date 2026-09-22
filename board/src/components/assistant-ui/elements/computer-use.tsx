@@ -72,7 +72,7 @@ export function ComputerUse({
           <span
             key={step.id}
             aria-hidden
-            className="pointer-events-none absolute size-2 rounded-full bg-blue-500 transition-opacity duration-300 dark:bg-blue-400"
+            className="pointer-events-none absolute size-2 rounded-full bg-primary transition-opacity duration-300 dark:bg-primary"
             style={{
               left: `${step.x}%`,
               top: `${step.y}%`,
@@ -84,7 +84,7 @@ export function ComputerUse({
         {active && (
           <MousePointer2Icon
             aria-hidden
-            className="pointer-events-none absolute size-4 fill-blue-500 text-blue-500 transition-[left,top] duration-500 ease-out motion-reduce:transition-none dark:fill-blue-400 dark:text-blue-400"
+            className="pointer-events-none absolute size-4 fill-primary text-primary transition-[left,top] duration-500 ease-out motion-reduce:transition-none dark:fill-primary dark:text-primary"
             style={{ left: `${active.x}%`, top: `${active.y}%` }}
           />
         )}

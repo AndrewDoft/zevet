@@ -6,7 +6,7 @@
 // is that text stays readable on every surface in both themes.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { ROOT, startHub } from "./helpers.mjs";
 
@@ -225,4 +225,46 @@ describe("the shadcn contract is wired to masora", () => {
       assert.match(index, new RegExp(`--${required}:`), `--${required} is not defined`);
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// ZEVET CERULEAN. Andrew, 2026-09-22: highlight colours across the board
+// (the heat graph, agent status, composer, etc.) used to be a Tailwind
+// "blue" — a different hue from the --cerulean/--cerulean-soft tokens the
+// rest of the UI is built on. They were swept to `primary`/`accent`
+// (which alias --cerulean/--cerulean-soft) and the heat graph's ramp to
+// color-mix() steps of --cerulean. This guards the sweep: a reintroduced
+// blue/sky/indigo/cyan utility, or one of the exact hexes the old heat-graph
+// ramp used, is a regression, not a new feature — those hues mean nothing
+// semantic here (--alert and --success are untouched by this rule).
+describe("Zevet Cerulean: no stray blue highlight returns", () => {
+  function tsxFiles(dir) {
+    const out = [];
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      if (name.name === "node_modules") continue;
+      const full = path.join(dir, name.name);
+      if (name.isDirectory()) out.push(...tsxFiles(full));
+      else if (/\.(tsx|ts)$/.test(name.name)) out.push(full);
+    }
+    return out;
+  }
+
+  const BLUE_CLASS = /\b(?:bg|text|border|ring|from|to|via|fill|stroke|outline|accent|decoration|divide|shadow|caret)-(?:blue|sky|indigo|cyan)-\d+(?:\/\d+)?\b/;
+  // The exact ramp heat-graph.tsx used to hardcode before it moved to
+  // color-mix(in oklab, var(--cerulean) N%, var(--paper)).
+  const OLD_HEATMAP_HEX = /#(?:ebedf0|c6d7f9|8fb0f3|5888e8|2563eb)\b/i;
+
+  for (const file of tsxFiles(path.join(ROOT, "board", "src"))) {
+    const rel = path.relative(ROOT, file);
+    test(`${rel} has no blue/sky/indigo/cyan highlight class`, () => {
+      const content = readFileSync(file, "utf8");
+      const hit = content.match(BLUE_CLASS);
+      assert.equal(hit, null, `found ${hit?.[0]} in ${rel}`);
+    });
+    test(`${rel} has no old light-blue heat-graph hex`, () => {
+      const content = readFileSync(file, "utf8");
+      const hit = content.match(OLD_HEATMAP_HEX);
+      assert.equal(hit, null, `found ${hit?.[0]} in ${rel}`);
+    });
+  }
 });

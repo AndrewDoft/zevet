@@ -91,7 +91,7 @@ export function ReasoningEffort({
         className="bg-foreground/[0.06] h-[3px] w-full overflow-hidden rounded-full"
       >
         <span
-          className="block h-full rounded-full bg-blue-500 transition-[width] duration-500 motion-reduce:transition-none dark:bg-blue-400"
+          className="block h-full rounded-full bg-primary transition-[width] duration-500 motion-reduce:transition-none dark:bg-primary"
           style={{ width: `${used}%` }}
         />
       </span>

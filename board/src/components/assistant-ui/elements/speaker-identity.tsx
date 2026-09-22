@@ -17,7 +17,7 @@ export interface SpeakerTurn {
 
 const TONE: Record<SpeakerKind, string> = {
   user: "bg-foreground/[0.06] text-foreground/55",
-  agent: "bg-blue-500/12 text-blue-600 dark:bg-blue-400/15 dark:text-blue-400",
+  agent: "bg-primary/12 text-primary dark:bg-primary/15",
   subagent: "bg-foreground/[0.06] text-foreground/45",
   tool: "bg-foreground/[0.04] text-foreground/40",
 };
