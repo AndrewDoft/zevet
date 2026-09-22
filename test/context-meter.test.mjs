@@ -11,6 +11,8 @@ const { contextShare, CONTEXT_FLOOR } = await import(
 );
 const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
 const controls = readFileSync(path.join(ROOT, "board", "src", "components", "composercontrols.tsx"), "utf8");
+const choice = readFileSync(path.join(ROOT, "board", "src", "components", "model-choice.tsx"), "utf8");
+const modelsLib = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "models.mjs")).href);
 
 describe("contextShare", () => {
   test("is used over the reported window, else over the 200k floor", () => {
@@ -50,9 +52,19 @@ describe("the composer shows one model label", () => {
     assert.match(controls, /<ContextRing share=\{share\} label=\{detail\} \/>/);
   });
 
-  test("with a console in front, the label is that console's model", () => {
-    // The launch picker's default read "Opus 5.5" over a Sonnet 5 run.
-    assert.match(controls, /runningModelName\(active\.usage\.model, active\.model\)/);
-    assert.match(controls, /\{active \? \([\s\S]*?\) : \([\s\S]*?<ModelChoice agents=\{usable\} \/>/);
+  test("with a console in front, the picker stays and shows that console's model", () => {
+    // The launch picker's default read "Opus 5.5" over a Sonnet 5 run. The
+    // picker must stay live mid-run (Andrew: "you should still be able to
+    // choose model and effort and posture"), so it is not swapped for a label.
+    const { runningModelName } = modelsLib;
+    const sonnet = { agent: "claude", model: "claude-opus-5-5", usage: { model: "claude-sonnet-5" } };
+    assert.equal(runningModelName(sonnet.usage.model, sonnet.model), "Sonnet 5");
+    assert.match(controls, /const model = active \? runningModelName\(active\.usage\.model, active\.model\) : "";/);
+    // Rendered unconditionally — not behind `active ?` — and handed the running model.
+    assert.match(controls, /<div className=\{compactModelChoice\}>\s*<ModelChoice\s+agents=\{usable\}\s+running=\{\s*active\s*\?\s*\{ id: `\$\{active\.agent\}:\$\{active\.usage\.model \|\| active\.model\}`, name: model/);
+    assert.ok(!/\{active \? \([\s\S]{0,80}<span[^>]*>\s*\{model\}/.test(controls), "the picker is swapped for a label again");
+    // The trigger shows that name instead of the launch default.
+    assert.match(choice, /\{running \? \([\s\S]*?\{running\.name\}[\s\S]*?\) : \(\s*<ModelSelectorValue \/>/);
+    assert.match(choice, /value=\{running && all\.some\(\(m\) => m\.id === running\.id\) \? running\.id : selected\}/);
   });
 });

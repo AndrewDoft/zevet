@@ -7,10 +7,10 @@
  * re-install) hosts it with a one-line patch; everything it needs stays in
  * this file so that patch never grows.
  *
- * The model picker sets the global launch state (`launchModel`/
- * `launchAgent`/`launchEffort`), which is what the NEXT start reads, so it is
- * only offered for a new conversation; with a console in front, the same spot
- * names the model THAT console runs. The posture picker is live either way.
+ * The model/posture pickers are live whether or not a console is running:
+ * they set the global launch state (`launchModel`/`launchAgent`/
+ * `launchEffort`/`launchMode`), which is what the NEXT start reads. With a
+ * console in front, the model picker DISPLAYS the model that console runs.
  * Once a console exists, a small ring says how full its context is (numbers
  * and cost in its tooltip).
  * runmeters.tsx keeps the full breakdown behind its button; this is the
@@ -96,18 +96,16 @@ export function ComposerControls() {
    * whatever it was started with), but that state is exactly what the NEXT
    * start uses: `onNew` in lib/runtime.tsx reads it when there is no active
    * console, the launcher's Start buttons read it, and a fork reads it too
-   * (board.ts's `startAgent`). So the posture picker stays live for the whole
-   * time a console runs — Andrew: "you should still be able to choose model and
-   * effort and posture". The model picker does not: a label over a run has to
-   * name that run's model (below), and a fork keeps its console's model
-   * anyway. It returns with the launcher. */
+   * (board.ts's `startAgent`). So the pickers stay live for the whole time a
+   * console runs — Andrew: "you should still be able to choose model and
+   * effort and posture". */
   /* ⚠️ ONE MODEL LABEL, AND IT IS THIS CONSOLE'S. A second, mono
      "GPT-5.6-Terra 354k/200k 78% cached" beside the picker read as two models
      and as jargon — but folding the running model into the launch picker then
      showed "Opus 5.5", the NEXT start's default, over a Sonnet 5 run. With a
-     console in front, the one label names what it runs (usage.model, else
-     what it was started with); the launch picker belongs to a new
-     conversation. Token counts and cost live in the ring's tooltip. */
+     console in front, the picker stays live but DISPLAYS what that console
+     runs (usage.model, else what it was started with); a pick still sets the
+     next start. Token counts and cost live in the ring's tooltip. */
   const model = active ? runningModelName(active.usage.model, active.model) : "";
   const facts = active
     ? (() => {
@@ -158,17 +156,16 @@ export function ComposerControls() {
       <PastPromptsButton>
         <PromptLibraryPanel />
       </PastPromptsButton>
-      {active ? (
-        model && (
-          <span className="inline-flex h-7 max-w-56 items-center truncate rounded-full bg-foreground/[0.04] px-2 text-xs">
-            {model}
-          </span>
-        )
-      ) : (
-        <div className={compactModelChoice}>
-          <ModelChoice agents={usable} />
-        </div>
-      )}
+      <div className={compactModelChoice}>
+        <ModelChoice
+          agents={usable}
+          running={
+            active
+              ? { id: `${active.agent}:${active.usage.model || active.model}`, name: model || "Default" }
+              : undefined
+          }
+        />
+      </div>
 
       {/* The console in front takes the pick on its next turn
           (`setConsoleMode` parks it while a turn runs); the next start takes it
