@@ -319,6 +319,19 @@ describe("codex", () => {
     assert.equal(s.messages[0].status.error, "Not signed in.");
   });
 
+  // A codex run that fails on a usage limit emits both an `error` event and
+  // a `turn.failed` event for the same failure. Each one closed the
+  // transcript with the same error, so the conversation drew the line twice:
+  // "GPT-6-Astra hit its usage limit.GPT-6-Astra hit its usage limit."
+  test("an error event plus turn.failed shows the error once, not twice", () => {
+    const opts = { agent: "codex", model: "gpt-6-astra" };
+    let s = appendUserText(emptyTranscript(), "ok");
+    s = appendAgentPayload(s, { type: "error", error: { message: "usage limit reached" } }, opts);
+    s = appendAgentPayload(s, { type: "turn.failed", error: { message: "usage limit reached" } }, opts);
+    const errors = s.messages.filter((m) => m.status && m.status.error).map((m) => m.status.error);
+    assert.deepEqual(errors, ["GPT-6-Astra hit its usage limit."]);
+  });
+
   // Captured 2026-09-22 from `codex exec --json`: a non-fatal notice from
   // codex itself, first in the turn. It was drawn as the start of the reply.
   test("codex's own notices are not the reply", () => {
