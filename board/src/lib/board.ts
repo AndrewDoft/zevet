@@ -1689,6 +1689,45 @@ function recordUsage(c: ConsoleEntry, u: UsageReading | null, cost: number | nul
   c.usage = next;
 }
 
+/** Adopt what each running console's CLI has written to its own session file:
+ *  its title, and codex's real context (see desktop/agent-sessions.js § live).
+ *  Called on a timer by the rail; a console that has exited keeps what it had. */
+export async function pollConsoleFiles(): Promise<void> {
+  const ask = bridge.local && bridge.local.sessionLive;
+  if (!ask) return;
+  let changed = false;
+  for (const c of useBoard.getState().myConsoles) {
+    if (!c.running || !c.sessionId) continue;
+    const r = await ask(c.agent, c.sessionId).catch(() => null);
+    if (!r) continue;
+    if (r.title && r.title !== c.title) {
+      c.title = r.title;
+      changed = true;
+    }
+    if (r.context != null && r.context !== c.usage.context) {
+      const cached = r.cached ?? 0;
+      recordUsage(
+        c,
+        {
+          context: r.context,
+          cacheHit: r.context > 0 ? (cached / r.context) * 100 : null,
+          model: null,
+          input: Math.max(0, r.context - cached),
+          cachedInput: cached,
+          output: r.output ?? 0,
+        },
+        null,
+      );
+      changed = true;
+    }
+    if (r.window != null && r.window !== c.usage.window) {
+      c.usage = { ...c.usage, window: r.window };
+      changed = true;
+    }
+  }
+  if (changed) signalConsolesChanged();
+}
+
 /**
  * The agent's own id for this session.
  *
@@ -1798,8 +1837,14 @@ interface UsageReading {
   output: number;
 }
 
-function usageOf(payload: { message?: { usage?: unknown; model?: string }; usage?: unknown; part?: { tokens?: unknown }; model?: string }): UsageReading | null {
+function usageOf(payload: { type?: string; message?: { usage?: unknown; model?: string }; usage?: unknown; part?: { tokens?: unknown }; model?: string }): UsageReading | null {
   if (!payload || typeof payload !== "object") return null;
+  /* ⚠️ THESE TWO ARE RUNNING TOTALS, NOT THE CONTEXT. claude's `result` sums
+   * every API call of the turn and codex's `turn.completed` carries the whole
+   * thread's `total_token_usage`, so reading either as the context put
+   * "354k/200k" in the composer. claude's per-message usage is the real one;
+   * codex's comes off its rollout file (pollConsoleFiles). */
+  if (payload.type === "result" || payload.type === "turn.completed") return null;
   const u = ((payload.message && payload.message.usage) || payload.usage) as { input_tokens?: unknown; cache_read_input_tokens?: unknown; cached_input_tokens?: unknown; cache_creation_input_tokens?: unknown; cache_write_input_tokens?: unknown; output_tokens?: unknown } | undefined;
   const tokens = payload.part && payload.part.tokens;
   if ((!u || typeof u !== "object") && tokens && typeof tokens === "object") {

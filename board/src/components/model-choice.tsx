@@ -31,7 +31,7 @@ import {
 import { mono } from "./assistant-ui/elements/surfaces";
 import { AgentLogo } from "./brand";
 import { cn } from "@/lib/utils";
-import { MODELS, MULTI_TURN } from "../lib/constants";
+import { MODELS } from "../lib/constants";
 import { aliasOf, describeModel } from "../lib/models.mjs";
 import { useBoard } from "../lib/board";
 import type { UsableAgent } from "../lib/types";
@@ -40,12 +40,6 @@ import type { UsableAgent } from "../lib/types";
  *  control for models that ignore it would be inventing a setting. */
 const HAS_EFFORT = new Set(["codex"]);
 
-/** What is true of the AGENT, said once on its group rather than on each of
- *  its models. */
-function agentNote(a: UsableAgent): string {
-  const turns = MULTI_TURN.has(a.name) ? "keeps talking" : "one prompt per run";
-  return `${a.signedIn ? "signed in" : "no account found"} · ${turns}`;
-}
 
 export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
   const launchModel = useBoard((s) => s.launchModel);
@@ -144,7 +138,9 @@ export function ModelChoice({ agents }: { agents: UsableAgent[] }) {
                     <AgentLogo agent={agent.name} className="size-3" />
                     {agent.name}
                   </span>
-                  <span className={cn(mono, "text-foreground/35")}>{agentNote(agent)}</span>
+                  {/* Only what you can act on: the sign-in state and turn style on
+                      every group was noise. */}
+                  {!agent.signedIn && <span className={cn(mono, "text-foreground/35")}>Not signed in</span>}
                 </span>
               }
             >

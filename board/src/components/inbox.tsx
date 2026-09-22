@@ -15,6 +15,7 @@ import {
 } from "./assistant-ui/elements/background-inbox";
 import { selectActiveConsole, selectMyConsoles, serverNow, useBoard } from "../lib/board";
 import { agoText } from "../lib/text";
+import { consoleBlurb } from "./people";
 import type { ConsoleEntry } from "../lib/types";
 
 function stateOf(c: ConsoleEntry): BackgroundState {
@@ -87,7 +88,7 @@ export function BackgroundInbox() {
     })
     .map((c) => ({
       id: String(c.key),
-      title: c.model ? `${c.agent} · ${c.model}` : c.agent,
+      title: consoleBlurb(c),
       state: stateOf(c),
       elapsed: agoText(now, finishedAtRef.current.get(c.key) ?? now),
       summary: lastAssistantText(c.transcript.messages),
@@ -96,6 +97,13 @@ export function BackgroundInbox() {
   if (!runs.length) return null;
 
   return (
-    <BackgroundInboxElement runs={runs} onCollect={(id) => setActiveConsole(Number(id))} />
+    /* ⚠️ ITS OWN BOUNDED BOX. Unbounded, a long list of finished runs took
+       the rail's height from the agent list and sat where its rows were;
+       `.rail-inbox` caps it and scrolls it instead. */
+    <BackgroundInboxElement
+      className="rail-inbox"
+      runs={runs}
+      onCollect={(id) => setActiveConsole(Number(id))}
+    />
   );
 }

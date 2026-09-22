@@ -2459,6 +2459,9 @@ ipcMain.handle("local:session", (_e, arg) =>
 ipcMain.handle("local:sessionAgents", (_e, arg) =>
   agentSessions.children((arg && arg.slug) || "", (arg && arg.id) || ""),
 );
+ipcMain.handle("local:sessionLive", (_e, arg) =>
+  agentSessions.live((arg && arg.source) || "", (arg && arg.id) || ""),
+);
 
 ipcMain.handle("local:defaultMode", (_e, mode) => rememberMode(String(mode || "")));
 

@@ -33,7 +33,8 @@
  * construction (it has the claude logo, the permissions, and a stop option)."
  * The old "You" section (components/consoles.tsx, mounted under its own
  * heading in App.tsx) is gone; its row — logo, posture, Stop — is folded into
- * `AgentRow` below, which now renders off a normalised `Row` rather than off
+ * `AgentRow` below (the posture has since moved to the composer and Stop to a
+ * hover icon), which now renders off a normalised `Row` rather than off
  * a `SessionSummary` directly. See `Row` and `buildGroups` for the merge and
  * the dedupe that merge requires.
  *
@@ -51,6 +52,7 @@ import { Twist } from "./twist";
 import {
   hueOf,
   isIdle,
+  pollConsoleFiles,
   resumeIdForSession,
   selectActiveConsole,
   selectMyConsoles,
@@ -65,10 +67,9 @@ import { missionOf } from "../lib/text";
 import { agoLabel } from "../lib/fmt";
 import { sessionBlurb, sessionProject } from "../lib/sessions.mjs";
 import { AgentLogo } from "./brand";
-import { ghostButton, mono } from "./assistant-ui/elements/surfaces";
-import { cn } from "@/lib/utils";
+import { SquareIcon, XIcon } from "lucide-react";
 import { bridge } from "../lib/bridge";
-import { HUES, LIVE_SESSION_MS, MODE_LABEL, MODES } from "../lib/constants";
+import { HUES, LIVE_SESSION_MS } from "../lib/constants";
 
 function expandedStored(): string[] {
   try {
@@ -154,8 +155,8 @@ function SubagentRow({ a, hue }: { a: SessionAgent; hue: number }) {
  * different lists — this is the shape both are normalised into before
  * `AgentRow` ever sees them, so the component renders one thing instead of
  * forking into a session branch and a console branch. `console`/`session` are
- * mutually exclusive: exactly one is non-null, and it is what the row's extra
- * slot (posture + Stop, or "4m ago") and click handler key off.
+ * mutually exclusive: exactly one is non-null, and it is what the row's Stop
+ * icon and click handler key off.
  */
 type Row = {
   key: string;
@@ -167,8 +168,8 @@ type Row = {
   session: SessionSummary | null;
 };
 
-/** The console's first user message, verbatim. `sessionBlurb` does the
- *  1-3 word cut from here, same as it does for a disk session's `prompt` —
+/** The console's first user message, verbatim. `sessionBlurb` takes its
+ *  first sentence, same as it does for a disk session's `prompt` —
  *  this used to be `consoles.tsx`'s own `taskOf`, which returned the raw
  *  prompt straight to the row and was exactly Andrew's complaint ("neither
  *  the zevet nor the terminal agents have good descriptions, they just read
@@ -185,7 +186,13 @@ function firstPrompt(c: ConsoleEntry): string {
           .filter((p): p is { type: "text"; text: string } => p.type === "text")
           .map((p) => p.text)
           .join(" ");
-  return text.replace(/\s+/g, " ").trim();
+  return text.trim();
+}
+
+/** A console's title for anywhere it is listed — the rail row and the inbox
+ *  say the same words. */
+export function consoleBlurb(c: ConsoleEntry): string {
+  return sessionBlurb({ title: c.title, prompt: firstPrompt(c), source: c.agent });
 }
 
 /** The repo a console belongs to: the last segment of where it is running.
@@ -198,16 +205,12 @@ function consoleProject(c: ConsoleEntry): string {
 }
 
 /**
- * One agent: its CLI's mark, the CLI's own two-word summary of the work, and
- * either how long ago it last wrote anything (a disk session) or its posture
- * and a Stop button (a live console).
- *
- * ⚠️ THE STOP BUTTON NEVER APPEARS OR DISAPPEARS ON A ROW THAT HAS ONE — its
- * label swaps between "Stop" and "Close" (and its colour between red and
- * muted) but it is always mounted for a console row, exactly like the old
- * consoles.tsx did it. A button that pops in under the pointer when a process
- * exits is worse than a button that just relabels itself; same reasoning as
- * the reserved task line below.
+ * One agent: its CLI's mark, its title, and how long ago it last wrote (a
+ * disk session) or a live dot (a running console). Nothing else — a posture
+ * label and a text Stop on every row squeezed titles to "You …". The posture
+ * lives in the composer; Stop/Close is an icon that shows on hover or focus,
+ * over the time slot, so it is still reachable by keyboard and never widens
+ * the row.
  *
  * ⚠️ THE SUBAGENT NAMES COST A FILE EACH, so they are only ever fetched for the
  * session that is open — `children` is a readdir count and is free, the names
@@ -225,22 +228,12 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
   const activeConsole = useBoard(selectActiveConsole);
   const setActiveConsole = useBoard((st) => st.setActiveConsole);
   const closeConsole = useBoard((st) => st.closeConsole);
-  const setConsoleMode = useBoard((st) => st.setConsoleMode);
   const now = serverNow();
 
   const c = row.console;
   const s = row.session;
   const isOpen = c ? activeConsole?.key === c.key : Boolean(s) && open?.id === s!.id && open?.source === s!.source;
   const hasKids = Boolean(s) && Number(s!.children) > 0;
-  const title = c
-    ? consoleProject(c) + (MODE_LABEL[c.mode] ? ` · ${MODE_LABEL[c.mode]}` : "")
-    : sessionBlurb(s!);
-  // What the console is actually headed for: `nextMode` when one is parked
-  // (see `ConsoleEntry.nextMode`), otherwise `mode` itself. Cycling from here
-  // means a second click while a change is pending moves on from where it's
-  // already pointed, not back from the still-running `mode`.
-  const heading = c ? c.nextMode ?? c.mode : null;
-  const pending = Boolean(c && c.nextMode && c.nextMode !== c.mode);
 
   return (
     <div className="agent-row-wrap">
@@ -255,63 +248,29 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
           aria-current={isOpen ? "true" : undefined}
           aria-expanded={hasKids ? isOpen : undefined}
           onClick={() => (c ? setActiveConsole(c.key) : openSession(s!))}
-          title={title}
+          title={row.blurb}
         >
           {hasKids ? <Twist open={isOpen} /> : <span className="agent-row-gap" aria-hidden="true" />}
           <AgentLogo agent={row.agent} model={row.model} hue={hue} className="agent-row-mark size-3" />
           <span className="agent-row-name">{row.blurb}</span>
-          {/* Reserved either way, so the row never grows or shrinks when a
-              console starts or a session ages: a console shows its posture
-              here (as its own button, below — a disk session's "4m ago" is
-              plain text and stays in this slot; a console's posture is a
-              control, and a <button> cannot nest inside `agent-row-pick`,
-              which is a <button> itself). */}
-          {c ? null : <span className="agent-row-ago">{agoLabel(s!.updated, now)}</span>}
+          {c && c.running ? (
+            <span className="agent-row-live" role="img" aria-label="Running" />
+          ) : (
+            <span className="agent-row-ago">{agoLabel(row.updated, now)}</span>
+          )}
         </button>
-        {/* Cycles MODES on click. Andrew: "you should be able to change
-            permissions throughout, even to dsp [dangerous]." A RUNNING
-            console can't take a new posture mid-turn — there is no way to
-            hand a live process new argv — so `setConsoleMode` parks the pick
-            in `nextMode` instead of applying it, and this button says so
-            ("Auto → Skip permissions") rather than looking like the click did
-            nothing. The store's prompt-sending action is what actually
-            swaps it in, on the next turn. A disk session gets no control
-            here — zevet did not start it and cannot restart it. */}
+        {/* A sibling, not inside `agent-row-pick`: a <button> cannot nest in a
+            <button>. Only a console row has one — a disk session already
+            finished writing and cannot be stopped. */}
         {c ? (
           <button
             type="button"
-            className={cn(mono, "agent-row-mode")}
-            data-danger={String(c.mode === "dangerous" || c.nextMode === "dangerous")}
-            data-pending={String(pending)}
-            title={
-              pending
-                ? `Permissions for the next turn — click to change. Currently ${MODE_LABEL[c.mode] || c.mode}, switching to ${MODE_LABEL[heading!] || heading}.`
-                : "Permissions for the next turn — click to change."
-            }
-            onClick={(e) => {
-              e.stopPropagation();
-              const idx = MODES.findIndex((m) => m.id === heading);
-              const next = MODES[(idx + 1 + MODES.length) % MODES.length];
-              setConsoleMode(c.key, next.id);
-            }}
-          >
-            {pending ? `${MODE_LABEL[c.mode] || c.mode} → ${MODE_LABEL[heading!] || heading}` : MODE_LABEL[c.mode] || c.mode}
-          </button>
-        ) : null}
-        {/* Only a console row gets this — a disk session cannot be stopped,
-            it already finished writing. Andrew asked for Stop specifically in
-            red; Close (the same button once the process has exited) is not
-            destructive, so it stays the muted colour every other control in
-            this pane uses. */}
-        {c ? (
-          <button
-            type="button"
-            className={cn(ghostButton, "agent-row-stop")}
-            data-running={String(c.running)}
+            className="agent-row-stop"
             onClick={() => closeConsole(c.key)}
-            aria-label={(c.running ? "Stop " : "Close ") + c.agent}
+            aria-label={c.running ? "Stop" : "Close"}
+            title={c.running ? "Stop" : "Close"}
           >
-            {c.running ? "Stop" : "Close"}
+            {c.running ? <SquareIcon className="size-2.5" fill="currentColor" /> : <XIcon className="size-3" />}
           </button>
         ) : null}
       </div>
@@ -376,6 +335,14 @@ export function PeoplePane() {
 
   useEffect(() => {
     const t = setInterval(() => setNow(serverNow()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  /* A running console's title is whatever its CLI has written to its session
+     file by now — claude rewrites its `ai-title` as the work goes. */
+  useEffect(() => {
+    if (!bridge.local) return;
+    const t = setInterval(() => void pollConsoleFiles(), 5000);
     return () => clearInterval(t);
   }, []);
 
@@ -450,7 +417,7 @@ export function PeoplePane() {
         key: `console:${c.key}`,
         agent: c.agent,
         model: c.model,
-        blurb: sessionBlurb({ prompt: firstPrompt(c) }),
+        blurb: consoleBlurb(c),
         updated: c.startedAt,
         console: c,
         session: null,

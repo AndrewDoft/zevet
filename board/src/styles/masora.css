@@ -271,6 +271,7 @@
   .repo-group-count { flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle); }
 
   .agent-row {
+    position: relative;
     display: flex; align-items: center; gap: 6px;
     padding: 4px 10px 4px 38px;
     border-left: 2px solid transparent;
@@ -278,10 +279,10 @@
   }
   .agent-row:hover { background: var(--raise-soft); color: var(--ink); }
   .agent-row[data-active="true"] { background: var(--raise); border-left-color: var(--who); color: var(--ink); }
-  /* The clickable part of the row: twisty/gap, mark, name, and the posture-or-
-     age slot. Its own element rather than making `.agent-row` itself the
-     button, because a console row also carries a Stop button beside this one
-     and a <button> cannot nest inside another <button>. */
+  /* The clickable part of the row: twisty/gap, mark, name, and the time slot.
+     Its own element rather than making `.agent-row` itself the button, because
+     a console row also carries a Stop button and a <button> cannot nest inside
+     another <button>. */
   .agent-row-pick {
     flex: 1 1 auto; min-width: 0;
     display: flex; align-items: center; gap: 6px;
@@ -300,39 +301,21 @@
   .agent-row-ago {
     flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle);
   }
-  /* A console's posture, in the same trailing slot `.agent-row-ago` uses for
-     a disk session — the two never sit on the same row, since a `Row` is
-     backed by exactly one of a ConsoleEntry or a SessionSummary. Now a real
-     <button> (it cycles MODES on click), so browser button chrome is reset
-     back to the plain-text look `.agent-row-ago` has. `white-space: nowrap`
-     matters more here than it did as a span: "Auto → Skip permissions" is
-     long enough to wrap onto a second line in a narrow rail, and a wrapped
-     row is a row that grew — the one thing a pending-change label must not
-     do (⚠️ see people.tsx `AgentRow`). */
-  .agent-row-mode {
-    flex: none; font-size: 10.5px; color: var(--subtle);
-    background: none; border: 0; padding: 0; cursor: pointer;
-    white-space: nowrap;
+  .agent-row-live {
+    flex: none; width: 6px; height: 6px; margin: 0 4px; border-radius: 50%;
+    background: var(--who);
   }
-  .agent-row-mode:hover { color: var(--ink); }
-  .agent-row-mode[data-danger="true"] { color: var(--alert); }
-  /* A pending change (mode → nextMode) reads as ink rather than the default
-     subtle grey, same reasoning as Stop's red: a change waiting on the next
-     message is not the resting state and should not look like one. */
-  .agent-row-mode[data-pending="true"] { color: var(--ink); }
-  .agent-row-mode[data-pending="true"][data-danger="true"] { color: var(--alert); }
-  /* Stop/Close. Andrew asked for Stop specifically in red, not merely on
-     hover: a running agent is the one state in this pane you should not have
-     to hover to notice. Close — the same button, relabelled, once the
-     process has exited — stays the muted colour every other control here
-     uses. Always mounted for a console row, label and colour swapping rather
-     than the button appearing or disappearing, so the row never resizes. */
+  /* Stop/Close: an icon laid OVER the time slot, shown on hover or keyboard
+     focus. Out of flow, so it can appear without the title giving up width;
+     transparent rather than hidden, so Tab still reaches it. */
   .agent-row-stop {
-    flex: none; font-size: 11px; padding: 3px 7px; border-radius: 2px;
-    color: var(--subtle); border: 1px solid transparent;
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px;
+    background: var(--raise); color: var(--subtle); border: 0; cursor: pointer;
+    opacity: 0;
   }
-  .agent-row-stop[data-running="true"] { color: var(--alert); }
-  .agent-row-stop:hover { border-color: currentColor; }
+  .agent-row:hover .agent-row-stop, .agent-row-stop:focus-visible { opacity: 1; }
+  .agent-row-stop:hover { color: var(--ink); }
   .agent-row-err {
     font-size: 11.5px; color: var(--alert); padding: 0 10px 4px 38px;
   }
@@ -354,6 +337,12 @@
   .agent-sub-note { cursor: default; font-style: italic; }
 
   /* The launcher, as a plus in the People header rather than a row of its own. */
+  /* The "Running elsewhere" card (components/inbox.tsx): a fixed share of the
+     rail that scrolls, never the agent list's space. */
+  .rail-inbox {
+    flex: none; max-height: 35%; overflow-y: auto;
+    margin: 6px 10px; width: auto;
+  }
   .rail-new {
     margin-left: auto; margin-right: 8px;
     width: 18px; height: 18px; flex: none;
@@ -810,6 +799,9 @@
     font-family: var(--font-mono); font-size: 12px;
   }
   .ran-said::before { content: "❯ "; opacity: 0.45; }
+  /* The prompt is plain text, not markdown, so its line breaks are the only
+     structure it has: a multi-paragraph prompt rendered as one paragraph. */
+  .aui-user-message-content { white-space: pre-wrap; }
   .aui-user-message-content:has(.local-out) {
     background: none; padding: 0;
   }
@@ -1371,7 +1363,15 @@
     display: flex; flex-direction: row; align-items: flex-end; gap: 10px;
   }
   .chat-underline > * { min-width: 0; }
-  .thinking-row { padding: 0 22px 8px; }
+  /* 4px, not 8: in the 22px strip an 8px pad pushed the 16px label out of
+     the top and cut its descenders. */
+  .thinking-row { padding: 0 22px 4px; }
+  /* ⚠️ NO SHIMMER HERE. tw-shimmer sweeps a WHITE band, which on the light
+     theme erased the first letters as it passed — "laude is working". The
+     pulsing dot beside it already says the agent is busy. */
+  .thinking-row .shimmer {
+    animation: none; background: none; -webkit-text-fill-color: currentColor;
+  }
 
   /* The collapsed detail rows under the conversation. Same shape as
      .run-meters, which they sit beside. */

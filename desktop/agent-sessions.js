@@ -681,4 +681,62 @@ function read(source, slug, id, child = "") {
   };
 }
 
-module.exports = { list, read, children, claudeDir, codexDir, _fileFor: fileFor, _firstAsk: firstAsk };
+/**
+ * What a RUNNING session has written about itself that its live stream never
+ * says: the CLI's own title, and — for codex — how full the context is now.
+ *
+ * ⚠️ THE STREAM'S CODEX USAGE IS A RUNNING TOTAL. `turn.completed` carries
+ * the thread's cumulative `total_token_usage`, so a long run read "354k/200k".
+ * The rollout's `token_count` records carry `last_token_usage` (what the model
+ * was actually sent last) and `model_context_window` beside it, measured
+ * 2026-09-22. claude's per-message usage in the stream is already per-call.
+ *
+ * The file is found once per id and remembered; until it exists this answers
+ * null and the caller asks again.
+ */
+const liveFiles = new Map();
+function live(source, id) {
+  if ((source !== "claude" && source !== "codex") || typeof id !== "string" || !SEGMENT.test(id)) return null;
+  const key = `${source}:${id}`;
+  let file = liveFiles.get(key);
+  if (!file || !fs.existsSync(file)) {
+    // codex names the file rollout-<ts>-<thread id>; claude names it the id.
+    const f = (source === "codex" ? listCodex() : listClaude()).find((x) =>
+      source === "codex" ? x.id.endsWith(id) : x.id === id,
+    );
+    if (!f) return null;
+    file = fileFor(source, f.slug, f.id);
+    liveFiles.set(key, file);
+  }
+  let size;
+  try {
+    size = fs.statSync(file).size;
+  } catch {
+    return null;
+  }
+  const { head, tail } = readEnds(file, size);
+  const all = records(head).concat(tail ? records(tail, { fromOffset: true }) : []);
+  if (source === "codex") {
+    let usage = null;
+    for (const r of all) {
+      const p = r.type === "event_msg" && r.payload;
+      if (p && p.type === "token_count" && p.info && p.info.last_token_usage) usage = p.info;
+    }
+    const last = usage && usage.last_token_usage;
+    const n = (v) => (typeof v === "number" && isFinite(v) ? v : 0);
+    return {
+      title: str(codexTitles().get(id)),
+      // Same arithmetic as the board's usageOf: codex's cached count is a
+      // SUBSET of its input, so it is not added again.
+      context: last ? n(last.input_tokens) + n(last.cache_write_input_tokens) : null,
+      cached: last ? n(last.cached_input_tokens) : null,
+      output: last ? n(last.output_tokens) : null,
+      window: usage && n(usage.model_context_window) ? n(usage.model_context_window) : null,
+    };
+  }
+  let title = "";
+  for (const r of all) if (r.type === "ai-title" && str(r.aiTitle)) title = str(r.aiTitle);
+  return { title, context: null, cached: null, output: null, window: null };
+}
+
+module.exports = { list, read, children, live, claudeDir, codexDir, _fileFor: fileFor, _firstAsk: firstAsk };
