@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { bridge, type AgentSchedule, type AgentSettings, type AskRequest, type MemoryNote, type PermitRequest, type RepoCommit, type StatusResult } from "./bridge";
+import { bridge, type AgentEvent, type AgentSchedule, type AgentSettings, type AskRequest, type HeldConsole, type MemoryNote, type PermitRequest, type RepoCommit, type StatusResult } from "./bridge";
 import { shortInput } from "./fmt";
 import {
   appendAgentPayload,
@@ -719,6 +719,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       activeConsole: g.activeConsole === key ? null : g.activeConsole,
     }));
     if (del && del.running && del.id) void bridge.local?.stopAgent(del.id);
+    if (del && del.id) void bridge.local?.forgetAgent?.(del.id);
     const cur = get();
     if (cur.edView) { /* unchanged */ }
   },
@@ -804,7 +805,9 @@ export const useBoard = create<BoardState>((set, get) => ({
       c.running = true;
       c.exitCode = null;
       signalConsolesChanged();
-      bridge.local.resumeAgent(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode }).then((r) => {
+      // `continues` keeps the app's copy of this thread as ONE thread across
+      // the new process, so a reload brings back one entry, not two.
+      bridge.local.resumeAgent(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode, ...(c.id ? { continues: c.id } : {}) }).then((r) => {
         if (!r || !r.ok) {
           c.running = false;
           pushConsoleLine(c, "err", (r && r.error) || "could not continue");
@@ -1503,8 +1506,44 @@ function consoleById(id: string | null | undefined): ConsoleEntry | undefined {
   return pending.length === 1 ? pending[0] : undefined;
 }
 
+/**
+ * Pick up the consoles the app kept running across a reload of this page.
+ *
+ * Each comes back as a fresh entry and its events go through
+ * `ingressAgentEvent` — the same code that handled them live — so the rail,
+ * transcript, usage and session id land exactly where the old page had them.
+ */
+function reattachConsoles(held: HeldConsole[]): void {
+  for (const h of held) {
+    const c: ConsoleEntry = {
+      key: ++consoleSeq,
+      id: h.id,
+      agent: h.agent,
+      lines: [],
+      transcript: emptyTranscript(),
+      running: true,
+      error: null,
+      mode: h.mode as LaunchMode,
+      model: h.model,
+      root: h.root,
+      hue: useBoard.getState().myConsoles.length % 5,
+      usage: { context: null, cacheHit: null, cost: null, model: null, input: null, cachedInput: null, output: null, window: null, series: [] },
+      limits: [],
+      sessionId: null,
+      slashCommands: [],
+      forkedFrom: null,
+      startedAt: h.startedAt,
+      exitCode: null,
+    };
+    useBoard.setState((g) => ({ myConsoles: [...g.myConsoles, c] }));
+    for (const evt of h.events) ingressAgentEvent(evt);
+    c.running = h.running;
+  }
+  signalConsolesChanged();
+}
+
 /** Fold one decoded stream-json agent event into the store. */
-function ingressAgentEvent(evt: { id?: string; type: string; code?: number | null; signal?: string | null; text?: string; payload?: unknown }): void {
+function ingressAgentEvent(evt: AgentEvent): void {
   if (evt.type === "agent") {
     const payload = (evt.payload || {}) as { type?: string; model?: string; total_cost_usd?: number };
     if (payload.type === "system" && typeof payload.model === "string") useBoard.getState().setStripLive({ model: payload.model });
@@ -1584,7 +1623,13 @@ function ingressAgentEvent(evt: { id?: string; type: string; code?: number | nul
 
   const c = consoleById(evt.id);
   if (!c) return;
-  if (evt.type === "exit") {
+  if (evt.type === "prompt") {
+    // Only ever replayed: live, sendPrompt has already shown it.
+    pushConsoleLine(c, "you", evt.text || "");
+    c.transcript = appendUserText(c.transcript, evt.text || "");
+  } else if (evt.type === "gap") {
+    pushConsoleLine(c, "meta", "earlier output trimmed");
+  } else if (evt.type === "exit") {
     c.running = false;
     c.exitCode = evt.code ?? null;
     pushConsoleLine(c, "meta", `agent exited (${evt.code === null ? "signal " + evt.signal : "code " + evt.code})`);
@@ -2656,7 +2701,27 @@ export function boot(): void {
     });
   }
   if (bridge.local && typeof bridge.local.onAgentEvent === "function") {
-    bridge.local.onAgentEvent(ingressAgentEvent);
+    const br = bridge.local;
+    if (typeof br.consoles === "function") {
+      /* ⚠️ HELD UNTIL THE SNAPSHOT LANDS. Agents kept running through the
+         reload, so live events race the `consoles()` reply: one that arrives
+         first has no console to land in yet, and one the snapshot already
+         holds must not be folded in twice. `seq` says which is which. */
+      let held: AgentEvent[] | null = [];
+      br.onAgentEvent((evt) => (held ? held.push(evt) : ingressAgentEvent(evt)));
+      void br
+        .consoles()
+        .catch(() => null)
+        .then((snap) => {
+          const seq = snap ? snap.seq : 0;
+          if (snap) reattachConsoles(snap.consoles);
+          const late = held || [];
+          held = null;
+          for (const evt of late) if (!(typeof evt.seq === "number" && evt.seq <= seq)) ingressAgentEvent(evt);
+        });
+    } else {
+      br.onAgentEvent(ingressAgentEvent);
+    }
   }
   void g.refreshLocalWorkspaces().then(restoreLastRoot);
   void g.refreshLocalAgents();

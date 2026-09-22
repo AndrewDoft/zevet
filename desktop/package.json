@@ -36,6 +36,7 @@
       "preload.js",
       "local-fs.js",
       "agent-console.js",
+      "console-log.js",
       "doc-sync.js",
       "repo-stats.js",
       "schedule.js",
