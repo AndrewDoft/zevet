@@ -9,6 +9,7 @@ import {
   emptyTranscript,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
+import { learnModels } from "./models.mjs";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
 import type { TranscriptState } from "./transcript.d.mts";
 import {
@@ -872,6 +873,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   refreshLocalAgents: () => {
     if (!bridge.local) return;
     bridge.local.agents().then((list) => {
+      for (const a of list || []) if (a.models) learnModels(a.models);
       set({ localAgents: list || [] });
       // The composer can start a run, so it needs to know what to start
       // before anybody has opened the picker.
