@@ -29,6 +29,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 // Only for the temp-file suffix in `writeTextFile`. `node:crypto` is a builtin,
 // so the "no dependencies" rule above is intact; `Math.random` would also have
 // been fine for uniqueness, but a collision here would overwrite somebody's
@@ -125,6 +126,31 @@ function skipSet(opts) {
   return new Set([...DEFAULT_SKIP, ...extra.filter((n) => typeof n === "string" && n.length > 0)]);
 }
 
+/**
+ * Paths Git says are ignored in this checkout, normalized to the spelling the
+ * tree uses. Tracked files stay out of this result by design: a .gitignore is
+ * often intentionally tracked, and a file tree must not hide source merely
+ * because a rule would ignore a new copy of it.
+ */
+function ignoredByGit(root) {
+  try {
+    return new Set(
+      execFileSync(
+        "git",
+        ["-C", root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
+      )
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((p) => p.replace(/\\/g, "/").replace(/\/+$/, "")),
+    );
+  } catch {
+    // A plain folder, a missing git executable, or a broken repository still
+    // deserves a tree. Only a repository that answers gets Git filtering.
+    return new Set();
+  }
+}
+
 function positiveInt(value, fallback) {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
@@ -214,6 +240,7 @@ function listTree(rootDir, opts = {}) {
   const rooted = realRoot(rootDir);
   if (!rooted.ok) return rooted;
   const root = rooted.root;
+  const ignored = ignoredByGit(root);
 
   const entries = [];
   let truncated = false;
@@ -243,6 +270,8 @@ function listTree(rootDir, opts = {}) {
       if (skip.has(name)) continue;
 
       const abs = path.join(absDir, name);
+      const rel = relDir ? `${relDir}/${name}` : name;
+      if (ignored.has(rel) || Array.from(ignored).some((ignoredPath) => rel.startsWith(ignoredPath + "/"))) continue;
       let st;
       try {
         // lstat, NEVER stat. `stat` follows the link, so a symlink pointing at

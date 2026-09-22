@@ -33,6 +33,7 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 // The module under test is CommonJS because the Electron main process is.
 const require = createRequire(import.meta.url);
@@ -158,6 +159,34 @@ describe("listTree", () => {
         assert.ok(!p.includes("node_modules"), p);
         assert.ok(!p.includes(".git"), p);
       }
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("honors a repository's ignored paths without hiding tracked dotfiles", () => {
+    const t = tempRoot();
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: t.dir, windowsHide: true });
+      build(t.dir, {
+        ".gitignore": ".playwright-mcp/\n*.bak.*\n",
+        ".github/workflows/build.yml": "name: build\n",
+        ".playwright-mcp/console-1.log": "noise\n",
+        "settings.json.bak.2026-09-18T17-00-50-988Z": "backup\n",
+        "src/app.ts": "export {};\n",
+      });
+      execFileSync("git", ["add", ".gitignore", ".github"], { cwd: t.dir, windowsHide: true });
+
+      const r = listTree(t.dir);
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.entries.map((e) => e.path), [
+        ".github",
+        ".github/workflows",
+        ".github/workflows/build.yml",
+        "src",
+        "src/app.ts",
+        ".gitignore",
+      ]);
     } finally {
       t.cleanup();
     }

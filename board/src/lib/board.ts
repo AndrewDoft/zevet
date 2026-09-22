@@ -85,6 +85,37 @@ interface Stats {
   root: string | null;
 }
 
+const TREE_COLLAPSED_KEY = "zevet.tree-collapsed.v1";
+
+function collapsedKey(root: string): string {
+  return `${TREE_COLLAPSED_KEY}:${root}`;
+}
+
+function collapseForEntries(root: string, entries: LocalEntry[]): Record<string, boolean> {
+  const collapsed: Record<string, boolean> = Object.create(null);
+  for (const entry of entries) if (entry.kind === "dir") collapsed[entry.path] = true;
+  try {
+    const saved = JSON.parse(localStorage.getItem(collapsedKey(root)) || "null");
+    if (saved && typeof saved === "object") {
+      for (const path of Object.keys(collapsed)) {
+        if (typeof saved[path] === "boolean") collapsed[path] = saved[path];
+      }
+    }
+  } catch {
+    // Private mode and malformed old data both get the clean default: closed.
+  }
+  return collapsed;
+}
+
+function saveCollapsed(root: string | null, collapsed: Record<string, boolean>): void {
+  if (!root) return;
+  try {
+    localStorage.setItem(collapsedKey(root), JSON.stringify(collapsed));
+  } catch {
+    // Folder state is a convenience; the tree still works without persistence.
+  }
+}
+
 interface LiveStrip {
   model: string | null;
   context: number | null;
@@ -565,7 +596,11 @@ export const useBoard = create<BoardState>((set, get) => ({
      value back unchanged and a directory could not be collapsed at any point
      in zevet's life. Nothing threw; the chevron just never turned. */
   setCollapsed: (path, collapsed) =>
-    set((g) => ({ collapsed: { ...g.collapsed, [path]: collapsed } })),
+    set((g) => {
+      const next = { ...g.collapsed, [path]: collapsed };
+      saveCollapsed(g.localRoot, next);
+      return { collapsed: next };
+    }),
   setFollowMode: (m) => {
     try {
       window.localStorage.setItem("zevet.follow.v1", m);
@@ -843,6 +878,7 @@ export const useBoard = create<BoardState>((set, get) => ({
            - reads them together. */
         set({
           localEntries: r.entries || null,
+          collapsed: collapseForEntries(dir, r.entries || []),
           localError: null,
           localTruncated: r.truncated
             ? `showing the first ${(r.entries || []).length} entries`
@@ -1828,6 +1864,24 @@ export function toggleSelection(path: string): void {
   }
 }
 
+/** Open just the ancestors needed to make an agent's active file visible. */
+function revealPath(path: string): void {
+  const g = useBoard.getState();
+  const collapsed = { ...g.collapsed };
+  let changed = false;
+  const parts = path.split("/").filter(Boolean);
+  for (let i = 1; i < parts.length; i++) {
+    const parent = parts.slice(0, i).join("/");
+    if (collapsed[parent]) {
+      collapsed[parent] = false;
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  saveCollapsed(g.localRoot, collapsed);
+  useBoard.setState({ collapsed });
+}
+
 function followEvent(e: HubEvent): void {
   const g = useBoard.getState();
   if (g.followMode === "off") return;
@@ -1836,13 +1890,14 @@ function followEvent(e: HubEvent): void {
   if (g.followMode === "mine" && (!myActor || e.actor !== myActor)) return;
   const patch: Partial<BoardState> = {};
   if (g.selectedRepo !== e.repo) patch.selectedRepo = e.repo;
+  const canOpen =
+    bridge.local && g.localRoot &&
+    String(g.localRoot).split("\\").join("/").split("/").pop() === e.repo;
+  if (canOpen) revealPath(e.target);
   if (g.selectedPath === e.target) {
     if (Object.keys(patch).length) useBoard.setState(patch);
     return;
   }
-  const canOpen =
-    bridge.local && g.localRoot &&
-    String(g.localRoot).split("\\").join("/").split("/").pop() === e.repo;
   if (canOpen) {
     pendingAgentLine = { repo: e.repo, target: e.target! };
     toggleSelection(e.target);
