@@ -31,6 +31,7 @@
  * update.mjs are .mjs with a .d.mts beside them.
  */
 
+import { readEnvelope } from "./envelope.mjs";
 import { assembleTranscript } from "./transcript.mjs";
 
 /** @typedef {import("./sessions.d.mts").SessionRecord} SessionRecord */
@@ -356,6 +357,20 @@ export function sessionLabel(session) {
  * @returns {string} what a person typed, or "" if they typed nothing.
  */
 export function unwrapEnvelope(prompt) {
+  /* ⚠️ A MESSAGE THAT IS *ONLY* ENVELOPE IS NOT PEELED, IT IS READ. The peel
+     below takes blocks off the front of something a person then typed; it has
+     nothing to say about a record that is the command itself. A session whose
+     first record is `/model` is called "/model" — which is what its own
+     terminal header says — and one that is a caveat is called nothing at all.
+     lib/envelope.mjs is the same classifier the conversation renders with, so
+     a title and a turn cannot name the same record differently. */
+  const env = readEnvelope(prompt);
+  if (env) {
+    if (env.kind === "command") return env.args ? `${env.name} ${env.args}` : env.name;
+    if (env.kind === "bash") return `! ${env.command}`;
+    return "";
+  }
+
   let out = String(prompt || "").trim();
   // Bounded rather than `while (true)`: a handful of envelopes is the real
   // shape, and a pathological prompt must not spin the render.
