@@ -33,6 +33,8 @@ import { AgentLogo } from "./brand";
 import { cn } from "@/lib/utils";
 import { MODELS } from "../lib/constants";
 import { aliasOf, describeModel } from "../lib/models.mjs";
+import { modelLimitedUntil, sortByLimit } from "../lib/model-limits.mjs";
+import { whenText } from "../lib/when.mjs";
 import { useBoard } from "../lib/board";
 import type { UsableAgent } from "../lib/types";
 
@@ -61,34 +63,42 @@ export function ModelChoice({
    *  offer the same alias without colliding; aliasOf() reads it back. */
   const groups = useMemo(
     () =>
-      agents.map((a) => ({
-        agent: a,
+      agents.map((a) => {
         // What the CLI knows today, when the desktop app could read it;
-        // otherwise what zevet shipped with. Catalogue order is kept: both
+        // otherwise what zevet shipped with. Catalogue order is kept — both
         // CLIs lead with their newest flagship, which is what all[0] below
-        // makes the default — never an id typed here.
-        models: (a.models?.map((m) => m.id) ?? MODELS[a.name] ?? []).map((alias): ModelOption => {
-          const { label, from, note, trains } = describeModel(alias);
-          const notes = [from, note, trains ? "may train on prompts" : null].filter(Boolean);
-          return {
-            id: `${a.name}:${alias}`,
-            // The name comes from one place for every row and every surface.
-            name: label,
-            description: notes.join(" · ") || undefined,
-            // The raw id is what someone types when they are looking for
-            // `inkling` inside `openrouter/thinkingmachines/inkling:free`.
-            // No "" row reaches here any more (constants.ts MODELS dropped
-            // it), so alias is always a real model id — the old `alias ?
-            // ... : [...]` fallback for the empty-alias row is unreachable
-            // and gone.
-            keywords: [alias, a.name],
-            // The provider's own mark, where one is honest. opencode fronts a
-            // dozen providers, so the MODEL is what identifies it, not the CLI.
-            icon: <AgentLogo agent={a.name} model={alias} className="size-3.5" />,
-            efforts: HAS_EFFORT.has(a.name) && alias ? true : undefined,
-          };
-        }),
-      })),
+        // makes the default — except a model past its free daily cap sinks
+        // below the rest of its group: still offered, just not first.
+        const aliases = sortByLimit(a.models?.map((m) => m.id) ?? MODELS[a.name] ?? [], window.localStorage);
+        return {
+          agent: a,
+          models: aliases.map((alias): ModelOption & { resetLabel?: string } => {
+            const { label, from, note, trains } = describeModel(alias);
+            const notes = [from, note, trains ? "may train on prompts" : null].filter(Boolean);
+            const resetAt = modelLimitedUntil(window.localStorage, alias);
+            return {
+              id: `${a.name}:${alias}`,
+              // The name comes from one place for every row and every surface.
+              name: label,
+              description: notes.join(" · ") || undefined,
+              // The raw id is what someone types when they are looking for
+              // `inkling` inside `openrouter/thinkingmachines/inkling:free`.
+              // No "" row reaches here any more (constants.ts MODELS dropped
+              // it), so alias is always a real model id — the old `alias ?
+              // ... : [...]` fallback for the empty-alias row is unreachable
+              // and gone.
+              keywords: [alias, a.name],
+              // The provider's own mark, where one is honest. opencode fronts a
+              // dozen providers, so the MODEL is what identifies it, not the CLI.
+              icon: <AgentLogo agent={a.name} model={alias} className="size-3.5" />,
+              efforts: HAS_EFFORT.has(a.name) && alias ? true : undefined,
+              // Still pickable — the user may know better than the last run
+              // did — just marked, in the tooltip only, with when it clears.
+              resetLabel: resetAt ? `Resets ${whenText(resetAt)}` : undefined,
+            };
+          }),
+        };
+      }),
     [agents],
   );
 
@@ -160,7 +170,11 @@ export function ModelChoice({
               }
             >
               {models.map((m) => (
-                <ModelSelectorItem key={m.id} model={m} />
+                <ModelSelectorItem
+                  key={m.id}
+                  model={m}
+                  {...(m.resetLabel ? { title: m.resetLabel, className: "opacity-40" } : undefined)}
+                />
               ))}
             </ModelSelectorGroup>
           ))}

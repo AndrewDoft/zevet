@@ -8,6 +8,7 @@ import {
   emptyTranscript,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
+import { clearModelLimit, isLimitMessage, recordModelLimit, resetFromPayload } from "./model-limits.mjs";
 import { learnModels } from "./models.mjs";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
 import type { TranscriptState } from "./transcript.d.mts";
@@ -1527,6 +1528,25 @@ function signalConsolesChanged(): void {
   useBoard.setState({ myConsoles: [...c] });
 }
 
+/** Whatever just closed this console's transcript, fold it into
+ *  lib/model-limits.mjs's memory of which models are past their free daily
+ *  cap: a run that ended in that error remembers it, a run that ended clean
+ *  forgets it. Reads the message closeTranscript just set rather than
+ *  re-parsing the provider's raw payload, so it can never disagree with what
+ *  the transcript itself says happened. */
+function noteModelLimit(c: ConsoleEntry, payload: unknown): void {
+  if (!c.model) return;
+  const last = c.transcript.messages[c.transcript.messages.length - 1] as
+    | { status?: { type?: string; error?: string } }
+    | undefined;
+  const status = last?.status;
+  if (!status) return;
+  if (status.type === "complete") clearModelLimit(window.localStorage, c.model);
+  else if (status.type === "incomplete" && isLimitMessage(status.error)) {
+    recordModelLimit(window.localStorage, c.model, resetFromPayload(payload));
+  }
+}
+
 /**
  * The console an agent event belongs to.
  *
@@ -1730,6 +1750,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
       pushConsoleLine(c, k as ConsoleLine["kind"], text);
     }
     c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: c.agent, localRoot, model: c.model });
+    noteModelLimit(c, evt.payload);
   } else if (evt.type === "stdout-line") {
     // Update banners and notices, not the conversation: the raw view only.
     pushConsoleLine(c, "out", evt.text || "");
