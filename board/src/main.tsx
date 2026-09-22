@@ -1,7 +1,15 @@
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import "./styles/masora.css";
-import App from "./App";
+import { bridge } from "./lib/bridge";
+import { hydratePrefsMirror } from "./lib/prefs-mirror.mjs";
+
+/* Every "zevet.*" preference a person set, off this machine rather than off
+ * whichever hub served this page — before "./App" (and, through it, ./lib/
+ * board's `create<BoardState>` call) is even imported, since that is where
+ * localStorage is first read into the store's initial state. See
+ * lib/prefs-mirror.mjs. No-op without a desktop bridge. */
+await hydratePrefsMirror(window.localStorage, bridge.local);
 
 /* The fixture bridge is dev-only twice over: the module is behind
  * import.meta.env.DEV, which rollup resolves to false and drops, and it still
@@ -17,4 +25,5 @@ if (import.meta.env.DEV) {
   }
 }
 
+const { default: App } = await import("./App");
 createRoot(document.getElementById("root")!).render(<App />);

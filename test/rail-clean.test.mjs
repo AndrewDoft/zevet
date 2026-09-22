@@ -44,7 +44,7 @@ test("seen is per run, survives a reload, and is marked by what is in front", ()
   // Keyed by process id (stable across the console replay), not the
   // per-page `key` a reload renumbers.
   assert.match(board, /seenRuns: loadSeenRuns\(\)/);
-  assert.match(board, /localStorage\.setItem\(SEEN_RUNS_KEY/);
+  assert.match(board, /zStorage\.setItem\(SEEN_RUNS_KEY/);
   assert.ok(!/seenConsole/.test(board));
   // One subscription marks the run in front, only once it has finished — a
   // run you glanced at while it ran and then left still gets its dot.

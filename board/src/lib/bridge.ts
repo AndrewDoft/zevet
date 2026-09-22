@@ -1,5 +1,6 @@
 import type { SessionsResult, SessionResult, SessionAgentsResult } from "./sessions.d.mts";
 import type { LocalWorkspace, LocalEntry, UsableAgent, ColorThemeSpec } from "./types";
+import { mirroredStorage } from "./prefs-mirror.mjs";
 
 export interface ReadResult {
   ok: boolean;
@@ -274,6 +275,11 @@ export interface LocalBridge {
    *  and the panel that edits them renders nothing without it. */
   agentSettings?: (root: string) => Promise<AgentSettingsResult>;
   saveAgentSettings?: (root: string, patch: Partial<AgentSettings>) => Promise<AgentSettingsResult>;
+  /** Every "zevet.*" localStorage key, mirrored on this machine. Optional: an
+   *  older desktop build has neither, and `zStorage` below is then exactly
+   *  `window.localStorage`. */
+  prefs?: () => Promise<Record<string, string>>;
+  setPref?: (key: string, value: string | null) => Promise<unknown>;
   indexEnable?: (root: string | null) => Promise<{ ok?: boolean; indexed?: number; skipped?: number; error?: string } | null | undefined>;
   updateCheck: () => Promise<unknown>;
   updateStatus: () => Promise<unknown>;
@@ -361,3 +367,11 @@ export const bridge = {
     return window.__zevetHub || location.origin;
   },
 };
+
+/** `window.localStorage`, mirrored to the desktop app's own storage so a
+ *  "zevet.*" preference follows the person across a reload, an app update, or
+ *  a change of hub rather than resetting with the origin. In a plain browser
+ *  (no desktop bridge) this is exactly `window.localStorage`. See
+ *  lib/prefs-mirror.mjs and main.tsx's `hydratePrefsMirror` call, which fills
+ *  it in before anything reads from it. */
+export const zStorage = mirroredStorage(window.localStorage, () => bridge.local);

@@ -243,6 +243,10 @@ contextBridge.exposeInMainWorld("zevetLocal", {
     ipcRenderer.invoke("local:resumeAgent", { agent, cwd, resumeFrom, opts }),
   agentSettings: (root) => ipcRenderer.invoke("local:agentSettings", { root }),
   saveAgentSettings: (root, patch) => ipcRenderer.invoke("local:saveAgentSettings", { root, patch }),
+  /** Every "zevet.*" localStorage key, mirrored on this machine so it follows
+   *  the person across a reload, an app update, or a change of hub. */
+  prefs: () => ipcRenderer.invoke("local:prefs"),
+  setPref: (key, value) => ipcRenderer.invoke("local:setPref", { key, value }),
   schedules: () => ipcRenderer.invoke("local:schedules"),
   scheduleSave: (s) => ipcRenderer.invoke("local:scheduleSave", { schedule: s }),
   scheduleRemove: (id) => ipcRenderer.invoke("local:scheduleRemove", { id }),

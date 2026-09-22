@@ -36,6 +36,7 @@ import { aliasOf, describeModel } from "../lib/models.mjs";
 import { modelLimitedUntil, sortByLimit } from "../lib/model-limits.mjs";
 import { whenText } from "../lib/when.mjs";
 import { useBoard } from "../lib/board";
+import { zStorage } from "../lib/bridge";
 import type { UsableAgent } from "../lib/types";
 
 /** codex is the one CLI here that takes a reasoning-effort flag. Offering the
@@ -69,13 +70,13 @@ export function ModelChoice({
         // CLIs lead with their newest flagship, which is what all[0] below
         // makes the default — except a model past its free daily cap sinks
         // below the rest of its group: still offered, just not first.
-        const aliases = sortByLimit(a.models?.map((m) => m.id) ?? MODELS[a.name] ?? [], window.localStorage);
+        const aliases = sortByLimit(a.models?.map((m) => m.id) ?? MODELS[a.name] ?? [], zStorage);
         return {
           agent: a,
           models: aliases.map((alias): ModelOption & { resetLabel?: string } => {
             const { label, from, note, trains } = describeModel(alias);
             const notes = [from, note, trains ? "may train on prompts" : null].filter(Boolean);
-            const resetAt = modelLimitedUntil(window.localStorage, alias);
+            const resetAt = modelLimitedUntil(zStorage, alias);
             return {
               id: `${a.name}:${alias}`,
               // The name comes from one place for every row and every surface.
