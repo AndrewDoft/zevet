@@ -11,10 +11,12 @@ workflows:
     scripts:
       - name: Generate icon
         script: cd desktop && node make-icon.mjs
-      - name: Test
-        script: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
       - name: Install desktop deps
         script: cd desktop && npm ci
+      - name: Install editor deps
+        script: cd editor && npm ci
+      - name: Test
+        script: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
       - name: Build the .dmg
         script: cd desktop && CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac
       - name: Smoke the app on Apple Silicon
