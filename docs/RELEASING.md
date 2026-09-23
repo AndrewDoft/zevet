@@ -46,6 +46,24 @@ zevet-0.2.0-macos-arm64.dmg
 versions in one folder is how a feed ends up advertising one build and serving
 another. `make-feed.mjs` checks for exactly this and exits rather than write it.
 
+### The .dmg from Codemagic
+
+The Mac leg can also run on Codemagic (app `6ab33101a3079c5deee322d8`, workflow `macos`
+in `codemagic.yaml`, mac_mini_m2), started from Windows:
+
+```
+node scripts/codemagic.mjs --branch <release branch or tag commit's branch> --out release-0.2.0/cm
+```
+
+It runs the suite, `npm run dist:mac`, `npm run smoke:mac`, then prints `lipo -archs` of the
+app binary and the dmg's SHA-256. Token: `CODEMAGIC_TOKEN`, else the DPAPI file zevet-voice
+uses. Move the `.dmg` from `cm/` into the release directory before step 3.
+
+The Mac app is ad-hoc sealed, not notarized. First launch on a Mac: right-click → Open
+(macOS 14), or System Settings → Privacy & Security → **Open Anyway** (macOS 15+, where
+right-click no longer offers it). Terminal alternative:
+`xattr -dr com.apple.quarantine /Applications/zevet.app`.
+
 ## 3. Generate the feed
 
 ```
