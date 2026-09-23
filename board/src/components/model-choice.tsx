@@ -15,7 +15,7 @@
  * keywords, and has reasoning effort built in. Ten free opencode ids with
  * provider-qualified names are a list you search, not one you scroll.
  */
-import { useEffect, useMemo } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import {
   ModelSelectorContent,
   ModelSelectorEffort,
@@ -36,6 +36,8 @@ import { aliasOf, describeModel } from "../lib/models.mjs";
 import { modelLimitedUntil, sortByLimit } from "../lib/model-limits.mjs";
 import { whenText } from "../lib/when.mjs";
 import { useBoard } from "../lib/board";
+import { useChat } from "../lib/chat";
+import { ChatSurface } from "../lib/surface";
 import { zStorage } from "../lib/bridge";
 import type { UsableAgent } from "../lib/types";
 
@@ -61,6 +63,15 @@ export function ModelChoice({
   const setLaunchEffort = useBoard((s) => s.setLaunchEffort);
   const modelSelectorOpen = useBoard((s) => s.modelSelectorOpen);
   const setModelSelectorOpen = useBoard((s) => s.setModelSelectorOpen);
+  /* ⚠️ TWO OF THESE ARE MOUNTED — Code's composer and Chat's, one hidden. Both
+     bound to the one store signal, a click opened both and the hidden one's
+     outside-click closed them again, so the picker never opened (seen live
+     2026-09-23). Only the surface in front takes the /model signal. */
+  const inChat = useContext(ChatSurface);
+  const front = useChat((s) => s.mode === "chat") === inChat;
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = front ? modelSelectorOpen : ownOpen;
+  const setOpen = front ? setModelSelectorOpen : setOwnOpen;
 
   /** One group per agent. The id carries `<agent>:<alias>` so two CLIs can
    *  offer the same alias without colliding; aliasOf() reads it back. */
@@ -151,8 +162,8 @@ export function ModelChoice({
       }}
       effort={launchEffort || undefined}
       onEffortChange={(e) => setLaunchEffort(e)}
-      open={modelSelectorOpen}
-      onOpenChange={setModelSelectorOpen}
+      open={open}
+      onOpenChange={setOpen}
     >
       <ModelSelectorTrigger className="w-full justify-between" variant="outline">
         {running ? (

@@ -35,3 +35,12 @@ test('"+" puts a blank composer in front: openLauncher clears activeConsole', ()
   const fn = board.slice(board.indexOf("  openLauncher: () => {"), board.indexOf("  closeConsole: (key)"));
   assert.match(fn, /activeConsole: null/);
 });
+
+// Two ModelChoice instances are mounted (Code's composer and Chat's). Both bound
+// to the one `modelSelectorOpen` signal, the picker never opened on click.
+test("only the surface in front binds ModelChoice to the /model signal", () => {
+  const src = readFileSync(path.join(ROOT, "board", "src", "components", "model-choice.tsx"), "utf8");
+  assert.match(src, /const open = front \? modelSelectorOpen : ownOpen;/);
+  assert.match(src, /open=\{open\}/);
+  assert.ok(!/open=\{modelSelectorOpen\}/.test(src), "bound unconditionally again");
+});
