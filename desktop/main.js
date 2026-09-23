@@ -1197,6 +1197,46 @@ ipcMain.handle("zevet:masoraUnpair", () => {
   return true;
 });
 
+const OAUTH_PROVIDERS = ["linear", "github", "slack", "gdrive", "gmail", "gcal", "notion", "zoom"];
+
+ipcMain.handle("masora:sources", async () => {
+  const cfg = masora.readConfig();
+  if (!cfg.paired) return { sources: [] };
+  const token = masora.loadToken((b) => safeStorage.decryptString(b));
+  if (!token) return { error: "Could not decrypt token" };
+  try {
+    let url = cfg.url;
+    const res = await fetch(`${url.replace(/\/+$/, "")}/api/sources`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return { error: "token" }; // 401/403 → auth issue
+    const data = await res.json();
+    if (!Array.isArray(data)) return { sources: [] };
+    return {
+      sources: data.map((s) => ({
+        kind: s.kind || s.type || "unknown",
+        status: s.status || "unknown",
+      })),
+    };
+  } catch {
+    return { error: "network" };
+  }
+});
+
+ipcMain.handle("masora:connect", async (_e, { provider } = {}) => {
+  if (!OAUTH_PROVIDERS.includes(provider)) {
+    return { error: "Unknown provider" };
+  }
+  const cfg = masora.readConfig();
+  if (!cfg.paired) {
+    return { error: "Not paired with Masora" };
+  }
+  let url = cfg.url;
+  shell.openExternal(`${url.replace(/\/+$/, "")}/api/oauth/${provider}/install`).catch(() => {});
+  return { ok: true };
+});
+
 // ---- the local workspace ---------------------------------------------------
 
 /** Folders this machine has opened. Stored beside the config, never on the hub. */
