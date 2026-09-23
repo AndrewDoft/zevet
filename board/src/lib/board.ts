@@ -2091,7 +2091,7 @@ type EditorBundle = {
   Awareness: new (doc: unknown) => unknown;
   awarenessProtocol: {
     applyAwarenessUpdate: (a: unknown, b: Uint8Array, origin: string) => void;
-    encodeAwarenessUpdate: (a: { clientID: number }, c: number[]) => Uint8Array;
+    encodeAwarenessUpdate: (a: unknown, c: number[]) => Uint8Array;
     removeAwarenessStates: (a: unknown, c: number[], origin: string) => void;
   };
   createEditor: (o: unknown) => unknown;
@@ -2142,7 +2142,7 @@ export function closeEditor(): void {
       if (e.awareness) {
         const a = e.awareness as { clientID: number };
         E.awarenessProtocol.removeAwarenessStates(e.awareness, [a.clientID], "local");
-        const gone = E.awarenessProtocol.encodeAwarenessUpdate({ clientID: a.clientID }, [a.clientID]);
+        const gone = E.awarenessProtocol.encodeAwarenessUpdate(e.awareness, [a.clientID]);
         doc.send?.(e.room, tagged(MSG_AWARENESS, gone));
       }
     } catch { /* socket already gone */ }
@@ -2364,7 +2364,10 @@ function joinRoom(e: EditorSession): void {
     if (origin === "remote") return;
     const changed = changes.added.concat(changes.updated, changes.removed);
     if (!changed.length) return;
-    const bytes = E.awarenessProtocol.encodeAwarenessUpdate({ clientID: awareness.clientID }, changed);
+    // The Awareness itself: y-protocols reads `.states` and `.meta` off it. A
+    // `{ clientID }` stand-in threw "reading 'get'" on every local change, which
+    // left the shared editor blank and broke whatever click triggered it.
+    const bytes = E.awarenessProtocol.encodeAwarenessUpdate(e.awareness, changed);
     doc.send(e.room, tagged(MSG_AWARENESS, bytes));
   };
   awareness.on("update", onAwareness);
@@ -2385,7 +2388,7 @@ async function sendState(e: EditorSession, snapshot?: boolean): Promise<void> {
   doc.send(e.room, tagged(MSG_DOC, E.Y.encodeStateAsUpdate(e.ydoc)), snapshot ? { snapshot: true } : undefined);
   if (!snapshot && e.awareness) {
     const a = e.awareness as { clientID: number };
-    const mine = E.awarenessProtocol.encodeAwarenessUpdate({ clientID: a.clientID }, [a.clientID]);
+    const mine = E.awarenessProtocol.encodeAwarenessUpdate(e.awareness, [a.clientID]);
     doc.send(e.room, tagged(MSG_AWARENESS, mine));
   }
 }
