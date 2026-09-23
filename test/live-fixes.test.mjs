@@ -49,5 +49,5 @@ test("Chat's claude-only picker never writes the launch model back", () => {
   const src = readFileSync(path.join(ROOT, "board", "src", "components", "model-choice.tsx"), "utf8");
   assert.match(src, /if \(inChat \|\| !front \|\| match \|\| !selected\) return;/);
   const chat = readFileSync(path.join(ROOT, "board", "src", "lib", "chat.ts"), "utf8");
-  assert.match(chat, /const launchModel = launchAgent === "claude" \? picked : "";/);
+  assert.match(chat, /const launchModel = !launchAgent \|\| launchAgent === "claude" \? picked : "";/);
 });
