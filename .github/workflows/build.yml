@@ -45,15 +45,22 @@ jobs:
         working-directory: desktop
         run: node make-icon.mjs
 
+      # Both installed BEFORE Test: test/setup-window.test.mjs drives the real
+      # Electron binary and editor/test/*.test.mjs imports yjs, and root has
+      # no npm ci step of its own to hoist either.
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Install editor deps
+        working-directory: editor
+        run: npm ci
+
       # The hub and the client have no dependencies, so this is the whole suite.
       # It runs on both runners on purpose: the bugs this project keeps finding
       # are the ones that are correct on one platform and wrong on the other.
       - name: Test
         run: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
-
-      - name: Install desktop deps
-        working-directory: desktop
-        run: npm ci
 
       - name: Build
         working-directory: desktop
