@@ -431,20 +431,13 @@ function fromClaude(state, p, root, model) {
    * shown as a chip on the composer row. Not transcript content either, and
    * it used to print `[claude: rate_limit_event]` for the same reason.
    *
-   * MEASURED 2026-09-21 against claude 2.1.278 (see board.ts's `limitsOf`
-   * doc comment): the one payload captured carried
-   * `rate_limit_info.status: "allowed"`. Whether claude ever sends a
-   * DIFFERENT status for a request it actually blocked has not been
-   * observed in this session — no such payload exists to point at, and
-   * inventing a specific string (e.g. "rejected") for that is exactly what
-   * CLAUDE.md §4 bans. What this does instead is conservative rather than
-   * invented: anything other than the one confirmed-safe value ends the
-   * turn as a rate limit, so a real block is still caught whatever its
-   * actual spelling turns out to be, without asserting what that spelling
-   * is. */
+   * VERIFIED 2026-09-23 in the claude 2.1.278 binary: the unified status is
+   * "allowed" | "allowed_warning" | "rejected", and "rejected" is hard
+   * exhaustion. "allowed_warning" means CLOSE to the limit and the request
+   * still ran, so it must not end the turn. */
   if (p.type === "rate_limit_event") {
     const status = p.rate_limit_info && typeof p.rate_limit_info === "object" ? p.rate_limit_info.status : undefined;
-    if (typeof status === "string" && status && status !== "allowed") {
+    if (status === "rejected") {
       return closeTranscript(state, { error: plainError(`rate limit status: ${status}`, { model }) });
     }
     return state;

@@ -535,11 +535,14 @@ describe("claude payloads that are not transcript content", () => {
     assert.equal(after.messages[0].status.type, "running", "an allowed status must not close the turn");
   });
 
-  // Whether claude ever sends a non-"allowed" status for a request it
-  // actually blocked is NOT verified — no such payload has been captured.
-  // "rejected" here is illustrative, not a confirmed value; the code checks
-  // for "anything but allowed", never for this specific string.
-  test("rate_limit_event with any other status ends the turn as a rate limit", () => {
+  // Verified 2026-09-23 in the claude 2.1.278 binary: "allowed_warning" is
+  // near the limit (request still served); "rejected" is exhaustion.
+  test("rate_limit_event allowed_warning does not end the turn", () => {
+    const s = claude({ type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", unifiedWindows: {} } }, claude(text("x")));
+    assert.equal(s.messages[0].status.type, "running");
+  });
+
+  test("rate_limit_event rejected ends the turn as a rate limit", () => {
     let s = claude(text("x"));
     s = claude({ type: "rate_limit_event", rate_limit_info: { status: "rejected", unifiedWindows: {} } }, s);
     assert.equal(s.messages[0].status.type, "incomplete");
