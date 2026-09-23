@@ -2906,7 +2906,7 @@ async function spawnChat(chat, provider, opts = {}) {
     mcpConfig = path.join(app.getPath("temp"), `zevet-chat-mcp-${process.pid}.json`);
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: masora.mcpServerEntry(cfg.url) }), "utf8");
   }
-  const run = { id: chat.id, console: null, turn: null, model: opts.model || chat.model || "", mode: opts.mode || "", provider: provider.id };
+  const run = { id: chat.id, console: null, turn: null, model: chat.model || "", want: `${opts.model || ""}|${opts.mode || ""}`, provider: provider.id };
   const opened = provider.open({
     chat,
     mcpConfig,
@@ -2974,13 +2974,11 @@ ipcMain.handle("chat:send", async (_e, arg) => {
   if (!chat) return { ok: false, error: "No such chat." };
   if (!text.trim()) return { ok: false, error: "Nothing to send." };
   if (chatRun && chatRun.id === id && chatRun.turn) return { ok: false, error: "Still answering." };
-  // If model/mode/effort changed, respawn to pick up the new flags.
-  const wantModel = opts.model || "";
-  const wantMode = opts.mode || "";
   if (chatRun && chatRun.id !== id) stopChatRun();
-  if (chatRun && (chatRun.model !== wantModel || chatRun.mode !== wantMode)) {
-    stopChatRun();
-  }
+  // A different model or posture needs new flags: respawn (--resume keeps the
+  // conversation). Compared against what was ASKED, not run.model, which init
+  // overwrites with the resolved id.
+  if (chatRun && chatRun.want !== `${opts.model || ""}|${opts.mode || ""}`) stopChatRun();
 
   const provider = chatProviders[chat.provider] || chatProviders[DEFAULT_CHAT_PROVIDER];
   const brief = await chatBrief(provider, text);

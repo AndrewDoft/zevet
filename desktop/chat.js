@@ -194,19 +194,8 @@ function chatArgs({ sessionId, started, mcpConfig, model, mode } = {}) {
     ...(mcpConfig ? ["--mcp-config", mcpConfig, "--allowedTools", "mcp__masora"] : []),
     ...(model ? ["--model", model] : []),
   ];
-  if (mode) {
-    if (mode === "dangerous") {
-      args.push("--dangerously-skip-permissions");
-    } else {
-      const modeMap = {
-        plan: "plan",
-        ask: "manual",
-        auto: "acceptEdits",
-      };
-      const claudeMode = modeMap[mode];
-      if (claudeMode) args.push("--permission-mode", claudeMode);
-    }
-  }
+  // One mapping for Code and Chat: agent-console.js MODES.
+  if (mode) args.push(...require("./agent-console.js").modeFlags("claude", mode).flags);
   return args;
 }
 
