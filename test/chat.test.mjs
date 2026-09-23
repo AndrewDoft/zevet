@@ -91,6 +91,17 @@ describe("composeTurn: what a turn writes to stdin", () => {
     assert.equal(chats.composeTurn("hi", null), "hi");
     assert.equal(chats.composeTurn("hi", "- a cited fact"), "<masora-context>\n- a cited fact\n</masora-context>\n\nhi");
   });
+
+  test("a slash command reaches claude unwrapped; normal text still wraps", () => {
+    const prior = [{ role: "user", author: "andrew", text: "earlier" }];
+    // claude only RUNS a command the line it sees starts with it.
+    assert.equal(chats.composeTurn("/compact", "- a cited fact", prior), "/compact");
+    assert.equal(chats.composeTurn("/clear", null, prior), "/clear");
+    assert.equal(chats.composeTurn("/cost", "- a cited fact"), "/cost");
+    // Prose that does not START with a slash still wraps.
+    assert.equal(chats.composeTurn("see /docs for this", "- brief", prior),
+      "<prior-conversation>\n[andrew]: earlier\n</prior-conversation>\n\n<masora-context>\n- brief\n</masora-context>\n\nsee /docs for this");
+  });
 });
 
 describe("persistence under ~/.zevet/chats", () => {
@@ -116,6 +127,15 @@ describe("persistence under ~/.zevet/chats", () => {
     assert.equal(chats.remove(c.id), true);
     assert.equal(chats.read(c.id), null);
     assert.ok(!existsSync(dir), "the chat's working folder goes with it");
+  });
+
+  test("a slash command never titles an untitled chat", () => {
+    const c = chats.create("andrew");
+    chats.addTurn(c.id, "/compact", "Compacted.", "claude-x", "andrew");
+    assert.equal(chats.read(c.id).title, "", "a command is plumbing, not a topic");
+    chats.addTurn(c.id, "What is a kumquat?", "A small citrus fruit.", "claude-x", "andrew");
+    assert.equal(chats.read(c.id).title, "What is a kumquat?", "the first real message still names it");
+    chats.remove(c.id);
   });
 
   test("an id that is not a uuid never becomes a path", () => {
@@ -185,6 +205,25 @@ describe("masora.json: Chat push consent", () => {
 describe("chat-stream: token streaming over transcript.mjs", () => {
   const delta = (text) => ({ type: "agent", payload: { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text } } } });
   const block = (text) => ({ type: "agent", payload: { type: "assistant", message: { content: [{ type: "text", text }] } } });
+
+  test("the init line's slash_commands land on the thread for the menu", () => {
+    let t = stream.emptyChatThread();
+    assert.equal(t.slashCommands, null, "before any run: fallback list");
+    t = stream.chatEvent(t, {
+      type: "agent",
+      payload: { type: "system", subtype: "init", model: "claude-x", slash_commands: ["compact", "clear", 7] },
+    });
+    assert.deepEqual(t.slashCommands, ["compact", "clear"], "non-strings dropped, like Code");
+  });
+
+  test("conversation_reset empties the thread and any draft with it", () => {
+    let t = stream.sendUser(stream.emptyChatThread(), "/clear");
+    t = stream.chatEvent(t, delta("leftover"));
+    assert.ok(t.draft);
+    t = stream.chatEvent(t, { type: "agent", payload: { type: "conversation_reset" } });
+    assert.equal(t.transcript.messages.length, 0, "screen matches claude");
+    assert.equal(t.draft, "", "old tokens go too");
+  });
 
   test("deltas show as they arrive, the finished block replaces them once", () => {
     let t = stream.sendUser(stream.emptyChatThread(), "hi");

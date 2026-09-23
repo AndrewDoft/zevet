@@ -19,6 +19,7 @@ import { ToolUIs } from "./tools";
 import { chatAvailable, useChat } from "../lib/chat";
 import { emptyChatThread, visibleMessages } from "../lib/chat-stream.mjs";
 import { useBoard } from "../lib/board";
+import { parseLocal } from "../lib/slash.mjs";
 import { MasoraVoiceDictationAdapter } from "../lib/voice";
 import { ChatSurface } from "../lib/surface";
 
@@ -133,6 +134,8 @@ function ChatRuntime({ children }: PropsWithChildren) {
   const thread = useChat((s) => (s.activeId ? s.threads[s.activeId] : undefined)) ?? EMPTY;
   const send = useChat((s) => s.send);
   const stop = useChat((s) => s.stop);
+  const newChat = useChat((s) => s.newChat);
+  const setModelSelectorOpen = useBoard((s) => s.setModelSelectorOpen);
   const setVoiceAsk = useBoard((s) => s.setVoiceAsk);
   const setVoiceHotkey = useBoard((s) => s.setVoiceHotkey);
   const dictation = useMemo(
@@ -146,7 +149,24 @@ function ChatRuntime({ children }: PropsWithChildren) {
     isRunning: thread.busy,
     onNew: async (message) => {
       const text = textOf(message);
-      if (text) await send(text);
+      if (!text) return;
+      /* LOCAL commands zevet answers itself, same rule as Code's runtime.
+         /clear is claudeToo:false → parseLocal is null → sent; claude runs it
+         and the conversation_reset line empties the thread (chat-stream). */
+      const local = parseLocal(text, "claude");
+      if (local === "stop") {
+        stop();
+        return;
+      }
+      if (local === "new") {
+        newChat();
+        return;
+      }
+      if (local === "model") {
+        setModelSelectorOpen(true);
+        return;
+      }
+      await send(text);
     },
     onCancel: async () => stop(),
     adapters: {

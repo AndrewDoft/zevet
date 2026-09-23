@@ -159,8 +159,14 @@ function markStarted(id) {
   if (!s.started) fs.writeFileSync(sessionFile(id), JSON.stringify({ ...s, started: true }), "utf8");
 }
 
+/** A prompt that IS a slash command — `/compact`, `/clear args`, not prose. */
+function isSlashPrompt(text) {
+  return /^\/[^\s/]+/.test(String(text || ""));
+}
+
 /** One finished exchange, by `author` (a hub login). The reply records the
- *  provider and model that wrote it. The first exchange names an untitled chat. */
+ *  provider and model that wrote it. The first real exchange names an
+ *  untitled chat; a slash command never does — it is plumbing, not a topic. */
 function addTurn(id, user, assistant, model, author, provider) {
   const c = read(id);
   if (!c) return null;
@@ -178,7 +184,7 @@ function addTurn(id, user, assistant, model, author, provider) {
   if (who && !participants.includes(who)) c.participants = [...participants, who];
   c.updated = at;
   if (model) c.model = String(model);
-  if (!c.title) c.title = String(user).trim().split("\n")[0].slice(0, 60);
+  if (!c.title && !isSlashPrompt(user)) c.title = String(user).trim().split("\n")[0].slice(0, 60);
   return write(c);
 }
 
@@ -203,8 +209,13 @@ function chatArgs({ sessionId, started, mcpConfig, model, mode } = {}) {
  * What goes on stdin for one turn: the conversation so far when this
  * machine's session has never seen it (a handed-over chat, or a lost
  * session), the C2 brief when there is one, then the words.
+ *
+ * A slash command goes UNWRAPPED. claude runs `/compact`, `/clear`, `/cost`
+ * only when the line it sees starts with the command — a `<prior-conversation>`
+ * block in front makes it prose about a path, and the command never fires.
  */
 function composeTurn(text, brief, prior) {
+  if (isSlashPrompt(text)) return String(text);
   const parts = [];
   if (prior && prior.length) {
     const log = prior.map((m) => `[${m.role === "user" ? m.author || "user" : "assistant"}]: ${m.text}`).join("\n\n");
@@ -253,5 +264,6 @@ module.exports = {
   addTurn,
   chatArgs,
   composeTurn,
+  isSlashPrompt,
   toRecord,
 };

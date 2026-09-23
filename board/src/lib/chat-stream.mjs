@@ -15,7 +15,7 @@ import { usageOf } from "./usage.mjs";
 
 /** @returns {import("./chat-stream.d.mts").ChatThread} */
 export function emptyChatThread() {
-  return { transcript: emptyTranscript(), draft: "", busy: false, usage: null };
+  return { transcript: emptyTranscript(), draft: "", busy: false, usage: null, slashCommands: null };
 }
 
 /** A saved chat ({role, text}[]) as a closed thread. */
@@ -29,7 +29,7 @@ export function fromStored(messages) {
       t = closeTranscript(t, { code: 0 });
     }
   }
-  return { transcript: t, draft: "", busy: false, usage: null };
+  return { transcript: t, draft: "", busy: false, usage: null, slashCommands: null };
 }
 
 let turns = 0;
@@ -42,7 +42,7 @@ let turns = 0;
 export function sendUser(thread, text) {
   const t = appendUserText(thread.transcript, text);
   const messages = t.messages.concat({ id: `zc-${++turns}`, role: "assistant", content: [], status: { type: "running" } });
-  return { ...thread, transcript: { ...t, messages, openIndex: messages.length - 1 }, draft: "", busy: true, usage: thread.usage };
+  return { ...thread, transcript: { ...t, messages, openIndex: messages.length - 1 }, draft: "", busy: true, usage: thread.usage, slashCommands: thread.slashCommands };
 }
 
 /** One `chat:event` evt from the desktop side. */
@@ -57,11 +57,18 @@ export function chatEvent(thread, evt) {
       draft: "",
       busy: false,
       usage: thread.usage,
+      slashCommands: thread.slashCommands,
     };
   }
   if (evt.type !== "agent") return thread;
   const p = evt.payload;
   if (!p || typeof p !== "object") return thread;
+  /* claude announces every command it will accept on the init line, the same
+     way Code's consoles record it (lib/board.ts). Before any run the list is
+     null and commandsFor falls back to CLAUDE_FALLBACK. */
+  if (p.type === "system" && Array.isArray(p.slash_commands)) {
+    return { ...thread, slashCommands: p.slash_commands.filter((n) => typeof n === "string") };
+  }
   if (p.type === "stream_event") {
     const d = p.event && p.event.type === "content_block_delta" ? p.event.delta : null;
     return d && d.type === "text_delta" && typeof d.text === "string"
@@ -72,14 +79,16 @@ export function chatEvent(thread, evt) {
   let usage = thread.usage;
   const u = usageOf(p);
   if (u) usage = u;
-  if (p.type === "result") return { transcript, draft: "", busy: false, usage };
+  if (p.type === "result") return { transcript, draft: "", busy: false, usage, slashCommands: thread.slashCommands };
   if (p.type === "assistant") return { ...thread, transcript, draft: "", usage };
-  return transcript === thread.transcript ? thread : { ...thread, transcript, usage };
+  /* `/clear` lands as `conversation_reset`: the transcript empties (transcript.mjs)
+     and any streamed draft must go with it, or the screen keeps old tokens. */
+  return transcript === thread.transcript ? thread : { ...thread, transcript, usage, draft: "" };
 }
 
 /** A failure to even start the turn, drawn where the reply would be. */
 export function failTurn(thread, error) {
-  return { transcript: closeTranscript(thread.transcript, { error }), draft: "", busy: false, usage: thread.usage };
+  return { transcript: closeTranscript(thread.transcript, { error }), draft: "", busy: false, usage: thread.usage, slashCommands: thread.slashCommands };
 }
 
 /** What the runtime renders: the transcript with the draft laid over it. */

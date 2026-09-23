@@ -21,11 +21,13 @@
  * envelope and are drawn here too: muted, collapsed, and never as markdown.
  * See lib/envelope.mjs for the shapes and where they were measured.
  */
-import { type CSSProperties, useMemo } from "react";
+import { type CSSProperties, useContext, useMemo } from "react";
 import type { TextMessagePartComponent } from "@assistant-ui/react";
 import { hueOf, selectActiveConsole, useBoard } from "@/lib/board";
 import { readEnvelope } from "@/lib/envelope.mjs";
 import { commandsFor, slashLead } from "@/lib/slash.mjs";
+import { ChatSurface } from "@/lib/surface";
+import { useChat } from "@/lib/chat";
 
 /** What a local command printed. One muted line; the rest behind it. */
 function LocalOut({ text, error }: { text: string; error: boolean }) {
@@ -47,16 +49,19 @@ function LocalOut({ text, error }: { text: string; error: boolean }) {
 }
 
 export const UserText: TextMessagePartComponent = ({ text }) => {
+  const isChat = useContext(ChatSurface);
   const active = useBoard(selectActiveConsole);
   const reading = useBoard((s) => s.sessions.open);
   const myActor = useBoard((s) => s.myActor);
+  const chatSlash = useChat((s) => (s.activeId ? s.threads[s.activeId]?.slashCommands ?? null : null));
   /* A recorded session has no live console behind it, so there is nothing to
      have announced anything — but the file does say which CLI wrote it, and
      that is enough for the fallback list. Without this, reading back a
      transcript showed every claude command as plain text and the highlight
-     looked broken rather than absent. */
-  const agent = active?.agent ?? reading?.source ?? null;
-  const announced = active?.slashCommands;
+     looked broken rather than absent. Chat is always claude and takes the
+     list from its own run's init line. */
+  const agent = isChat ? "claude" : (active?.agent ?? reading?.source ?? null);
+  const announced = isChat ? chatSlash ?? undefined : active?.slashCommands;
   const known = useMemo(() => commandsFor(agent, announced), [agent, announced]);
   const env = useMemo(() => readEnvelope(text), [text]);
 

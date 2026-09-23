@@ -2878,8 +2878,9 @@ function finishChatTurn(run, reply, error) {
   if (!chat) return;
   toBoard("chat:event", { id: run.id, evt: { type: "saved", chat: { id: chat.id, title: chat.title, updated: chat.updated } } });
   void pushChat(chat).catch((err) => console.error(`zevet: chat push failed: ${err.message}`));
-  // A few generated words replace the first-line title, same as a console.
-  if (chat.messages.length === 2) void nameChat(chat.id, turn.user).catch(() => {});
+  // A few generated words replace the first-line title, same as a console —
+  // but a slash command is plumbing, never a topic to title from.
+  if (chat.messages.length === 2 && !chats.isSlashPrompt(turn.user)) void nameChat(chat.id, turn.user).catch(() => {});
 }
 
 async function nameChat(id, text) {
@@ -2981,7 +2982,9 @@ ipcMain.handle("chat:send", async (_e, arg) => {
   if (chatRun && chatRun.want !== `${opts.model || ""}|${opts.mode || ""}`) stopChatRun();
 
   const provider = chatProviders[chat.provider] || chatProviders[DEFAULT_CHAT_PROVIDER];
-  const brief = await chatBrief(provider, text);
+  // A slash command goes to claude bare: no Masora brief, no prior replay
+  // (composeTurn drops both too; skipping the fetch here saves the round trip).
+  const brief = chats.isSlashPrompt(text) ? null : await chatBrief(provider, text);
 
   if (!chatRun) {
     const s = await spawnChat(chat, provider, opts);

@@ -19,6 +19,8 @@ export interface ChatThread {
   busy: boolean;
   /** Usage from the last assistant message, same shape as ConsoleEntry.usage. */
   usage: UsageReading | null;
+  /** `slash_commands` from claude's init line; null until the first run. */
+  slashCommands: string[] | null;
 }
 
 export interface StoredMessage {
