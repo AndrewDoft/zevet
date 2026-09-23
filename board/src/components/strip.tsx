@@ -31,8 +31,8 @@ function Seg({ children }: { children: ReactNode }) {
   return <span className="seg">{children}</span>;
 }
 
-function Sp({ cls, text }: { cls?: string; text: string | number }) {
-  return <span className={cls}>{text}</span>;
+function Sp({ cls, text, title }: { cls?: string; text: string | number; title?: string }) {
+  return <span className={cls} title={title}>{text}</span>;
 }
 
 export function Strip() {
@@ -142,7 +142,7 @@ export function Strip() {
 
   /* The folder error came here with the picker. It used to sit directly under
      it as a "ws-note" row, and that row went with the block. */
-  if (localError) rest.push(<Seg key="wserr"><Sp cls="bad" text={localError} /></Seg>);
+  if (localError) rest.push(<Seg key="wserr"><Sp cls="bad" text={localError} title={localError} /></Seg>);
 
   const hook = machine && (machine.hook as { failedAgo?: number } | undefined);
   if (hook && hook.failedAgo != null) {

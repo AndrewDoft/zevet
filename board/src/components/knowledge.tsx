@@ -298,8 +298,11 @@ export function Reads() {
           page: r.offset,
           quote: firstQuote(r.text),
         }));
-        // offset + limit - 1: a read of L1 with limit 2000 ends at L2000.
-        const pages = Math.max(...reads.map((r) => maxLineNumberIn(r.text) ?? r.offset + r.limit - 1));
+        // Only a real `cat -n` line number counts. offset+limit-1 was a GUESS
+        // for a still-running/empty/non-numbered read -- "through L2000" on a
+        // ten-line file. null omits the clause instead of inventing a count.
+        const observed = reads.map((r) => maxLineNumberIn(r.text)).filter((n): n is number => n != null);
+        const pages = observed.length ? Math.max(...observed) : null;
         const activePage = reads[reads.length - 1]!.offset;
         const relPath = relPathForJump(path, localRoot);
 

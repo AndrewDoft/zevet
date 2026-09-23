@@ -183,6 +183,7 @@ export function Pages() {
             {text ? (
               <div className="max-h-48 overflow-y-auto whitespace-pre-wrap px-3.5 py-2.5 text-xs leading-relaxed text-foreground/70">
                 {text.slice(0, 4000)}
+                {text.length > 4000 ? <span className="text-foreground/40">{"…truncated"}</span> : null}
               </div>
             ) : null}
           </WebPreview>

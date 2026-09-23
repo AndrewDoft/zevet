@@ -23,7 +23,7 @@ export function DocumentReference({
   "children" | "title" | "pages" | "anchors" | "activePage" | "onJump"
 > & {
   title: string;
-  pages: number;
+  pages: number | null;
   anchors: readonly DocumentAnchor[];
   activePage: number;
   onJump?: (page: number) => void;
@@ -51,7 +51,7 @@ export function DocumentReference({
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[13.5px] font-medium">{title}</span>
           <span className={cn(mono, "text-foreground/30")}>
-            read {anchors.length}× · through L{pages}
+            read {anchors.length}×{pages != null ? ` · through L${pages}` : ""}
           </span>
         </div>
       </div>

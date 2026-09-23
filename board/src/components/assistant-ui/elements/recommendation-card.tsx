@@ -8,8 +8,6 @@ import { inkButton, mono, paper } from "./surfaces";
 
 export type RecommendationState = "idle" | "accepted";
 
-const CONFIDENCE_BARS = [0, 1, 2];
-
 export function RecommendationCard({
   state,
   question,
@@ -58,15 +56,10 @@ export function RecommendationCard({
         {state === "idle" ? (
           <>
             <div className="flex items-center gap-2">
-              <span className="flex items-end gap-0.5" aria-hidden>
-                {CONFIDENCE_BARS.map((bar) => (
-                  <span
-                    key={bar}
-                    className="w-1 rounded-full bg-emerald-500/70"
-                    style={{ height: 6 + bar * 3 }}
-                  />
-                ))}
-              </span>
+              {/* No fixed "high confidence" bars -- no agent here reports its
+                  own confidence, and a hard-coded full meter next to every
+                  label contradicted that (provenance.tsx's own rule). Just
+                  the label. */}
               <span className={cn(mono, "text-foreground/40")}>
                 {confidenceLabel}
               </span>
