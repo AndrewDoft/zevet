@@ -9,7 +9,7 @@ import {
   plainError,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
-import { classifyEnding, clearModelLimit, isLimitMessage, recordModelLimit, resetFromPayload } from "./model-limits.mjs";
+import { classifyEnding, noteModelLimit as noteLimitFromStatus } from "./model-limits.mjs";
 import { learnModels } from "./models.mjs";
 import { usageOf, type UsageReading } from "./usage.mjs";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
@@ -1547,12 +1547,7 @@ function noteModelLimit(c: ConsoleEntry, payload: unknown): void {
   const last = c.transcript.messages[c.transcript.messages.length - 1] as
     | { status?: { type?: string; error?: string } }
     | undefined;
-  const status = last?.status;
-  if (!status) return;
-  if (status.type === "complete") clearModelLimit(zStorage, modelLimitKey(c));
-  else if (status.type === "incomplete" && isLimitMessage(status.error)) {
-    recordModelLimit(zStorage, modelLimitKey(c), resetFromPayload(payload));
-  }
+  noteLimitFromStatus(zStorage, modelLimitKey(c), last?.status, payload);
 }
 
 /**

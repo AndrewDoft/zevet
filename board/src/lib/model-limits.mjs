@@ -54,12 +54,17 @@ export function classifyEnding(raw) {
   return { kind: null, code: null };
 }
 
-/** "14:05", UTC — matches the UTC reset cadence `recordModelLimit` falls back
- *  to, and keeps the reading the same on every machine regardless of its own
- *  timezone (see CLAUDE.md §9.13 on a clock read without pinning its zone). */
+/** "14:05", in the VIEWER's own local time — this is copy shown on screen
+ *  ("resets 14:05"), and a person reads that against their own clock, not
+ *  UTC. (§9.13's "pin the context" is about a number quoted in a log or a
+ *  report surviving to a different reader; a live clock rendered for the
+ *  person looking at it right now is the one case local time is correct,
+ *  not a violation of it.) `recordModelLimit`'s own UTC-midnight FALLBACK is
+ *  unrelated and unchanged — that is a storage cadence picked to match
+ *  OpenRouter's own reset schedule, not something ever shown as a time. */
 export function resetClock(ms) {
   const d = new Date(ms);
-  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 function readAll(storage) {
@@ -131,6 +136,32 @@ export function modelLimitedUntil(storage, modelId, now = Date.now()) {
     return null;
   }
   return entry.resetAt;
+}
+
+/**
+ * Fold whatever just closed a transcript into this memory: a run that ended
+ * on "Rate limited" remembers it, a run that ended clean forgets it.
+ * Anything else (still running, a provider error, "Not signed in.") is left
+ * alone — a provider error must never gray a model that was never actually
+ * over its cap.
+ *
+ * Shared by board.ts (Code) and chat.ts (Chat) so the two surfaces can never
+ * disagree about what a rate limit looks like — each computes its own
+ * `key` (Code: `${agent}:${model}`; Chat is claude-only, `claude:${model}`)
+ * and its own last-message `status` off whichever transcript shape it has,
+ * then calls this the same way.
+ *
+ * @param {unknown} storage
+ * @param {string | null | undefined} key
+ * @param {{ type?: string; error?: string } | null | undefined} status
+ * @param {unknown} payload the raw agent payload, for resetFromPayload
+ */
+export function noteModelLimit(storage, key, status, payload) {
+  if (!key || !status) return;
+  if (status.type === "complete") clearModelLimit(storage, key);
+  else if (status.type === "incomplete" && isLimitMessage(status.error)) {
+    recordModelLimit(storage, key, resetFromPayload(payload));
+  }
 }
 
 /** Model ids reordered so any still-limited ones sink below the rest, order

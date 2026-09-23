@@ -17,6 +17,7 @@ import {
   type ChatThread,
 } from "./chat-stream.mjs";
 import { readLastChat, readMode, writeLastChat, writeMode } from "./mode.mjs";
+import { noteModelLimit } from "./model-limits.mjs";
 import { useBoard } from "./board";
 import type { LaunchMode } from "./types";
 
@@ -122,7 +123,7 @@ export const useChat = create<ChatState>((set, get) => ({
     const chatId = id;
     const put = (fn: (t: ChatThread) => ChatThread) =>
       set((s) => ({ threads: { ...s.threads, [chatId]: fn(s.threads[chatId] ?? emptyChatThread()) } }));
-    put((t) => sendUser(t, text));
+    put((t) => sendUser(t, text, launchModel));
     const r = await l.chatSend(chatId, text, { model: launchModel, effort: launchEffort, mode: launchMode });
     if (!r || !r.ok) put((t) => failTurn(t, (r && r.error) || "Could not send."));
     void get().refresh();
@@ -152,9 +153,23 @@ export function wireChat(): void {
       void useChat.getState().refresh();
       return;
     }
-    useChat.setState((s) =>
-      s.threads[id] ? { threads: { ...s.threads, [id]: chatEvent(s.threads[id], evt) } } : {},
-    );
+    useChat.setState((s) => {
+      const prev = s.threads[id];
+      if (!prev) return {};
+      const next = chatEvent(prev, evt);
+      /* Same bookkeeping as board.ts's noteModelLimit (Code), reused rather
+         than reimplemented — see model-limits.mjs. Chat is claude-only
+         (desktop/chat.js), so the key is always claude:<model>, the exact
+         namespace ModelChoice already reads for claude's group; a run that
+         hits a usage limit here grays the same picker row Code's would. */
+      if (prev.model) {
+        const last = next.transcript.messages[next.transcript.messages.length - 1] as
+          | { status?: { type?: string; error?: string } }
+          | undefined;
+        noteModelLimit(zStorage, `claude:${prev.model}`, last?.status, evt.payload);
+      }
+      return { threads: { ...s.threads, [id]: next } };
+    });
   });
   const last = readLastChat(zStorage);
   if (last) void useChat.getState().open(last);

@@ -21,15 +21,29 @@ limit had no distinct message at all.
 is now the one place that reads a raw error string and says
 `rate_limited | provider_error | null` (tested against the exact opencode
 1.18.31 strings observed this session: `test/model-limits.test.mjs`).
-`plainError` uses it to produce `"Rate limited"` (+ `" · resets 14:05"` when
-the payload carries `X-RateLimit-Reset`), `"Provider error 404"`, or
-`"Timed out"`.
+`plainError` uses it to produce `"Rate limited"` (+ `" · resets HH:MM"`, in
+the VIEWER's own local time, when the payload carries `X-RateLimit-Reset` —
+`resetClock`), `"Provider error 404"`, or `"Timed out"`. The bookkeeping
+itself (`noteModelLimit`) is one shared function, called by both
+`board.ts` (Code, key `<agent>:<model>`) and `chat.ts` (Chat, key
+`claude:<model>` — Chat is claude-only) so the two surfaces can never
+disagree; Chat did not call any of this until this session's second pass —
+`chat-stream.mjs`'s reducer now carries `thread.model` (what a turn was
+actually sent on) through every branch a turn can end on, so `chat.ts`
+knows which key to grade a rate limit against.
+
+Also: a `rate_limit_event` whose `rate_limit_info.status` is anything other
+than the one MEASURED-safe value (`"allowed"`, claude 2.1.278) now ends the
+turn as a rate limit too — conservative rather than invented, since no
+payload with a different status has actually been captured; see the comment
+in `transcript.mjs` and `docs/contracts/opencode-hooks.md`-style reasoning
+applied to claude instead.
 
 **What zevet shows.** The thread's own error line (assistant-ui's built-in
 `MessagePrimitive.Error`, already wired — verified against
 `@assistant-ui/core`'s `messageErrorText`, nothing custom needed there) now
-reads one of the three lines above instead of a sentence. Only the
-rate-limited case grays the model in the picker.
+reads one of the three lines above instead of a sentence, in Code and Chat
+alike. Only the rate-limited case grays the model in the picker.
 
 ## Opencode's own CLI-level failures (before the JSON stream opens) were
 ## invisible — not classified, model not grayed

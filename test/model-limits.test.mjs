@@ -104,9 +104,19 @@ describe("classifyEnding", () => {
 });
 
 describe("resetClock", () => {
-  test("formats as UTC HH:MM regardless of the machine's own timezone", () => {
-    assert.equal(resetClock(Date.UTC(2026, 8, 23, 14, 5)), "14:05");
-    assert.equal(resetClock(Date.UTC(2026, 8, 23, 0, 0)), "00:00");
+  // "resets 14:05" is read against the viewer's OWN clock, so this is built
+  // from the local Date constructor and checked against the same local
+  // reading — self-consistent on whatever timezone the machine running the
+  // test happens to be in, rather than pinned to UTC (which is what made
+  // this the wrong test the first time: it asserted a UTC reading and
+  // passed on a UTC+0 machine while being wrong everywhere else).
+  test("formats as the viewer's own local HH:MM", () => {
+    const d = new Date(2026, 8, 23, 14, 5);
+    assert.equal(resetClock(d.getTime()), "14:05");
+    const midnight = new Date(2026, 8, 23, 0, 0);
+    assert.equal(resetClock(midnight.getTime()), "00:00");
+    const single = new Date(2026, 8, 23, 4, 7);
+    assert.equal(resetClock(single.getTime()), "04:07", "single-digit hour/minute must still be zero-padded");
   });
 });
 

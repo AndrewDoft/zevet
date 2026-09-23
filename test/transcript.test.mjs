@@ -409,10 +409,11 @@ describe("CLI plumbing is not conversation", () => {
   test("errors become one plain line, never the payload", () => {
     assert.equal(plainError("Rate limit exceeded: free-models-per-day"), "Rate limited");
     assert.equal(plainError("HTTP 429 Too Many Requests", { model: "x/y" }), "Rate limited");
-    assert.equal(
-      plainError("HTTP 429 Too Many Requests", { resetAt: Date.UTC(2026, 8, 23, 14, 5) }),
-      "Rate limited · resets 14:05",
-    );
+    // resetClock reads the viewer's own local clock (not UTC — a person
+    // reads "resets 14:05" against their own time), so the expected string
+    // is computed the same way rather than hard-coded against one timezone.
+    const resetAt = Date.now() + 3_600_000;
+    assert.equal(plainError("HTTP 429 Too Many Requests", { resetAt }), `Rate limited · resets ${resetClock(resetAt)}`);
     assert.equal(plainError("Could not find codex on this machine. Looked in 9 directories"), "Codex isn't installed.");
     // A code-bearing provider error (not 429/401), and a 401 kept distinct
     // from it — CLAUDE.md's rate-limit ask draws that line explicitly.
@@ -524,4 +525,24 @@ describe("claude payloads that are not transcript content", () => {
       assert.equal(after.messages.length, 0, `${type} put something on screen`);
     });
   }
+
+  // MEASURED 2026-09-21 (board.ts's limitsOf comment): the one captured
+  // rate_limit_event carried rate_limit_info.status "allowed" — this must
+  // stay silent, same as the loop above (no status field is the same case).
+  test("rate_limit_event with status allowed still adds nothing", () => {
+    const before = claude(text("x"));
+    const after = claude({ type: "rate_limit_event", rate_limit_info: { status: "allowed", unifiedWindows: {} } }, before);
+    assert.equal(after.messages[0].status.type, "running", "an allowed status must not close the turn");
+  });
+
+  // Whether claude ever sends a non-"allowed" status for a request it
+  // actually blocked is NOT verified — no such payload has been captured.
+  // "rejected" here is illustrative, not a confirmed value; the code checks
+  // for "anything but allowed", never for this specific string.
+  test("rate_limit_event with any other status ends the turn as a rate limit", () => {
+    let s = claude(text("x"));
+    s = claude({ type: "rate_limit_event", rate_limit_info: { status: "rejected", unifiedWindows: {} } }, s);
+    assert.equal(s.messages[0].status.type, "incomplete");
+    assert.equal(s.messages[0].status.error, "Rate limited");
+  });
 });

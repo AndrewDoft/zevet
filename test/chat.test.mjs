@@ -22,6 +22,12 @@ const stream = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib",
 
 const { readMode, writeMode, readLastChat, writeLastChat } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "mode.mjs")).href);
 const { mirroredStorage, hydratePrefsMirror } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "prefs-mirror.mjs")).href);
+const { noteModelLimit, modelLimitedUntil } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "model-limits.mjs")).href);
+
+function fakeStorage() {
+  const map = new Map();
+  return { getItem: (k) => (map.has(k) ? map.get(k) : null), setItem: (k, v) => map.set(k, String(v)) };
+}
 
 const ID = "6f0c2b8e-1d3a-4c5b-9e7f-0a1b2c3d4e5f";
 
@@ -317,6 +323,64 @@ describe("chat-stream: token streaming over transcript.mjs", () => {
     assert.equal(t.usage.input, 17039 - 9984);
     assert.equal(t.usage.cachedInput, 9984);
     assert.equal(t.usage.output, 500);
+  });
+
+  // A rate limit in Chat must behave exactly as it does in Code: end the
+  // turn, show "Rate limited", and be recordable against claude:<model> so
+  // the shared ModelChoice grays it — chat.ts's wireChat() is what actually
+  // calls model-limits.mjs's noteModelLimit with that key (glue code, same
+  // testing boundary as board.ts's own noteModelLimit); what belongs here is
+  // proving the DATA that glue depends on — thread.model — survives sendUser
+  // and every chatEvent branch intact, and that the shared function produces
+  // the right verdict for a chat-shaped status.
+  test("sendUser records the model actually used, not re-read off a live preference later", () => {
+    let t = stream.sendUser(stream.emptyChatThread(), "hi", "claude-opus-5");
+    assert.equal(t.model, "claude-opus-5");
+  });
+
+  test("model survives every chatEvent branch a turn can end on", () => {
+    // result
+    let t = stream.sendUser(stream.emptyChatThread(), "hi", "claude-opus-5");
+    t = stream.chatEvent(t, { type: "agent", payload: { type: "result", is_error: false } });
+    assert.equal(t.model, "claude-opus-5", "result branch dropped the model");
+
+    // exit (mid-turn death)
+    t = stream.sendUser(stream.emptyChatThread(), "hi", "claude-opus-5");
+    t = stream.chatEvent(t, { type: "exit", code: 1 });
+    assert.equal(t.model, "claude-opus-5", "exit branch dropped the model");
+
+    // a claude result that IS the rate-limit error, same shape transcript.test.mjs
+    // pins for Code
+    t = stream.sendUser(stream.emptyChatThread(), "hi", "claude-opus-5");
+    t = stream.chatEvent(t, {
+      type: "agent",
+      payload: { type: "result", is_error: true, result: 'API Error: 429 {"type":"rate_limit_error"}' },
+    });
+    assert.equal(t.model, "claude-opus-5", "rate-limited result dropped the model");
+    assert.equal(stream.visibleMessages(t)[1].status.error, "Rate limited", "Chat must show the same terse line as Code");
+
+    // failTurn (a send that never started)
+    const f = stream.failTurn(stream.sendUser(stream.emptyChatThread(), "hi", "claude-opus-5"), "Rate limited");
+    assert.equal(f.model, "claude-opus-5", "failTurn dropped the model");
+  });
+
+  test("the shared noteModelLimit grays claude:<model> from a Chat-shaped status, the same function Code uses", () => {
+    const storage = fakeStorage();
+    let t = stream.sendUser(stream.emptyChatThread(), "hi", "claude-opus-5");
+    t = stream.chatEvent(t, {
+      type: "agent",
+      payload: { type: "result", is_error: true, result: "HTTP 429 Too Many Requests" },
+    });
+    const status = stream.visibleMessages(t)[1].status;
+    noteModelLimit(storage, `claude:${t.model}`, status, undefined);
+    assert.ok(modelLimitedUntil(storage, "claude:claude-opus-5"), "claude:<model> must be the key ModelChoice reads");
+    assert.equal(modelLimitedUntil(storage, "claude-opus-5"), null, "the bare model id must NOT be the key — that would collide with another agent's alias");
+
+    // A clean run on the same model afterwards must clear it, same as Code.
+    let clean = stream.sendUser(stream.emptyChatThread(), "hi again", "claude-opus-5");
+    clean = stream.chatEvent(clean, { type: "agent", payload: { type: "result", is_error: false } });
+    noteModelLimit(storage, `claude:${clean.model}`, stream.visibleMessages(clean)[1].status, undefined);
+    assert.equal(modelLimitedUntil(storage, "claude:claude-opus-5"), null, "a clean run must clear the limit");
   });
 });
 
