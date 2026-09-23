@@ -51,3 +51,31 @@ test("Chat's claude-only picker never writes the launch model back", () => {
   const chat = readFileSync(path.join(ROOT, "board", "src", "lib", "chat.ts"), "utf8");
   assert.match(chat, /const launchModel = !launchAgent \|\| launchAgent === "claude" \? picked : "";/);
 });
+
+// Three IPC calls with no .catch, found auditing workspaces/launcher: a
+// rejection left "Open a folder…", a freshly-opened repo's tree, and a
+// just-started console each stuck with no error, forever.
+const boardSrc = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
+const boardSlice = (start, end) => boardSrc.slice(boardSrc.indexOf(start), boardSrc.indexOf(end));
+
+test("addWorkspace does not leave an unhandled rejection on a failed picker call", () => {
+  const fn = boardSlice("  addWorkspace: () => {", "  refreshLocalWorkspaces: (): Promise<void> => {");
+  assert.match(fn, /\.catch\(/);
+});
+
+test("openLocalRoot surfaces an error instead of leaving the tree null forever on a rejected read", () => {
+  const fn = boardSlice("  openLocalRoot: (dir) => {", "  unsetLocalRoot: () => {");
+  // Two .catch()es live in this function (checkoutId's own, then tree()'s);
+  // this one must be the second, or a stray earlier match would pass fine.
+  assert.equal((fn.match(/\.catch\(/g) || []).length, 2, "expected checkoutId's catch plus tree()'s");
+  const rejection = fn.slice(fn.lastIndexOf(".catch("));
+  assert.match(rejection, /localEntries: \[\]/, "clears the perpetual null/loading tree state");
+  assert.match(rejection, /localError:/, "tells the user it failed, like the !r.ok branch above it does");
+});
+
+test("startAgent's console stops spinning and shows an error on a rejected spawn", () => {
+  const fn = boardSlice("  startAgent: (name, launch) => {", "  setActiveConsole: (key) =>");
+  const rejection = fn.slice(fn.indexOf(".catch("));
+  assert.match(rejection, /c\.running = false/, "the optimistic running:true console never resets");
+  assert.match(rejection, /pushConsoleLine\(c, "err"/, "no error line reaches the console");
+});
