@@ -10,7 +10,7 @@
 // installed. The same rule bought the same way twice.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -661,10 +661,46 @@ const teamAccounts = new Map([[DEFAULT_TEAM, accounts]]);
 const MAX_TEAMS = Number(process.env.ZEVET_MAX_TEAMS || 200);
 const TEAMS_DIR = path.dirname(ACCOUNTS_FILE || defaultAccountsFile(HERE));
 
+/** How long an unclaimed team may sit before sweepUnclaimedTeams() deletes it.
+ *  A `/team/create` with nobody ever signing in against it — the orphan a
+ *  test POST left on the hosted hub — is not distinguishable from a real one
+ *  mid-onboarding except by age, so age is the only thing this checks. A
+ *  CLAIMED team (owner !== null) is never touched here, at any age. */
+const TEAM_EXPIRY_MS = Number(process.env.ZEVET_TEAM_EXPIRY_MS || 24 * 60 * 60 * 1000);
+
+/**
+ * Delete every unclaimed team old enough to be a stranded /team/create call.
+ *
+ * Same lazy-plus-interval shape as sweepGooglePairs above: called here, before
+ * a fresh team is minted, so a hub that keeps creating teams never accumulates
+ * orphans between sweeps; and on the interval below, so a hub that stops
+ * getting /team/create calls still cleans up the last one it saw.
+ */
+function sweepUnclaimedTeams() {
+  const now = Date.now();
+  for (const [slug, acc] of teamAccounts) {
+    if (slug === DEFAULT_TEAM) continue; // the default team has no "created" moment to expire
+    if (acc.owner) continue; // claimed, regardless of age
+    if (now - acc.createdAt <= TEAM_EXPIRY_MS) continue;
+    teamAccounts.delete(slug);
+    boards.delete(slug);
+    for (const f of [path.join(TEAMS_DIR, `accounts-${slug}.json`), path.join(TEAMS_DIR, `events-${slug}.jsonl`)]) {
+      try {
+        rmSync(f);
+      } catch {
+        // Already gone, or never flushed to disk. Either way there is nothing
+        // left to clean up for this file.
+      }
+    }
+  }
+}
+setInterval(sweepUnclaimedTeams, 60 * 60 * 1000).unref(); // hourly is plenty against a 24h default
+
 function createTeam() {
   if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
     return { ok: false, status: 503, error: "this hub has no sign-in configured" };
   }
+  sweepUnclaimedTeams();
   if (teamAccounts.size - 1 >= MAX_TEAMS) {
     return { ok: false, status: 503, error: "this hub is holding as many teams as it will" };
   }

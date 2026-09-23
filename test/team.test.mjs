@@ -10,7 +10,7 @@
 // without needing GitHub or Google to answer.
 import { test, describe, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, mkdtempSync } from "node:fs";
+import { readFileSync, mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { startHub, post, state } from "./helpers.mjs";
@@ -159,4 +159,64 @@ describe("a created team is isolated", () => {
     assert.equal(afterCreate.teams, 2);
     assert.equal(afterCreate.events, before.events, "unaffected by another team's activity");
   });
+});
+
+describe("unclaimed teams expire (INSUF: the orphan a test POST left on the hosted hub)", () => {
+  test("an unclaimed team older than the expiry window is gone after the next /team/create", async () => {
+    // ZEVET_TEAM_EXPIRY_MS is the same override shape ZEVET_COLLISION_WINDOW_MS
+    // already uses elsewhere in this suite: a real, tiny window, then a real
+    // (tiny) sleep past it — not a mock of time, because the thing under test
+    // is server.mjs's own Date.now()-based sweep, in its own process.
+    const hub = await teamHub({ ZEVET_TEAM_EXPIRY_MS: "50" });
+    const orphan = await create(hub.base);
+    const tokenOrphan = tokenFor(hub, orphan.team);
+    const accountsFile = path.join(hub.accountsDir, `accounts-${orphan.team}.json`);
+    const eventsFile = path.join(hub.accountsDir, `events-${orphan.team}.jsonl`);
+    assert.ok(existsSync(accountsFile), "the orphan's own file must exist before the sweep");
+
+    // Confirm it is reachable before the sweep, so the assertion below is a
+    // real transition and not a token that never worked.
+    const before = await fetch(`${hub.base}/api/state?token=${tokenOrphan}`);
+    assert.equal(before.status, 200);
+    await before.text();
+
+    await new Promise((r) => setTimeout(r, 200)); // past the 50ms window
+
+    // The sweep runs lazily, before a new team is minted — see
+    // sweepUnclaimedTeams() in hub/server.mjs — so creating a second team is
+    // what triggers it, not a wait for the hourly interval.
+    const second = await create(hub.base);
+    assert.equal(second.ok, true);
+
+    const after = await fetch(`${hub.base}/api/state?token=${tokenOrphan}`);
+    assert.equal(after.status, 401, "the orphan's token must no longer resolve to a team");
+    await after.text();
+
+    assert.equal(existsSync(accountsFile), false, "the orphan's accounts file must be deleted");
+    assert.equal(existsSync(eventsFile), false, "the orphan's events file must be deleted");
+  });
+
+  test("a freshly created unclaimed team survives a sweep triggered moments later", async () => {
+    const hub = await teamHub({ ZEVET_TEAM_EXPIRY_MS: String(60 * 60 * 1000) }); // one hour — nothing here is that old
+    const fresh = await create(hub.base);
+    const tokenFresh = tokenFor(hub, fresh.team);
+
+    // Two more /team/create calls, each of which runs the lazy sweep.
+    await create(hub.base);
+    await create(hub.base);
+
+    const res = await fetch(`${hub.base}/api/state?token=${tokenFresh}`);
+    assert.equal(res.status, 200, "a team well inside the expiry window must not be swept");
+    await res.text();
+    assert.ok(existsSync(path.join(hub.accountsDir, `accounts-${fresh.team}.json`)), "its file must still be there");
+  });
+
+  // A claimed team is never swept, no matter its age: hub/server.mjs's
+  // sweepUnclaimedTeams() skips any Accounts whose `owner` is set,
+  // unconditionally, before it ever looks at age. Claiming one over HTTP needs
+  // a real GitHub/Google OAuth round trip, which this file's own header
+  // comment rules out — so that branch is exercised directly against
+  // hub/accounts.mjs instead, in test/accounts.test.mjs's "createdAt" describe:
+  // "signing in sets owner — the fact the sweep uses to never touch a claimed
+  // team".
 });

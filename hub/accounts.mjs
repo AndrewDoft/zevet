@@ -83,7 +83,7 @@ const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
  */
 const DEFAULT_PROVIDER = "github";
 
-const EMPTY = () => ({ version: 1, secret: "", owner: null, allowed: [], blocked: [], sessions: {} });
+const EMPTY = () => ({ version: 1, secret: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null });
 
 /** Same person? Provider AND id, never id alone. A record with no id yet (an
  *  invitation nobody has accepted) matches nobody — it is matched by login, at
@@ -135,12 +135,28 @@ export class Accounts {
       this.state.secret = adopted || randomBytes(24).toString("hex");
       this.#save();
     }
+
+    // Same shape as the secret above: set once, on the file's first write, and
+    // never touched again. An accounts.json from before this existed has no
+    // `createdAt` either — #load defaults it to `now()` on the read that first
+    // notices, which reads as "just created" rather than "ancient", the safe
+    // direction to be wrong in for something a sweep is about to delete.
+    if (!this.state.createdAt) {
+      this.state.createdAt = this.now();
+      this.#save();
+    }
   }
 
   /** The master secret. Handed to a client only after it has proved who it is,
    *  and never logged — every caller is expected to keep it out of a log line. */
   get secret() {
     return this.state.secret;
+  }
+
+  /** When this file was first written — see team-expiry sweeping in
+   *  server.mjs, the one caller that reads this today. */
+  get createdAt() {
+    return this.state.createdAt;
   }
 
   /** The login that set this hub up, or null if nobody has yet. */
@@ -427,6 +443,7 @@ export class Accounts {
         // never matches.
         blocked: Array.isArray(raw.blocked) ? raw.blocked.filter((b) => b && b.login && b.id).map(tag) : [],
         sessions,
+        createdAt: typeof raw.createdAt === "number" ? raw.createdAt : null,
       };
     } catch (err) {
       // ⚠️ A CORRUPT FILE IS NOT SILENTLY REPLACED. Starting empty would mean

@@ -67,6 +67,36 @@ describe("the shared secret", () => {
   });
 });
 
+describe("createdAt — what server.mjs's unclaimed-team sweep relies on", () => {
+  test("is stamped once, on first write, and survives a reload unchanged", (t) => {
+    let now = 1_000_000;
+    const file = path.join(tmp(t), "accounts.json");
+    const a = new Accounts({ file, now: () => now });
+    assert.equal(a.createdAt, 1_000_000);
+
+    now = 9_999_999; // time passes, and a later boot must not re-stamp it
+    const reloaded = new Accounts({ file, now: () => now });
+    assert.equal(reloaded.createdAt, 1_000_000, "createdAt must not move on reload");
+  });
+
+  test("an accounts.json from before createdAt existed is treated as new, not ancient", (t) => {
+    // The safe direction to be wrong in: a sweep that deletes unclaimed teams
+    // by age must never treat "we don't know" as "old enough to delete".
+    const file = path.join(tmp(t), "accounts.json");
+    writeFileSync(file, JSON.stringify({ version: 1, secret: SECRET, owner: null, allowed: [], blocked: [], sessions: {} }));
+    let now = 42;
+    const a = new Accounts({ file, now: () => now });
+    assert.equal(a.createdAt, 42);
+  });
+
+  test("signing in sets owner — the fact the sweep uses to never touch a claimed team", (t) => {
+    const a = store(t);
+    assert.equal(a.owner, null);
+    a.signIn(alice);
+    assert.ok(a.owner, "a claimed team's Accounts must report an owner regardless of its age");
+  });
+});
+
 describe("trust on first use", () => {
   test("the first sign-in becomes the owner", (t) => {
     const a = store(t);
