@@ -35,6 +35,7 @@
  * dictation and then finishes it.
  */
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawn, execFile } = require("node:child_process");
 
@@ -73,6 +74,51 @@ function candidates(env) {
   return out;
 }
 
+/** macOS: the bundle name it ships under today, and the two it shipped under before —
+ *  same migration as PRODUCTS above, mirrored on the other OS. Verified against
+ *  zevet-voice's own git history of release/build_macos.sh: `APP=` was "Masora Voice.app"
+ *  through the first published build (masora-voice-0.1.6-macos-arm64.dmg, 2026-09-19),
+ *  then briefly "zevet Voice.app", then the current "zevet voice.app". Current name first. */
+const MAC_APPS = ["zevet voice.app", "zevet Voice.app", "Masora Voice.app"];
+
+/**
+ * Where a Mac install lives: release/install_macos.sh's curl installer always drops it in
+ * /Applications; a person who instead drags the .dmg's icon over by hand can land it in
+ * ~/Applications. Both are searched for the same reason candidates() checks two registry
+ * roots on Windows — either is a normal, real install.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string[]}
+ */
+function macCandidates(env) {
+  const out = [];
+  const home = env.HOME || os.homedir();
+  for (const root of ["/Applications", home && path.join(home, "Applications")]) {
+    if (!root) continue;
+    for (const app of MAC_APPS) out.push(path.join(root, app));
+  }
+  return out;
+}
+
+/**
+ * The bundle's main executable, read from Contents/MacOS rather than guessed: the
+ * CFBundleExecutable name has itself changed once (masora-voice -> "zevet voice", the
+ * macos_launcher.c rename) across the same history MAC_APPS covers, and a bundle only
+ * ever has the one binary in that directory.
+ *
+ * @param {string} appDir
+ * @returns {string | null}
+ */
+function macExe(appDir) {
+  const dir = path.join(appDir, "Contents", "MacOS");
+  try {
+    const [name] = fs.readdirSync(dir).filter((f) => !f.startsWith("."));
+    return name ? path.join(dir, name) : null;
+  } catch {
+    return null; // not a real bundle, or not there
+  }
+}
+
 /**
  * The installed executable, or null.
  *
@@ -80,6 +126,13 @@ function candidates(env) {
  * @returns {string | null}
  */
 function find(env = process.env) {
+  if (process.platform === "darwin") {
+    for (const app of macCandidates(env)) {
+      const exe = macExe(app);
+      if (exe) return exe;
+    }
+    return null;
+  }
   for (const p of candidates(env)) {
     try {
       if (fs.statSync(p).isFile()) return p;
@@ -254,4 +307,19 @@ async function mic(env = process.env, impls = {}) {
   };
 }
 
-module.exports = { candidates, find, hotkey, status, start, dictate, mic, EXE, CONSOLE_EXE, PRODUCTS, DEFAULT_HOLD };
+module.exports = {
+  candidates,
+  find,
+  hotkey,
+  status,
+  start,
+  dictate,
+  mic,
+  EXE,
+  CONSOLE_EXE,
+  PRODUCTS,
+  DEFAULT_HOLD,
+  macCandidates,
+  macExe,
+  MAC_APPS,
+};

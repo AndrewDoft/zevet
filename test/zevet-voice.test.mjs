@@ -159,6 +159,69 @@ describe("the microphone gesture", () => {
   });
 });
 
+describe("macOS", () => {
+  /** A throwaway $HOME, with an app bundle laid out under it or /Applications-shaped root. */
+  function fakeMacRoot(t) {
+    const root = mkdtempSync(path.join(os.tmpdir(), "zevet-voice-mac-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    return root;
+  }
+
+  function layBundle(root, appName, exeName) {
+    const macos = path.join(root, appName, "Contents", "MacOS");
+    mkdirSync(macos, { recursive: true });
+    writeFileSync(path.join(macos, exeName), "");
+  }
+
+  function asDarwin(t) {
+    const real = process.platform;
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    t.after(() => Object.defineProperty(process, "platform", { value: real }));
+  }
+
+  test("finds the current bundle under /Applications-shaped HOME", (t) => {
+    asDarwin(t);
+    const home = fakeMacRoot(t);
+    const apps = path.join(home, "Applications");
+    layBundle(apps, "zevet voice.app", "zevet voice");
+    const exe = voice.find({ HOME: home, PATH: "" });
+    assert.ok(exe, "the mac bundle was not found");
+    assert.match(exe, /zevet voice\.app[\\/]Contents[\\/]MacOS[\\/]zevet voice$/);
+    assert.equal(voice.status({ HOME: home, PATH: "" }).installed, true);
+  });
+
+  test("finds an install under one of the two earlier bundle names", (t) => {
+    asDarwin(t);
+    const home = fakeMacRoot(t);
+    const apps = path.join(home, "Applications");
+    layBundle(apps, "Masora Voice.app", "masora-voice");
+    const exe = voice.find({ HOME: home, PATH: "" });
+    assert.ok(exe, "the legacy mac bundle was not found");
+    assert.match(exe, /Masora Voice\.app[\\/]Contents[\\/]MacOS[\\/]masora-voice$/);
+  });
+
+  test("an empty HOME reads as not installed, not a crash", (t) => {
+    asDarwin(t);
+    const home = fakeMacRoot(t);
+    assert.equal(voice.find({ HOME: home, PATH: "" }), null);
+    assert.equal(voice.status({ HOME: home, PATH: "" }).installed, false);
+  });
+
+  test("a directory that merely has the bundle's name but no Contents/MacOS is not a match", (t) => {
+    asDarwin(t);
+    const home = fakeMacRoot(t);
+    mkdirSync(path.join(home, "Applications", "zevet voice.app"), { recursive: true });
+    assert.equal(voice.find({ HOME: home, PATH: "" }), null);
+  });
+
+  test("Windows candidates() is untouched by the mac path", (t) => {
+    // find() must still branch on process.platform, not silently prefer macCandidates
+    // whenever a HOME happens to be set — Windows sessions have one too.
+    const env = fakeHome(t, { installed: true });
+    assert.match(voice.find(env), /zevet Voice\.exe$/);
+  });
+});
+
 describe("the rename", () => {
   test("an install under the OLD name is still found", (t) => {
     // The two apps update independently, so there is a window where zevet has
