@@ -28,6 +28,7 @@ export function IndexSearch() {
   const [chunks, setChunks] = useState<RetrievalChunk[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notBuilt, setNotBuilt] = useState(false);
   // Bumped on every effect run so a response from a superseded keystroke
   // can't land after a newer one and overwrite it with stale results.
   const seq = useRef(0);
@@ -54,10 +55,20 @@ export function IndexSearch() {
           if (mySeq !== seq.current) return;
           setSearching(false);
           if (!res.ok) {
-            setError(res.error || "search failed");
+            // main.js's own wording for "never built" -- a onboarding state,
+            // not a red error, for a brand-new workspace that has not run
+            // "Build the index" in Settings yet.
+            if (res.error === "no index for this workspace yet") {
+              setNotBuilt(true);
+              setError(null);
+            } else {
+              setError(res.error || "search failed");
+              setNotBuilt(false);
+            }
             setChunks([]);
             return;
           }
+          setNotBuilt(false);
           setError(null);
           setCommittedQuery(q);
           setChunks(
@@ -96,10 +107,12 @@ export function IndexSearch() {
           "w-full rounded-xl px-3.5 py-2 text-[13px] outline-none",
         )}
       />
-      {error ? (
+      {notBuilt ? (
+        <p className="text-foreground/45 text-xs">Build the index in Settings to search code.</p>
+      ) : error ? (
         <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
       ) : null}
-      {!error && (searching || committedQuery) ? (
+      {!error && !notBuilt && (searching || committedQuery) ? (
         <RetrievalChunks
           className="max-w-none"
           query={committedQuery}
