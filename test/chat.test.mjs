@@ -533,3 +533,42 @@ describe("the provider seam", () => {
     chats.remove(c.id);
   });
 });
+
+describe("board/src/lib/chat.ts: failure does not vanish silently", () => {
+  // The store (useChat) imports zustand/react and touches `document` at
+  // module load, so it cannot be required outside a DOM — same situation
+  // ask-tool.test.mjs documents for desktop/main.js outside Electron. Source
+  // assertions on the one file, same as that precedent.
+  const src = readFileSync(path.join(ROOT, "board", "src", "lib", "chat.ts"), "utf8");
+  const method = (name) => {
+    const start = src.indexOf(`${name}: async (`);
+    return src.slice(start, src.indexOf("\n  },", start));
+  };
+
+  test("chatAvailable also requires chatCreate, not just chatSend", () => {
+    // Without this, `send()`'s own `if (!l?.chatSend || !l.chatCreate) return`
+    // guard is reachable with ChatMode already mounted and showing a composer
+    // that silently does nothing on an inconsistent bridge (chatSend present,
+    // chatCreate not) — chatAvailable() gating the whole surface on the same
+    // three calls send() needs closes that off at the one place callers check.
+    const fn = src.slice(src.indexOf("export function chatAvailable"), src.indexOf("interface ChatState"));
+    assert.match(fn, /typeof l\.chatCreate === "function"/);
+  });
+
+  test("open() drops the stale row when the chat was deleted elsewhere", () => {
+    const open = method("open");
+    assert.match(open, /activeId: null \} : \{\}\)\);\s*\n\s*await get\(\)\.refresh\(\);/);
+  });
+
+  test("rename() does not refresh (and so does not un-name the row) after a failed IPC call", () => {
+    const rename = method("rename");
+    assert.match(rename, /try \{/);
+    assert.match(rename, /catch/);
+  });
+
+  test("remove() does not delete the thread locally after a failed IPC call", () => {
+    const remove = method("remove");
+    assert.match(remove, /try \{/);
+    assert.match(remove, /catch/);
+  });
+});

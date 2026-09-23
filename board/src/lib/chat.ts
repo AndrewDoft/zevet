@@ -26,7 +26,12 @@ export type Mode = "code" | "chat";
 /** Chat needs a desktop build that has it (0.2.53+). */
 export function chatAvailable(): boolean {
   const l = bridge.local;
-  return Boolean(l && typeof l.chatSend === "function" && typeof l.onChatEvent === "function");
+  return Boolean(
+    l &&
+      typeof l.chatSend === "function" &&
+      typeof l.chatCreate === "function" &&
+      typeof l.onChatEvent === "function",
+  );
 }
 
 interface ChatState {
@@ -88,18 +93,29 @@ export const useChat = create<ChatState>((set, get) => ({
       // Deleted elsewhere, or a hand-edited prefs file: back to a new chat.
       writeLastChat(zStorage, null);
       set((s) => (s.activeId === id ? { activeId: null } : {}));
+      await get().refresh(); // drop the now-stale row from the rail
       return;
     }
     set((s) => ({ threads: { ...s.threads, [id]: fromStored(c.messages) } }));
   },
 
   rename: async (id, title) => {
-    await bridge.local?.chatRename?.(id, title);
+    try {
+      await bridge.local?.chatRename?.(id, title);
+    } catch (err) {
+      console.error("zevet: chat rename failed", err);
+      return; // leave the row showing the old title, not a lie about the new one
+    }
     await get().refresh();
   },
 
   remove: async (id) => {
-    await bridge.local?.chatRemove?.(id);
+    try {
+      await bridge.local?.chatRemove?.(id);
+    } catch (err) {
+      console.error("zevet: chat remove failed", err);
+      return; // leave the chat in place rather than hiding one that is still on disk
+    }
     set((s) => {
       const threads = { ...s.threads };
       delete threads[id];
