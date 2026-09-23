@@ -149,7 +149,12 @@ describe("the bridge surface the renderer is written against", () => {
       //   The words are the person's own conversation, which the page already
       //   holds because it sent them; it is a separate channel only so a chat
       //   is never drawn as a console in Code.
-      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentEvent", "local:askRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest"],
+      //   local:schedulesChanged — a due schedule just ran (or was skipped);
+      //   the board's own scheduled-run list is otherwise only refreshed
+      //   after a save/toggle/remove round-trip it initiated itself. Carries
+      //   the same schedule records local:schedules already returns to an
+      //   invoke, from a click — no new data crosses the boundary here.
+      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentEvent", "local:askRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {
