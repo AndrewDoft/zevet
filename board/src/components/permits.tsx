@@ -219,6 +219,7 @@ function shotsWithSteps(messages: readonly ThreadMessageLike[]): Shot[] {
 
   for (const m of messages) {
     for (const c of toolCalls(m.content)) {
+      if (typeof c.toolName !== "string") continue;
       const name = c.toolName.toLowerCase();
       if (isShot(name)) {
         const dataUrl = imageDataUrl(c.result);

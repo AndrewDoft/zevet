@@ -78,7 +78,9 @@ function allToolCalls(
   const out: ToolCallLike[] = [];
   for (const m of messages) {
     for (const c of toolCalls(m.content)) {
-      if (match(c.toolName.toLowerCase())) out.push(c);
+      // `toolCalls` casts; a part with no toolName threw here and took the
+      // whole panel down. Same guard as knowledge.tsx's copy of this loop.
+      if (typeof c.toolName === "string" && match(c.toolName.toLowerCase())) out.push(c);
     }
   }
   return out;
@@ -119,7 +121,7 @@ const isBash = (n: string) =>
 export function CommandRuns() {
   const messages = useTranscriptMessages();
   const turn = lastAssistantMessage(messages);
-  const calls = turn ? toolCalls(turn.content).filter((c) => isBash(c.toolName.toLowerCase())) : [];
+  const calls = turn ? toolCalls(turn.content).filter((c) => typeof c.toolName === "string" && isBash(c.toolName.toLowerCase())) : [];
   if (!calls.length) return null;
 
   return (

@@ -202,6 +202,7 @@ function groundedIn(
   localRoot: string | null,
 ): Grounding | null {
   for (const c of calls) {
+    if (typeof c.toolName !== "string") continue;
     const n = c.toolName.toLowerCase();
     if (!isReadTool(n) && !isWriteTool(n)) continue;
     const argPath = pick(c.args, "file_path", "filePath", "path", "file");

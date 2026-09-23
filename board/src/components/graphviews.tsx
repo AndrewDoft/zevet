@@ -58,7 +58,9 @@ function allToolCalls(
   const out: ToolCallLike[] = [];
   for (const m of messages) {
     for (const c of toolCalls(m.content)) {
-      if (match(c.toolName.toLowerCase())) out.push(c);
+      // `toolCalls` casts; a part with no toolName threw here and took the
+      // whole graph down. Same guard as knowledge.tsx's copy of this loop.
+      if (typeof c.toolName === "string" && match(c.toolName.toLowerCase())) out.push(c);
     }
   }
   return out;
@@ -179,6 +181,7 @@ export function ResearchReportView() {
 
   for (const m of messages) {
     for (const c of toolCalls(m.content)) {
+      if (typeof c.toolName !== "string") continue;
       const name = c.toolName.toLowerCase();
       if (isTodoWrite(name)) {
         const raw = rec(c.args).todos;
