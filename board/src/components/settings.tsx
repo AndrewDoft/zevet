@@ -1,6 +1,7 @@
 import { AgentSettings } from "./agentsettings";
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { bridge } from "../lib/bridge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { connectPhaseLabel, connectValue, disconnectValue } from "../lib/connect.mjs";
 import {
   selectUpdates,
@@ -432,6 +433,282 @@ function AccountSection() {
   return (
     <SSection title="Account" summary={login ? "@" + login : "not signed in"}>
       {out}
+    </SSection>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Model credentials (D-0NN)
+// ---------------------------------------------------------------------------
+
+type CredentialMeta = {
+  id: string;
+  scope: "team" | "personal";
+  label: string;
+  provider: string;
+  kind: string;
+  last4: string;
+  addedBy?: string;
+};
+
+type CredentialDefault = { scope: "team" | "personal" | "auto"; id?: string } | null;
+
+type LadderStep = { credentialId: string; untilPct: number };
+
+/** provider+kind combinations Settings offers when adding one — the same
+ *  pairs hub/server.mjs's CREDENTIAL_ENV table knows an env var for. A
+ *  subscription token is personal-scope only; the hub itself refuses one at
+ *  team scope regardless of what this form lets someone pick, but the form
+ *  does not even offer the combination when "Team" is selected. */
+const CREDENTIAL_KINDS: Array<{ provider: string; kind: string; label: string; teamOk: boolean }> = [
+  { provider: "anthropic", kind: "api_key", label: "Anthropic — API key", teamOk: true },
+  { provider: "anthropic", kind: "subscription_token", label: "Anthropic — subscription token", teamOk: false },
+  { provider: "openai", kind: "api_key", label: "OpenAI — API key", teamOk: true },
+];
+
+function credentialLine(c: CredentialMeta): string {
+  const scope = c.scope === "team" ? "team" : "personal";
+  const who = c.scope === "team" && c.addedBy ? `, added by @${c.addedBy}` : "";
+  return `${scope} · ${c.provider}/${c.kind} · …${c.last4}${who}`;
+}
+
+function CredentialAddForm({ onAdded }: { onAdded: () => void }) {
+  const [scope, setScope] = useState<"team" | "personal">("personal");
+  const [kindIdx, setKindIdx] = useState(0);
+  const label = useRef<HTMLInputElement>(null);
+  const key = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const kinds = CREDENTIAL_KINDS.filter((k) => scope === "personal" || k.teamOk);
+  const chosen = kinds[Math.min(kindIdx, kinds.length - 1)];
+
+  function submit(ev: FormEvent) {
+    ev.preventDefault();
+    const k = (key.current && key.current.value.trim()) || "";
+    if (!k || !window.zevet?.addCredential) return;
+    setBusy(true);
+    setErr("");
+    window.zevet
+      .addCredential({
+        scope,
+        label: (label.current && label.current.value.trim()) || "",
+        provider: chosen.provider,
+        kind: chosen.kind,
+        key: k,
+      })
+      .then(
+        (r) => {
+          setBusy(false);
+          if (r && r.ok) {
+            if (key.current) key.current.value = "";
+            if (label.current) label.current.value = "";
+            onAdded();
+          } else {
+            setErr((r && r.error) || "Could not add that credential.");
+          }
+        },
+        () => {
+          setBusy(false);
+          setErr("Could not connect.");
+        },
+      );
+  }
+
+  return (
+    <form className="sinvite" style={{ flexWrap: "wrap", gap: "6px" }} onSubmit={submit}>
+      <Select
+        value={scope}
+        onValueChange={(v: string | null) => {
+          if (!v) return;
+          setScope(v as "team" | "personal");
+          setKindIdx(0);
+        }}
+      >
+        <SelectTrigger size="sm" className="h-7 shrink-0 rounded-full border-transparent bg-foreground/[0.04] px-2 text-xs" aria-label="Scope">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="start">
+          <SelectItem value="personal">Personal (this machine only)</SelectItem>
+          <SelectItem value="team">Team (shared with everyone)</SelectItem>
+        </SelectContent>
+      </Select>
+      <Select value={String(kindIdx)} onValueChange={(v: string | null) => setKindIdx(Number(v ?? 0))}>
+        <SelectTrigger size="sm" className="h-7 shrink-0 rounded-full border-transparent bg-foreground/[0.04] px-2 text-xs" aria-label="Provider and kind">
+          <SelectValue>{() => chosen.label}</SelectValue>
+        </SelectTrigger>
+        <SelectContent align="start">
+          {kinds.map((k, i) => (
+            <SelectItem key={`${k.provider}:${k.kind}`} value={String(i)}>
+              {k.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <input className="mono" type="text" ref={label} placeholder="Label (optional)" autoComplete="off" spellCheck={false} style={{ minWidth: "120px" }} />
+      <input className="mono" type="password" ref={key} placeholder="Paste the key" autoComplete="off" spellCheck={false} style={{ minWidth: "220px" }} />
+      <button className={MAKE_BTN} type="submit" disabled={busy}>
+        Add
+      </button>
+      {err ? <SNote>{err}</SNote> : null}
+    </form>
+  );
+}
+
+/** The Auto ladder editor. Only shown once "Auto" is the chosen default — a
+ *  ladder nobody has selected is dead weight to look at. */
+function LadderEditor({ credentials, ladder, onSaved }: { credentials: CredentialMeta[]; ladder: LadderStep[]; onSaved: () => void }) {
+  const [rows, setRows] = useState<LadderStep[]>(ladder);
+  const [busy, setBusy] = useState(false);
+
+  function save(next: LadderStep[]) {
+    setRows(next);
+    setBusy(true);
+    window.zevet?.setCredentialLadder?.(next).then(
+      () => {
+        setBusy(false);
+        onSaved();
+      },
+      () => setBusy(false),
+    );
+  }
+
+  return (
+    <div style={{ marginTop: "6px" }}>
+      <SNote>Rotates in order: each launch uses the first step whose credential is below its own usage ceiling.</SNote>
+      {rows.map((r, i) => (
+        <div className="srow" key={i}>
+          <Select
+            value={r.credentialId}
+            onValueChange={(v: string | null) => save(rows.map((row, j) => (j === i ? { ...row, credentialId: v || "" } : row)))}
+          >
+            <SelectTrigger size="sm" className="h-7 shrink-0 rounded-full border-transparent bg-foreground/[0.04] px-2 text-xs" aria-label="Credential">
+              <SelectValue placeholder="(choose a credential)" />
+            </SelectTrigger>
+            <SelectContent align="start">
+              {credentials.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.label} (…{c.last4})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="v">
+            until{" "}
+            <input
+              className="mono"
+              type="number"
+              min={0}
+              max={100}
+              value={r.untilPct}
+              style={{ width: "56px" }}
+              onChange={(ev) => save(rows.map((row, j) => (j === i ? { ...row, untilPct: Number(ev.target.value) } : row)))}
+            />
+            %
+            <button className={MAKE_BTN} type="button" disabled={busy} onClick={() => save(rows.filter((_, j) => j !== i))}>
+              Remove
+            </button>
+          </span>
+        </div>
+      ))}
+      <button
+        className={MAKE_BTN}
+        type="button"
+        disabled={busy}
+        onClick={() => save([...rows, { credentialId: credentials[0]?.id || "", untilPct: 100 }])}
+      >
+        Add a step
+      </button>
+    </div>
+  );
+}
+
+function CredentialsSection() {
+  const available = Boolean(window.zevet && typeof window.zevet.listCredentials === "function");
+  const [list, setList] = useState<CredentialMeta[] | null>(null);
+  const [def, setDef] = useState<CredentialDefault>(null);
+  const [ladder, setLadder] = useState<LadderStep[]>([]);
+  const [err, setErr] = useState("");
+
+  function refresh() {
+    if (!available || !window.zevet?.listCredentials) return;
+    window.zevet.listCredentials().then(
+      (r) => {
+        if (r && r.ok) {
+          setList((r.credentials as CredentialMeta[]) || []);
+          setDef((r.default as CredentialDefault) || null);
+        } else {
+          setErr((r && r.error) || "Could not load credentials.");
+        }
+      },
+      () => setErr("Could not connect."),
+    );
+    window.zevet?.credentialLadder?.().then((l) => setLadder(l || []));
+  }
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [available]);
+
+  if (!available) {
+    return (
+      <SSection title="Model credentials" summary="desktop app only">
+        <SNote>Manage credentials from the Zevet desktop app.</SNote>
+      </SSection>
+    );
+  }
+
+  function isDefault(c: CredentialMeta) {
+    return Boolean(def && def.scope === c.scope && def.id === c.id);
+  }
+
+  function chooseDefault(c: CredentialMeta | null) {
+    window.zevet?.setDefaultCredential?.(c ? { scope: c.scope, id: c.id } : null).then(() => refresh());
+  }
+
+  function chooseAuto() {
+    window.zevet?.setDefaultCredential?.({ scope: "auto" }).then(() => refresh());
+  }
+
+  function remove(c: CredentialMeta) {
+    window.zevet?.removeCredential?.({ scope: c.scope, id: c.id }).then(() => refresh());
+  }
+
+  const rows = list || [];
+  const summary = def
+    ? def.scope === "auto"
+      ? "auto-rotating"
+      : rows.find((c) => isDefault(c))?.label || "set"
+    : "not set";
+
+  return (
+    <SSection title="Model credentials" summary={summary}>
+      {rows.map((c) => (
+        <div className="srow" key={`${c.scope}:${c.id}`}>
+          <span className="k mono">{c.label || credentialLine(c)}</span>
+          <span className="v">
+            {c.label ? <span className="mono">{credentialLine(c)}</span> : null}
+            <label style={{ marginLeft: "8px" }}>
+              <input type="radio" name="credentialDefault" checked={isDefault(c)} onChange={() => chooseDefault(c)} /> use
+            </label>
+            <button className={MAKE_BTN} type="button" onClick={() => remove(c)}>
+              Remove
+            </button>
+          </span>
+        </div>
+      ))}
+      <div className="srow">
+        <span className="k">Auto-rotate</span>
+        <span className="v">
+          <label>
+            <input type="radio" name="credentialDefault" checked={Boolean(def && def.scope === "auto")} onChange={chooseAuto} /> use the ladder below
+          </label>
+        </span>
+      </div>
+      {def && def.scope === "auto" ? <LadderEditor credentials={rows} ladder={ladder} onSaved={refresh} /> : null}
+      <CredentialAddForm onAdded={refresh} />
+      {err ? <SNote>{err}</SNote> : null}
     </SSection>
   );
 }
@@ -1001,6 +1278,7 @@ export function SettingsSheet() {
         </SSection>
 
         <AccountSection />
+        <CredentialsSection />
         <IndexSection />
         <MasoraSection />
         <ConnectionsSection />

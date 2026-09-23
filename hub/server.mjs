@@ -457,6 +457,27 @@ const DEFAULT_TEAM = "default";
  *  real derived token is compared against a non-64-char default `ZEVET_TOKEN` (the test suite's own "test-token-…" literal). */
 const HEX_SHA256_LEN = 64;
 
+/** A real Anthropic API key, never a subscription OAuth token (those start
+ *  `sk-ant-oat…` and are rejected explicitly, above, with their own message
+ *  before this regex ever gets to say no). */
+const ANTHROPIC_API_KEY_RE = /^sk-ant-api\d{2}-[A-Za-z0-9_-]{20,}$/;
+
+/** Which env var a spawned agent reads a credential from, by (provider,
+ *  kind). A combination with no entry is not a supported credential type —
+ *  /team/credentials' POST route rejects it at add time rather than storing
+ *  something nothing will ever read.
+ *
+ * DUPLICATED in desktop/main.js, deliberately — same reasoning accounts.mjs
+ * gives for `deriveAuthToken`: the hub must not import out of `client/` (the
+ * one directory both sides could otherwise share), and this repo has no
+ * other module both the hub and the Electron app load. Four lines twice
+ * beats inventing a shared package for four lines. */
+const CREDENTIAL_ENV = {
+  "anthropic:api_key": "ANTHROPIC_API_KEY",
+  "anthropic:subscription_token": "CLAUDE_CODE_OAUTH_TOKEN",
+  "openai:api_key": "OPENAI_API_KEY",
+};
+
 /**
  * Which team does this credential belong to, if any?
  *
@@ -1224,6 +1245,78 @@ const server = createServer(async (req, res) => {
     const r = url.pathname === "/auth/allow" ? acc.allow(body && body.login) : acc.revoke(body && body.login);
     if (!r.ok) return json(res, 400, { error: r.error });
     return json(res, 200, { ok: true, people: acc.list().map(person) });
+  }
+
+  /* Team-held model credentials: listed and added by any signed-in member
+   * (addedBy records who), removed by the owner or by whoever added it, and
+   * the raw secret handed back only by its own dedicated route — never by
+   * list/whoami/settings, so a board that only shows metadata cannot leak
+   * one by accident. */
+  if (url.pathname === "/team/credentials" && req.method === "GET") {
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    return json(res, 200, { credentials: auth.accounts.listCredentials() });
+  }
+
+  if (url.pathname === "/team/credentials" && req.method === "POST") {
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const sess = auth.session;
+    // A shared-token caller is anonymous — there is no login to record as
+    // `addedBy`, and "added by nobody" is not a record this hub can later
+    // use to decide who may remove it.
+    if (!sess) return json(res, 403, { error: "sign in to add a team credential" });
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const provider = String((body && body.provider) || "").trim();
+    const kind = String((body && body.kind) || "").trim();
+    const key = String((body && body.key) || "");
+    // Checked before the type table, and worded differently, because this is
+    // not an unsupported type — it is the RIGHT SHAPE of the wrong thing. A
+    // subscription sign-in token is a consumer credential tied to one
+    // person's login; sharing it with a team would let everyone spend
+    // against one person's plan under their own identity, silently. The
+    // prefix check catches a token mislabelled as `api_key`, not just an
+    // honest `kind: "subscription_token"`.
+    if (kind === "subscription_token" || /^sk-ant-oat/.test(key)) {
+      return json(res, 400, { error: "subscription tokens are single-person and can't be team-shared" });
+    }
+    const envVar = CREDENTIAL_ENV[`${provider}:${kind}`];
+    if (!envVar) return json(res, 400, { error: `unsupported credential type: ${provider || "?"}/${kind || "?"}` });
+    if (!key) return json(res, 400, { error: "key required" });
+    if (provider === "anthropic" && !ANTHROPIC_API_KEY_RE.test(key)) {
+      return json(res, 400, { error: "that does not look like an Anthropic API key (expected sk-ant-apiNN-…)" });
+    }
+    const rec = auth.accounts.addCredential({ label: body && body.label, provider, kind, key, addedBy: sess.login });
+    return json(res, 200, { ok: true, id: rec.id });
+  }
+
+  if (url.pathname.startsWith("/team/credentials/") && url.pathname.endsWith("/secret") && req.method === "GET") {
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const id = safeDecode(url.pathname.slice("/team/credentials/".length, -"/secret".length));
+    const key = id ? auth.accounts.credentialKey(id) : null;
+    if (key === null) return json(res, 404, { error: "no such credential" });
+    return json(res, 200, { key });
+  }
+
+  if (url.pathname.startsWith("/team/credentials/") && req.method === "DELETE") {
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const sess = auth.session;
+    if (!sess) return json(res, 403, { error: "sign in to remove a team credential" });
+    const id = safeDecode(url.pathname.slice("/team/credentials/".length));
+    const meta = id ? auth.accounts.credential(id) : null;
+    if (!meta) return json(res, 404, { error: "no such credential" });
+    if (meta.addedBy !== sess.login && auth.accounts.owner !== sess.login) {
+      return json(res, 403, { error: "only the owner or whoever added it can remove this credential" });
+    }
+    auth.accounts.removeCredential(id);
+    return json(res, 200, { ok: true });
   }
 
   /* Minting a new, independent team on this hub: its own Accounts (so its own

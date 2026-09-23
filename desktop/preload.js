@@ -120,6 +120,22 @@ contextBridge.exposeInMainWorld("zevet", {
       `masora:connect`, matching main.js's own registration. */
   masoraSources: () => ipcRenderer.invoke("masora:sources"),
   masoraConnect: (arg) => ipcRenderer.invoke("masora:connect", arg),
+  /**
+   * Model credentials (D-0NN). `listCredentials` merges team (fetched from
+   * the hub) and personal (this machine's own safeStorage-encrypted store,
+   * desktop/credentials.js) into one metadata-only list, plus the member's
+   * chosen default. `addCredential`/`removeCredential` take `{scope}` of
+   * "team" or "personal"; a personal secret never crosses this bridge except
+   * as the `key` the person just typed, going IN.
+   */
+  listCredentials: () => ipcRenderer.invoke("zevet:listCredentials"),
+  addCredential: (arg) => ipcRenderer.invoke("zevet:addCredential", arg),
+  removeCredential: (arg) => ipcRenderer.invoke("zevet:removeCredential", arg),
+  setDefaultCredential: (arg) => ipcRenderer.invoke("zevet:setDefaultCredential", arg),
+  /** "Auto" mode's rotation ladder — an ordered [{credentialId, untilPct}].
+   *  See desktop/credential-ladder.js for how it is walked. */
+  credentialLadder: () => ipcRenderer.invoke("zevet:credentialLadder"),
+  setCredentialLadder: (ladder) => ipcRenderer.invoke("zevet:setCredentialLadder", ladder),
   /** Native folder picker; resolves to a path or null. */
   pickRepo: () => ipcRenderer.invoke("zevet:pickRepo"),
   /** Install the hooks into that repo. */

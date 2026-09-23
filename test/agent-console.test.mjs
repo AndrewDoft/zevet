@@ -155,7 +155,7 @@ function plantAgent(t, { exe = false, shim = false, name = "claude" } = {}) {
 }
 
 /** Start a console against a planted binary and a fake process. */
-function start(t, { agent = "claude", child = fakeChild(), spawn = null } = {}) {
+function start(t, { agent = "claude", child = fakeChild(), spawn = null, env } = {}) {
   plantAgent(t, { exe: true, name: agent });
   const events = [];
   const spawnFn = spawn || fakeSpawn(child);
@@ -164,6 +164,7 @@ function start(t, { agent = "claude", child = fakeChild(), spawn = null } = {}) 
     cwd: process.cwd(),
     onEvent: (e) => events.push(e),
     spawn: spawnFn,
+    ...(env !== undefined ? { env } : {}),
   });
   return { handle, events, child, spawnFn };
 }
@@ -592,6 +593,26 @@ describe("startConsole — stopping", () => {
     assert.equal(r.alreadyStopped, true);
     assert.equal(spawnFn.calls.filter((c) => c.command === "taskkill").length, 0);
     assert.equal(child.kills.length, 0);
+  });
+});
+
+describe("startConsole — environment", () => {
+  test("a supplied env is passed straight through to spawn", (t) => {
+    const child = fakeChild();
+    const spawnFn = fakeSpawn(child);
+    const env = { ...process.env, ANTHROPIC_API_KEY: "sk-ant-api03-fake-team-key" };
+    const { handle } = start(t, { child, spawn: spawnFn, env });
+    assert.equal(handle.ok, true, handle.error);
+    assert.equal(spawnFn.calls.length, 1);
+    assert.equal(spawnFn.calls[0].options.env, env, "the exact object, not a copy — startConsole has no opinion on its contents");
+  });
+
+  test("no env supplied means spawn inherits process.env exactly as before", (t) => {
+    const child = fakeChild();
+    const spawnFn = fakeSpawn(child);
+    const { handle } = start(t, { child, spawn: spawnFn });
+    assert.equal(handle.ok, true, handle.error);
+    assert.equal(spawnFn.calls[0].options.env, undefined, "undefined, so node falls back to inheriting process.env");
   });
 });
 

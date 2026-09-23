@@ -363,6 +363,41 @@ export interface ZevetBridge {
   /** Connections panel: linked-source status, and connecting a new one. */
   masoraSources?: () => Promise<{ sources?: { kind: string; status: string }[]; error?: string }>;
   masoraConnect?: (arg: { provider: string }) => Promise<{ ok?: boolean; error?: string }>;
+  /** Model credentials (D-0NN): team (hub-held) and personal (this machine
+   *  only, safeStorage-encrypted) merged into one metadata-only list, never
+   *  a secret. `default` is this member's chosen spawn credential, if any —
+   *  {scope:"personal"|"team", id} or {scope:"auto"} to use the ladder. */
+  listCredentials?: () => Promise<{
+    ok?: boolean;
+    credentials?: Array<{
+      id: string;
+      scope: "team" | "personal";
+      label: string;
+      provider: string;
+      kind: string;
+      last4: string;
+      addedBy?: string;
+      createdAt?: string;
+    }>;
+    default?: { scope: "team" | "personal" | "auto"; id?: string } | null;
+    error?: string;
+  }>;
+  addCredential?: (arg: {
+    scope: "team" | "personal";
+    label?: string;
+    provider: string;
+    kind: string;
+    key: string;
+  }) => Promise<{ ok?: boolean; id?: string; error?: string }>;
+  removeCredential?: (arg: { scope: "team" | "personal"; id: string }) => Promise<{ ok?: boolean; error?: string }>;
+  setDefaultCredential?: (
+    arg: { scope: "team" | "personal"; id: string } | { scope: "auto" } | null,
+  ) => Promise<{ ok?: boolean; default?: unknown }>;
+  /** The "Auto" rotation ladder — an ordered list of {credentialId, untilPct}. */
+  credentialLadder?: () => Promise<Array<{ credentialId: string; untilPct: number }>>;
+  setCredentialLadder?: (
+    ladder: Array<{ credentialId: string; untilPct: number }>,
+  ) => Promise<{ ok?: boolean; ladder?: Array<{ credentialId: string; untilPct: number }> }>;
 }
 
 declare global {
