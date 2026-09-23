@@ -26,6 +26,10 @@ const { execFile } = require("node:child_process");
 
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
 const OUTBOX_PATH = path.join(HOME, "masora-outbox.jsonl");
+/** Zevet Chat records (`surface: "zevet_chat"`) get their OWN outbox. A Masora
+ *  that predates that surface answers such a line with a whole-batch 400, and
+ *  a shared outbox would then hold every session queued behind it forever. */
+const CHAT_OUTBOX_PATH = path.join(HOME, "masora-chat-outbox.jsonl");
 const CURSOR_PATH = path.join(HOME, "masora-cursor.json");
 
 const GIT_TIMEOUT_MS = 4000;
@@ -152,16 +156,16 @@ function writeCursor(cursor) {
 
 /* ── outbox: newline-delimited C1 records awaiting a successful POST ────── */
 
-function appendOutbox(records) {
+function appendOutbox(records, file = OUTBOX_PATH) {
   if (!records.length) return;
   fs.mkdirSync(HOME, { recursive: true });
-  fs.appendFileSync(OUTBOX_PATH, records.map((r) => `${JSON.stringify(r)}\n`).join(""), "utf8");
+  fs.appendFileSync(file, records.map((r) => `${JSON.stringify(r)}\n`).join(""), "utf8");
 }
 
-function readOutbox() {
+function readOutbox(file = OUTBOX_PATH) {
   try {
     return fs
-      .readFileSync(OUTBOX_PATH, "utf8")
+      .readFileSync(file, "utf8")
       .split("\n")
       .filter((line) => line.trim())
       .map((line) => JSON.parse(line));
@@ -172,10 +176,10 @@ function readOutbox() {
 
 /** Removes the first `n` lines (the ones just confirmed delivered); anything
  *  appended after they were read stays -- lines are re-read, not indices. */
-function removeFromOutbox(n) {
-  const remaining = readOutbox().slice(n);
+function removeFromOutbox(n, file = OUTBOX_PATH) {
+  const remaining = readOutbox(file).slice(n);
   fs.writeFileSync(
-    OUTBOX_PATH,
+    file,
     remaining.length ? `${remaining.map((r) => JSON.stringify(r)).join("\n")}\n` : "",
     "utf8",
   );
@@ -187,11 +191,11 @@ function removeFromOutbox(n) {
  * next cycle -- this is the durability: nothing is removed before Masora has
  * accepted it.
  */
-async function flushOutbox({ baseUrl, token, fetchImpl }) {
+async function flushOutbox({ baseUrl, token, fetchImpl, file = OUTBOX_PATH }) {
   const f = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
   let sent = 0;
   for (;;) {
-    const pending = readOutbox();
+    const pending = readOutbox(file);
     if (!pending.length) break;
     const batch = pending.slice(0, BATCH_SIZE);
     const gz = zlib.gzipSync(batch.map((r) => JSON.stringify(r)).join("\n"));
@@ -207,7 +211,7 @@ async function flushOutbox({ baseUrl, token, fetchImpl }) {
       break; // network error -- retry next cycle
     }
     if (res.status !== 202) break; // rejected -- leave it for a human/next cycle, not a retry loop
-    removeFromOutbox(batch.length);
+    removeFromOutbox(batch.length, file);
     sent += batch.length;
   }
   return { sent };
@@ -247,6 +251,7 @@ async function runOnce({ repos, baseUrl, token, listSessions, readSession, fetch
 
 module.exports = {
   OUTBOX_PATH,
+  CHAT_OUTBOX_PATH,
   CURSOR_PATH,
   BATCH_SIZE,
   CONTENT_TEXT_MAX_BYTES,

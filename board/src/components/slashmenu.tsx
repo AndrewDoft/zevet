@@ -12,13 +12,18 @@
  * composer holds exactly `/compact`, Enter has nothing left to complete and
  * falls through to Send, so choosing a command is not a two-Enter chore.
  */
+import { ChatSurface } from "../lib/surface";
 import { useAui, useAuiState } from "@assistant-ui/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { commandsFor, matchSlash, type SlashCommand } from "../lib/slash.mjs";
 import { cn } from "@/lib/utils";
 
 export function SlashMenu() {
+  return useContext(ChatSurface) ? null : <SlashMenuCode />;
+}
+
+function SlashMenuCode() {
   const aui = useAui();
   const text = useAuiState((s) => s.composer.text);
   const active = useBoard(selectActiveConsole);

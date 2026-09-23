@@ -603,7 +603,7 @@ function VersionSection() {
  */
 function MasoraSection() {
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
-  const [cfg, setCfg] = useState<{ url: string; paired: boolean; repos: Record<string, boolean> } | null>(null);
+  const [cfg, setCfg] = useState<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean } | null>(null);
   const [urlDraft, setUrlDraft] = useState("");
   const [pair, setPair] = useState<
     | { phase: "idle" }
@@ -704,6 +704,21 @@ function MasoraSection() {
       {pair.phase === "fail" ? <SNote style={{ color: "var(--bad)" }}>{pair.message}</SNote> : null}
       {cfg && cfg.paired ? (
         <>
+          {window.zevet?.masoraChatPush ? (
+            <div className="srow" id="settingsChatPush">
+              <span className="k">Chat</span>
+              <span className="v">
+                <button
+                  className={MAKE_BTN}
+                  type="button"
+                  aria-pressed={Boolean(cfg.chat)}
+                  onClick={() => window.zevet?.masoraChatPush?.(!cfg.chat).then((c) => c && setCfg(c))}
+                >
+                  {cfg.chat ? "Syncing" : "Off"}
+                </button>
+              </span>
+            </div>
+          ) : null}
           <SNote>
             Sessions push only from folders opted in below (C1: private by default, ACL closed to you).
           </SNote>

@@ -1398,3 +1398,69 @@
     margin-top: 26px; max-width: 46rem;
   }
   .blank-repo > * { max-width: none; width: 100%; }
+
+  /* ---- Code | Chat -------------------------------------------------------
+     The mode switch heads the rail, like Claude Desktop's. Chat hides Code's
+     columns rather than unmounting them, so the tree, the editor and every
+     console are exactly where they were when you come back. */
+  .modebar { padding-top: 12px; padding-bottom: 8px; }
+  .modeseg {
+    display: inline-flex; gap: 2px; padding: 2px;
+    border: 1px solid var(--line); border-radius: 7px;
+  }
+  .modeseg button {
+    padding: 3px 14px; border: 0; border-radius: 5px; background: none; cursor: pointer;
+    font-size: 12.5px; color: var(--ink-muted);
+  }
+  .modeseg button:hover { color: var(--ink); }
+  .modeseg button[aria-selected="true"] { background: var(--cerulean); color: var(--paper); }
+  .rail-code { display: contents; }
+  .chatrail, .chatmain { display: none; }
+  body[data-mode="chat"] .rail-code,
+  body[data-mode="chat"] .middle { display: none; }
+  body[data-mode="chat"] .split[data-pane="tree"] { display: none !important; }
+  body[data-mode="chat"] .chatrail { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  body[data-mode="chat"] .chatmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .chatmain-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
+  .chatmain-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chatsearch {
+    display: flex; align-items: center; gap: 7px;
+    margin: 0 12px 6px; padding: 5px 9px;
+    border: 1px solid var(--line); border-radius: 6px; color: var(--faint);
+  }
+  .chatsearch:focus-within { border-color: var(--cerulean); }
+  .chatsearch input { flex: 1 1 auto; min-width: 0; border: 0; background: none; outline: none; font-size: 13px; color: var(--ink); }
+  .chatrow {
+    display: flex; align-items: center;
+    border-left: 2px solid transparent;
+  }
+  .chatrow:hover { background: var(--raise-soft); }
+  .chatrow[data-sel="true"] { background: var(--raise); border-left-color: var(--cerulean); }
+  .chatrow-open {
+    flex: 1 1 auto; min-width: 0; padding: 7px 8px 7px 14px;
+    text-align: left; background: none; border: 0; cursor: pointer;
+    font-size: 13.5px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chatrow-act {
+    display: none; flex: none; width: 24px; height: 24px; margin-right: 4px;
+    align-items: center; justify-content: center;
+    border: 0; border-radius: 4px; background: none; cursor: pointer; color: var(--ink-muted);
+  }
+  .chatrow:hover .chatrow-act, .chatrow:focus-within .chatrow-act { display: inline-flex; }
+  .chatrow-act:hover { color: var(--ink); background: var(--raise-soft); }
+  .chatrow-edit {
+    width: calc(100% - 24px); margin: 3px 12px; padding: 4px 6px;
+    border: 1px solid var(--cerulean); border-radius: 4px; background: var(--paper);
+    font-size: 13.5px; color: var(--ink);
+  }
+
+  /* ---- the file tree, folded (Ctrl/Cmd+B) ---------------------------------
+     Zero width and invisible, NOT display:none: the middle column's tracks
+     are matched to DOM order (see above), and a hidden-but-laid-out tree
+     keeps its scroll position and open folders for when it comes back. */
+  body[data-tree="hidden"] { --tree: 0px; }
+  body[data-tree="hidden"] .treecol { visibility: hidden; overflow: hidden; border-right: 0; }
+  body[data-tree="hidden"] .split[data-pane="tree"] { display: none !important; }
+  .tree-toggle { margin-left: 4px; margin-right: 8px; }
+  .pane-title.row > .follow + .tree-toggle { margin-left: 6px; }

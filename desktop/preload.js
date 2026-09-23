@@ -109,6 +109,8 @@ contextBridge.exposeInMainWorld("zevet", {
   masoraPairWait: () => ipcRenderer.invoke("zevet:masoraPairWait"),
   masoraPairCancel: () => ipcRenderer.invoke("zevet:masoraPairCancel"),
   masoraUnpair: () => ipcRenderer.invoke("zevet:masoraUnpair"),
+  /** Zevet Chat push to Masora (C1 `zevet_chat`), off by default. */
+  masoraChatPush: (on) => ipcRenderer.invoke("zevet:masoraChatPush", { on }),
   /** Native folder picker; resolves to a path or null. */
   pickRepo: () => ipcRenderer.invoke("zevet:pickRepo"),
   /** Install the hooks into that repo. */
@@ -287,6 +289,15 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    *  what a reloaded board replays to pick them back up. */
   consoles: () => ipcRenderer.invoke("local:consoles"),
   forgetAgent: (id) => ipcRenderer.invoke("local:forgetAgent", id),
+  /* Zevet Chat (desktop/chat.js): repo-independent conversations. */
+  chatList: (query) => ipcRenderer.invoke("chat:list", { query }),
+  chatGet: (id) => ipcRenderer.invoke("chat:get", id),
+  chatCreate: () => ipcRenderer.invoke("chat:create"),
+  chatRename: (id, title) => ipcRenderer.invoke("chat:rename", { id, title }),
+  chatRemove: (id) => ipcRenderer.invoke("chat:remove", id),
+  chatSend: (id, text) => ipcRenderer.invoke("chat:send", { id, text }),
+  chatStop: (id) => ipcRenderer.invoke("chat:stop", id),
+  onChatEvent: (fn) => subscribe("chat:event", fn),
   /** Stream of console events; returns an unsubscribe function. */
   onAgentEvent: (fn) => {
     const handler = (_e, payload) => fn(payload);

@@ -174,6 +174,8 @@ interface BoardState {
 
   followMode: "mine" | "all" | "off";
   viewMode: ViewMode;
+  /** The file tree folded away (Code). Per user, like the view. */
+  treeHidden: boolean;
   theme: Theme;
 
   localRoot: string | null;
@@ -311,6 +313,7 @@ interface BoardState {
   setCollapsed: (path: string, collapsed: boolean) => void;
   setFollowMode: (m: "mine" | "all" | "off") => void;
   setView: (v: ViewMode) => void;
+  toggleTree: () => void;
   setTheme: (t: Theme) => void;
   clearSelectedPath: () => void;
 
@@ -470,6 +473,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   })(),
   // New users land on Agent — IDE is for people who already asked for it.
   viewMode: (pref("view", "agent") === "ide" ? "ide" : "agent") as ViewMode,
+  treeHidden: pref("treeHidden", "0") === "1",
   theme: (pref("theme", "light") === "dark" ? "dark" : "light") as Theme,
 
   localRoot: null,
@@ -616,6 +620,15 @@ export const useBoard = create<BoardState>((set, get) => ({
   setFollowMode: (m) => {
     zStorage.setItem("zevet.follow.v1", m);
     set({ followMode: m });
+  },
+  /* Hidden, not unmounted: the tree keeps its open folders and its scroll
+     position (it is only `visibility: hidden` at zero width, see masora.css),
+     so unfolding it puts it back exactly as it was. */
+  toggleTree: () => {
+    const next = !get().treeHidden;
+    setPref("treeHidden", next ? "1" : "0");
+    set({ treeHidden: next });
+    requestMeasureEditor();
   },
   setView: (v) => {
     setPref("view", v);
@@ -3061,6 +3074,7 @@ export async function toggleSchedule(id: string): Promise<void> {
 export function applyView(): void {
   const g = useBoard.getState();
   document.body.setAttribute("data-view", g.viewMode);
+  document.body.dataset.tree = g.treeHidden ? "hidden" : "shown";
   document.body.dataset.picked = String(Boolean(g.selectedPath));
   document.body.dataset.surface = mainSurface(g.viewMode, g.selectedPath, g.conversationOpen);
   requestMeasureEditor();

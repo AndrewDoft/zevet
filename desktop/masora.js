@@ -73,7 +73,15 @@ function readConfig() {
     url: typeof raw.url === "string" && raw.url ? raw.url : DEFAULT_URL,
     paired: typeof raw.tokenEnc === "string" && raw.tokenEnc.length > 0,
     repos: raw.repos && typeof raw.repos === "object" && !Array.isArray(raw.repos) ? raw.repos : {},
+    // Zevet Chat push (C1 `zevet_chat`). Off unless the person turned it on:
+    // the per-repo opt-in above says nothing about chats, which have no repo.
+    chat: raw.chat === true,
   };
+}
+
+function setChatPush(on) {
+  writeRaw({ ...readRaw(), chat: on === true });
+  return readConfig();
 }
 
 function saveUrl(url) {
@@ -268,6 +276,7 @@ module.exports = {
   unpair,
   reposFor,
   setRepoOpted,
+  setChatPush,
   MasoraPair,
   MasoraPairError,
   briefFor,

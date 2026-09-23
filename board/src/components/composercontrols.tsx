@@ -19,6 +19,8 @@
  * Renders nothing when it has nothing honest to say: no usable agents and no
  * console running.
  */
+import { useContext } from "react";
+import { ChatSurface } from "../lib/surface";
 import { ContextCardButton, PastPromptsButton } from "./composercards";
 import { PromptLibraryPanel } from "./promptlib";
 import { QuotaChip } from "./quota";
@@ -80,6 +82,10 @@ const compactModelChoice = cn(
 );
 
 export function ComposerControls() {
+  return useContext(ChatSurface) ? null : <ComposerControlsCode />;
+}
+
+function ComposerControlsCode() {
   const active = useBoard(selectActiveConsole);
   // Usage is mutated onto the console object in place (board.ts recordUsage);
   // only the list itself is replaced, so that is what re-renders the ring.
@@ -220,6 +226,10 @@ export function ComposerControls() {
  * console's own usage now and says so there.
  */
 export function ComposerExtras() {
+  return useContext(ChatSurface) ? null : <ComposerExtrasCode />;
+}
+
+function ComposerExtrasCode() {
   const active = useBoard(selectActiveConsole);
   return (
     <ContextCardButton>

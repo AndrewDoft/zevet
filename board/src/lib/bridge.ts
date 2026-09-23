@@ -181,6 +181,19 @@ export interface HeldConsole {
   events: AgentEvent[];
 }
 
+export interface ChatSummary {
+  id: string;
+  title: string;
+  created: number;
+  updated: number;
+}
+
+export interface StoredChat extends ChatSummary {
+  started: boolean;
+  model?: string;
+  messages: Array<{ role: "user" | "assistant"; text: string; at?: number }>;
+}
+
 export interface LocalBridge {
   available: boolean;
   read: (root: string, relPath: string) => Promise<ReadResult>;
@@ -211,6 +224,16 @@ export interface LocalBridge {
   diffHunks?: (root: string, rel: string) => Promise<{ ok: boolean; hunks?: Array<{ start?: number }> }>;
   onFileChanged: (cb: (p: { root: string; relPath: string; text?: string; bom?: boolean; eol?: string }) => void) => () => void;
   onAgentEvent: (cb: (evt: AgentEvent) => void) => () => void;
+  /* Zevet Chat (desktop/chat.js). Optional: an older desktop build has none,
+     and the Code | Chat switch is then not offered. */
+  chatList?: (query?: string) => Promise<ChatSummary[]>;
+  chatGet?: (id: string) => Promise<StoredChat | null>;
+  chatCreate?: () => Promise<StoredChat>;
+  chatRename?: (id: string, title: string) => Promise<ChatSummary | null>;
+  chatRemove?: (id: string) => Promise<boolean>;
+  chatSend?: (id: string, text: string) => Promise<{ ok: boolean; error?: string; brief?: boolean }>;
+  chatStop?: (id: string) => Promise<unknown>;
+  onChatEvent?: (cb: (p: { id: string; evt: { type: string; [k: string]: unknown } }) => void) => () => void;
   /** An agent is asking permission and is waiting on the answer. Optional: a
    *  build without computer use never sends one. */
   onPermitRequest?: (cb: (req: PermitRequest) => void) => () => void;
@@ -326,7 +349,8 @@ export interface ZevetBridge {
      start/wait/cancel shape as the GitHub/Google trio; `masoraPairWait`
      never returns a token, only ok/error -- it is written straight to the
      OS keychain in the main process. */
-  masoraConfig?: () => Promise<{ url: string; paired: boolean; repos: Record<string, boolean> }>;
+  masoraConfig?: () => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean }>;
+  masoraChatPush?: (on: boolean) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean }>;
   masoraSaveUrl?: (url: string) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean> }>;
   masoraPairStart?: () => Promise<{ ok: boolean; error?: string; userCode?: string; verifyUrl?: string }>;
   masoraPairWait?: () => Promise<{ ok: boolean; cancelled?: boolean; error?: string | null }>;

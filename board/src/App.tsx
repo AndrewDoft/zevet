@@ -1,4 +1,4 @@
-import { SettingsIcon } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, SettingsIcon } from "lucide-react";
 import { useEffect } from "react";
 import { PeoplePane } from "./components/people";
 import { WorkspacesPane } from "./components/workspaces";
@@ -26,6 +26,30 @@ import {
   useBoard,
 } from "./lib/board";
 import { bridge } from "./lib/bridge";
+import { ChatMain, ChatRail, ModeSwitch } from "./components/chatmode";
+import { useChat, wireChat } from "./lib/chat";
+
+/** Folds the file tree away, leaving the rail. Ctrl/Cmd+B, like an editor's
+ *  sidebar. */
+function TreeToggle() {
+  const hidden = useBoard((s) => s.treeHidden);
+  const toggleTree = useBoard((s) => s.toggleTree);
+  const label = hidden ? "Show files" : "Hide files";
+  const Icon = hidden ? PanelLeftOpen : PanelLeftClose;
+  return (
+    <button
+      type="button"
+      className="rail-new tree-toggle"
+      id="treeToggle"
+      aria-label={label}
+      aria-pressed={hidden}
+      title={label + " (" + (navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl+") + "B)"}
+      onClick={toggleTree}
+    >
+      <Icon className="size-3.5" aria-hidden="true" />
+    </button>
+  );
+}
 
 function RailFoot() {
   const theme = useBoard(selectTheme);
@@ -75,6 +99,8 @@ function App() {
   const selectedPath = useBoard((s) => s.selectedPath);
   const conversationOpen = useBoard((s) => s.conversationOpen);
   const localRoot = useBoard((s) => s.localRoot);
+  const treeHidden = useBoard((s) => s.treeHidden);
+  const mode = useChat((s) => s.mode);
 
   const roster = useBoard(selectRoster);
   const launching = useBoard((s) => s.launching);
@@ -84,7 +110,23 @@ function App() {
 
   useEffect(() => {
     boot();
+    wireChat();
   }, []);
+
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if ((ev.metaKey || ev.ctrlKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "b" && useChat.getState().mode === "code") {
+        ev.preventDefault();
+        useBoard.getState().toggleTree();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    positionSplits();
+  }, [treeHidden, mode]);
 
   useEffect(() => {
     applyTheme();
@@ -92,7 +134,7 @@ function App() {
 
   useEffect(() => {
     applyView();
-  }, [viewMode, selectedPath, conversationOpen]);
+  }, [viewMode, selectedPath, conversationOpen, treeHidden]);
 
   useEffect(() => {
     applyPanes();
@@ -119,6 +161,9 @@ function App() {
     <ConsoleRuntimeProvider>
       <div className="shell" inert={sheetOpen ? true : undefined}>
         <aside className="pane rail">
+          <ModeSwitch />
+          <ChatRail />
+          <div className="rail-code">
           {/* The follow control sits here now, not in the Files column's own
               header - which let that header go, and the tree start at the top
               of its column. It is a People control by meaning as well as by
@@ -153,6 +198,7 @@ function App() {
               </button>
             ) : null}
             <FollowControl blanked={blanked} />
+            <TreeToggle />
           </div>
           <div className="pane-body" id="people">
             <PeoplePane />
@@ -181,6 +227,7 @@ function App() {
               using; see components/people.tsx. */}
           <ConnBanner />
           <Strip />
+          </div>
           <UpdateRow />
           {/* ⚠️ NO "Repos" HEADER. It was a full pane-title row — 24px of
               padding and a word — sitting above a dropdown that already says
@@ -195,7 +242,9 @@ function App() {
               settings one." The repo picker is something you reach for while
               working; theme and settings are set once and then left, so they
               belong in the corner under it. */}
-          <WorkspacesPane />
+          <div className="rail-code">
+            <WorkspacesPane />
+          </div>
           <div className="railfoot">
             <RailFoot />
           </div>
@@ -213,6 +262,7 @@ function App() {
             <DetailPane blanked={blanked} />
           </main>
         </div>
+        <ChatMain />
       </div>
       <SettingsSheet />
       <Palette />

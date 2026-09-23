@@ -58,6 +58,7 @@
       "google-signin.js",
       "masora.js",
       "masora-push.js",
+      "chat.js",
       "setup.html",
       "fonts/**",
       "build/icon.png",

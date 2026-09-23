@@ -653,7 +653,9 @@ function startConsole(opts) {
   const resolved = resolveAgent(agent);
   if (!resolved.ok) return { ok: false, error: resolved.error };
 
-  const args = invocationFor(agent, opts);
+  // Zevet Chat hands its own argv (desktop/chat.js § chatArgs); everything
+  // below — the shim check, the spawn, the line splitting — still applies.
+  const args = Array.isArray(options.args) ? options.args : invocationFor(agent, opts);
 
   // The invariant from CMD_METACHARACTERS, checked. On the shim path these
   // strings are about to be re-parsed by a shell, so anything that could change

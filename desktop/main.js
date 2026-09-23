@@ -48,6 +48,7 @@ const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const masoraPush = require("./masora-push.js");
+const chats = require("./chat.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -1865,6 +1866,15 @@ function startScheduler() {
  */
 let masoraPushTimer = null;
 async function runMasoraPushOnce() {
+  // Chat records queued while offline or locked go out on the same beat.
+  if (masoraPush.readOutbox(masoraPush.CHAT_OUTBOX_PATH).length) {
+    const auth = await masoraToken();
+    if (auth) {
+      await masoraPush
+        .flushOutbox({ baseUrl: auth.cfg.url, token: auth.token, file: masoraPush.CHAT_OUTBOX_PATH })
+        .catch((err) => console.error(`zevet: chat push failed: ${err.message}`));
+    }
+  }
   const repos = masora.reposFor();
   if (!Object.keys(repos).length) return;
   const cfg = masora.readConfig();
@@ -2777,6 +2787,155 @@ function stopAllConsoles() {
 }
 
 app.on("before-quit", stopAllConsoles);
+
+/* ==========================================================================
+ * ZEVET CHAT — conversations with no repository behind them (desktop/chat.js)
+ *
+ * One claude process at a time, kept alive across the turns of the chat in
+ * front: a follow-up is one more stdin line, not a cold start. Switching chats
+ * ends it, and the next turn there resumes the session by id. Events go to the
+ * board on `chat:event`, never `local:agentEvent`, so a chat is never drawn as
+ * a console in Code's People pane.
+ * ======================================================================== */
+let chatRun = null; // { id, console, turn: { user, reply } | null, model }
+
+function stopChatRun() {
+  if (!chatRun) return;
+  try {
+    chatRun.console.stop();
+  } catch {
+    // Already exited: the next turn resumes by id.
+  }
+  chatRun = null;
+}
+app.on("before-quit", stopChatRun);
+
+async function masoraToken() {
+  const cfg = masora.readConfig();
+  if (!cfg.paired || !safeStorage.isEncryptionAvailable()) return null;
+  const token = masora.loadToken((buf) => safeStorage.decryptString(buf));
+  return token ? { cfg, token } : null;
+}
+
+/** C1 `zevet_chat`: queued only when the person turned Chat push on. */
+async function pushChat(chat) {
+  const cfg = masora.readConfig();
+  if (!cfg.chat) return;
+  masoraPush.appendOutbox([chats.toRecord(chat)], masoraPush.CHAT_OUTBOX_PATH);
+  const auth = await masoraToken();
+  if (!auth) return; // stays queued until a paired, unlocked cycle
+  await masoraPush.flushOutbox({ baseUrl: auth.cfg.url, token: auth.token, file: masoraPush.CHAT_OUTBOX_PATH });
+}
+
+function finishChatTurn(run, reply, error) {
+  const turn = run.turn;
+  run.turn = null;
+  if (!turn || error || !reply) return;
+  const chat = chats.addTurn(run.id, turn.user, reply, run.model);
+  if (!chat) return;
+  toBoard("chat:event", { id: run.id, evt: { type: "saved", chat: { id: chat.id, title: chat.title, updated: chat.updated } } });
+  void pushChat(chat).catch((err) => console.error(`zevet: chat push failed: ${err.message}`));
+  // A few generated words replace the first-line title, same as a console.
+  if (chat.messages.length === 2) void nameChat(chat.id, turn.user).catch(() => {});
+}
+
+async function nameChat(id, text) {
+  const r = agentConsole.resolveAgent("claude");
+  if (!r.ok) return;
+  const inv =
+    r.kind === "shim"
+      ? agentConsole._internals.buildShimInvocation(r.file, autoTitle.ARGS)
+      : { command: r.file, args: autoTitle.ARGS, options: {} };
+  const title = await autoTitle.titleFor(text, inv);
+  const renamed = title ? chats.rename(id, title) : null;
+  if (renamed) toBoard("chat:event", { id, evt: { type: "saved", chat: renamed } });
+}
+
+async function spawnChat(chat) {
+  let mcpConfig = null;
+  const cfg = masora.readConfig();
+  if (cfg.paired) {
+    mcpConfig = path.join(app.getPath("temp"), `zevet-chat-mcp-${process.pid}.json`);
+    fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: masora.mcpServerEntry(cfg.url) }), "utf8");
+  }
+  const run = { id: chat.id, console: null, turn: null, model: chat.model || "" };
+  const started = agentConsole.startConsole({
+    agent: "claude",
+    cwd: chats.dirOf(chat.id),
+    args: chats.chatArgs({ id: chat.id, started: chat.started, mcpConfig }),
+    onEvent: (evt) => {
+      const p = evt && evt.type === "agent" ? evt.payload : null;
+      if (p && p.type === "system" && p.subtype === "init") {
+        chats.markStarted(run.id);
+        if (p.model) run.model = String(p.model);
+      }
+      if (p && p.type === "assistant" && run.turn && p.message && Array.isArray(p.message.content)) {
+        const text = p.message.content.filter((b) => b && b.type === "text").map((b) => b.text).join("");
+        if (text) run.turn.reply = run.turn.reply ? [run.turn.reply, text].join("\n\n") : text;
+      }
+      if (p && p.type === "result" && run.turn) finishChatTurn(run, run.turn.reply, p.is_error);
+      if (evt && evt.type === "exit") {
+        if (run.turn) finishChatTurn(run, "", true);
+        if (chatRun === run) chatRun = null;
+      }
+      toBoard("chat:event", { id: run.id, evt });
+    },
+  });
+  if (!started.ok) return { ok: false, error: started.error };
+  run.console = started;
+  return { ok: true, run };
+}
+
+ipcMain.handle("chat:list", (_e, arg) => chats.list(arg && arg.query));
+ipcMain.handle("chat:get", (_e, id) => chats.read(String(id || "")));
+ipcMain.handle("chat:create", () => chats.create());
+ipcMain.handle("chat:rename", (_e, arg) => chats.rename(arg && arg.id, arg && arg.title));
+ipcMain.handle("chat:remove", (_e, id) => {
+  if (chatRun && chatRun.id === id) stopChatRun();
+  return chats.remove(String(id || ""));
+});
+ipcMain.handle("chat:stop", (_e, id) => {
+  if (chatRun && chatRun.id === id) stopChatRun();
+  return { ok: true };
+});
+ipcMain.handle("chat:send", async (_e, arg) => {
+  await runtimeReady;
+  const id = String((arg && arg.id) || "");
+  const text = String((arg && arg.text) || "");
+  const chat = chats.read(id);
+  if (!chat) return { ok: false, error: "No such chat." };
+  if (!text.trim()) return { ok: false, error: "Nothing to send." };
+  if (chatRun && chatRun.id === id && chatRun.turn) return { ok: false, error: "Still answering." };
+  if (chatRun && chatRun.id !== id) stopChatRun();
+
+  // C2: the same brief Code gets, per turn, from these words. Fails open.
+  let brief = null;
+  try {
+    const auth = await masoraToken();
+    if (auth) {
+      const r = await masora.briefFor({ baseUrl: auth.cfg.url, token: auth.token, prompt: text });
+      brief = r ? r.brief : null;
+    }
+  } catch (err) {
+    console.error(`zevet: could not fetch the Masora brief: ${err.message}`);
+  }
+
+  if (!chatRun) {
+    const s = await spawnChat(chat);
+    if (!s.ok) return s;
+    chatRun = s.run;
+  }
+  chatRun.turn = { user: text, reply: "" };
+  const sent = chatRun.console.send(chats.composeTurn(text, brief));
+  if (!sent || sent.ok === false) {
+    chatRun.turn = null;
+    stopChatRun();
+    return sent || { ok: false, error: "Could not send." };
+  }
+  return { ok: true, brief: Boolean(brief) };
+});
+
+ipcMain.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(arg && arg.on)));
 
 // ---- lifecycle -------------------------------------------------------------
 
