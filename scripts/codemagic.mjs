@@ -50,8 +50,10 @@ for (;;) {
 mkdirSync(out, { recursive: true });
 for (const [i, s] of (b.buildActions || []).entries()) {
   console.log(`  step ${s.name}: ${s.status}`);
-  if (s.logUrl) writeFileSync(path.join(out, `${String(i).padStart(2, "0")}-${s.name.replace(/[^\w.-]+/g, "_").slice(0, 40)}.log`),
-    await (await api(s.logUrl)).text());
+  // Script steps keep their log on the subaction, not the step.
+  const url = s.logUrl || s.subactions?.[0]?.logUrl;
+  if (url) writeFileSync(path.join(out, `${String(i).padStart(2, "0")}-${s.name.replace(/[^\w.-]+/g, "_").slice(0, 40)}.log`),
+    await (await api(url)).text());
 }
 for (const a of b.artefacts || []) {
   const r = await fetch(a.url, { headers: { "x-auth-token": headers["x-auth-token"] } });
