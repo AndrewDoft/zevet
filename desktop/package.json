@@ -59,6 +59,7 @@
       "masora.js",
       "masora-push.js",
       "chat.js",
+      "chat-claude.js",
       "setup.html",
       "fonts/**",
       "build/icon.png",

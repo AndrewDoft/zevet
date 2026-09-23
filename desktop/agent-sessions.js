@@ -76,8 +76,15 @@ const codexDir = () => path.join(os.homedir(), ".codex", "sessions");
  * caller's path and then check where it landed, this refuses anything that is
  * not a single path-safe segment — no separators, so no `..` — and builds the
  * path itself. There is no traversal left to check for.
+ *
+ * ⚠️ A LEADING `-` IS ALLOWED, because every Claude Code project folder on
+ * macOS and Linux starts with one: the slug of `/Users/kai/repo` is
+ * `-Users-kai-repo`. Requiring an alphanumeric first character hid every
+ * session on a Mac; only Windows' `C--…` slugs got through. Found by the
+ * macOS CI leg of 0.2.53. A leading `-` is still one segment with no
+ * separator, so it opens no traversal.
  */
-const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SEGMENT = /^[A-Za-z0-9-][A-Za-z0-9._-]*$/;
 /** codex's store is dated directories; this is the only shape accepted. */
 const DATE_PATH = /^\d{4}\/\d{2}\/\d{2}$/;
 

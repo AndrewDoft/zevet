@@ -289,3 +289,51 @@ describe("the transcript travels; the claude session stays on this machine", () 
     assert.deepEqual(r.participants, ["andrew", "kai"]);
   });
 });
+
+describe("sessions on macOS and Linux", () => {
+  test("a project folder slug that starts with '-' (every POSIX path) is listed", () => {
+    const sessions = require(path.join(ROOT, "desktop", "agent-sessions.js"));
+    const fake = tempDir("zevet-posix-slug-");
+    const was = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = process.env.USERPROFILE = fake.dir;
+    try {
+      const d = path.join(fake.dir, ".claude", "projects", "-Users-kai-repo");
+      mkdirSync(d, { recursive: true });
+      writeFileSync(path.join(d, "11111111-2222-3333-4444-555555555555.jsonl"),
+        JSON.stringify({ type: "user", timestamp: "2026-09-22T00:00:00.000Z", message: { role: "user", content: "hi" } }) + "\n");
+      assert.deepEqual(sessions.list({}).sessions.map((s) => s.slug), ["-Users-kai-repo"]);
+    } finally {
+      process.env.HOME = was.HOME;
+      process.env.USERPROFILE = was.USERPROFILE;
+    }
+  });
+});
+
+describe("the provider seam", () => {
+  const { createClaudeCli } = require(path.join(ROOT, "desktop", "chat-claude.js"));
+
+  test("claude-cli: fresh session replays history once, then resumes; model and provider land on the reply", () => {
+    const c = chats.create("andrew");
+    chats.addTurn(c.id, "earlier", "answer", "model-a", "andrew", "claude-cli");
+    const spawned = [];
+    const writes = [];
+    const provider = createClaudeCli({
+      startConsole: (opts) => {
+        spawned.push(opts.args);
+        return { ok: true, send: (t) => (writes.push(t), { ok: true }), stop: () => ({ ok: true }) };
+      },
+    });
+    assert.equal(provider.id, "claude-cli");
+    assert.equal(provider.trainsOnPrompts, false, "the brief step stays on for it");
+    const run = provider.open({ chat: chats.read(c.id), mcpConfig: null, onEvent: () => {} });
+    run.send("next", { brief: null, prior: chats.read(c.id).messages });
+    run.send("again", { brief: null, prior: chats.read(c.id).messages });
+    assert.ok(spawned[0].includes("--session-id"));
+    assert.match(writes[0], /^<prior-conversation>/);
+    assert.equal(writes[1], "again", "history goes once per session, not every turn");
+    const reply = chats.read(c.id).messages[1];
+    assert.equal(reply.provider, "claude-cli");
+    assert.equal(reply.model, "model-a");
+    chats.remove(c.id);
+  });
+});

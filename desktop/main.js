@@ -49,6 +49,7 @@ const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const masoraPush = require("./masora-push.js");
 const chats = require("./chat.js");
+const { createClaudeCli } = require("./chat-claude.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -2797,7 +2798,7 @@ app.on("before-quit", stopAllConsoles);
  * board on `chat:event`, never `local:agentEvent`, so a chat is never drawn as
  * a console in Code's People pane.
  * ======================================================================== */
-let chatRun = null; // { id, console, turn: { user, reply } | null, model }
+let chatRun = null; // { id, console, turn: { user, reply } | null, model, provider }
 
 function stopChatRun() {
   if (!chatRun) return;
@@ -2831,7 +2832,7 @@ function finishChatTurn(run, reply, error) {
   const turn = run.turn;
   run.turn = null;
   if (!turn || error || !reply) return;
-  const chat = chats.addTurn(run.id, turn.user, reply, run.model, chatAuthor());
+  const chat = chats.addTurn(run.id, turn.user, reply, run.model, chatAuthor(), run.provider);
   if (!chat) return;
   toBoard("chat:event", { id: run.id, evt: { type: "saved", chat: { id: chat.id, title: chat.title, updated: chat.updated } } });
   void pushChat(chat).catch((err) => console.error(`zevet: chat push failed: ${err.message}`));
@@ -2851,30 +2852,28 @@ async function nameChat(id, text) {
   if (renamed) toBoard("chat:event", { id, evt: { type: "saved", chat: renamed } });
 }
 
-async function spawnChat(chat) {
+/* Model providers (desktop/chat-claude.js documents the contract). One today;
+   a chat records which one answered each message. */
+const chatProviders = { "claude-cli": createClaudeCli({ startConsole: agentConsole.startConsole }) };
+const DEFAULT_CHAT_PROVIDER = "claude-cli";
+
+async function spawnChat(chat, provider) {
   let mcpConfig = null;
   const cfg = masora.readConfig();
   if (cfg.paired) {
     mcpConfig = path.join(app.getPath("temp"), `zevet-chat-mcp-${process.pid}.json`);
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: masora.mcpServerEntry(cfg.url) }), "utf8");
   }
-  // This machine's claude session for the chat. A chat that arrives with
-  // history but no session here replays it on the first turn (chat.js).
-  const sess = chats.session(chat.id);
-  const run = { id: chat.id, console: null, turn: null, model: chat.model || "", replay: !sess.started };
-  const started = agentConsole.startConsole({
-    agent: "claude",
-    cwd: chats.dirOf(chat.id),
-    args: chats.chatArgs({ sessionId: sess.sessionId, started: sess.started, mcpConfig }),
+  const run = { id: chat.id, console: null, turn: null, model: chat.model || "", provider: provider.id };
+  const opened = provider.open({
+    chat,
+    mcpConfig,
     onEvent: (evt) => {
       const p = evt && evt.type === "agent" ? evt.payload : null;
-      if (p && p.type === "system" && p.subtype === "init") {
-        chats.markStarted(run.id);
-        if (p.model) run.model = String(p.model);
-      }
+      if (p && p.type === "system" && p.subtype === "init" && p.model) run.model = String(p.model);
       if (p && p.type === "assistant" && run.turn && p.message && Array.isArray(p.message.content)) {
         const text = p.message.content.filter((b) => b && b.type === "text").map((b) => b.text).join("");
-        if (text) run.turn.reply = run.turn.reply ? [run.turn.reply, text].join("\n\n") : text;
+        if (text) run.turn.reply = run.turn.reply ? [run.turn.reply, text].join(String.fromCharCode(10, 10)) : text;
       }
       if (p && p.type === "result" && run.turn) finishChatTurn(run, run.turn.reply, p.is_error);
       if (evt && evt.type === "exit") {
@@ -2884,9 +2883,24 @@ async function spawnChat(chat) {
       toBoard("chat:event", { id: run.id, evt });
     },
   });
-  if (!started.ok) return { ok: false, error: started.error };
-  run.console = started;
+  if (!opened.ok) return { ok: false, error: opened.error };
+  run.console = opened;
   return { ok: true, run };
+}
+
+/** C2 for one chat turn: a separate step, skipped for any provider that may
+ *  train on prompts. Fails open, like Code's. */
+async function chatBrief(provider, text) {
+  if (provider.trainsOnPrompts) return null;
+  try {
+    const auth = await masoraToken();
+    if (!auth) return null;
+    const r = await masora.briefFor({ baseUrl: auth.cfg.url, token: auth.token, prompt: text });
+    return r ? r.brief : null;
+  } catch (err) {
+    console.error(`zevet: could not fetch the Masora brief: ${err.message}`);
+    return null;
+  }
 }
 
 ipcMain.handle("chat:list", (_e, arg) => chats.list(arg && arg.query));
@@ -2917,27 +2931,16 @@ ipcMain.handle("chat:send", async (_e, arg) => {
   if (chatRun && chatRun.id === id && chatRun.turn) return { ok: false, error: "Still answering." };
   if (chatRun && chatRun.id !== id) stopChatRun();
 
-  // C2: the same brief Code gets, per turn, from these words. Fails open.
-  let brief = null;
-  try {
-    const auth = await masoraToken();
-    if (auth) {
-      const r = await masora.briefFor({ baseUrl: auth.cfg.url, token: auth.token, prompt: text });
-      brief = r ? r.brief : null;
-    }
-  } catch (err) {
-    console.error(`zevet: could not fetch the Masora brief: ${err.message}`);
-  }
+  const provider = chatProviders[chat.provider] || chatProviders[DEFAULT_CHAT_PROVIDER];
+  const brief = await chatBrief(provider, text);
 
   if (!chatRun) {
-    const s = await spawnChat(chat);
+    const s = await spawnChat(chat, provider);
     if (!s.ok) return s;
     chatRun = s.run;
   }
   chatRun.turn = { user: text, reply: "" };
-  const prior = chatRun.replay ? chat.messages : null;
-  chatRun.replay = false;
-  const sent = chatRun.console.send(chats.composeTurn(text, brief, prior));
+  const sent = chatRun.console.send(text, { brief, prior: chat.messages });
   if (!sent || sent.ok === false) {
     chatRun.turn = null;
     stopChatRun();

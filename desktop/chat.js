@@ -26,7 +26,8 @@
 // zevet's local state, the way consoles and prefs do.
 //
 // SHAPED TO TRAVEL. A chat is {id (uuid, global), title, owner,
-// participants[], messages[{role, author, text, at}], created, updated}: the
+// participants[], messages[{role, author, text, at, provider?, model?}],
+// created, updated}: the
 // whole of it is the transcript, and it serializes on its own. The claude
 // session that answers it is NOT in it. That binding is this machine's
 // (~/.zevet/chats/<id>/session.json), so a chat handed to someone else is
@@ -158,16 +159,20 @@ function markStarted(id) {
   if (!s.started) fs.writeFileSync(sessionFile(id), JSON.stringify({ ...s, started: true }), "utf8");
 }
 
-/** One finished exchange, by `author` (a hub login). The first one names an
- *  untitled chat. */
-function addTurn(id, user, assistant, model, author) {
+/** One finished exchange, by `author` (a hub login). The reply records the
+ *  provider and model that wrote it. The first exchange names an untitled chat. */
+function addTurn(id, user, assistant, model, author, provider) {
   const c = read(id);
   if (!c) return null;
   const at = Date.now();
   const who = String(author || c.owner || "");
   c.messages.push(
     { role: "user", author: who, text: String(user), at },
-    { role: "assistant", author: "assistant", text: String(assistant), at },
+    {
+      role: "assistant", author: "assistant", text: String(assistant), at,
+      ...(provider ? { provider: String(provider) } : {}),
+      ...(model ? { model: String(model) } : {}),
+    },
   );
   const participants = Array.isArray(c.participants) ? c.participants : [];
   if (who && !participants.includes(who)) c.participants = [...participants, who];
