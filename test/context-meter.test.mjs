@@ -6,8 +6,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ROOT } from "./helpers.mjs";
 
-const { contextShare, CONTEXT_FLOOR } = await import(
-  pathToFileURL(path.join(ROOT, "board", "src", "lib", "meter.mjs")).href
+const { contextShare, CONTEXT_FLOOR, usageOf } = await import(
+  pathToFileURL(path.join(ROOT, "board", "src", "lib", "usage.mjs")).href
 );
 const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
 const controls = readFileSync(path.join(ROOT, "board", "src", "components", "composercontrols.tsx"), "utf8");
@@ -33,7 +33,7 @@ describe("contextShare", () => {
 describe("running totals are not the context", () => {
   test("usageOf ignores claude's result and codex's turn.completed", () => {
     // Both carry cumulative usage; read as the context they exceed the window.
-    const fn = board.slice(board.indexOf("function usageOf("));
+    const fn = String(usageOf).slice(String(usageOf).indexOf("if (payload.type"));
     assert.match(fn, /if \(payload\.type === "result" \|\| payload\.type === "turn\.completed"\) return null;/);
   });
 
@@ -61,7 +61,7 @@ describe("the composer shows one model label", () => {
     assert.equal(runningModelName(sonnet.usage.model, sonnet.model), "Sonnet 5");
     assert.match(controls, /const model = active \? runningModelName\(active\.usage\.model, active\.model\) : "";/);
     // Rendered unconditionally — not behind `active ?` — and handed the running model.
-    assert.match(controls, /<div className=\{compactModelChoice\}>\s*<ModelChoice\s+agents=\{usable\}\s+running=\{\s*active\s*\?\s*\{ id: `\$\{active\.agent\}:\$\{active\.usage\.model \|\| active\.model\}`, name: model/);
+    assert.match(controls, /<div className=\{compactModelChoice\}>\s*<ModelChoice\s+agents=\{agents\}\s+running=\{runningModel\}/);
     assert.ok(!/\{active \? \([\s\S]{0,80}<span[^>]*>\s*\{model\}/.test(controls), "the picker is swapped for a label again");
     // The trigger shows that name instead of the launch default.
     assert.match(choice, /\{running \? \([\s\S]*?\{running\.name\}[\s\S]*?\) : \(\s*<ModelSelectorValue \/>/);

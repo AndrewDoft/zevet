@@ -183,8 +183,8 @@ function addTurn(id, user, assistant, model, author, provider) {
 }
 
 /** argv for one chat process. Pure; see the flag notes at the top. */
-function chatArgs({ sessionId, started, mcpConfig, model } = {}) {
-  return [
+function chatArgs({ sessionId, started, mcpConfig, model, mode } = {}) {
+  const args = [
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
     "--include-partial-messages",
     "--tools", "",
@@ -194,6 +194,20 @@ function chatArgs({ sessionId, started, mcpConfig, model } = {}) {
     ...(mcpConfig ? ["--mcp-config", mcpConfig, "--allowedTools", "mcp__masora"] : []),
     ...(model ? ["--model", model] : []),
   ];
+  if (mode) {
+    if (mode === "dangerous") {
+      args.push("--dangerously-skip-permissions");
+    } else {
+      const modeMap = {
+        plan: "plan",
+        ask: "manual",
+        auto: "acceptEdits",
+      };
+      const claudeMode = modeMap[mode];
+      if (claudeMode) args.push("--permission-mode", claudeMode);
+    }
+  }
+  return args;
 }
 
 /**

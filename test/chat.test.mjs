@@ -52,6 +52,38 @@ describe("chatArgs: the claude invocation for a chat", () => {
     const a = chats.chatArgs({ sessionId: ID, started: true, mcpConfig: "C:/t/m.json", model: "sonnet" });
     assert.deepEqual(_internals.unsafeForCmd(a), []);
   });
+
+  test("includes --permission-mode plan when mode is plan", () => {
+    const a = chats.chatArgs({ sessionId: ID, started: false, mode: "plan" });
+    assert.deepEqual(a.slice(a.indexOf("--permission-mode"), a.indexOf("--permission-mode") + 2), ["--permission-mode", "plan"]);
+  });
+
+  test("includes --permission-mode manual when mode is ask", () => {
+    const a = chats.chatArgs({ sessionId: ID, started: false, mode: "ask" });
+    assert.deepEqual(a.slice(a.indexOf("--permission-mode"), a.indexOf("--permission-mode") + 2), ["--permission-mode", "manual"]);
+  });
+
+  test("includes --permission-mode acceptEdits when mode is auto", () => {
+    const a = chats.chatArgs({ sessionId: ID, started: false, mode: "auto" });
+    assert.deepEqual(a.slice(a.indexOf("--permission-mode"), a.indexOf("--permission-mode") + 2), ["--permission-mode", "acceptEdits"]);
+  });
+
+  test("includes --dangerously-skip-permissions when mode is dangerous", () => {
+    const a = chats.chatArgs({ sessionId: ID, started: false, mode: "dangerous" });
+    assert.ok(a.includes("--dangerously-skip-permissions"));
+    assert.ok(!a.includes("--permission-mode"));
+  });
+
+  test("includes --model when model is given", () => {
+    const a = chats.chatArgs({ sessionId: ID, started: false, model: "opus-5" });
+    assert.deepEqual(a.slice(a.indexOf("--model"), a.indexOf("--model") + 2), ["--model", "opus-5"]);
+  });
+
+  test("permission-mode and model together", () => {
+    const a = chats.chatArgs({ sessionId: ID, started: false, mode: "plan", model: "sonnet" });
+    assert.deepEqual(a.slice(a.indexOf("--permission-mode"), a.indexOf("--permission-mode") + 2), ["--permission-mode", "plan"]);
+    assert.deepEqual(a.slice(a.indexOf("--model"), a.indexOf("--model") + 2), ["--model", "sonnet"]);
+  });
 });
 
 describe("composeTurn: what a turn writes to stdin", () => {
@@ -185,6 +217,67 @@ describe("chat-stream: token streaming over transcript.mjs", () => {
     assert.equal(stream.visibleMessages(t)[1].status.type, "incomplete");
     const f = stream.failTurn(stream.sendUser(stream.emptyChatThread(), "x"), "Still answering.");
     assert.equal(stream.visibleMessages(f)[1].status.error, "Still answering.");
+  });
+
+  test("usage is recorded from assistant message payload and available on thread", () => {
+    let t = stream.sendUser(stream.emptyChatThread(), "hi");
+    t = stream.chatEvent(t, {
+      type: "agent",
+      payload: {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "Hello" }],
+          usage: { input_tokens: 100, cache_read_input_tokens: 50, output_tokens: 20 },
+          model: "claude-opus-5",
+        },
+      },
+    });
+    t = stream.chatEvent(t, { type: "agent", payload: { type: "result", is_error: false } });
+    assert.ok(t.usage, "usage should be present on thread");
+    assert.equal(t.usage.context, 150, "context = input + cache_read");
+    assert.equal(t.usage.cacheHit, 33.33333333333333, "cacheHit = cache_read / context * 100");
+    assert.equal(t.usage.model, "claude-opus-5", "model from message");
+    assert.equal(t.usage.input, 100);
+    assert.equal(t.usage.cachedInput, 50);
+    assert.equal(t.usage.output, 20);
+  });
+
+  test("usage from result payload is ignored (running totals, not context)", () => {
+    let t = stream.sendUser(stream.emptyChatThread(), "hi");
+    t = stream.chatEvent(t, block("Hello"));
+    t = stream.chatEvent(t, {
+      type: "agent",
+      payload: {
+        type: "result",
+        usage: { input_tokens: 500, output_tokens: 100 }, // running total, not this turn
+        is_error: false,
+      },
+    });
+    // The result payload is ignored, and the assistant message had no usage, so usage stays null
+    assert.equal(t.usage, null, "result payload does not create usage");
+    // This test shows result payloads don't create usage
+  });
+
+  test("usage parsing handles codex-style cached_input_tokens", () => {
+    let t = stream.sendUser(stream.emptyChatThread(), "hi");
+    t = stream.chatEvent(t, {
+      type: "agent",
+      payload: {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "Hello" }],
+          usage: { input_tokens: 17039, cached_input_tokens: 9984, output_tokens: 500 },
+          model: "gpt-5",
+        },
+      },
+    });
+    t = stream.chatEvent(t, { type: "agent", payload: { type: "result", is_error: false } });
+    assert.ok(t.usage);
+    assert.equal(t.usage.context, 17039 + 0, "codex: context = input_tokens (cached is subset)");
+    assert.equal(t.usage.cacheHit, (9984 / 17039) * 100); // ~58.595%
+    assert.equal(t.usage.input, 17039 - 9984);
+    assert.equal(t.usage.cachedInput, 9984);
+    assert.equal(t.usage.output, 500);
   });
 });
 

@@ -295,7 +295,7 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   chatCreate: () => ipcRenderer.invoke("chat:create"),
   chatRename: (id, title) => ipcRenderer.invoke("chat:rename", { id, title }),
   chatRemove: (id) => ipcRenderer.invoke("chat:remove", id),
-  chatSend: (id, text) => ipcRenderer.invoke("chat:send", { id, text }),
+  chatSend: (id, text, opts) => ipcRenderer.invoke("chat:send", { id, text, opts }),
   chatStop: (id) => ipcRenderer.invoke("chat:stop", id),
   onChatEvent: (fn) => subscribe("chat:event", fn),
   /** Stream of console events; returns an unsubscribe function. */

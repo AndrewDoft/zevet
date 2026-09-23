@@ -52,11 +52,10 @@ test("the usage series only appends when the reading changed", () => {
 // that prints "cached" prints the number the agent reported rather than a
 // share back-computed from a rounded cacheHit.
 test("usage keeps input, cachedInput and output as their own fields", () => {
-  const board = read("lib", "board.ts");
-  const usageOf = board.slice(board.indexOf("function usageOf("));
-  assert.match(usageOf, /input:/);
-  assert.match(usageOf, /cachedInput:/);
-  assert.match(usageOf, /output:/);
+  const usage = read("lib", "usage.mjs");
+  assert.match(usage, /input:/);
+  assert.match(usage, /cachedInput:/);
+  assert.match(usage, /output:/);
   const types = readFileSync(path.join(BOARD, "lib", "types.ts"), "utf8");
   const cu = types.slice(types.indexOf("interface ConsoleUsage"), types.indexOf("interface UsableAgent"));
   assert.match(cu, /input: number \| null;/);

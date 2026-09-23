@@ -17,6 +17,8 @@ import {
   type ChatThread,
 } from "./chat-stream.mjs";
 import { readLastChat, readMode, writeLastChat, writeMode } from "./mode.mjs";
+import { useBoard } from "./board";
+import type { LaunchMode } from "./types";
 
 export type Mode = "code" | "chat";
 
@@ -109,6 +111,7 @@ export const useChat = create<ChatState>((set, get) => ({
   send: async (text) => {
     const l = bridge.local;
     if (!l?.chatSend || !l.chatCreate) return;
+    const { launchModel, launchEffort, launchMode } = useBoard.getState();
     let id = get().activeId;
     if (!id) {
       const c = await l.chatCreate();
@@ -120,7 +123,7 @@ export const useChat = create<ChatState>((set, get) => ({
     const put = (fn: (t: ChatThread) => ChatThread) =>
       set((s) => ({ threads: { ...s.threads, [chatId]: fn(s.threads[chatId] ?? emptyChatThread()) } }));
     put((t) => sendUser(t, text));
-    const r = await l.chatSend(chatId, text);
+    const r = await l.chatSend(chatId, text, { model: launchModel, effort: launchEffort, mode: launchMode });
     if (!r || !r.ok) put((t) => failTurn(t, (r && r.error) || "Could not send."));
     void get().refresh();
   },

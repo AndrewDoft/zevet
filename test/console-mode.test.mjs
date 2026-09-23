@@ -125,7 +125,7 @@ describe("the posture lives in the composer, not on the rail's rows", () => {
   });
 
   test("the composer's picker shows where the console is headed and parks the pick on it", () => {
-    assert.match(controlsSrc, /value=\{active \? active\.nextMode \?\? active\.mode : launchMode\}/);
-    assert.match(controlsSrc, /if \(active\) setConsoleMode\(active\.key, v\);/);
+    assert.match(controlsSrc, /value=\{activeKey && !isChat \?/);
+    assert.match(controlsSrc, /if \(!isChat && activeKey && setConsoleMode\) setConsoleMode\(activeKey, v\);/);
   });
 });

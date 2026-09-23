@@ -19,6 +19,7 @@ import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
 import { ContextChart, ContextTicker, RunUsageTable } from "./usageviews";
 import { ContextGauge } from "./mapviews";
 import { money, tokens } from "../lib/fmt";
+import { CONTEXT_FLOOR } from "../lib/usage.mjs";
 
 /** The fallback context window, used only when the agent hasn't said what its
  *  real one is (ConsoleUsage.window, lib/types.ts — claude's result payload
@@ -27,6 +28,19 @@ import { money, tokens } from "../lib/fmt";
  *  drawn against it undersells rather than oversells how full it is. */
 const CONTEXT_LIMIT = 200_000;
 
+interface RunMeterCardProps {
+  /** Usage passed directly (for Chat). If omitted, reads from active console (for Code). */
+  usage?: {
+    context: number | null;
+    cacheHit: number | null;
+    cost: number | null;
+    model: string | null;
+    window: number | null;
+    cachedInput: number | null;
+    output: number | null;
+  } | null;
+}
+
 /**
  * ⚠️ NO LONGER A COLLAPSED ROW UNDER THE COMPOSER. It was one of five stacked
  * under the chat box, each of which pushed it up when opened — Andrew: "the
@@ -34,7 +48,7 @@ const CONTEXT_LIMIT = 200_000;
  * numbers are the same; what changed is that they now live inside the card
  * `ComposerExtras` opens over the transcript, anchored to its own button.
  */
-export function RunMeterCard() {
+export function RunMeterCard({ usage: passedUsage }: RunMeterCardProps) {
   const active = useBoard(selectActiveConsole);
   const all = useBoard(selectMyConsoles);
 
@@ -47,15 +61,15 @@ export function RunMeterCard() {
      so switching to a console that has not run yet left the last agent's
      context in place and this card claimed those tokens for a thread that had
      spent none. Two consoles running the same agent made it obvious. */
-  if (!active) return null;
-  const usage = active.usage;
+  const usage = passedUsage ?? active?.usage ?? null;
+  const isChat = !!passedUsage;
 
   // Nothing has reported usage yet. An empty meter is worse than no meter —
   // it reads as "zero tokens", which is never true of a running agent.
-  if (usage.context == null) return null;
+  if (!usage || usage.context == null) return null;
 
   const context = usage.context;
-  // The console's own reported window, when it said — see the CONTEXT_LIMIT
+  // The run's own reported window, when it said — see the CONTEXT_LIMIT
   // comment above.
   const window = usage.window ?? CONTEXT_LIMIT;
   /* The number the agent GAVE, when it gave one. Recovering it from a rounded
@@ -74,13 +88,14 @@ export function RunMeterCard() {
     { label: "prompt", tokens: fresh, tint: "var(--chart-1)" },
   ].filter((s) => s.tokens > 0);
 
-  const model = usage.model || active.model || active.agent;
-  const messages = active.transcript.messages.length;
-  // ThreadMessageLike allows content to be a bare string, which has no parts.
-  const tools = active.transcript.messages.reduce(
+  const model = usage.model || (isChat ? "claude" : active?.model || active?.agent);
+  const messages = isChat ? 0 : active?.transcript.messages.length ?? 0;
+  const tools = isChat ? 0 : active?.transcript.messages.reduce(
     (n, m) => n + (Array.isArray(m.content) ? m.content.filter((part) => part.type === "tool-call").length : 0),
     0,
-  );
+  ) ?? 0;
+
+  const usageTable = isChat ? null : <RunUsageTable></RunUsageTable>;
 
   return (
     <div className="run-meters-body">
@@ -94,7 +109,7 @@ export function RunMeterCard() {
 
       {/* The same window, three ways, because they answer different questions:
           the gauge is "how close to full", the chart is "how fast did it get
-          there", the ticker is the count itself. All three read the console's
+          there", the ticker is the count itself. All three read the run's
           OWN usage rather than the strip, which is one global set of numbers
           for however many agents are running. */}
       <ContextGauge />
@@ -110,7 +125,7 @@ export function RunMeterCard() {
         <CostMeter
           className="max-w-none"
           runCost={money(usage.cost)}
-          sessionCost={money(all.reduce((t, c) => t + (c.usage.cost ?? 0), 0))}
+          sessionCost={isChat ? money(usage.cost) : money(all.reduce((t, c) => t + (c.usage.cost ?? 0), 0))}
           lines={[
             {
               model,
@@ -125,20 +140,18 @@ export function RunMeterCard() {
 
       <MessageTiming
         className="max-w-none"
-        streaming={active.running}
+        streaming={isChat ? false : active?.running}
         stats={[
           { label: "messages", value: String(messages) },
           { label: "tool calls", value: String(tools) },
           // cacheHit is a raw ratio off the usage payload; printing it
           // unrounded put "70.74109720885467%" on screen.
           ...(usage.cacheHit != null ? [{ label: "cache", value: `${Math.round(usage.cacheHit)}%` }] : []),
-          { label: "posture", value: active.mode },
+          ...(isChat ? [] : [{ label: "posture", value: active?.mode }]),
         ]}
       />
 
-      {/* Every console, not just this one. With three agents running the
-          question is which of them is burning the window. */}
-      <RunUsageTable />
+      {usageTable}
     </div>
   );
 }

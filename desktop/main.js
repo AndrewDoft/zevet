@@ -2899,17 +2899,19 @@ async function nameChat(id, text) {
 const chatProviders = { "claude-cli": createClaudeCli({ startConsole: agentConsole.startConsole }) };
 const DEFAULT_CHAT_PROVIDER = "claude-cli";
 
-async function spawnChat(chat, provider) {
+async function spawnChat(chat, provider, opts = {}) {
   let mcpConfig = null;
   const cfg = masora.readConfig();
   if (cfg.paired) {
     mcpConfig = path.join(app.getPath("temp"), `zevet-chat-mcp-${process.pid}.json`);
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: masora.mcpServerEntry(cfg.url) }), "utf8");
   }
-  const run = { id: chat.id, console: null, turn: null, model: chat.model || "", provider: provider.id };
+  const run = { id: chat.id, console: null, turn: null, model: opts.model || chat.model || "", mode: opts.mode || "", provider: provider.id };
   const opened = provider.open({
     chat,
     mcpConfig,
+    model: opts.model,
+    mode: opts.mode,
     onEvent: (evt) => {
       const p = evt && evt.type === "agent" ? evt.payload : null;
       if (p && p.type === "system" && p.subtype === "init" && p.model) run.model = String(p.model);
@@ -2967,17 +2969,24 @@ ipcMain.handle("chat:send", async (_e, arg) => {
   await runtimeReady;
   const id = String((arg && arg.id) || "");
   const text = String((arg && arg.text) || "");
+  const opts = arg && arg.opts ? arg.opts : {};
   const chat = chats.read(id);
   if (!chat) return { ok: false, error: "No such chat." };
   if (!text.trim()) return { ok: false, error: "Nothing to send." };
   if (chatRun && chatRun.id === id && chatRun.turn) return { ok: false, error: "Still answering." };
+  // If model/mode/effort changed, respawn to pick up the new flags.
+  const wantModel = opts.model || "";
+  const wantMode = opts.mode || "";
   if (chatRun && chatRun.id !== id) stopChatRun();
+  if (chatRun && (chatRun.model !== wantModel || chatRun.mode !== wantMode)) {
+    stopChatRun();
+  }
 
   const provider = chatProviders[chat.provider] || chatProviders[DEFAULT_CHAT_PROVIDER];
   const brief = await chatBrief(provider, text);
 
   if (!chatRun) {
-    const s = await spawnChat(chat, provider);
+    const s = await spawnChat(chat, provider, opts);
     if (!s.ok) return s;
     chatRun = s.run;
   }

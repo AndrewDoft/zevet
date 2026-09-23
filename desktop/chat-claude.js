@@ -6,7 +6,7 @@
 //
 //   id                 stable name, stored on every assistant message
 //   trainsOnPrompts    true = main.js skips the Masora brief step for it
-//   open({ chat, mcpConfig, onEvent })
+//   open({ chat, mcpConfig, model, mode, onEvent })
 //     -> { ok: true, send(text, { brief, prior }), stop() } | { ok: false, error }
 //   onEvent(evt)       evt is { type: "agent", payload } with payload in the
 //                      claude stream-json shape the board already renders
@@ -23,7 +23,7 @@ function createClaudeCli({ startConsole }) {
   return {
     id: "claude-cli",
     trainsOnPrompts: false,
-    open({ chat, mcpConfig, onEvent }) {
+    open({ chat, mcpConfig, model, mode, onEvent }) {
       // This machine's session for the chat. With history but no session
       // here (a handed-over chat), the first send replays it.
       const sess = chats.session(chat.id);
@@ -31,7 +31,7 @@ function createClaudeCli({ startConsole }) {
       const started = startConsole({
         agent: "claude",
         cwd: chats.dirOf(chat.id),
-        args: chats.chatArgs({ sessionId: sess.sessionId, started: sess.started, mcpConfig }),
+        args: chats.chatArgs({ sessionId: sess.sessionId, started: sess.started, mcpConfig, model, mode }),
         onEvent: (evt) => {
           const p = evt && evt.type === "agent" ? evt.payload : null;
           if (p && p.type === "system" && p.subtype === "init") chats.markStarted(chat.id);

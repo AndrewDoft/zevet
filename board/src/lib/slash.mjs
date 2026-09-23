@@ -43,7 +43,7 @@ const DESCRIPTIONS = {
 
 /** Commands zevet answers itself, for every agent. `claudeToo` = zevet handles
  *  it even for claude (nothing in the CLI does the same thing). */
-const LOCAL = [
+export const LOCAL = [
   { name: "stop", description: "Stop the running agent", local: true, claudeToo: true },
   { name: "new", description: "Start another agent (opens the launcher)", local: true, claudeToo: true },
   { name: "model", description: "Model", local: true, claudeToo: true },

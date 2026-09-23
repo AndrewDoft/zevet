@@ -1,5 +1,5 @@
 /**
- * The composer's own controls: model, posture, and — once a console exists —
+ * The composer's own controls: model, posture, and — once a run exists —
  * what that run has spent.
  *
  * Lives beside the attachment button, at the left end of the composer's
@@ -7,17 +7,17 @@
  * re-install) hosts it with a one-line patch; everything it needs stays in
  * this file so that patch never grows.
  *
- * The model/posture pickers are live whether or not a console is running:
+ * The model/posture pickers are live whether or not a run is running:
  * they set the global launch state (`launchModel`/`launchAgent`/
  * `launchEffort`/`launchMode`), which is what the NEXT start reads. With a
- * console in front, the model picker DISPLAYS the model that console runs.
- * Once a console exists, a small ring says how full its context is (numbers
+ * run in front, the model picker DISPLAYS the model that run runs.
+ * Once a run exists, a small ring says how full its context is (numbers
  * and cost in its tooltip).
  * runmeters.tsx keeps the full breakdown behind its button; this is the
  * glance version.
  *
  * Renders nothing when it has nothing honest to say: no usable agents and no
- * console running.
+ * run running.
  */
 import { useContext } from "react";
 import { ChatSurface } from "../lib/surface";
@@ -32,9 +32,11 @@ import { cn } from "@/lib/utils";
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { CONTEXT_FLOOR, contextShare } from "../lib/meter.mjs";
 import { selectActiveConsole, useBoard } from "../lib/board";
+import { useChat } from "../lib/chat";
 import { runningModelName } from "../lib/models.mjs";
 import { money, tokens } from "../lib/fmt";
 import type { LaunchMode } from "../lib/types";
+import type { UsableAgent } from "../lib/types";
 
 /** How full the context is, as a ring; the numbers are its tooltip. */
 function ContextRing({ share, label }: { share: number; label: string }) {
@@ -81,41 +83,79 @@ const compactModelChoice = cn(
   "[&_[data-slot=model-selector-trigger]]:text-xs",
 );
 
-export function ComposerControls() {
-  return useContext(ChatSurface) ? null : <ComposerControlsCode />;
+interface ComposerSource {
+  usage: { context: number | null; cacheHit: number | null; cost: number | null; model: string | null; window: number | null } | null;
+  model: string;
+  runningModel: { id: string; name: string } | undefined;
+  agents: UsableAgent[];
+  launchMode: LaunchMode;
+  setLaunchMode: (m: LaunchMode) => void;
+  setConsoleMode: ((key: number, mode: string) => void) | null;
+  activeKey: number | null;
 }
 
-function ComposerControlsCode() {
-  const active = useBoard(selectActiveConsole);
-  // Usage is mutated onto the console object in place (board.ts recordUsage);
-  // only the list itself is replaced, so that is what re-renders the ring.
-  useBoard((s) => s.myConsoles);
-  const localAgents = useBoard((s) => s.localAgents);
+/** Hook that returns the data the composer needs, whether on Code or Chat surface. */
+function useComposerSource(): ComposerSource {
+  const isChat = useContext(ChatSurface);
   const launchMode = useBoard((s) => s.launchMode);
   const setLaunchMode = useBoard((s) => s.setLaunchMode);
+  const localAgents = useBoard((s) => s.localAgents);
+
+  if (isChat) {
+    const activeId = useChat((s) => s.activeId);
+    const threads = useChat((s) => s.threads);
+    const thread = activeId ? threads[activeId] : null;
+    const usage = thread?.usage ?? null;
+    const model = usage?.model ? runningModelName(usage.model, usage.model) : "";
+    const runningModel = usage?.model ? { id: `claude:${usage.model}`, name: model || "Default" } : undefined;
+    // Chat only uses claude-cli provider
+    const usable = localAgents.filter((a) => a.ok && a.name === "claude");
+    return {
+      usage,
+      model,
+      runningModel,
+      agents: usable,
+      launchMode,
+      setLaunchMode,
+      setConsoleMode: null,
+      activeKey: null,
+    };
+  }
+
+  // Code surface
+  const active = useBoard(selectActiveConsole);
+  useBoard((s) => s.myConsoles);
   const setConsoleMode = useBoard((s) => s.setConsoleMode);
   const usable = localAgents.filter((a) => a.ok);
+  const model = active ? runningModelName(active.usage.model, active.model) : "";
+  const runningModel = active
+    ? { id: `${active.agent}:${active.usage.model || active.model}`, name: model || "Default" }
+    : undefined;
+  return {
+    usage: active?.usage ?? null,
+    model,
+    runningModel,
+    agents: usable,
+    launchMode,
+    setLaunchMode,
+    setConsoleMode,
+    activeKey: active?.key ?? null,
+  };
+}
 
-  /* The pickers below set `launchModel`/`launchAgent`/`launchEffort`/
-   * `launchMode` — global launch state, not anything on this console. A
-   * running console cannot be re-flagged (the CLI was already started with
-   * whatever it was started with), but that state is exactly what the NEXT
-   * start uses: `onNew` in lib/runtime.tsx reads it when there is no active
-   * console, the launcher's Start buttons read it, and a fork reads it too
-   * (board.ts's `startAgent`). So the pickers stay live for the whole time a
-   * console runs — Andrew: "you should still be able to choose model and
-   * effort and posture". */
-  /* ⚠️ ONE MODEL LABEL, AND IT IS THIS CONSOLE'S. A second, mono
+export function ComposerControls() {
+  const { usage, model, runningModel, agents, launchMode, setLaunchMode, setConsoleMode, activeKey } = useComposerSource();
+  const isChat = useContext(ChatSurface);
+
+  /* ⚠️ ONE MODEL LABEL, AND IT IS THIS RUN'S. A second, mono
      "GPT-5.6-Terra 354k/200k 78% cached" beside the picker read as two models
      and as jargon — but folding the running model into the launch picker then
      showed "Opus 5.5", the NEXT start's default, over a Sonnet 5 run. With a
-     console in front, the picker stays live but DISPLAYS what that console
-     runs (usage.model, else what it was started with); a pick still sets the
+     run in front, the picker stays live but DISPLAYS what that run runs
+     (usage.model, else what it was started with); a pick still sets the
      next start. Token counts and cost live in the ring's tooltip. */
-  const model = active ? runningModelName(active.usage.model, active.model) : "";
-  const facts = active
+  const facts = usage
     ? (() => {
-        const { usage } = active;
         const window = usage.window ?? CONTEXT_FLOOR;
         const share = contextShare(usage.context, usage.window);
         const detail = [
@@ -138,9 +178,9 @@ function ComposerControlsCode() {
     : null;
 
   // No usable agent to start or fork with — the pickers have nothing to
-  // offer. Facts about an already-running console still stand on their own;
+  // offer. Facts about an already-running run still stand on their own;
   // with neither, there is nothing honest to say.
-  if (!usable.length) return facts;
+  if (!agents.length) return facts;
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -149,39 +189,32 @@ function ComposerControlsCode() {
           overlay and not a dropdown.
 
           ⚠️ ALWAYS MOUNTED. It was gated on `active`, and that gate was the
-          last thing moving the chat box on its own: with no console the row
+          last thing moving the chat box on its own: with no run the row
           held the model picker and Send, and the moment a run started this
           button and ComposerExtras appeared on either side of them, growing
           the row and pushing the box 16px down. Measured in the running app
           2026-09-21 — composer top 669 empty, 685 with the buttons.
 
           Nothing needed relaxing to fix it. PromptLibraryPanel was already
-          written for a null console: it disables Save and says "No active
-          console to save from". The gate was preventing a state the panel
+          written for a null run: it disables Save and says "No active
+          run to save from". The gate was preventing a state the panel
           already handled. */}
       <PastPromptsButton>
         <PromptLibraryPanel />
       </PastPromptsButton>
       <div className={compactModelChoice}>
-        <ModelChoice
-          agents={usable}
-          running={
-            active
-              ? { id: `${active.agent}:${active.usage.model || active.model}`, name: model || "Default" }
-              : undefined
-          }
-        />
+        <ModelChoice agents={agents} running={runningModel} />
       </div>
 
-      {/* The console in front takes the pick on its next turn
+      {/* The run in front takes the pick on its next turn
           (`setConsoleMode` parks it while a turn runs); the next start takes it
           too. This is the only posture control — the rail's rows lost theirs. */}
       <Select
-        value={active ? active.nextMode ?? active.mode : launchMode}
+        value={activeKey && !isChat ? (useBoard.getState().myConsoles.find((c) => c.key === activeKey)?.nextMode ?? useBoard.getState().myConsoles.find((c) => c.key === activeKey)?.mode ?? launchMode) : launchMode}
         onValueChange={(v: string | null) => {
           if (!v) return;
           setLaunchMode(v as LaunchMode);
-          if (active) setConsoleMode(active.key, v);
+          if (!isChat && activeKey && setConsoleMode) setConsoleMode(activeKey, v);
         }}
       >
         <SelectTrigger
@@ -197,7 +230,7 @@ function ComposerControlsCode() {
               {m.label}
             </SelectItem>
           ))}
-        </SelectContent>
+        </SelectContent      >
       </Select>
 
       {facts}
@@ -220,21 +253,19 @@ function ComposerControlsCode() {
  * autonomously", broken by the very row built to obey it.
  *
  * And the gate read `strip.live`, which is ONE set of numbers for however many
- * consoles are running and which board.ts only ever patches — never clears. So
- * once any agent had run, a brand-new console inherited the button and the
- * card under it showed the other agent's context. RunMeterCard reads the
- * console's own usage now and says so there.
+ * runs are running and which board.ts only ever patches — never clears. So
+ * once any agent had run, a brand-new run inherited the button and the card
+ * under it showed the other agent's context. RunMeterCard reads the run's
+ * own usage now and says so there.
  */
 export function ComposerExtras() {
-  return useContext(ChatSurface) ? null : <ComposerExtrasCode />;
-}
+  const { usage } = useComposerSource();
+  const isChat = useContext(ChatSurface);
 
-function ComposerExtrasCode() {
-  const active = useBoard(selectActiveConsole);
   return (
     <ContextCardButton>
-      {active && active.usage.context != null ? (
-        <RunMeterCard />
+      {usage && usage.context != null ? (
+        <RunMeterCard usage={usage} />
       ) : (
         <p className="text-foreground/50 text-xs">Nothing reported yet — this fills in once the agent speaks.</p>
       )}

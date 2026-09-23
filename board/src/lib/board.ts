@@ -10,6 +10,7 @@ import {
 import { sessionTranscript } from "./sessions.mjs";
 import { clearModelLimit, isLimitMessage, recordModelLimit, resetFromPayload } from "./model-limits.mjs";
 import { learnModels } from "./models.mjs";
+import { usageOf, type UsageReading } from "./usage.mjs";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
 import type { TranscriptState } from "./transcript.d.mts";
 import { mainSurface, repoToFollow, showConversation, showFile } from "./view.mjs";
@@ -1954,68 +1955,7 @@ function windowOf(payload: unknown): number | null {
   return best > 0 ? best : null;
 }
 
-/** One usage reading, with the parts kept.
- *
- *  `context` and `cacheHit` are what the strip has always shown. The three
- *  raw counts beside them exist because a panel that says "cached" ought to
- *  print the number the agent reported rather than a share recovered from a
- *  rounded percentage. `cachedInput` is the READ cache only — cache creation
- *  is fresh input that happens to have been written down. */
-interface UsageReading {
-  context: number;
-  cacheHit: number | null;
-  model: string | null;
-  input: number;
-  cachedInput: number;
-  output: number;
-}
 
-function usageOf(payload: { type?: string; message?: { usage?: unknown; model?: string }; usage?: unknown; part?: { tokens?: unknown }; model?: string }): UsageReading | null {
-  if (!payload || typeof payload !== "object") return null;
-  /* ⚠️ THESE TWO ARE RUNNING TOTALS, NOT THE CONTEXT. claude's `result` sums
-   * every API call of the turn and codex's `turn.completed` carries the whole
-   * thread's `total_token_usage`, so reading either as the context put
-   * "354k/200k" in the composer. claude's per-message usage is the real one;
-   * codex's comes off its rollout file (pollConsoleFiles). */
-  if (payload.type === "result" || payload.type === "turn.completed") return null;
-  const u = ((payload.message && payload.message.usage) || payload.usage) as { input_tokens?: unknown; cache_read_input_tokens?: unknown; cached_input_tokens?: unknown; cache_creation_input_tokens?: unknown; cache_write_input_tokens?: unknown; output_tokens?: unknown } | undefined;
-  const tokens = payload.part && payload.part.tokens;
-  if ((!u || typeof u !== "object") && tokens && typeof tokens === "object") {
-    const ti = tokens as { input?: unknown; output?: unknown };
-    const n2 = (v: unknown): number => (typeof v === "number" && isFinite(v) ? v : 0);
-    const cx = n2(ti.input);
-    if (!cx && !n2(ti.output)) return null;
-    // opencode reports input and output and says nothing about caching, so
-    // the cache share is 0 rather than unknown-shown-as-something.
-    return { context: cx, cacheHit: cx > 0 ? 0 : null, model: null, input: cx, cachedInput: 0, output: n2(ti.output) };
-  }
-  if (!u || typeof u !== "object") return null;
-  const n = (v: unknown): number => (typeof v === "number" && isFinite(v) ? v : 0);
-
-  /* ⚠️ TWO CLIs, TWO SPELLINGS, AND ONE OF THEM MEASURES DIFFERENTLY.
-   *
-   * claude reports `cache_read_input_tokens` ALONGSIDE `input_tokens`: the
-   * window is the sum of the three. codex reports `cached_input_tokens` as a
-   * SUBSET of its `input_tokens` (measured 2026-09-21: input 17,039 of which
-   * cached 9,984), so adding them would count the cache twice and report a
-   * context nearly 60% larger than the one the agent is actually carrying.
-   *
-   * Before this, codex matched neither spelling, so every codex turn read as a
-   * 0% cache hit — wrong, and wrong in the flattering direction. */
-  const codexStyle = u.cached_input_tokens !== undefined;
-  const read = codexStyle ? n(u.cached_input_tokens) : n(u.cache_read_input_tokens);
-  const written = codexStyle ? n(u.cache_write_input_tokens) : n(u.cache_creation_input_tokens);
-  const context = codexStyle ? n(u.input_tokens) + written : n(u.input_tokens) + read + written;
-  if (!context && !n(u.output_tokens)) return null;
-  return {
-    context,
-    cacheHit: context > 0 ? (read / context) * 100 : null,
-    model: (payload.message && (payload.message as { model?: string }).model) || payload.model || null,
-    input: Math.max(0, context - read),
-    cachedInput: read,
-    output: n(u.output_tokens),
-  };
-}
 
 /* ---------------------------------------------------------------------------
  * FOLLOW / SELECTION

@@ -11,10 +11,11 @@
  * .mjs for the same reason as transcript.mjs: `node --test` runs it directly.
  */
 import { appendAgentPayload, appendUserText, closeTranscript, emptyTranscript } from "./transcript.mjs";
+import { usageOf } from "./usage.mjs";
 
 /** @returns {import("./chat-stream.d.mts").ChatThread} */
 export function emptyChatThread() {
-  return { transcript: emptyTranscript(), draft: "", busy: false };
+  return { transcript: emptyTranscript(), draft: "", busy: false, usage: null };
 }
 
 /** A saved chat ({role, text}[]) as a closed thread. */
@@ -28,7 +29,7 @@ export function fromStored(messages) {
       t = closeTranscript(t, { code: 0 });
     }
   }
-  return { transcript: t, draft: "", busy: false };
+  return { transcript: t, draft: "", busy: false, usage: null };
 }
 
 let turns = 0;
@@ -41,7 +42,7 @@ let turns = 0;
 export function sendUser(thread, text) {
   const t = appendUserText(thread.transcript, text);
   const messages = t.messages.concat({ id: `zc-${++turns}`, role: "assistant", content: [], status: { type: "running" } });
-  return { ...thread, transcript: { ...t, messages, openIndex: messages.length - 1 }, draft: "", busy: true };
+  return { ...thread, transcript: { ...t, messages, openIndex: messages.length - 1 }, draft: "", busy: true, usage: thread.usage };
 }
 
 /** One `chat:event` evt from the desktop side. */
@@ -55,6 +56,7 @@ export function chatEvent(thread, evt) {
       transcript: thread.busy ? closeTranscript(thread.transcript, { ...evt, error: died }) : thread.transcript,
       draft: "",
       busy: false,
+      usage: thread.usage,
     };
   }
   if (evt.type !== "agent") return thread;
@@ -67,14 +69,17 @@ export function chatEvent(thread, evt) {
       : thread;
   }
   const transcript = appendAgentPayload(thread.transcript, p);
-  if (p.type === "result") return { transcript, draft: "", busy: false };
-  if (p.type === "assistant") return { ...thread, transcript, draft: "" };
-  return transcript === thread.transcript ? thread : { ...thread, transcript };
+  let usage = thread.usage;
+  const u = usageOf(p);
+  if (u) usage = u;
+  if (p.type === "result") return { transcript, draft: "", busy: false, usage };
+  if (p.type === "assistant") return { ...thread, transcript, draft: "", usage };
+  return transcript === thread.transcript ? thread : { ...thread, transcript, usage };
 }
 
 /** A failure to even start the turn, drawn where the reply would be. */
 export function failTurn(thread, error) {
-  return { transcript: closeTranscript(thread.transcript, { error }), draft: "", busy: false };
+  return { transcript: closeTranscript(thread.transcript, { error }), draft: "", busy: false, usage: thread.usage };
 }
 
 /** What the runtime renders: the transcript with the draft laid over it. */
