@@ -111,7 +111,7 @@ describe("a fresh install's setup window", () => {
     const opened = drive("opened");
     assert.deepEqual(opened, [], "must not open a browser with nothing to open it to");
     const { outline } = drive("snapshot");
-    assert.match(outline, /div#msg[^\n]*"Enter a team address\."/);
+    assert.match(outline, /div#msg[^\n]*"Create a team, or paste your team address\."/);
   });
 
   test("b). Create a team mints one on the hosted hub's address and updates the buttons", async () => {

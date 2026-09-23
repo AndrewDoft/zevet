@@ -305,7 +305,7 @@
 
   $("gh").addEventListener("click", async function () {
     var hub = $("hub").value.trim();
-    if (!hub) { say("bad", "Enter a team address."); return; }
+    if (!hub) { say("bad", "Create a team, or paste your team address."); return; }
     if (!/^https?:\/\//i.test(hub)) { say("bad", "Team address needs https:// or http://."); return; }
 
     say("", "Starting sign-in…");
@@ -363,7 +363,7 @@
 
   $("google").addEventListener("click", async function () {
     var hub = $("hub").value.trim();
-    if (!hub) { say("bad", "Enter a team address."); return; }
+    if (!hub) { say("bad", "Create a team, or paste your team address."); return; }
     if (!/^https?:\/\//i.test(hub)) { say("bad", "Team address needs https:// or http://."); return; }
 
     say("", "Starting sign-in…");
