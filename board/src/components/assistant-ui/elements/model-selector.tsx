@@ -283,6 +283,7 @@ function ModelSelectorTrigger({
       data-size={size ?? "default"}
       role="combobox"
       aria-haspopup="listbox"
+      aria-label="Model"
       className={cn(modelSelectorTriggerVariants({ variant, size }), className)}
       onKeyDown={(e) => {
         onKeyDown?.(e);

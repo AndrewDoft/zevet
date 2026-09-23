@@ -87,6 +87,18 @@ test("the hook-fail age is formatted, not a raw second count", () => {
   assert.match(strip, /text=\{ago\(hook\.failedAgo \* 1000\)\}/, "hook.failedAgo is rendered raw");
 });
 
+test("the model selector trigger has an accessible name", () => {
+  // Its only visible content is the picked model's label ("Opus 5.5"), so a
+  // screen reader announced the trigger as "combobox: Opus 5.5" — nothing
+  // said it was a model picker rather than any other combobox on the page.
+  const selector = readFileSync(
+    new URL("../board/src/components/assistant-ui/elements/model-selector.tsx", import.meta.url),
+    "utf8",
+  );
+  const trigger = selector.slice(selector.indexOf("function ModelSelectorTrigger"), selector.indexOf("function ModelSelectorTrigger") + 800);
+  assert.match(trigger, /aria-label="Model"/);
+});
+
 test("the graph segment still shows a corrupt health file's detail", () => {
   // status-sources.js's vaultHealth returns state:"missing", detail:"unreadable"
   // for a corrupt (non-object) health file, and "missing" with an empty detail
