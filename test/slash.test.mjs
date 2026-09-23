@@ -34,12 +34,12 @@ describe("a command that registered", () => {
 test("claude's menu is what claude announced, plus zevet's own", () => {
   const cmds = commandsFor("claude", ["zzz-skill", "compact", "clear"]);
   const names = cmds.map((c) => c.name);
-  assert.deepEqual(names, ["stop", "new", "clear", "compact", "zzz-skill"]);
+  assert.deepEqual(names, ["stop", "new", "model", "clear", "compact", "zzz-skill"]);
   assert.equal(cmds.find((c) => c.name === "clear").local, false, "claude runs /clear itself");
 });
 
 test("codex gets only what zevet implements", () => {
-  assert.deepEqual(commandsFor("codex", []).map((c) => c.name), ["stop", "new", "clear"]);
+  assert.deepEqual(commandsFor("codex", []).map((c) => c.name), ["stop", "new", "model", "clear"]);
 });
 
 test("a menu opens only while the composer is one slash token", () => {
@@ -48,6 +48,17 @@ test("a menu opens only while the composer is one slash token", () => {
   assert.deepEqual(matchSlash("/", cmds).length, cmds.length);
   assert.deepEqual(matchSlash("/compact focus", cmds), []);
   assert.deepEqual(matchSlash("hello /co", cmds), []);
+});
+
+test("/model is a local command for every agent", () => {
+  const claudeCmds = commandsFor("claude", []);
+  const codexCmds = commandsFor("codex", []);
+  const opencodeCmds = commandsFor("opencode", []);
+  assert.ok(claudeCmds.some((c) => c.name === "model" && c.local), "claude gets /model");
+  assert.ok(codexCmds.some((c) => c.name === "model" && c.local), "codex gets /model");
+  assert.ok(opencodeCmds.some((c) => c.name === "model" && c.local), "opencode gets /model");
+  assert.deepEqual(matchSlash("/mo", claudeCmds).map((c) => c.name), ["model"]);
+  assert.deepEqual(matchSlash("/mo", codexCmds).map((c) => c.name), ["model"]);
 });
 
 test("/clear is local for codex and passthrough for claude", () => {

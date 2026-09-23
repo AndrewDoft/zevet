@@ -89,6 +89,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
   const startAgent = useBoard((s) => s.startAgent);
   const launchAgent = useBoard((s) => s.launchAgent);
   const localRoot = useBoard((s) => s.localRoot);
+  const setModelSelectorOpen = useBoard((s) => s.setModelSelectorOpen);
   /** Everything a first prompt needs: a CLI to run and a folder to run it in. */
   const canStart = Boolean(launchAgent && localRoot);
 
@@ -297,6 +298,10 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
       }
       if (local === "new") {
         openLauncher();
+        return;
+      }
+      if (local === "model") {
+        setModelSelectorOpen(true);
         return;
       }
       if (local === "clear") {

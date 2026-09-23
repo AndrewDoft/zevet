@@ -46,6 +46,7 @@ const DESCRIPTIONS = {
 const LOCAL = [
   { name: "stop", description: "Stop the running agent", local: true, claudeToo: true },
   { name: "new", description: "Start another agent (opens the launcher)", local: true, claudeToo: true },
+  { name: "model", description: "Model", local: true, claudeToo: true },
   // claude runs /clear itself; the others cannot, so zevet ends the run and
   // the next Send starts a fresh one.
   { name: "clear", description: "Start over with a fresh conversation", local: true, claudeToo: false },

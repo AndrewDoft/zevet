@@ -59,6 +59,8 @@ export function ModelChoice({
   const setLaunchModel = useBoard((s) => s.setLaunchModel);
   const launchEffort = useBoard((s) => s.launchEffort);
   const setLaunchEffort = useBoard((s) => s.setLaunchEffort);
+  const modelSelectorOpen = useBoard((s) => s.modelSelectorOpen);
+  const setModelSelectorOpen = useBoard((s) => s.setModelSelectorOpen);
 
   /** One group per agent. The id carries `<agent>:<alias>` so two CLIs can
    *  offer the same alias without colliding; aliasOf() reads it back. */
@@ -139,6 +141,8 @@ export function ModelChoice({
       }}
       effort={launchEffort || undefined}
       onEffortChange={(e) => setLaunchEffort(e)}
+      open={modelSelectorOpen}
+      onOpenChange={setModelSelectorOpen}
     >
       <ModelSelectorTrigger className="w-full justify-between" variant="outline">
         {running ? (

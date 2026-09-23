@@ -18,6 +18,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { commandsFor, matchSlash, type SlashCommand } from "../lib/slash.mjs";
 import { cn } from "@/lib/utils";
+import { parseLocal } from "../lib/slash.mjs";
 
 export function SlashMenu() {
   return useContext(ChatSurface) ? null : <SlashMenuCode />;
@@ -31,6 +32,7 @@ function SlashMenuCode() {
   const agent = active?.agent ?? launchAgent;
   const commands = useMemo(() => commandsFor(agent, active?.slashCommands), [agent, active?.slashCommands]);
   const matches = useMemo(() => matchSlash(text, commands), [text, commands]);
+  const setModelSelectorOpen = useBoard((s) => s.setModelSelectorOpen);
 
   const [index, setIndex] = useState(0);
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -47,7 +49,14 @@ function SlashMenuCode() {
   const open = matches.length > 0 && dismissed !== text;
   const chosen = matches[Math.min(index, matches.length - 1)];
 
-  const complete = (c: SlashCommand) => aui.composer().setText(`/${c.name} `);
+  const complete = (c: SlashCommand) => {
+    if (c.name === "model") {
+      aui.composer().setText("");
+      setModelSelectorOpen(true);
+    } else {
+      aui.composer().setText(`/${c.name} `);
+    }
+  };
 
   // Latest state for the listener below, which is installed once.
   const live = useRef({ open, matches, chosen, text, complete });
@@ -81,7 +90,7 @@ function SlashMenuCode() {
     // and would otherwise run first.
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, []);
+  }, [setModelSelectorOpen]);
 
   useEffect(() => {
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });

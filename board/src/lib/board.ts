@@ -267,6 +267,7 @@ interface BoardState {
 
   panes: Record<string, number>;
   sheetOpen: boolean;
+  modelSelectorOpen: boolean;
   /** Masora Voice is missing and the mic was pressed: the download URL to
    *  offer, or null. See lib/voice.ts. */
   voiceAsk: string | null;
@@ -360,6 +361,7 @@ interface BoardState {
   setVoiceAsk: (url: string | null) => void;
   setVoiceHotkey: (k: string) => void;
   closeSettings: () => void;
+  setModelSelectorOpen: (v: boolean) => void;
 
   refreshSessions: (force?: boolean) => void;
   setSessionQuery: (q: string) => void;
@@ -536,6 +538,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     return d;
   })(),
   sheetOpen: false,
+  modelSelectorOpen: false,
   voiceAsk: null,
   voiceHotkey: null,
   sessions: {
@@ -1332,6 +1335,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   setVoiceHotkey: (k) => set({ voiceHotkey: k }),
   openSettings: () => set({ sheetOpen: true }),
   closeSettings: () => set({ sheetOpen: false }),
+  setModelSelectorOpen: (v: boolean) => set({ modelSelectorOpen: v }),
 
   setMyActor: (a) => set({ myActor: a }),
 
