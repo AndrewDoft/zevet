@@ -53,7 +53,7 @@ export function CodeRunner({
           type="button"
           aria-label="Run this snippet"
           onClick={onRun}
-          disabled={state === "running"}
+          disabled={!onRun || state === "running"}
           className={cn(
             ghostButton,
             "size-7 shrink-0 disabled:pointer-events-none",

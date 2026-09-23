@@ -44,6 +44,7 @@ export function WebPreview({
           type="button"
           aria-label="Reload the preview"
           onClick={onReload}
+          disabled={!onReload}
           className={cn(ghostButton, "size-7 shrink-0")}
         >
           <RotateCwIcon
