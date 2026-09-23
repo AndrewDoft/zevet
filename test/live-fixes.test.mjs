@@ -29,3 +29,9 @@ test("y-protocols really needs the Awareness (why the stand-in threw)", async ()
   assert.ok(encodeAwarenessUpdate(a, [a.clientID]).length > 0);
   a.destroy(); // Awareness runs an interval; without this the test never exits.
 });
+
+// "+" beside Agents: seen live 2026-09-23 doing nothing once a folder was open.
+test('"+" puts a blank composer in front: openLauncher clears activeConsole', () => {
+  const fn = board.slice(board.indexOf("  openLauncher: () => {"), board.indexOf("  closeConsole: (key)"));
+  assert.match(fn, /activeConsole: null/);
+});

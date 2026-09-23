@@ -742,7 +742,15 @@ export const useBoard = create<BoardState>((set, get) => ({
       launching: false,
       ...showConversation(),
     }),
-  openLauncher: () => set({ launching: true, ...showConversation() }),
+  /* The composer IS the launcher: with no console in front, Send starts a new
+     agent (lib/runtime.tsx onNew). So "+" puts a blank composer in front and
+     focuses it. It used to only set `launching`, which nothing rendered once a
+     folder was open (launcher.tsx mounts only with no localRoot), so the
+     button looked dead. */
+  openLauncher: () => {
+    set({ launching: true, activeConsole: null, ...showConversation() });
+    requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".aui-composer-input, [aria-label='Message input']")?.focus());
+  },
 
   closeConsole: (key) => {
     const del = get().myConsoles.find((x) => x.key === key);
