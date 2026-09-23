@@ -9,6 +9,8 @@ workflows:
     environment:
       node: 22
     scripts:
+      - name: Generate icon
+        script: cd desktop && node make-icon.mjs
       - name: Test
         script: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
       - name: Install desktop deps
