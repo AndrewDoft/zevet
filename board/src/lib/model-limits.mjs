@@ -2,9 +2,11 @@
  * Which models are past OpenRouter's free daily cap (or another usage limit),
  * remembered per model id so the picker stops offering one that would only
  * fail the same way again — lib/transcript.mjs's `plainError` already turns
- * that failure into "<model> hit its free daily limit."/"...usage limit.";
- * this reads that same sentence rather than re-parsing the provider's raw
- * error, so the two can never disagree about what counts.
+ * that failure into "Rate limited" (plus a reset time, where one is known);
+ * this reads that same text rather than re-parsing the provider's raw error,
+ * so the two can never disagree about what counts. `classifyEnding` below is
+ * the actual parse of the raw error, shared by plainError so there is exactly
+ * one place that decides what a 429 looks like.
  *
  * `storage` is whatever implements getItem/setItem (window.localStorage in
  * the app, a plain in-memory fake in tests) — kept out of this file so it
@@ -13,8 +15,52 @@
 
 const KEY = "zevet.modelLimits.v1";
 
-/** The tail plainError puts on a run that ended this way. */
-const LIMIT_MESSAGE_RE = /hit its (free daily|usage) limit\.$/;
+/** What plainError puts at the front of a run that ended on a rate limit. */
+const LIMIT_MESSAGE_RE = /^Rate limited\b/;
+
+/**
+ * A 429/usage-limit signal, vs. a provider error that is not a rate limit
+ * (404, other 5xx, a timeout), vs. neither. Pure — a raw stderr line or a
+ * payload's error message in, a classification out, nothing else.
+ *
+ * MEASURED against opencode 1.18.31 (2026-09-23), on OpenRouter's free tier:
+ *   "Rate limit exceeded: free-models-per-day..."        -> rate_limited
+ *   "Error: Upstream request failed: [429]"               -> rate_limited
+ *   "Error from provider (Console): ... [404] ..."         -> provider_error (404)
+ *   "Error: [Nvidia] Provider returned error"              -> null (no code, no
+ *                                                             429/timeout signal
+ *                                                             to classify by —
+ *                                                             still closes the
+ *                                                             run, just with the
+ *                                                             generic message)
+ *   "Streaming response failed: [504] A Timeout Occurred"  -> provider_error (504)
+ *
+ * 401/unauthorized is deliberately NOT provider_error here — plainError checks
+ * for it first and reports "Not signed in." instead, which is a more useful
+ * message than "Provider error 401" and needs no model-limit bookkeeping.
+ */
+const RATE_LIMIT_RE = /free-models-per-day|rate.?limit|\b429\b|too many requests|usage limit|quota/i;
+const CODE_RE = /\b([45]\d\d)\b/;
+const TIMEOUT_RE = /\btime(?:d)?[\s-]?out\b|timeout/i;
+
+/** @returns {{ kind: "rate_limited" | "provider_error" | null, code: number | null }} */
+export function classifyEnding(raw) {
+  const s = String(raw ?? "");
+  if (!s) return { kind: null, code: null };
+  if (RATE_LIMIT_RE.test(s)) return { kind: "rate_limited", code: null };
+  const code = CODE_RE.exec(s);
+  if (code && code[1] !== "401") return { kind: "provider_error", code: Number(code[1]) };
+  if (TIMEOUT_RE.test(s)) return { kind: "provider_error", code: null };
+  return { kind: null, code: null };
+}
+
+/** "14:05", UTC — matches the UTC reset cadence `recordModelLimit` falls back
+ *  to, and keeps the reading the same on every machine regardless of its own
+ *  timezone (see CLAUDE.md §9.13 on a clock read without pinning its zone). */
+export function resetClock(ms) {
+  const d = new Date(ms);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
 
 function readAll(storage) {
   try {

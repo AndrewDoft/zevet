@@ -72,13 +72,21 @@ export function ModelChoice({
         // CLIs lead with their newest flagship, which is what all[0] below
         // makes the default — except a model past its free daily cap sinks
         // below the rest of its group: still offered, just not first.
-        const aliases = sortByLimit(a.models?.map((m) => m.id) ?? MODELS[a.name] ?? [], zStorage);
+        // Keyed `<agent>:<alias>` in storage too, same as the option id below —
+        // opencode's provider-prefixed ids and claude/codex's short ones share
+        // one namespace otherwise, and a limit on one agent's "sonnet" would
+        // wrongly gray another's.
+        const rawAliases = a.models?.map((m) => m.id) ?? MODELS[a.name] ?? [];
+        const aliases = sortByLimit(
+          rawAliases.map((alias) => `${a.name}:${alias}`),
+          zStorage,
+        ).map((qualified) => qualified.slice(a.name.length + 1));
         return {
           agent: a,
           models: aliases.map((alias): ModelOption & { resetLabel?: string } => {
             const { label, from, note, trains } = describeModel(alias);
             const notes = [from, note, trains ? "may train on prompts" : null].filter(Boolean);
-            const resetAt = modelLimitedUntil(zStorage, alias);
+            const resetAt = modelLimitedUntil(zStorage, `${a.name}:${alias}`);
             return {
               id: `${a.name}:${alias}`,
               // The name comes from one place for every row and every surface.
@@ -95,8 +103,10 @@ export function ModelChoice({
               // dozen providers, so the MODEL is what identifies it, not the CLI.
               icon: <AgentLogo agent={a.name} model={alias} className="size-3.5" />,
               efforts: HAS_EFFORT.has(a.name) && alias ? true : undefined,
-              // Still pickable — the user may know better than the last run
-              // did — just marked, in the tooltip only, with when it clears.
+              // Grayed and unselectable until it clears — a model that would
+              // only fail the same way again is not a real choice. The reset
+              // time is the tooltip (ModelSelectorItem's `title` below).
+              disabled: Boolean(resetAt),
               resetLabel: resetAt ? `Resets ${whenText(resetAt)}` : undefined,
             };
           }),
@@ -175,11 +185,7 @@ export function ModelChoice({
               }
             >
               {models.map((m) => (
-                <ModelSelectorItem
-                  key={m.id}
-                  model={m}
-                  {...(m.resetLabel ? { title: m.resetLabel, className: "opacity-40" } : undefined)}
-                />
+                <ModelSelectorItem key={m.id} model={m} {...(m.resetLabel ? { title: m.resetLabel } : undefined)} />
               ))}
             </ModelSelectorGroup>
           ))}

@@ -23,9 +23,9 @@
  * new state, sharing every message it did not touch.
  */
 
-import { readEnvelope } from "./envelope.mjs";
+import { readEnvelope, stripAnsi } from "./envelope.mjs";
 import { mdSafe } from "./prose.mjs";
-import { describeModel } from "./models.mjs";
+import { classifyEnding, resetClock, resetFromPayload } from "./model-limits.mjs";
 
 /** @typedef {import("./transcript.d.mts").TranscriptState} TranscriptState */
 
@@ -233,15 +233,21 @@ export function closeTranscript(state, { code = null, error = null, stopped = fa
  * view; this is what is shown instead. Unrecognised input gets `fallback`,
  * never the input itself.
  *
+ * Terse by design (CLAUDE.md's ui-copy-zevet-style note): "Rate limited", not
+ * a sentence naming the model — the picker already shows which model that is,
+ * grayed, with the same reset time as a tooltip.
+ *
  * @param {unknown} raw
- * @param {{ model?: string | null, fallback?: string }} [opts]
+ * @param {{ model?: string | null, fallback?: string, resetAt?: number | null }} [opts]
  */
 export function plainError(raw, opts = {}) {
   const s = String(raw ?? "");
-  const name = describeModel(opts.model || "").label || "The model";
-  if (/free-models-per-day/i.test(s)) return `${name} hit its free daily limit.`;
-  if (/rate.?limit|\b429\b|too many requests|usage limit|quota/i.test(s)) return `${name} hit its usage limit.`;
+  const cls = classifyEnding(s);
+  if (cls.kind === "rate_limited") {
+    return opts.resetAt ? `Rate limited · resets ${resetClock(opts.resetAt)}` : "Rate limited";
+  }
   if (/\b401\b|unauthori[sz]ed|api.?key|not logged in|authenticat/i.test(s)) return "Not signed in.";
+  if (cls.kind === "provider_error") return cls.code ? `Provider error ${cls.code}` : "Timed out";
   const missing = /could not find (\w+) on this machine/i.exec(s);
   if (missing) return `${missing[1][0].toUpperCase()}${missing[1].slice(1)} isn't installed.`;
   return opts.fallback || "The model returned an error.";
@@ -316,10 +322,20 @@ function addToolCall(state, { id, name, args }, root) {
 function setToolResult(state, callId, result, isError) {
   const at = state.toolIndex[callId];
   if (!at) return state;
+  // A Bash tool's own output is the one place raw ANSI actually shows up live
+  // — git, npm and eslint all force colour under some flag/env combination
+  // even off a real TTY — and nothing downstream strips it: the <pre> in
+  // tool-fallback.aui.tsx's ToolFallbackResult renders a string verbatim.
+  // envelope.mjs already carries this exact regex for replayed session text;
+  // reused here rather than duplicated. Only strings: claude's tool_result
+  // can be an array of content blocks, and reducing that to text here would
+  // throw the structure away for a problem that is specifically about raw
+  // terminal bytes in a STRING.
+  const cleaned = typeof result === "string" ? stripAnsi(result) : result;
   return withMessage(state, at.message, (content) => {
     const part = content[at.part];
     if (!part || part.type !== "tool-call") return content;
-    content[at.part] = { ...part, result, isError: Boolean(isError), endedAt: now() };
+    content[at.part] = { ...part, result: cleaned, isError: Boolean(isError), endedAt: now() };
     return content;
   });
 }
@@ -442,14 +458,23 @@ function fromOpencode(state, p, root, model) {
   if (p.type === "tool_use" && part.type === "tool") {
     const st = part.state || {};
     const callId = part.id || part.callID || st.id;
+    /* MEASURED 2026-09-23: a tool opencode auto-rejects (e.g. a write outside
+       the repo — `external_directory` permission, headless runs can't prompt
+       for it) arrives as ONE tool_use, `status:"error"`, with the reason at
+       `state.error` — there is no `state.output` at all. The old code only
+       ever read `output`, so this landed as a tool call with no result: not
+       running, not failed, nothing — a silent stop. `resultText` covers both
+       shapes; `settled` is true whenever there is something to show. */
+    const resultText = st.output !== undefined ? st.output : st.error;
+    const settled = resultText !== undefined || st.status === "completed" || st.status === "error";
     // opencode reports the same tool twice: once when it starts and again with
-    // output. The second must update the first, not stack a duplicate.
-    if (callId && state.toolIndex[callId] && (st.output !== undefined || st.status === "completed")) {
-      return setToolResult(state, callId, st.output, st.status === "error");
+    // a result. The second must update the first, not stack a duplicate.
+    if (callId && state.toolIndex[callId] && settled) {
+      return setToolResult(state, callId, resultText, st.status === "error");
     }
     let s = addToolCall(state, { id: callId, name: part.tool, args: st.input }, root);
-    if (st.output !== undefined) {
-      s = setToolResult(s, callId || Object.keys(s.toolIndex).pop(), st.output, st.status === "error");
+    if (settled) {
+      s = setToolResult(s, callId || Object.keys(s.toolIndex).pop(), resultText, st.status === "error");
     }
     return s;
   }
@@ -470,7 +495,8 @@ function fromOpencode(state, p, root, model) {
      `error.message` does not exist. */
   if (p.type === "error") {
     const e = p.error || {};
-    return closeTranscript(state, { error: plainError((e.data && e.data.message) || e.message || e.name, { model }) });
+    const resetAt = resetFromPayload(p);
+    return closeTranscript(state, { error: plainError((e.data && e.data.message) || e.message || e.name, { model, resetAt }) });
   }
 
   return state;

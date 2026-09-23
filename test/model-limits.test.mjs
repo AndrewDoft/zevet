@@ -8,7 +8,9 @@ import { pathToFileURL } from "node:url";
 import { ROOT } from "./helpers.mjs";
 
 const {
+  classifyEnding,
   isLimitMessage,
+  resetClock,
   resetFromPayload,
   recordModelLimit,
   clearModelLimit,
@@ -26,15 +28,85 @@ function fakeStorage() {
 }
 
 describe("isLimitMessage", () => {
-  test("matches plainError's two limit sentences", () => {
-    assert.ok(isLimitMessage("Gemma 4 31B hit its free daily limit."));
-    assert.ok(isLimitMessage("Sonnet 5 hit its usage limit."));
+  test("matches plainError's rate-limit line, with or without a reset time", () => {
+    assert.ok(isLimitMessage("Rate limited"));
+    assert.ok(isLimitMessage("Rate limited · resets 14:05"));
   });
 
   test("does not match other errors", () => {
     assert.ok(!isLimitMessage("The model returned an error."));
     assert.ok(!isLimitMessage("Not signed in."));
+    assert.ok(!isLimitMessage("Provider error 404"));
+    assert.ok(!isLimitMessage("Timed out"));
     assert.ok(!isLimitMessage(null));
+  });
+});
+
+describe("classifyEnding", () => {
+  // Exact strings observed this session against opencode 1.18.31 on
+  // OpenRouter's free tier (see task brief). Only a 429/usage-limit signal
+  // counts as rate_limited; 404, other 5xx and a timeout are provider_error,
+  // never a reason to gray a model that was never actually over its cap.
+  test("opencode's own free-tier cap message", () => {
+    assert.deepEqual(
+      classifyEnding("Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day"),
+      { kind: "rate_limited", code: null },
+    );
+  });
+
+  test("a bare 429 from OpenRouter", () => {
+    assert.deepEqual(classifyEnding("Error: Upstream request failed: [429]"), { kind: "rate_limited", code: null });
+  });
+
+  test("a 404 from a named provider is a provider error, not a rate limit", () => {
+    assert.deepEqual(
+      classifyEnding("Error from provider (Console): Upstream request failed: [404] Provider returned error"),
+      { kind: "provider_error", code: 404 },
+    );
+  });
+
+  test("a provider error with no code and no rate-limit words classifies as neither", () => {
+    // Still ends the run and shows a message — see plainError's fallback —
+    // this classifier just has nothing to key a specific label off.
+    assert.deepEqual(classifyEnding("Error: [Nvidia] Provider returned error"), { kind: null, code: null });
+  });
+
+  test("a 504 timeout is a provider error, keyed by its code", () => {
+    assert.deepEqual(
+      classifyEnding("Streaming response failed: [504] A Timeout Occurred"),
+      { kind: "provider_error", code: 504 },
+    );
+  });
+
+  test("a timeout with no code still classifies as a provider error", () => {
+    assert.deepEqual(classifyEnding("Streaming response timed out"), { kind: "provider_error", code: null });
+  });
+
+  test("401 is not swept up as a generic provider error — plainError gives it its own message", () => {
+    assert.deepEqual(classifyEnding("unexpected status 401 Unauthorized"), { kind: null, code: null });
+  });
+
+  test("a clean run classifies as null", () => {
+    assert.deepEqual(classifyEnding(""), { kind: null, code: null });
+    assert.deepEqual(classifyEnding(null), { kind: null, code: null });
+  });
+
+  // Mutation check (CLAUDE.md §9.4 / task's own ask 6): broadening CODE_RE to
+  // match any 3 digits, not just 4xx/5xx, would make this pass too — proving
+  // the fixture actually exercises the code boundary rather than just "has
+  // digits". Flipped RATE_LIMIT_RE off (commented it out) and reran by hand:
+  // the 429/free-models-per-day cases above went from rate_limited to
+  // provider_error (429 matches CODE_RE too) and null (free-models-per-day
+  // has no code) respectively — both red, as expected — then restored.
+  test("a 3-digit number that is not an HTTP status code is not a provider error", () => {
+    assert.deepEqual(classifyEnding("retrying in 123 ms"), { kind: null, code: null });
+  });
+});
+
+describe("resetClock", () => {
+  test("formats as UTC HH:MM regardless of the machine's own timezone", () => {
+    assert.equal(resetClock(Date.UTC(2026, 8, 23, 14, 5)), "14:05");
+    assert.equal(resetClock(Date.UTC(2026, 8, 23, 0, 0)), "00:00");
   });
 });
 

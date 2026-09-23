@@ -27,6 +27,7 @@ const {
   emptyTranscript,
   plainError,
 } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "transcript.mjs")).href);
+const { resetClock } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "model-limits.mjs")).href);
 
 beforeEach(() => _resetIds());
 
@@ -213,7 +214,7 @@ describe("endings", () => {
   test("a claude result that is an error says so in one plain line", () => {
     let s = claude(text("x"));
     s = claude({ type: "result", is_error: true, result: 'API Error: 429 {"type":"rate_limit_error"}' }, s);
-    assert.equal(s.messages[0].status.error, "The model hit its usage limit.");
+    assert.equal(s.messages[0].status.error, "Rate limited");
   });
 
   test("closing an already-closed transcript is a no-op", () => {
@@ -247,6 +248,33 @@ describe("opencode", () => {
     const parts = s.messages[0].content.filter((p) => p.type === "tool-call");
     assert.equal(parts.length, 1, "the second report must update the first");
     assert.equal(parts[0].result, "a b c");
+  });
+
+  // MEASURED 2026-09-23 against opencode 1.18.31: a `write` outside the repo
+  // in a headless run gets one tool_use, status "error", the reason at
+  // `state.error` and no `state.output` at all — auto-rejected because a
+  // headless run has nobody to ask. Before this, only `output` was read, so
+  // the tool call kept no result and no isError: not running, not failed,
+  // nothing visible. Andrew: it "auto-rejected, which ended the run" with no
+  // indication why.
+  test("a tool opencode auto-rejects (no state.output, only state.error) still shows why", () => {
+    const s = oc({
+      type: "tool_use",
+      part: {
+        type: "tool",
+        callID: "call_9c957d5e",
+        tool: "write",
+        state: {
+          status: "error",
+          input: { filePath: "C:/Windows/Temp/x.txt", content: "x" },
+          error: "The user rejected permission to use this specific tool call.",
+        },
+      },
+    });
+    const part = s.messages[0].content.find((p) => p.type === "tool-call");
+    assert.ok(part, "the rejected call must still appear");
+    assert.equal(part.result, "The user rejected permission to use this specific tool call.");
+    assert.equal(part.isError, true);
   });
 
   test("step_finish closes the turn", () => {
@@ -302,7 +330,10 @@ describe("opencode", () => {
     s = appendAgentPayload(s, payload, { agent: "opencode", model: "openrouter/google/gemma-4-31b-it:free" });
     s = closeTranscript(s, { code: 1 });
     assert.equal(s.messages.length, 2);
-    assert.equal(s.messages[1].status.error, "Gemma 4 31B hit its free daily limit.");
+    // The reset time comes off this same payload's responseHeaders (see
+    // resetFromPayload in model-limits.mjs) — terse, no model name, per
+    // CLAUDE.md's ui-copy-zevet-style note.
+    assert.equal(s.messages[1].status.error, `Rate limited · resets ${resetClock(1790121600000)}`);
     assert.equal(s.openIndex, -1);
   });
 });
@@ -325,6 +356,17 @@ describe("codex", () => {
     assert.equal(part.toolName, "Bash");
     assert.deepEqual(part.args, { command: "ls" });
     assert.equal(part.result, "a\nb");
+
+    // ANSI leaks into a Bash tool's own output whenever the command forces
+    // colour (git, npm, eslint all do under some flag or env, even off a real
+    // TTY) — ToolFallbackResult renders a string result verbatim in a <pre>,
+    // so raw \x1b bytes used to show up as garbage in the tool-call card.
+    const colored = cx({
+      type: "item.completed",
+      item: { id: "i2", type: "command_execution", command: "git log -1", aggregated_output: "\x1b[33mcommit abc123\x1b[m\r\nfix: thing\r\n", status: "completed" },
+    });
+    const cleanPart = colored.messages[0].content[0];
+    assert.equal(cleanPart.result, "commit abc123\nfix: thing\n");
   });
 
   test("turn.failed ends the turn with a plain reason", () => {
@@ -343,7 +385,7 @@ describe("codex", () => {
     s = appendAgentPayload(s, { type: "error", error: { message: "usage limit reached" } }, opts);
     s = appendAgentPayload(s, { type: "turn.failed", error: { message: "usage limit reached" } }, opts);
     const errors = s.messages.filter((m) => m.status && m.status.error).map((m) => m.status.error);
-    assert.deepEqual(errors, ["GPT-6-Astra hit its usage limit."]);
+    assert.deepEqual(errors, ["Rate limited"]);
   });
 
   // Captured 2026-09-22 from `codex exec --json`: a non-fatal notice from
@@ -364,11 +406,20 @@ describe("CLI plumbing is not conversation", () => {
     }
   });
 
-  test("errors become one plain sentence, never the payload", () => {
-    assert.equal(plainError("Rate limit exceeded: free-models-per-day"), "The model hit its free daily limit.");
-    assert.equal(plainError("HTTP 429 Too Many Requests", { model: "x/y" }), "y hit its usage limit.");
+  test("errors become one plain line, never the payload", () => {
+    assert.equal(plainError("Rate limit exceeded: free-models-per-day"), "Rate limited");
+    assert.equal(plainError("HTTP 429 Too Many Requests", { model: "x/y" }), "Rate limited");
+    assert.equal(
+      plainError("HTTP 429 Too Many Requests", { resetAt: Date.UTC(2026, 8, 23, 14, 5) }),
+      "Rate limited · resets 14:05",
+    );
     assert.equal(plainError("Could not find codex on this machine. Looked in 9 directories"), "Codex isn't installed.");
-    assert.equal(plainError('{"error":{"code":500}}'), "The model returned an error.");
+    // A code-bearing provider error (not 429/401), and a 401 kept distinct
+    // from it — CLAUDE.md's rate-limit ask draws that line explicitly.
+    assert.equal(plainError('{"error":{"code":500}}'), "Provider error 500");
+    assert.equal(plainError("unexpected status 401 Unauthorized"), "Not signed in.");
+    assert.equal(plainError("Streaming response failed: [504] A Timeout Occurred"), "Provider error 504");
+    assert.equal(plainError("Streaming response timed out"), "Timed out");
     assert.equal(plainError("spawn EINVAL", { fallback: "Couldn't start." }), "Couldn't start.");
   });
 

@@ -6,9 +6,10 @@ import {
   appendUserText,
   closeTranscript,
   emptyTranscript,
+  plainError,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
-import { clearModelLimit, isLimitMessage, recordModelLimit, resetFromPayload } from "./model-limits.mjs";
+import { classifyEnding, clearModelLimit, isLimitMessage, recordModelLimit, resetFromPayload } from "./model-limits.mjs";
 import { learnModels } from "./models.mjs";
 import { usageOf, type UsageReading } from "./usage.mjs";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
@@ -1528,6 +1529,13 @@ function signalConsolesChanged(): void {
   useBoard.setState({ myConsoles: [...c] });
 }
 
+/** Storage key for a console's model: agent-qualified, so opencode's dozen
+ *  provider-prefixed ids and claude/codex's short ones can never collide on
+ *  one entry that belongs to only one of them. */
+function modelLimitKey(c: { agent: string; model: string }): string {
+  return `${c.agent}:${c.model}`;
+}
+
 /** Whatever just closed this console's transcript, fold it into
  *  lib/model-limits.mjs's memory of which models are past their free daily
  *  cap: a run that ended in that error remembers it, a run that ended clean
@@ -1541,9 +1549,9 @@ function noteModelLimit(c: ConsoleEntry, payload: unknown): void {
     | undefined;
   const status = last?.status;
   if (!status) return;
-  if (status.type === "complete") clearModelLimit(zStorage, c.model);
+  if (status.type === "complete") clearModelLimit(zStorage, modelLimitKey(c));
   else if (status.type === "incomplete" && isLimitMessage(status.error)) {
-    recordModelLimit(zStorage, c.model, resetFromPayload(payload));
+    recordModelLimit(zStorage, modelLimitKey(c), resetFromPayload(payload));
   }
 }
 
@@ -1735,6 +1743,26 @@ function ingressAgentEvent(evt: AgentEvent): void {
        is: the process's stderr, labelled. Nothing is lost — that panel is why
        `lines` exists. */
     pushConsoleLine(c, "err", evt.text || "");
+
+    /* opencode's own CLI-level failures — a 429 or a dead provider before
+       the JSON stream ever opens — print one line here rather than the
+       `{"type":"error"}` event the "agent" branch below already handles.
+       See model-limits.mjs's classifyEnding for the exact strings this was
+       measured against. Scoped to opencode: codex's stderr is routine,
+       unrelated noise (see the comment above), and reading it the same way
+       would gray a model over a line that was never about it.
+       ponytail: a signal split across two stderr chunks is missed — these
+       are short single lines in practice; buffer them like stdout if that
+       ever proves wrong. */
+    if (c.agent === "opencode" && c.running) {
+      const cls = classifyEnding(evt.text || "");
+      if (cls.kind) {
+        c.transcript = closeTranscript(c.transcript, { error: plainError(evt.text) });
+        noteModelLimit(c, null);
+        c.running = false;
+        if (c.id) void bridge.local?.stopAgent(c.id);
+      }
+    }
   } else if (evt.type === "agent") {
     const payload = (evt.payload || {}) as {
       type?: string;
