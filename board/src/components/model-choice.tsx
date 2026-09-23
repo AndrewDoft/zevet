@@ -142,11 +142,14 @@ export function ModelChoice({
      one. Guarded on there being no match AND a list to pick from, so this
      settles in a single pass and cannot ping-pong. */
   useEffect(() => {
-    if (match || !selected) return;
+    // Code only, front only: Chat's picker lists claude alone, so a Chat
+    // instance "correcting" an opencode pick reset every non-claude choice to
+    // Opus (seen live 2026-09-23). Chat reads claude-or-default at send.
+    if (inChat || !front || match || !selected) return;
     setLaunchModel(aliasOf(selected));
     const cut = selected.indexOf(":");
     if (cut > 0) setLaunchAgent(selected.slice(0, cut));
-  }, [match, selected, setLaunchModel, setLaunchAgent]);
+  }, [inChat, front, match, selected, setLaunchModel, setLaunchAgent]);
 
   return (
     <ModelSelectorRoot

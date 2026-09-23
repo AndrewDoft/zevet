@@ -112,7 +112,10 @@ export const useChat = create<ChatState>((set, get) => ({
   send: async (text) => {
     const l = bridge.local;
     if (!l?.chatSend || !l.chatCreate) return;
-    const { launchModel, launchEffort, launchMode } = useBoard.getState();
+    const { launchModel: picked, launchAgent, launchEffort, launchMode } = useBoard.getState();
+    // Chat runs the Claude CLI only: a Code pick of an opencode/codex model is
+    // not a model claude can take, so Chat falls back to claude's default.
+    const launchModel = !launchAgent || launchAgent === "claude" ? picked : "";
     let id = get().activeId;
     if (!id) {
       const c = await l.chatCreate();
