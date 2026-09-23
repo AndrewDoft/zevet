@@ -45,9 +45,13 @@ jobs:
         working-directory: desktop
         run: node make-icon.mjs
 
-      # Both installed BEFORE Test: test/setup-window.test.mjs drives the real
-      # Electron binary and editor/test/*.test.mjs imports yjs, and root has
-      # no npm ci step of its own to hoist either.
+      # All three installed BEFORE Test: test/setup-window.test.mjs drives the
+      # real Electron binary and imports root's playwright-core via
+      # scripts/drive/drive.mjs, and editor/test/*.test.mjs imports yjs. None
+      # of the three were hoisted here before.
+      - name: Install root deps
+        run: npm ci
+
       - name: Install desktop deps
         working-directory: desktop
         run: npm ci

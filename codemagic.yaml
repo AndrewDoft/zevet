@@ -11,6 +11,8 @@ workflows:
     scripts:
       - name: Generate icon
         script: cd desktop && node make-icon.mjs
+      - name: Install root deps
+        script: npm ci
       - name: Install desktop deps
         script: cd desktop && npm ci
       - name: Install editor deps
