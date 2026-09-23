@@ -69,12 +69,12 @@ import { sessionBlurb, sessionProject } from "../lib/sessions.mjs";
 import { plainError } from "../lib/transcript.mjs";
 import { AgentLogo } from "./brand";
 import { SquareIcon, XIcon } from "lucide-react";
-import { bridge } from "../lib/bridge";
+import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
 
 function expandedStored(): string[] {
   try {
-    const v = JSON.parse(localStorage.getItem("zevet.expanded.v1") || "[]");
+    const v = JSON.parse(zStorage.getItem("zevet.expanded.v1") || "[]");
     return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
   } catch {
     return [];
@@ -376,11 +376,7 @@ export function PeoplePane() {
     const next = expanded.filter((x) => x !== actor);
     if (on) next.push(actor);
     setExpanded(next);
-    try {
-      localStorage.setItem("zevet.expanded.v1", JSON.stringify(next));
-    } catch {
-      // Private mode etc: expansion just does not persist.
-    }
+    zStorage.setItem("zevet.expanded.v1", JSON.stringify(next));
   }
 
   /* Everyone on the allowlist who is not already a live row. Matching a GitHub

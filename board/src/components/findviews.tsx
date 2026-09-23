@@ -19,6 +19,7 @@ import {
   selectMyConsoles,
   useBoard,
 } from "../lib/board";
+import { zStorage } from "../lib/bridge";
 import {
   ConversationSearch,
   type SearchHit,
@@ -240,9 +241,9 @@ export function ConsoleFind() {
  * same `aui.composer` scope `ComposerPrimitive.Input` renders from) rather
  * than the DOM, exactly as composer.tsx and runtime.tsx do.
  *
- * Storage follows promptlib.tsx's guarded try/catch exactly — a browser that
- * refuses storage must not take the panel down, it just never gets a draft
- * back.
+ * Storage goes through `zStorage` (lib/bridge.ts), which already guards a
+ * browser that refuses storage — the panel must not go down over it, it just
+ * never gets a draft back.
  * ------------------------------------------------------------------------- */
 
 const DRAFT_KEY = "zevet.draft.v1";
@@ -254,7 +255,7 @@ interface DraftEntry {
 
 function loadDrafts(): Record<string, DraftEntry> {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY);
+    const raw = zStorage.getItem(DRAFT_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : {};
@@ -264,11 +265,7 @@ function loadDrafts(): Record<string, DraftEntry> {
 }
 
 function saveDrafts(drafts: Record<string, DraftEntry>): void {
-  try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts));
-  } catch {
-    // private mode / storage quota: the session still works, it just won't persist
-  }
+  zStorage.setItem(DRAFT_KEY, JSON.stringify(drafts));
 }
 
 export function DraftRestore() {

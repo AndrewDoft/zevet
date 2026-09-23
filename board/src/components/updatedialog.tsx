@@ -26,10 +26,9 @@
  * Dismissal is per-version: "Not now" (and Escape, and the backdrop, and the
  * dialog's own close button — all of them route through Dialog's
  * `onOpenChange`) remember the version string, not a single boolean, so a
- * *newer* release still interrupts. Storage is guarded try/catch exactly
- * like promptlib.tsx's saved-prompt read/write — a browser that refuses
- * localStorage must not take the dialog down, it should just ask again next
- * time.
+ * *newer* release still interrupts. Read/write goes through `zStorage`
+ * (lib/bridge.ts), which already guards a browser that refuses localStorage —
+ * that must not take the dialog down, it should just ask again next time.
  */
 import { useState } from "react";
 import {
@@ -41,26 +40,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { bridge } from "../lib/bridge";
+import { bridge, zStorage } from "../lib/bridge";
 import { selectUpdates, useBoard } from "../lib/board";
 import { updateCommand, updateStatusText } from "../lib/update.mjs";
 
 const DISMISSED_KEY = "zevet.update.dismissed.v1";
 
 function loadDismissed(): string {
-  try {
-    return localStorage.getItem(DISMISSED_KEY) || "";
-  } catch {
-    return ""; // private mode / storage quota: falls back to "always ask"
-  }
+  return zStorage.getItem(DISMISSED_KEY) || "";
 }
 
 function saveDismissed(version: string): void {
-  try {
-    localStorage.setItem(DISMISSED_KEY, version);
-  } catch {
-    // the session still works, it just asks again next launch
-  }
+  zStorage.setItem(DISMISSED_KEY, version);
 }
 
 export function UpdateDialog() {

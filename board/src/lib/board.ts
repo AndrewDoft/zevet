@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { bridge, type AgentEvent, type AgentSchedule, type AgentSettings, type AskRequest, type HeldConsole, type MemoryNote, type PermitRequest, type RepoCommit, type StatusResult } from "./bridge";
+import { bridge, zStorage, type AgentEvent, type AgentSchedule, type AgentSettings, type AskRequest, type HeldConsole, type MemoryNote, type PermitRequest, type RepoCommit, type StatusResult } from "./bridge";
 import { shortInput } from "./fmt";
 import {
   appendAgentPayload,
@@ -95,7 +95,7 @@ function collapseForEntries(root: string, entries: LocalEntry[]): Record<string,
   const collapsed: Record<string, boolean> = Object.create(null);
   for (const entry of entries) if (entry.kind === "dir") collapsed[entry.path] = true;
   try {
-    const saved = JSON.parse(localStorage.getItem(collapsedKey(root)) || "null");
+    const saved = JSON.parse(zStorage.getItem(collapsedKey(root)) || "null");
     if (saved && typeof saved === "object") {
       for (const path of Object.keys(collapsed)) {
         if (typeof saved[path] === "boolean") collapsed[path] = saved[path];
@@ -110,7 +110,7 @@ function collapseForEntries(root: string, entries: LocalEntry[]): Record<string,
 function saveCollapsed(root: string | null, collapsed: Record<string, boolean>): void {
   if (!root) return;
   try {
-    localStorage.setItem(collapsedKey(root), JSON.stringify(collapsed));
+    zStorage.setItem(collapsedKey(root), JSON.stringify(collapsed));
   } catch {
     // Folder state is a convenience; the tree still works without persistence.
   }
@@ -416,19 +416,11 @@ export interface EditorViewState {
  * ------------------------------------------------------------------------- */
 
 function pref(key: string, fallback: string): string {
-  try {
-    const v = window.localStorage.getItem("zevet." + key);
-    return v == null ? fallback : v;
-  } catch {
-    return fallback;
-  }
+  const v = zStorage.getItem("zevet." + key);
+  return v == null ? fallback : v;
 }
 function setPref(key: string, value: string): void {
-  try {
-    window.localStorage.setItem("zevet." + key, value);
-  } catch {
-    /* preference applies for this session only */
-  }
+  zStorage.setItem("zevet." + key, value);
 }
 
 let ed: EditorSession | null = null;
@@ -449,7 +441,7 @@ const SEEN_RUNS_KEY = "zevet.seenRuns.v1";
 const SEEN_RUNS_CAP = 200;
 function loadSeenRuns(): string[] {
   try {
-    const v = JSON.parse(window.localStorage.getItem(SEEN_RUNS_KEY) || "[]");
+    const v = JSON.parse(zStorage.getItem(SEEN_RUNS_KEY) || "[]");
     return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
   } catch {
     return [];
@@ -473,15 +465,11 @@ export const useBoard = create<BoardState>((set, get) => ({
   conversationOpen: false,
 
   followMode: (() => {
-    try {
-      const v = window.localStorage.getItem("zevet.follow.v1");
-      if (v === "all" || v === "off") return v;
-    } catch {
-      /* private mode etc */
-    }
-    return "mine";
+    const v = zStorage.getItem("zevet.follow.v1");
+    return v === "all" || v === "off" ? v : "mine";
   })(),
-  viewMode: (pref("view", "ide") === "agent" ? "agent" : "ide") as ViewMode,
+  // New users land on Agent — IDE is for people who already asked for it.
+  viewMode: (pref("view", "agent") === "ide" ? "ide" : "agent") as ViewMode,
   theme: (pref("theme", "light") === "dark" ? "dark" : "light") as Theme,
 
   localRoot: null,
@@ -510,9 +498,14 @@ export const useBoard = create<BoardState>((set, get) => ({
   asks: [],
   mcpServers: {},
   launchAgent: "",
-  launchModel: "",
+  // The model and posture last picked in the composer, so they carry over to
+  // the next agent — restored here so a reload doesn't reset them to nothing.
+  launchModel: pref("launchModel", ""),
   launchEffort: "",
-  launchMode: "auto",
+  launchMode: (() => {
+    const saved = pref("launchMode", "auto");
+    return (MODES.some((m) => m.id === saved) ? saved : "auto") as LaunchMode;
+  })(),
   defaultMode: "",
 
   edView: null,
@@ -529,7 +522,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   panes: (() => {
     const d: Record<string, number> = { ...PANE_DEFAULTS };
     try {
-      const s = JSON.parse(window.localStorage.getItem(PANE_KEY) || "{}");
+      const s = JSON.parse(zStorage.getItem(PANE_KEY) || "{}");
       for (const k of ["rail", "tree"]) {
         if (typeof s[k] === "number") d[k] = clampPaneWidth(s[k], PANE_LIMITS[k][0], PANE_LIMITS[k][1]);
       }
@@ -621,11 +614,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       return { collapsed: next };
     }),
   setFollowMode: (m) => {
-    try {
-      window.localStorage.setItem("zevet.follow.v1", m);
-    } catch {
-      /* private mode etc */
-    }
+    zStorage.setItem("zevet.follow.v1", m);
     set({ followMode: m });
   },
   setView: (v) => {
@@ -641,7 +630,10 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
   clearSelectedPath: () => set({ selectedPath: null }),
 
-  setLaunchMode: (m) => set({ launchMode: m }),
+  setLaunchMode: (m) => {
+    setPref("launchMode", m);
+    set({ launchMode: m });
+  },
 
   /* ⚠️ APPLIES NOW, NOT NEXT LAUNCH. Saving a default and then watching the
      composer still offer the old one is what makes somebody set it twice and
@@ -654,7 +646,10 @@ export const useBoard = create<BoardState>((set, get) => ({
     if (r && r.ok) set({ defaultMode: m, launchMode: m as LaunchMode });
     return { ok: Boolean(r && r.ok), error: (r && r.error) || "" };
   },
-  setLaunchModel: (m) => set({ launchModel: m }),
+  setLaunchModel: (m) => {
+    setPref("launchModel", m);
+    set({ launchModel: m });
+  },
   setLaunchEffort: (e) => set({ launchEffort: e }),
   setLaunchAgent: (a) => set({ launchAgent: a }),
 
@@ -866,12 +861,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     closeEditor();
     // Which repo you had open, so the next launch can put it back. See
     // `restoreLastRoot` for why this is the renderer's job and not main's.
-    try {
-      localStorage.setItem(LAST_ROOT_KEY, dir);
-    } catch {
-      // Private mode, cleared site data, a quota that is full: the app works
-      // without this and re-picking a folder is not a failure worth reporting.
-    }
+    zStorage.setItem(LAST_ROOT_KEY, dir);
     /* ⚠️ THE INDEX LINE BELONGS TO A FOLDER. "done — 812 indexed, 40 skipped"
        is only ever written and never cleared, so it stayed pinned in Settings
        after the build that produced it — and after you opened a DIFFERENT
@@ -926,11 +916,7 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   unsetLocalRoot: () => {
     closeEditor();
-    try {
-      localStorage.removeItem(LAST_ROOT_KEY);
-    } catch {
-      // See openLocalRoot.
-    }
+    zStorage.removeItem(LAST_ROOT_KEY);
     set({ localRoot: null, localCheckout: null, localEntries: null, localFile: null, selectedPath: null });
   },
 
@@ -1032,11 +1018,7 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   setPanes: (p) => {
     set({ panes: p });
-    try {
-      window.localStorage.setItem(PANE_KEY, JSON.stringify(p));
-    } catch {
-      /* defaults next time */
-    }
+    zStorage.setItem(PANE_KEY, JSON.stringify(p));
   },
 
   /* SESSIONS — everything the two CLIs have written on this machine.
@@ -1541,9 +1523,9 @@ function noteModelLimit(c: ConsoleEntry, payload: unknown): void {
     | undefined;
   const status = last?.status;
   if (!status) return;
-  if (status.type === "complete") clearModelLimit(window.localStorage, c.model);
+  if (status.type === "complete") clearModelLimit(zStorage, c.model);
   else if (status.type === "incomplete" && isLimitMessage(status.error)) {
-    recordModelLimit(window.localStorage, c.model, resetFromPayload(payload));
+    recordModelLimit(zStorage, c.model, resetFromPayload(payload));
   }
 }
 
@@ -2783,12 +2765,7 @@ const LAST_ROOT_KEY = "zevet.lastRoot.v1";
 function restoreLastRoot(): void {
   const g = useBoard.getState();
   if (g.localRoot || !g.localWorkspaces.length) return;
-  let saved: string | null = null;
-  try {
-    saved = localStorage.getItem(LAST_ROOT_KEY);
-  } catch {
-    saved = null;
-  }
+  const saved = zStorage.getItem(LAST_ROOT_KEY);
   const pick = (saved && g.localWorkspaces.find((w) => w.dir === saved)) || null;
   if (pick) g.openLocalRoot(pick.dir);
 }
@@ -3178,11 +3155,7 @@ useBoard.subscribe((s) => {
   if (!c || c.running || !c.id || s.seenRuns.includes(c.id)) return;
   const seenRuns = [...s.seenRuns, c.id].slice(-SEEN_RUNS_CAP);
   useBoard.setState({ seenRuns });
-  try {
-    window.localStorage.setItem(SEEN_RUNS_KEY, JSON.stringify(seenRuns));
-  } catch {
-    /* seen for this page only */
-  }
+  zStorage.setItem(SEEN_RUNS_KEY, JSON.stringify(seenRuns));
 });
 
 export const selectLaunching = (s: BoardState) => s.launching;

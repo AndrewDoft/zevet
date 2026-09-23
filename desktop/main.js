@@ -1706,6 +1706,65 @@ ipcMain.handle("local:saveAgentSettings", (_e, arg) => {
   return { ok: true, settings: writeAgentSettingsFor(dir, arg && arg.patch) };
 });
 
+/* ---------------------------------------------------------------------------
+ * USER PREFS MIRROR
+ *
+ * Every "zevet.*" key the board keeps in localStorage — view, theme, launch
+ * model, permission mode, seen runs, model limits, and the rest (see board/
+ * src/lib/prefs-mirror.mjs). localStorage is scoped to the hub's ORIGIN, so a
+ * person who switches hubs, or whose hub's URL changes, silently loses all of
+ * it. This is the same flat key→string map, kept on this machine instead, so
+ * a preference follows the person rather than whichever hub served the page.
+ * The board hydrates its localStorage from this on startup and mirrors every
+ * write back here — see prefs-mirror.mjs's `applyMirror`/`mirroredStorage`.
+ * ------------------------------------------------------------------------- */
+const PREFS = path.join(HOME, "prefs.json");
+
+function readPrefs() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(PREFS, "utf8"));
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePrefs(all) {
+  try {
+    fs.mkdirSync(HOME, { recursive: true });
+    fs.writeFileSync(PREFS, `${JSON.stringify(all, null, 2)}\n`, "utf8");
+  } catch (err) {
+    console.error(`zevet: could not save prefs: ${err.message}`);
+  }
+}
+
+ipcMain.handle("local:prefs", () => readPrefs());
+
+ipcMain.handle("local:setPref", (_e, arg) => {
+  const key = String((arg && arg.key) || "");
+  if (!key) return { ok: false };
+  const all = readPrefs();
+  // A null value is a delete (see prefs-mirror.mjs's mirroredStorage.removeItem).
+  if (arg.value == null) delete all[key];
+  else all[key] = String(arg.value);
+  writePrefs(all);
+  return { ok: true };
+});
+
+/** One round trip for many keys at once — prefs-mirror.mjs's
+ *  `hydratePrefsMirror` seeding the mirror from an existing user's
+ *  localStorage the first time it finds the mirror empty. */
+ipcMain.handle("local:setPrefs", (_e, arg) => {
+  const entries = arg && arg.entries;
+  if (!entries || typeof entries !== "object") return { ok: false };
+  const all = readPrefs();
+  for (const [key, value] of Object.entries(entries)) {
+    if (key && typeof value === "string") all[key] = value;
+  }
+  writePrefs(all);
+  return { ok: true };
+});
+
 function readSchedules() {
   try {
     const raw = JSON.parse(fs.readFileSync(SCHEDULES, "utf8"));

@@ -133,13 +133,14 @@ describe("the command palette", () => {
 describe("the prompt library survives a browser that refuses storage", () => {
   const src = read("components", "promptlib.tsx");
 
-  test("every localStorage touch is guarded", () => {
-    // Private mode and cleared site data both throw on access, and a throw
-    // here would take the panel down with it.
-    const touches = (src.match(/localStorage/g) || []).length;
-    const guards = (src.match(/try\s*\{/g) || []).length;
-    assert.ok(touches > 0, "the library does not persist at all");
-    assert.ok(guards >= 2, `${touches} localStorage uses and only ${guards} try blocks`);
+  test("storage goes through zStorage, which already guards private mode and cleared site data", () => {
+    assert.match(src, /import \{ zStorage \} from "\.\.\/lib\/bridge";/);
+    assert.match(src, /zStorage\.getItem\(STORAGE_KEY\)/);
+    assert.match(src, /zStorage\.setItem\(STORAGE_KEY,/);
+    assert.ok(!/\blocalStorage\.(get|set|remove)Item\(/.test(src), "a raw localStorage call reappeared");
+    // Malformed JSON is a separate failure from storage throwing, and still
+    // has to fall back to the starter set rather than take the panel down.
+    assert.match(src, /try\s*\{\s*const raw = zStorage\.getItem\(STORAGE_KEY\);/);
   });
 
   test("it keys its own namespace", () => {

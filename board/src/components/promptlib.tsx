@@ -12,6 +12,7 @@ import { field, fieldInteractive, mono, paper } from "./assistant-ui/elements/su
 import { cn } from "@/lib/utils";
 import { useAui, useAuiState } from "@assistant-ui/react";
 import { selectActiveConsole, useBoard } from "../lib/board";
+import { zStorage } from "../lib/bridge";
 
 const STORAGE_KEY = "zevet.prompts.v1";
 
@@ -55,7 +56,7 @@ function isSavedPrompt(x: unknown): x is SavedPrompt {
 
 function loadPrompts(): SavedPrompt[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = zStorage.getItem(STORAGE_KEY);
     if (!raw) return STARTER_PROMPTS;
     const parsed = JSON.parse(raw);
     const valid = Array.isArray(parsed) ? parsed.filter(isSavedPrompt) : [];
@@ -66,11 +67,7 @@ function loadPrompts(): SavedPrompt[] {
 }
 
 function savePrompts(prompts: SavedPrompt[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(prompts));
-  } catch {
-    // private mode / storage quota: the session still works, it just won't persist
-  }
+  zStorage.setItem(STORAGE_KEY, JSON.stringify(prompts));
 }
 
 export function PromptLibraryPanel() {
