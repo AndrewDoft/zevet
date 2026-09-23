@@ -12,5 +12,8 @@
     "install-hooks": "node client/install.mjs",
     "doctor": "node client/doctor.mjs",
     "test": "node --test \"test/**/*.test.mjs\" \"editor/test/**/*.test.mjs\""
+  },
+  "devDependencies": {
+    "playwright-core": "1.63.0"
   }
 }

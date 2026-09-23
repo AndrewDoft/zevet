@@ -71,6 +71,27 @@ const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
 const CONFIG = path.join(HOME, "config.json");
 
 /**
+ * Test hook: record every `shell.openExternal` call instead of actually
+ * opening a browser, so a driving harness can ask "did clicking this button
+ * open the browser, and with what URL?" without a real browser popping up on
+ * every run. Gated on an env var that is never set by the installer or by a
+ * person launching the app normally — see scripts/drive/README.md.
+ */
+if (process.env.ZEVET_TEST_HOOKS === "1") {
+  const openedLog = path.join(HOME, "opened-external.jsonl");
+  shell.openExternal = (url) => {
+    try {
+      fs.mkdirSync(HOME, { recursive: true });
+      fs.appendFileSync(openedLog, `${JSON.stringify({ url: String(url), at: Date.now() })}\n`);
+    } catch {
+      // Best effort — a harness that cannot read this file will notice from
+      // the assertion that fails, not from a crashed app.
+    }
+    return Promise.resolve();
+  };
+}
+
+/**
  * The Windows application identity. MUST match `build.appId` in package.json.
  *
  * Without it, Windows treats the running window and the installed shortcut as
