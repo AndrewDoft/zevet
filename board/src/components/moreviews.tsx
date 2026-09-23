@@ -7,7 +7,7 @@
  * Reader helpers (`rec`/`str`/`pick`) are duplicated from agentviews.tsx
  * rather than imported — that file does not export them, same as tools.tsx.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { CodeRunner, type RunState } from "./assistant-ui/elements/code-runner";
@@ -227,10 +227,16 @@ export function NextStep() {
   const raw = latest ? rec(latest.args).todos : undefined;
   const todos = Array.isArray(raw) ? raw : [];
   const pending = todos.find((t) => str(rec(t).status).toLowerCase() === "pending");
-  if (!pending) return null;
+  const text = pending ? str(rec(pending).content) : "";
 
-  const text = str(rec(pending).content);
-  if (!text) return null;
+  // A stale "Sent" must not carry over onto a DIFFERENT recommendation once
+  // the plan moves on to its next pending todo -- state is per-component,
+  // not per-todo, so nothing else resets it.
+  useEffect(() => {
+    setState("idle");
+  }, [text]);
+
+  if (!pending || !text) return null;
 
   return (
     <RecommendationCard
