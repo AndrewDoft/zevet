@@ -1,22 +1,34 @@
 // The OpenCode connector.
 //
 // opencode has no shell-hook config like Claude Code or Codex: it loads JS
-// plugins from <repo>/.opencode/plugins/ at startup. So zevet's coverage is a
-// plugin file copied per repo, and the per-repo file IS the opt-in — there is
-// no global block to gate and no trust ceremony to record. Every claim about
-// opencode's own behaviour is written up in docs/contracts/opencode-hooks.md,
-// and the coverage is `unverified` until a live turn fires there.
+// plugins from <repo>/.opencode/plugins/ at startup, or from its GLOBAL
+// `~/.config/opencode/plugins/` for every repo at once (VERIFIED 2026-09-23,
+// opencode.ai/docs/plugins) — install.mjs writes there now, not per-repo, so
+// a fresh worktree nobody has ever run `zevet install` inside of is still
+// covered. A global plugin needs its own opt-in list the way Codex's global
+// hooks needed codex-repos.json (D-001): opencode-repos.json, read inline by
+// the self-contained plugin the same way it inlines secret.mjs's derivation.
+// Every claim about opencode's own behaviour is written up in
+// docs/contracts/opencode-hooks.md, and the coverage is `unverified` until a
+// live turn fires there.
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { startHub, state, tempDir, TOKEN, ROOT } from "./helpers.mjs";
 import {
+  addOpencodeRepo,
   installOpencode,
+  installOpencodeGlobal,
+  opencodeReposPath,
+  readOpencodeRepos,
   removeOpencode,
+  removeOpencodeRepo,
+  opencodeGlobalPluginPath,
   opencodePluginPathFor,
   openrouterReady,
   PLUGIN_MARK,
@@ -136,6 +148,75 @@ describe("the opencode plugin file", () => {
   });
 });
 
+describe("the global opencode plugin", () => {
+  test("installs at ~/.config/opencode/plugins/zevet.js under the given home", async (t) => {
+    const home = tempDir("zevet-opencode-globalhome-");
+    t.after(() => home.cleanup());
+    const r = installOpencodeGlobal({ home: home.dir });
+    assert.ok(r.ok, `install failed: ${r.detail}`);
+    const file = opencodeGlobalPluginPath(home.dir);
+    assert.equal(file, path.join(home.dir, ".config", "opencode", "plugins", "zevet.js"));
+    assert.ok(existsSync(file), "global plugin file was not written");
+    const template = readFileSync(path.join(ROOT, "client", "opencode-plugin.mjs"), "utf8");
+    assert.equal(readFileSync(file, "utf8"), template);
+  });
+
+  test("covers a repo that never had a per-repo install, e.g. a fresh worktree", async (t) => {
+    // This is the actual bug: a worktree nobody ran `zevet install` inside of
+    // had no .opencode/plugins/zevet.js and its opencode sessions never
+    // showed on the board. The plugin computes which repo it is watching off
+    // `directory` at call time (opencode-plugin.mjs § repoInfo), not off
+    // where the plugin file lives — so the SAME global copy, loaded once,
+    // reports correctly for a repo it was never installed into.
+    const home = tempDir("zevet-opencode-globalwt-");
+    t.after(() => home.cleanup());
+    writeFileSync(path.join(home.dir, "config.json"), JSON.stringify({ hub: hub.base, token: TOKEN, actor: "global-test" }));
+    installOpencodeGlobal({ home: home.dir });
+
+    const neverInstalled = makeRepo(t, "never-installed");
+    mkdirSync(path.join(neverInstalled, "src"), { recursive: true });
+    writeFileSync(path.join(neverInstalled, "src", "x.ts"), "x\n");
+    assert.ok(!existsSync(opencodePluginPathFor(neverInstalled)), "test setup: this repo must have no per-repo plugin");
+
+    const before = (await state(hub.base, TOKEN)).body.events.length;
+    await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
+      // The repo still has to be on the opt-in list — a fresh worktree gets
+      // coverage without its OWN per-repo install, not without ANY install
+      // ever having named it (see "a repo not opted in stays silent" below).
+      addOpencodeRepo(neverInstalled);
+      // Load it from the GLOBAL path, exactly as opencode itself would.
+      const mod = await import(pathToFileURL(opencodeGlobalPluginPath(home.dir)).href + `?g=${Date.now()}`);
+      const hooks = await mod.Zevet({ directory: neverInstalled });
+      await hooks["tool.execute.before"]({ tool: "write" }, { args: { file_path: "src/x.ts" } });
+    });
+    const [e] = (await state(hub.base, TOKEN)).body.events.slice(before);
+    assert.equal(e.repo, "never-installed");
+    assert.equal(e.target, "src/x.ts");
+  });
+
+  test("remove takes the global copy and is idempotent", async (t) => {
+    const home = tempDir("zevet-opencode-globalrm-");
+    t.after(() => home.cleanup());
+    installOpencodeGlobal({ home: home.dir });
+    const gone = installOpencodeGlobal({ remove: true, home: home.dir });
+    assert.equal(gone.state, "removed");
+    assert.ok(!existsSync(opencodeGlobalPluginPath(home.dir)));
+    const again = installOpencodeGlobal({ remove: true, home: home.dir });
+    assert.equal(again.state, "absent");
+  });
+
+  test("a foreign file at the global path is refused, never overwritten", async (t) => {
+    const home = tempDir("zevet-opencode-globalforeign-");
+    t.after(() => home.cleanup());
+    const file = opencodeGlobalPluginPath(home.dir);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, "// somebody else's global plugin\n", "utf8");
+    const r = installOpencodeGlobal({ home: home.dir });
+    assert.equal(r.ok, false);
+    assert.equal(readFileSync(file, "utf8"), "// somebody else's global plugin\n");
+  });
+});
+
 describe("the plugin at runtime", () => {
   test("it exports one plugin function", async () => {
     const mod = await import(`../client/opencode-plugin.mjs?serial=${Date.now()}`);
@@ -155,6 +236,7 @@ describe("the plugin at runtime", () => {
 
     const before = (await state(hub.base, TOKEN)).body.events.length;
     await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
+      addOpencodeRepo(repo);
       // Fresh import per test: the plugin module itself holds no settings, but
       // a query string defeats any loader cache anyway.
       const mod = await import(`../client/opencode-plugin.mjs?live=${Date.now()}`);
@@ -195,6 +277,11 @@ describe("the plugin at runtime", () => {
 
     const before = (await state(hub.base, TOKEN)).body.events.length;
     await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
+      // Opt in the ORIGINAL repo, not the worktree — the worktree has no
+      // .git of its own to be opted in by path; it resolves back to this one
+      // (repoInfo § zevetOrigin), and that resolved identity is what the
+      // opt-in check reads.
+      addOpencodeRepo(repo);
       const mod = await import(`../client/opencode-plugin.mjs?wt=${Date.now()}`);
       const hooks = await mod.Zevet({ directory: wt.dir });
       await hooks["tool.execute.before"]({ tool: "write" }, { args: { file_path: "a.ts" } });
@@ -213,14 +300,94 @@ describe("the plugin at runtime", () => {
       path.join(home.dir, "config.json"),
       JSON.stringify({ hub: "http://127.0.0.1:1", token: TOKEN, actor: "opencode-test" }),
     );
+    // Opted in and a real repo: otherwise the opt-in gate makes every hook a
+    // no-op before it ever reaches the dead hub, and the test would pass
+    // without exercising anything.
+    const repo = makeRepo(t, "dead-hub");
     await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "500" }, async () => {
+      addOpencodeRepo(repo);
       const mod = await import(`../client/opencode-plugin.mjs?dead=${Date.now()}`);
-      const hooks = await mod.Zevet({ directory: t.name });
+      const hooks = await mod.Zevet({ directory: repo });
       // Must resolve, not reject: a throw in tool.execute.before blocks the tool.
       await hooks["tool.execute.before"]({ tool: "read" }, { args: { file_path: "x" } });
       await hooks.event({ event: { type: "session.idle" } });
       await hooks.event({ event: { type: "something-new" } });
       await hooks.event({});
+    });
+  });
+
+  test("a repo not opted in stays silent, even with the global plugin installed", async (t) => {
+    const home = tempDir("zevet-opencode-noopt-");
+    t.after(() => home.cleanup());
+    writeFileSync(path.join(home.dir, "config.json"), JSON.stringify({ hub: hub.base, token: TOKEN, actor: "noopt-test" }));
+    const repo = makeRepo(t, "never-opted-in");
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "y.ts"), "x\n");
+
+    const before = (await state(hub.base, TOKEN)).body.events.length;
+    await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
+      // Deliberately NOT calling addOpencodeRepo — this is the machine-wide
+      // plugin seeing a repo nobody ever pointed zevet at.
+      const mod = await import(`../client/opencode-plugin.mjs?noopt=${Date.now()}`);
+      const hooks = await mod.Zevet({ directory: repo });
+      await hooks["tool.execute.before"]({ tool: "write" }, { args: { file_path: "src/y.ts" } });
+      await hooks.event({ event: { type: "session.idle" } });
+    });
+    assert.equal(
+      (await state(hub.base, TOKEN)).body.events.length,
+      before,
+      "a repo nobody opted in published to the hub",
+    );
+  });
+
+  test("no opt-in list at all means silence, not every repo on the machine", async (t) => {
+    // The failure direction matters, same as Codex's identical test: a
+    // missing or corrupt list must publish nothing, never fall open.
+    const home = tempDir("zevet-opencode-nolist-");
+    t.after(() => home.cleanup());
+    writeFileSync(path.join(home.dir, "config.json"), JSON.stringify({ hub: hub.base, token: TOKEN, actor: "nolist-test" }));
+    const repo = makeRepo(t, "nolist");
+    const before = (await state(hub.base, TOKEN)).body.events.length;
+    await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
+      assert.ok(!existsSync(opencodeReposPath()), "test setup: no list must exist yet");
+      const mod = await import(`../client/opencode-plugin.mjs?nolist=${Date.now()}`);
+      const hooks = await mod.Zevet({ directory: repo });
+      await hooks.event({ event: { type: "session.idle" } });
+    });
+    assert.equal((await state(hub.base, TOKEN)).body.events.length, before, "a missing opt-in list fell open");
+  });
+
+  test("a corrupt opt-in list means silence too", async (t) => {
+    const home = tempDir("zevet-opencode-badlist-");
+    t.after(() => home.cleanup());
+    writeFileSync(path.join(home.dir, "config.json"), JSON.stringify({ hub: hub.base, token: TOKEN, actor: "badlist-test" }));
+    const repo = makeRepo(t, "badlist");
+    const before = (await state(hub.base, TOKEN)).body.events.length;
+    await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
+      mkdirSync(home.dir, { recursive: true });
+      writeFileSync(opencodeReposPath(), "{ this is not json", "utf8");
+      const mod = await import(`../client/opencode-plugin.mjs?badlist=${Date.now()}`);
+      const hooks = await mod.Zevet({ directory: repo });
+      await hooks.event({ event: { type: "session.idle" } });
+    });
+    assert.equal((await state(hub.base, TOKEN)).body.events.length, before, "a corrupt opt-in list fell open");
+  });
+});
+
+describe("the opencode repo opt-in list", () => {
+  test("install.mjs's opencode branch records and un-records a repo", async (t) => {
+    const home = tempDir("zevet-opencode-reposlist-");
+    t.after(() => home.cleanup());
+    await withEnv({ ZEVET_HOME: home.dir }, () => {
+      const a = makeRepo(t, "list-a");
+      const b = makeRepo(t, "list-b");
+      addOpencodeRepo(a);
+      addOpencodeRepo(b);
+      assert.deepEqual(readOpencodeRepos().sort(), [path.resolve(a), path.resolve(b)].sort());
+      addOpencodeRepo(a); // twice is once
+      assert.equal(readOpencodeRepos().length, 2);
+      removeOpencodeRepo(a);
+      assert.deepEqual(readOpencodeRepos(), [path.resolve(b)], "removing one repo must leave the other opted in");
     });
   });
 });

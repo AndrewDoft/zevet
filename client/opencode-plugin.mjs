@@ -17,7 +17,7 @@
 //   2. Never be noisy. Diagnostics go nowhere unless ZEVET_DEBUG is set.
 //      (hook.mjs warns to stderr; a plugin's console is opencode's log surface,
 //      so silence is the default here rather than just silence on stdout.)
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
@@ -113,6 +113,44 @@ function zevetOrigin(dir) {
   } catch {
     return null;
   }
+}
+
+/**
+ * The repos this machine opted in to reporting opencode activity for.
+ *
+ * Copy of install-opencode.mjs's readOpencodeRepos + sameRepoPath, inline for
+ * the same reason the credential derivation above is: this file runs with no
+ * access to the checkout. Load-bearing, not optional — this is a GLOBAL
+ * plugin now (opencodeGlobalPluginPath's comment), so without this check it
+ * would report every `opencode run` on the machine, including repos nobody
+ * ever pointed zevet at. See DECISIONS.md D-001, which hit the identical
+ * problem for Codex's global hooks first.
+ */
+function repoIsOptedIn(dir) {
+  let list;
+  try {
+    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    const raw = readFileSync(path.join(home, "opencode-repos.json"), "utf8").replace(/^﻿/, "");
+    const parsed = JSON.parse(raw);
+    list = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    // No list, no opt-in. Silence is the safe direction for a global plugin —
+    // better to report nothing than to publish a repo nobody chose.
+    return false;
+  }
+  const canonical = (p) => {
+    try {
+      return realpathSync(path.resolve(p));
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const here = canonical(dir || "");
+  return list.some((d) => {
+    if (typeof d !== "string" || !d.trim()) return false;
+    const there = canonical(d);
+    return process.platform === "win32" ? there.toLowerCase() === here.toLowerCase() : there === here;
+  });
 }
 
 /** Repo root, name and branch, straight off the filesystem. No git subprocess. */
@@ -321,12 +359,23 @@ async function flushOutbox() {
 export const Zevet = async ({ directory } = {}) => {
   const { repo, root, origin } = repoInfo(directory);
   const detailLevel = (process.env.ZEVET_DETAIL || "full").toLowerCase();
+  // This repo (or the repo a zevet-made worktree belongs to) must be
+  // explicitly opted in — see repoIsOptedIn's comment. Checked once, at
+  // startup: the directory a session runs in does not change mid-session.
+  // Same fallback chain as hook.mjs's Codex check: origin (a zevet-made
+  // worktree's real repo), else the git root, else the raw directory opencode
+  // handed us — a session outside any git repo still needs SOMETHING to
+  // compare against the opt-in list, and "nothing" would either always match
+  // (falls open) or never match (silently drops a folder somebody genuinely
+  // opted in by its own path, not a repo root).
+  const optedIn = repoIsOptedIn(origin || root || directory);
 
   return {
     // Fires before each tool runs. input.tool is the name, output.args holds
     // the arguments — the opencode equivalent of Claude Code's PreToolUse.
     "tool.execute.before": async (input, output) => {
       try {
+        if (!optedIn) return;
         const tool = (input && input.tool) || "";
         if (!tool) return;
         const { file, detail } = describe(output && output.args);
@@ -346,6 +395,7 @@ export const Zevet = async ({ directory } = {}) => {
     // every tool twice. Same reason hook.mjs ignores PostToolUse.
     event: async ({ event } = {}) => {
       try {
+        if (!optedIn) return;
         if (!event || typeof event.type !== "string") return;
         if (event.type === "session.idle") {
           // The turn went quiet — the opencode equivalent of Stop.

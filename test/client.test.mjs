@@ -58,6 +58,12 @@ const SANDBOX = {
   ZEVET_SKIP_CODEX_TRUST: "1",
   CODEX_HOME: path.join(SANDBOX_HOME.dir, "codex"),
   ZEVET_HOME: path.join(SANDBOX_HOME.dir, "zevet"),
+  // Same reasoning as CODEX_HOME/ZEVET_HOME above, for opencode's GLOBAL
+  // plugin install: without this, installOpencodeGlobal's default
+  // (os.homedir()) would write into the real machine's ~/.config/opencode —
+  // exactly the "wired the real install to a temp repo" bug this file's own
+  // header comment describes, just for a different agent.
+  ZEVET_OPENCODE_HOME: path.join(SANDBOX_HOME.dir, "opencode-global"),
 };
 after(() => SANDBOX_HOME.cleanup());
 

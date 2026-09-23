@@ -500,3 +500,55 @@ the timer already only sends what actually changed).
 
 **Reversibility.** High. The outbox and cursor are their own files;
 deleting them starts push from a clean slate.
+
+## D-013 — opencode's plugin install moved from per-repo to global + an opt-in list
+
+**2026-09-23**
+
+**Decision.** `client/install.mjs`'s opencode step now calls
+`installOpencodeGlobal()` (writes `~/.config/opencode/plugins/zevet.js`,
+opencode's own documented global plugin directory — VERIFIED against
+`opencode.ai/docs/plugins` and confirmed on a real machine, which already had
+an empty one) instead of only `installOpencode(repo, ...)`. It also removes
+any older per-repo copy for the repo being installed (it would otherwise
+double-report every session there). A repo is watched only once it is
+recorded in a new `~/.zevet/opencode-repos.json`, written by `install.mjs`
+and read inline by the self-contained plugin — the exact shape of
+`codex-repos.json` (D-001), for the exact same reason: a global surface
+(opencode's plugin dir, Codex's hook config) reports every repo on the
+machine unless something tells it not to, and installing zevet into one repo
+must never publish an unrelated private one to a hub the whole team can read.
+
+**Why it came up.** `docs/contracts/opencode-hooks.md` §1 had already noted
+the global directory exists and explicitly chose not to use it, citing D-001
+— at the time, the per-repo file itself was treated as sufficient opt-in.
+That stopped being true the moment zevet started launching its OWN opencode
+agents (`desktop/agent-console.js`): those run in whatever worktree the board
+gives them, which is never the repo `zevet install` was run in, so the
+per-repo file was never there and the session was invisible on the board.
+Observed directly this session in a fresh worktree.
+
+**Alternatives.**
+
+1. *Auto-install the per-repo plugin from `agent-console.js` before every
+   opencode launch* (what the task brief offered as the fallback). Rejected:
+   opencode already supports a global directory, so this would be maintaining
+   the weaker mechanism when the strong one exists — and it would still leave
+   any opencode session a person starts by hand (not through zevet) in a
+   worktree uncovered.
+2. *Global plugin, no allowlist* (the simplest reading of "any opencode
+   session on this machine"). Rejected outright: this is D-001's exact
+   failure, just for a different agent — it would report a person's unrelated
+   private repos the moment zevet was installed anywhere.
+
+**Reversibility.** High. `opencode-repos.json` and the global plugin file are
+each one file; deleting both and going back to `installOpencode(repo, ...)`
+alone restores the old per-repo-only behaviour. A repo that still carries an
+old per-repo copy (nobody has re-run `zevet install` in it since this change)
+is a known, bounded gap — see docs/KNOWN-FAILURES.md.
+
+**Cost.** Every machine that had already run `zevet install` for opencode
+needs to run it again once for the global copy + opt-in entry to exist;
+until then, that repo's opencode sessions are invisible exactly as they were
+before this change (not worse — the per-repo file, if still present, keeps
+working on its own until the next install swaps it out).

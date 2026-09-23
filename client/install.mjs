@@ -12,7 +12,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectAgents } from "./detect.mjs";
 import { installCodex, grantCodexHookTrust } from "./install-codex.mjs";
-import { installOpencode, openrouterReady } from "./install-opencode.mjs";
+import {
+  addOpencodeRepo,
+  installOpencodeGlobal,
+  openrouterReady,
+  removeOpencode,
+  removeOpencodeRepo,
+} from "./install-opencode.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.resolve(HERE, "hook.mjs");
@@ -240,13 +246,28 @@ for (const agent of targets) {
       );
     }
   } else if (agent.id === "opencode") {
-    const r = installOpencode(repo, { remove });
-    if (!r.ok) {
-      console.error(`zevet: ${r.detail}`);
+    // GLOBAL, not per-repo: opencode-plugin.mjs reads which repo it is
+    // running against off the directory it was STARTED in, not off where the
+    // plugin file lives (see opencodeGlobalPluginPath's comment), so one
+    // install here covers every repo and worktree on the machine, including
+    // ones nobody has ever pointed this installer at.
+    const g = installOpencodeGlobal({ remove });
+    if (!g.ok) {
+      console.error(`zevet: ${g.detail}`);
       failed = true;
       continue;
     }
-    console.log(remove ? `OpenCode       ${r.detail}` : `OpenCode       plugin -> ${r.detail}`);
+    console.log(remove ? `OpenCode       ${g.detail}` : `OpenCode       plugin -> ${g.detail}`);
+    // This repo's own OLDER, per-repo copy, if an earlier zevet left one:
+    // left in place it would report every opencode session here twice, once
+    // from it and once from the global copy just installed above.
+    const r = removeOpencode(repo);
+    if (r.state === "removed") console.log(`OpenCode       also removed this repo's own older copy (${r.detail})`);
+    // The global plugin reports every repo on the machine unless it is told
+    // not to — this list is what tells it. Same reasoning as Codex's global
+    // hooks (D-001): wiring up one repo must not publish every other one.
+    if (remove) removeOpencodeRepo(repo);
+    else addOpencodeRepo(repo);
     if (!remove) {
       // OpenRouter is a provider inside opencode, not a binary to find: the
       // board shows whatever model the session uses, free or paid. A missing

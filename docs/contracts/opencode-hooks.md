@@ -16,9 +16,7 @@ opencode has no equivalent of Claude Code's `.claude/settings.json`
 `hooks: { Event: [...] }`. The only hook surface is **plugins**: JS/TS modules
 that export plugin functions, auto-loaded from `.opencode/plugins/` (project)
 or `~/.config/opencode/plugins/` (global), or named in config `"plugin": [...]`
-for npm packages. So zevet's coverage is a plugin file, not a command string —
-`client/opencode-plugin.mjs`, copied per repo to
-`<repo>/.opencode/plugins/zevet.js` by `client/install-opencode.mjs`.
+for npm packages.
 
 The installed copy is `.js`, not `.mjs`, and that is load-bearing rather than
 cosmetic: MEASURED 2026-09-19 against opencode 1.18.31, a `.mjs` file in the
@@ -28,10 +26,28 @@ docs say "JavaScript or TypeScript files" and the loader means the extensions
 it knows. A marker that appends to a file on load is the five-minute test if
 this is ever doubted again.
 
-The per-repo file IS the opt-in, the way Claude Code's per-repo settings entry
-is. A global plugin would report every project on the machine, which is the
-Codex failure D-001 exists to prevent — except here the scoped option is the
-default, so it is simply used.
+**Changed 2026-09-23 (D-013): the installed copy is now GLOBAL, not per-repo.**
+`client/install-opencode.mjs`'s `installOpencodeGlobal()` writes
+`~/.config/opencode/plugins/zevet.js` — VERIFIED against
+`opencode.ai/docs/plugins` and against this same machine, which already had
+an empty `~/.config/opencode/plugins/` directory opencode itself had created.
+`client/install.mjs` calls it instead of (and also removes) the old per-repo
+copy. Reason: the per-repo file is never present in a worktree
+`desktop/agent-console.js` starts an opencode agent in on zevet's own
+behalf — that worktree was never the repo `zevet install` ran in — so
+zevet's OWN launched agents were invisible on the board. A global plugin
+computes which repo it is watching off the directory it is STARTED in
+(`repoInfo` in `opencode-plugin.mjs`), not off where the plugin file lives, so
+one global copy covers every repo and worktree.
+
+A global surface reports every repo on the machine unless something tells it
+not to — the exact problem D-001 solved for Codex's global hooks. So this
+carries the same fix: `~/.zevet/opencode-repos.json`, written by
+`install.mjs` (`addOpencodeRepo`/`removeOpencodeRepo`), read inline by the
+plugin itself (`repoIsOptedIn`, a copy of hook.mjs's Codex check — the plugin
+is self-contained, see §4, so it cannot import the checkout's copy). A repo
+not on the list is silent, same failure direction as Codex: a missing or
+corrupt list means nothing reports, never everything.
 
 ## 2. Events used, and what they become
 
@@ -129,3 +145,25 @@ Two things the observation taught, the first now in the code:
    loads the target repo's plugin directory. The one `--dir` attempt predated
    the `.js` fix, so it proved nothing either way. Until someone watches it,
    run wired turns with the repo as the working directory.
+
+## 8. The global plugin, OBSERVED 2026-09-23 (D-013)
+
+`installOpencodeGlobal({})` (default `home`, the real machine) really does
+write `C:\Users\<user>\.config\opencode\plugins\zevet.js`. Then, with that
+repo added to a throwaway `~/.zevet/opencode-repos.json` pointed at a local
+disposable hub (never the production one), a real `opencode run -m
+opencode/mimo-v2.6-flash-free "..."` in a git worktree that had **no**
+`.opencode/plugins/` directory of its own — the exact "fresh worktree" case
+this change exists for — produced `prompt` and `turn_end` on `/api/state`,
+`agent: opencode`, `repo` correctly read as that worktree's own folder name.
+
+The negative case (repo NOT on the opt-in list stays silent) is verified
+against the real, unmodified plugin module loaded from its real installed
+path (`test/opencode.test.mjs`'s "a repo not opted in stays silent" and the
+two empty/corrupt-list tests), not against a second live `opencode run` —
+two attempts at that hung indefinitely for reasons that had nothing to do
+with the gate (no output on stdout or stderr, opencode.exe still resident
+minutes later; killed both times). Given the gate is one `if` at the top of
+each hook and the positive case is proven against the real binary, the risk
+this leaves unverified is narrow, but it is not zero — flagged here rather
+than claimed.

@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { startHub, state, runScript, tempDir, TOKEN } from "./helpers.mjs";
+import { addOpencodeRepo } from "../client/install-opencode.mjs";
 
 const TOOL_PAYLOAD = JSON.stringify({
   hook_event_name: "PreToolUse",
@@ -113,6 +114,10 @@ describe("the plugin outbox", () => {
     const home = tempDir("zevet-outbox-plugin-");
     t.after(() => home.cleanup());
     const env = { ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "400" };
+    // The global plugin now needs the directory opted in (see
+    // opencode-repos.json / D-013) — home.dir has no .git, so the plugin's
+    // opt-in check falls back to comparing this exact path.
+    await withEnv({ ZEVET_HOME: home.dir }, () => addOpencodeRepo(home.dir));
     const mod = await import(`../client/opencode-plugin.mjs?outbox=${Date.now()}`);
 
     await withEnv({ ...env, ZEVET_HUB: "http://127.0.0.1:1", ZEVET_TOKEN: TOKEN }, async () => {
