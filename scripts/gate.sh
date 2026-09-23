@@ -21,15 +21,20 @@ node --version
 #
 # The editor tests need NO npm install: they read the committed bundle and
 # import editor/src/language.js, which imports nothing. A fresh clone runs them.
-node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs" 2>&1 | tee /tmp/zevet-gate.log
+#
+# scripts/run-tests.mjs, not a raw `node --test`: it is the one place that
+# reads the "cancelled" line node's own summary keeps separate from "fail" —
+# a hook that threw before its tests ran (a missing Electron build is the
+# common cause) — and fails loudly on it. Same npm-test entry point CI uses.
+node scripts/run-tests.mjs 2>&1 | tee /tmp/zevet-gate.log
 status=${PIPESTATUS[0]}
 
 echo
-grep -E "^ℹ (tests|pass|fail|skipped|todo) " /tmp/zevet-gate.log | tail -5
+grep -E "^ℹ (tests|pass|fail|cancelled|skipped|todo) " /tmp/zevet-gate.log | tail -6
 
 if [ "$status" -ne 0 ]; then
   echo
-  echo "GATE RED (node --test exited $status) — do not commit, do not deploy."
+  echo "GATE RED (test run exited $status) — do not commit, do not deploy."
   sed -n '/^✖ failing tests:/,$p' /tmp/zevet-gate.log | head -40
   exit 1
 fi

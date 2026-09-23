@@ -63,8 +63,13 @@ jobs:
       # The hub and the client have no dependencies, so this is the whole suite.
       # It runs on both runners on purpose: the bugs this project keeps finding
       # are the ones that are correct on one platform and wrong on the other.
+      #
+      # `npm test`, not a raw `node --test`: scripts/run-tests.mjs is the one
+      # place that reads node's "cancelled" line (a hook that threw before its
+      # tests ran — e.g. Electron missing) and fails the job on it, since
+      # "cancelled" is not "fail" and a green-looking "fail 0" can hide it.
       - name: Test
-        run: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
+        run: npm test
 
       - name: Build
         working-directory: desktop
