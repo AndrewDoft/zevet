@@ -48,6 +48,7 @@ const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const masoraPush = require("./masora-push.js");
+const masoraConnect = require("./masora-connect.js");
 const chats = require("./chat.js");
 const { createClaudeCli } = require("./chat-claude.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
@@ -1197,15 +1198,13 @@ ipcMain.handle("zevet:masoraUnpair", () => {
   return true;
 });
 
-const OAUTH_PROVIDERS = ["linear", "github", "slack", "gdrive", "gmail", "gcal", "notion", "zoom"];
-
 ipcMain.handle("masora:sources", async () => {
   const cfg = masora.readConfig();
   if (!cfg.paired) return { sources: [] };
   const token = masora.loadToken((b) => safeStorage.decryptString(b));
   if (!token) return { error: "Could not decrypt token" };
   try {
-    let url = cfg.url;
+    const url = cfg.url;
     const res = await fetch(`${url.replace(/\/+$/, "")}/api/sources`, {
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(5000),
@@ -1225,16 +1224,19 @@ ipcMain.handle("masora:sources", async () => {
 });
 
 ipcMain.handle("masora:connect", async (_e, { provider } = {}) => {
-  if (!OAUTH_PROVIDERS.includes(provider)) {
-    return { error: "Unknown provider" };
-  }
   const cfg = masora.readConfig();
   if (!cfg.paired) {
     return { error: "Not paired with Masora" };
   }
-  let url = cfg.url;
-  shell.openExternal(`${url.replace(/\/+$/, "")}/api/oauth/${provider}/install`).catch(() => {});
-  return { ok: true };
+  const token = masora.loadToken((b) => safeStorage.decryptString(b));
+  if (!token) return { error: "Could not decrypt token" };
+  return masoraConnect.connectProvider({
+    provider,
+    baseUrl: cfg.url,
+    token,
+    shell,
+    fetchImpl: fetch,
+  });
 });
 
 // ---- the local workspace ---------------------------------------------------

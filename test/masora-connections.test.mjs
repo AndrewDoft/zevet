@@ -1,45 +1,20 @@
 // Masora connections: provider OAuth setup via Zevet's Settings (D-326).
-// Zevet holds no secrets — it opens Masora's /api/oauth/{provider}/install in
-// the system browser and maps connection status from /api/sources.
+// Tests the real masora-connect.js module: provider validation, URL building,
+// status mapping, and the OAuth flow with authorize URL or admin fallback.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import {
+  OAUTH_PROVIDERS,
+  PROVIDER_MAP,
+  isValidProvider,
+  buildInstallUrl,
+  mapSourcesToStatus,
+  connectProvider,
+} from "../desktop/masora-connect.js";
 
-const OAUTH_PROVIDERS = ["linear", "github", "slack", "gdrive", "gmail", "gcal", "notion", "zoom"];
-
-/**
- * Validates a provider ID against the allowlist. Returns true if valid.
- * Guard: unknown providers are rejected.
- */
-function isValidProvider(provider) {
-  return OAUTH_PROVIDERS.includes(provider);
-}
-
-/**
- * Builds the OAuth initiation URL for a given provider and Masora base URL.
- */
-function buildOAuthUrl(baseUrl, provider) {
-  if (!isValidProvider(provider)) {
-    throw new Error(`Unknown provider: ${provider}`);
-  }
-  return `${String(baseUrl).replace(/\/+$/, "")}/api/oauth/${provider}/install`;
-}
-
-/**
- * Maps a sources array from Masora's /api/sources to status labels.
- * Status: "connected" if the source status is "connected", else "reconnect".
- * Missing providers get no entry (mapped to "—" in UI).
- */
-function mapSourcesToStatus(sources) {
-  const map = {};
-  if (!Array.isArray(sources)) return map;
-  for (const s of sources) {
-    map[s.kind] = s.status === "connected" ? "connected" : "reconnect";
-  }
-  return map;
-}
-
-describe("provider allowlist", () => {
+describe("provider validation", () => {
   test("accepts all 8 providers", () => {
+    assert.deepEqual(OAUTH_PROVIDERS, ["linear", "github", "slack", "notion", "zoom", "gdrive", "gmail", "gcal"]);
     for (const p of OAUTH_PROVIDERS) {
       assert(isValidProvider(p), `${p} should be valid`);
     }
@@ -53,42 +28,58 @@ describe("provider allowlist", () => {
 
   test("rejects unknown provider in URL builder", () => {
     assert.throws(
-      () => buildOAuthUrl("https://usemasora.com", "unknown"),
+      () => buildInstallUrl("unknown"),
       /Unknown provider/
     );
   });
 });
 
-describe("OAuth URL building", () => {
+describe("provider mapping", () => {
+  test("gdrive maps to google with kind=gdrive", () => {
+    const m = PROVIDER_MAP.gdrive;
+    assert.equal(m.provider, "google");
+    assert.equal(m.kind, "gdrive");
+  });
+
+  test("gmail maps to google with kind=gmail", () => {
+    const m = PROVIDER_MAP.gmail;
+    assert.equal(m.provider, "google");
+    assert.equal(m.kind, "gmail");
+  });
+
+  test("gcal maps to google with kind=gcal", () => {
+    const m = PROVIDER_MAP.gcal;
+    assert.equal(m.provider, "google");
+    assert.equal(m.kind, "gcal");
+  });
+
+  test("linear maps to linear with no kind", () => {
+    const m = PROVIDER_MAP.linear;
+    assert.equal(m.provider, "linear");
+    assert.equal(m.kind, undefined);
+  });
+});
+
+describe("install URL building", () => {
   test("builds correct URLs for each provider", () => {
-    const base = "https://example.com";
-    assert.equal(
-      buildOAuthUrl(base, "linear"),
-      "https://example.com/api/oauth/linear/install"
-    );
-    assert.equal(
-      buildOAuthUrl(base, "github"),
-      "https://example.com/api/oauth/github/install"
-    );
-    assert.equal(
-      buildOAuthUrl(base, "zoom"),
-      "https://example.com/api/oauth/zoom/install"
-    );
+    assert.equal(buildInstallUrl("linear"), "/api/oauth/linear/install");
+    assert.equal(buildInstallUrl("github"), "/api/oauth/github/install");
+    assert.equal(buildInstallUrl("slack"), "/api/oauth/slack/install");
+    assert.equal(buildInstallUrl("notion"), "/api/oauth/notion/install");
+    assert.equal(buildInstallUrl("zoom"), "/api/oauth/zoom/install");
   });
 
-  test("strips trailing slashes from base URL", () => {
-    const urlWithSlash = "https://example.com///";
-    assert.equal(
-      buildOAuthUrl(urlWithSlash, "slack"),
-      "https://example.com/api/oauth/slack/install"
-    );
+  test("google URLs include kind param", () => {
+    assert.equal(buildInstallUrl("gdrive"), "/api/oauth/google/install?kind=gdrive");
+    assert.equal(buildInstallUrl("gmail"), "/api/oauth/google/install?kind=gmail");
+    assert.equal(buildInstallUrl("gcal"), "/api/oauth/google/install?kind=gcal");
   });
 
-  test("handles missing protocol", () => {
-    // The replace handles malformed URLs gracefully; behavior on edge cases
-    // is deferred to the browser opening the URL.
-    const result = buildOAuthUrl("example.com", "github");
-    assert(result.endsWith("/api/oauth/github/install"));
+  test("rejects unknown provider", () => {
+    assert.throws(
+      () => buildInstallUrl("unknown"),
+      /Unknown provider/
+    );
   });
 });
 
@@ -136,18 +127,126 @@ describe("source status mapping", () => {
   });
 });
 
-describe("guard: provider validation", () => {
-  test("guard fails when provider list excludes valid provider", () => {
-    // Deliberately mutate the guard to prove it can fail: if we remove "linear"
-    // from OAUTH_PROVIDERS, the test below should fail.
-    // Reset OAUTH_PROVIDERS to prove the guard works.
-    const providers = ["linear", "github"];
-    const hasLinear = providers.includes("linear");
-    assert(hasLinear, "guard should detect linear");
+describe("OAuth flow", () => {
+  test("opens authorize_url when install returns 200 with https URL", async () => {
+    let openedUrl = null;
+    const mockShell = {
+      openExternal: async (url) => {
+        openedUrl = url;
+      },
+    };
+    const mockFetch = async () => ({
+      status: 200,
+      ok: true,
+      json: async () => ({ authorize_url: "https://example.com/authorize?code=123" }),
+    });
+    const result = await connectProvider({
+      provider: "github",
+      baseUrl: "https://masora.example.com",
+      token: "token123",
+      shell: mockShell,
+      fetchImpl: mockFetch,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.via, "authorize");
+    assert.equal(result.status, 200);
+    assert.equal(openedUrl, "https://example.com/authorize?code=123");
+  });
 
-    // Now test with linear missing.
-    const providersWithoutLinear = ["github"];
-    const missingLinear = !providersWithoutLinear.includes("linear");
-    assert(missingLinear, "guard should fail when linear is missing");
+  test("opens /admin when install returns non-200", async () => {
+    let openedUrl = null;
+    const mockShell = {
+      openExternal: async (url) => {
+        openedUrl = url;
+      },
+    };
+    const mockFetch = async () => ({
+      status: 503,
+      ok: false,
+      json: async () => ({}),
+    });
+    const result = await connectProvider({
+      provider: "github",
+      baseUrl: "https://masora.example.com",
+      token: "token123",
+      shell: mockShell,
+      fetchImpl: mockFetch,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.via, "admin");
+    assert.equal(result.status, 503);
+    assert.equal(openedUrl, "https://masora.example.com/admin");
+  });
+
+  test("opens /admin when authorize_url is missing or not https", async () => {
+    let openedUrl = null;
+    const mockShell = {
+      openExternal: async (url) => {
+        openedUrl = url;
+      },
+    };
+    const mockFetch = async () => ({
+      status: 200,
+      ok: true,
+      json: async () => ({ authorize_url: "http://example.com/authorize" }),
+    });
+    const result = await connectProvider({
+      provider: "github",
+      baseUrl: "https://masora.example.com",
+      token: "token123",
+      shell: mockShell,
+      fetchImpl: mockFetch,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.via, "admin");
+    assert.equal(openedUrl, "https://masora.example.com/admin");
+  });
+
+  test("opens /admin when network error", async () => {
+    let openedUrl = null;
+    const mockShell = {
+      openExternal: async (url) => {
+        openedUrl = url;
+      },
+    };
+    const mockFetch = async () => {
+      throw new Error("network error");
+    };
+    const result = await connectProvider({
+      provider: "github",
+      baseUrl: "https://masora.example.com",
+      token: "token123",
+      shell: mockShell,
+      fetchImpl: mockFetch,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.via, "admin");
+    assert.equal(result.status, "error");
+    assert.equal(openedUrl, "https://masora.example.com/admin");
+  });
+
+  test("rejects unknown provider", async () => {
+    const result = await connectProvider({
+      provider: "unknown",
+      baseUrl: "https://masora.example.com",
+      token: "token123",
+      shell: { openExternal: async () => {} },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "Unknown provider");
+  });
+});
+
+describe("guard: mutation test", () => {
+  test("removing gcal from mapping breaks the test", () => {
+    // This test documents that the mutation check was done manually:
+    // 1. Removed gcal from PROVIDER_MAP
+    // 2. Ran tests - confirmed buildInstallUrl("gcal") failed
+    // 3. Restored gcal
+    // 4. Ran tests - confirmed all passed
+    //
+    // The presence of gcal in both PROVIDER_MAP and OAUTH_PROVIDERS is the guard.
+    assert(PROVIDER_MAP.gcal, "gcal must be in PROVIDER_MAP");
+    assert(OAUTH_PROVIDERS.includes("gcal"), "gcal must be in OAUTH_PROVIDERS");
   });
 });
