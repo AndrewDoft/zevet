@@ -258,3 +258,36 @@ shows `masora` as connected after the CLI's own OAuth flow completes.
 Masora. The masora2-side half of the same contract (T5's other track) has its
 own request/response tests against the real FastAPI app in MOCK_MODE and is
 not blocked by this entry.
+
+## INSUF-008 — a created team's WebSocket document rooms are not isolated from other teams on the same hub — **OPEN**
+
+**What is missing.** D-014 gives each team created via `POST /team/create` its
+own master secret, ownership/allowlist and activity board (events, `/api/state`,
+`/events` SSE). It does NOT scope the WebSocket document rooms
+(`hub/server.mjs`'s `rooms` Map, `joinRoom`, `handleControlMessage`): a room
+name is client-chosen and opaque to the hub (`MAX_ROOM_NAME`, no parsing,
+no namespace), so two different teams' editors choosing the same room name
+would relay each other's document edits.
+
+**What was tried.** The account and board halves are real and tested
+(`test/team.test.mjs`, 10 tests, mutation-checked on the event-isolation
+assertion). Scoping the room layer too was scoped out of this session
+deliberately — see D-014's alternatives — rather than attempted and left
+half-verified: `rooms`/`wsClients`/the frame-decoding code are covered by
+`test/hub-ws.test.mjs`'s 48 tests and touching that subsystem under the same
+P0 timebox as the sign-in/updater fixes risked a change to the hardest part
+of the hub to verify quietly wrong.
+
+**Smallest thing that unblocks it.** Namespace the room key at `joinRoom`
+with the caller's own resolved team (`` `${team}\u0000${room}` ``, mirroring
+how `resolveTeam` already resolves the caller's team from their token at the
+WS upgrade's existing `tokenFrom` check) — additive, no client change needed
+since the editor never sees the hub's internal room key. Needs its own pass
+through `test/hub-ws.test.mjs`'s existing room tests plus a new
+cross-team-collision test before it can be called closed.
+
+**Blast radius.** Only a hub actually hosting more than one team via
+`/team/create` — Andrew's hosted hub has exactly one team (himself) until
+this ships. Document content, not credentials or account data: a room-name
+collision could relay live document edits between two teams' editors, never
+authenticate one team's caller as another's.

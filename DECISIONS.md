@@ -552,3 +552,64 @@ needs to run it again once for the global copy + opt-in entry to exist;
 until then, that repo's opencode sessions are invisible exactly as they were
 before this change (not worse — the per-repo file, if still present, keeps
 working on its own until the next install swaps it out).
+
+---
+
+## D-014 — a created team gets its own accounts and its own activity board, not yet its own document rooms
+
+**2026-09-23**
+
+**Decision.** `hub/server.mjs` gained a team registry: `POST /team/create`
+mints a random 10-hex slug, a fresh `Accounts` instance (own master secret,
+own ownership, own allowlist — reusing the exact trust-on-first-use path an
+unclaimed default hub already has) and a fresh activity board (own event
+ring buffer, own `.jsonl` log, own SSE listener set). `/auth/github/*` and
+`/auth/google/*` accept an optional `team` in the request, defaulting to
+`"default"` — every install in the field today, which never sends one — and
+`resolveTeam()` resolves ANY authenticated call (`/ingest`, `/api/state`,
+`/events`, `/auth/whoami`, `/auth/allow`, `/auth/revoke`, `/auth/logout`) to
+the team the CALLER'S OWN token belongs to, so a second team's activity feed
+is isolated from the first's without the client naming a team on every call.
+
+Deliberately NOT scoped: the WebSocket document rooms (`rooms`, `joinRoom`,
+`handleControlMessage`). A room name is client-chosen and already opaque to
+the hub (`MAX_ROOM_NAME`, no parsing) — two teams choosing the same room name
+would relay to each other. See INSUF-008.
+
+**Why it came up.** Andrew: "it doesn't allow him to create a new hub only to
+join one" (Trevor, onboarding zevet 0.2.56 fresh). The setup window had no
+path to a hub for a first-run person with nobody to invite them, which is
+also most of why the sign-in buttons looked broken (a).
+
+**Alternatives.**
+
+1. *Full tenant isolation, rooms included, this session.* Rejected for time
+   and risk: `rooms`/`wsClients`/the WS framing code are a large, carefully
+   invariant-commented subsystem (test/hub-ws.test.mjs alone is 48 tests), and
+   scoping it under the same P0 session as the sign-in and updater fixes risked
+   shipping a half-verified change to the part of the hub that is hardest to
+   get wrong quietly — a room that leaks is a data leak, not a broken button.
+2. *No team feature this session, only fix (a)/(c)/(d).* Rejected: Andrew's
+   own words treat "create a team" as a genuine bug, not a nice-to-have, and
+   the hub-side trust-on-first-use mechanism already made the auth half of
+   this cheap and low-risk to build properly — punting the whole thing would
+   have been the lazier, not the more honest, choice.
+3. *Fake it — same board, cosmetic team switch.* Rejected outright: a "team"
+   that shares another team's activity feed is not a team, and shipping that
+   under the label "isolated" is exactly what CLAUDE.md's tone (and this
+   repo's own INSUF-NNN convention) exists to prevent even without a formal
+   §0 in this file's own governance.
+
+**Reversibility.** High for the account/board half: `/team/create` and the
+`team` parameter are additive — deleting them returns every route to reading
+the bare `accounts`/`TOKEN`/default board exactly as before. Extending
+isolation to rooms is a separate, additive change on top (prefix or namespace
+the room key by team at `joinRoom`), not a rework of what shipped here.
+
+**Cost.** A hub operator who wants real multi-team hosting today gets
+isolated credentials and an isolated activity feed, but a room-name collision
+between two teams (accidental or deliberate) still relays traffic between
+them. Practically low-severity while a hub hosts a handful of teams whose
+document-room names are drawn from real repo/branch state, not an attacker
+picking a name on purpose — but it is not a security boundary, and is not
+described as one anywhere in the desktop UI.

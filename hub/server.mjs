@@ -258,89 +258,257 @@ async function buildManifest() {
   return { version: pkg.version, files };
 }
 
-/** @type {Array<object>} newest last */
-const events = [];
-/** @type {Set<import("node:http").ServerResponse>} */
-const listeners = new Set();
-
 /**
  * The board, surviving a restart.
  *
  * A hub that kept its events in memory alone forgot the whole board every
  * deploy and every crash — and deploys are routine here. So every recorded
- * event is appended to `var/events.jsonl` (next to the account store, and
+ * event is appended to a `.jsonl` file (next to the account store, and
  * gitignored for the same reason: a tracked copy would overwrite the live one
  * on deploy), and at boot the tail is replayed into memory. The replay is
  * capped at MAX_EVENTS, so a log that grew for a year still boots in
  * milliseconds; the in-memory window stays the board's working set, not an
- * archive. `ZEVET_EVENTS` overrides the path exactly like `ZEVET_ACCOUNTS`
- * does for the account store, and the test suite points every hub at a temp
- * file so runs cannot see each other.
+ * archive. `ZEVET_EVENTS` overrides the DEFAULT team's path exactly like
+ * `ZEVET_ACCOUNTS` does for the account store, and the test suite points
+ * every hub at a temp file so runs cannot see each other.
+ *
+ * ⚠️ ONE BOARD PER TEAM (see the team registry below `makeBoard` is called
+ * for). Extracted into a factory rather than kept as three module-level
+ * bindings, so a team created at runtime gets an identically-behaved board —
+ * same cap, same replay, same compaction, same SSE fan-out — not a second,
+ * drifted copy of this logic.
  */
 const EVENTS_FILE = process.env.ZEVET_EVENTS || path.join(HERE, "..", "var", "events.jsonl");
-try {
-  mkdirSync(path.dirname(EVENTS_FILE), { recursive: true });
-  if (existsSync(EVENTS_FILE)) {
-    const lines = readFileSync(EVENTS_FILE, "utf8").split("\n").filter((l) => l.trim());
-    for (const line of lines.slice(-MAX_EVENTS)) {
-      try {
-        const evt = JSON.parse(line);
-        if (evt && typeof evt === "object") events.push(evt);
-      } catch {
-        // One corrupt line is not a corrupt log. Skip it and keep the rest.
+
+function makeBoard(file) {
+  /** @type {Array<object>} newest last */
+  const events = [];
+  /** @type {Set<import("node:http").ServerResponse>} */
+  const listeners = new Set();
+
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    if (existsSync(file)) {
+      const lines = readFileSync(file, "utf8").split("\n").filter((l) => l.trim());
+      for (const line of lines.slice(-MAX_EVENTS)) {
+        try {
+          const evt = JSON.parse(line);
+          if (evt && typeof evt === "object") events.push(evt);
+        } catch {
+          // One corrupt line is not a corrupt log. Skip it and keep the rest.
+        }
       }
-    }
-    // Retention compaction: details older than the TTL are blanked in place,
-    // so the archive keeps the structure (who/tool/file/repo) and forgets the
-    // words. Best effort; a failure here costs nothing at runtime.
-    if (DETAIL_TTL_MS > 0) {
-      try {
-        const now = Date.now();
-        const compacted = lines.map((line) => {
-          try {
-            const evt = JSON.parse(line);
-            if (evt && typeof evt === "object" && now - evt.ts > DETAIL_TTL_MS) {
-              return JSON.stringify({ ...evt, detail: "" });
+      // Retention compaction: details older than the TTL are blanked in place,
+      // so the archive keeps the structure (who/tool/file/repo) and forgets the
+      // words. Best effort; a failure here costs nothing at runtime.
+      if (DETAIL_TTL_MS > 0) {
+        try {
+          const now = Date.now();
+          const compacted = lines.map((line) => {
+            try {
+              const evt = JSON.parse(line);
+              if (evt && typeof evt === "object" && now - evt.ts > DETAIL_TTL_MS) {
+                return JSON.stringify({ ...evt, detail: "" });
+              }
+            } catch {
+              // Keep the line as-is; the replay above already skipped it.
             }
-          } catch {
-            // Keep the line as-is; the replay above already skipped it.
-          }
-          return line;
-        });
-        writeFileSync(EVENTS_FILE, `${compacted.join("\n")}\n`);
-      } catch {
-        // The uncompacted log still replays fine above.
+            return line;
+          });
+          writeFileSync(file, `${compacted.join("\n")}\n`);
+        } catch {
+          // The uncompacted log still replays fine above.
+        }
       }
     }
+  } catch (err) {
+    // A hub that cannot read its log still serves the board; it just starts
+    // empty. Say so once, on stderr, where the operator looks.
+    console.error(`zevet: event log unreadable (${err.message}) — starting with an empty board`);
   }
-} catch (err) {
-  // A hub that cannot read its log still serves the board; it just starts
-  // empty. Say so once, on stderr, where the operator looks.
-  console.error(`zevet: event log unreadable (${err.message}) — starting with an empty board`);
+
+  const board = { events, listeners, file, warned: false };
+
+  board.record = function record(evt) {
+    events.push(evt);
+    while (events.length > MAX_EVENTS) events.shift();
+    // Best effort, and deliberately synchronous: one small append per event, no
+    // queue to drain and no background writer to lose on crash. A hub that
+    // cannot write its log keeps serving — the board is live either way — but
+    // the first failure is said once on stderr, because a log that silently
+    // never lands is a restart away from an empty board nobody expected.
+    try {
+      appendFileSync(file, `${JSON.stringify(evt)}\n`);
+    } catch (err) {
+      if (!board.warned) {
+        board.warned = true;
+        console.error(`zevet: event log unwritable (${err.message}) — board will not survive a restart`);
+      }
+    }
+    const frame = `event: activity\ndata: ${JSON.stringify(evt)}\n\n`;
+    for (const res of listeners) {
+      if (res.destroyed || res.writableEnded) {
+        listeners.delete(res);
+        continue;
+      }
+      if (!res.write(frame) && res.writableLength > 1_000_000) {
+        console.error("zevet: dropping a listener that stopped draining (>1MB buffered)");
+        listeners.delete(res);
+        res.destroy();
+      }
+    }
+  };
+
+  /** Presence, collisions and recent files, derived fresh — nothing cached to drift. */
+  board.snapshot = function snapshot() {
+    const now = Date.now();
+    // Prompt bodies and shell commands age out of the served board after
+    // ZEVET_DETAIL_TTL_MS (0, the default, keeps everything). Structure —
+    // who, what tool, what file, what repo — is the board's long memory and is
+    // never trimmed; `detail` is the sensitive half and the only thing with a
+    // TTL. The log file is compacted the same way at boot (see above), so this
+    // is retention, not a view filter.
+    const show = (e) =>
+      DETAIL_TTL_MS > 0 && now - e.ts > DETAIL_TTL_MS ? { ...e, detail: "" } : e;
+    const actors = new Map();
+    for (const e of events) {
+      const a = actors.get(e.actor) || { actor: e.actor, hue: null, lastTs: 0, lastEvent: null, turns: 0, tools: 0 };
+      a.lastTs = Math.max(a.lastTs, e.ts);
+      if (!a.lastEvent || e.ts >= a.lastEvent.ts) a.lastEvent = show(e);
+      if (e.kind === "prompt") a.turns += 1;
+      if (e.kind === "tool") a.tools += 1;
+      actors.set(e.actor, a);
+    }
+    const roster = [...actors.values()]
+      .sort((x, y) => x.actor.localeCompare(y.actor))
+      .map((a, i) => ({ ...a, hue: i, idle: now - a.lastTs > IDLE_AFTER_MS, agoMs: now - a.lastTs }));
+
+    // Collisions: one file, two people, both writing, both inside the window.
+    //
+    // Four defects lived in the first version of this, all found by driving it
+    // rather than reading it, and all of them made the headline feature lie:
+    //
+    //   1. READS COUNTED. Every Claude Code session opens by reading CLAUDE.md,
+    //      README.md and package.json, so the alert panel lit up within seconds
+    //      of two people starting work, on files neither was changing. `e.tool`
+    //      was already on the event and simply never consulted. Alert fatigue
+    //      kills a warning nobody can act on.
+    //   2. THE TRUE POSITIVE DISAPPEARED. Participants were keyed by display
+    //      name, and the name defaults to the OS username. Two machines both
+    //      reporting `Administrator` or `User` — routine on Windows — collapsed
+    //      to one participant, so `size < 2` skipped exactly the case where two
+    //      real people were about to clobber one file. Keyed by name AND machine
+    //      now, which is why the hook reports a machine at all.
+    //   3. CROSS-REPO FALSE POSITIVES. The key was the repo-relative path alone,
+    //      so `src/index.ts` in two different repos collided permanently.
+    //   4. CASE. `src/DB.ts` and `src/db.ts` are one file on the case-insensitive
+    //      filesystems Windows and macOS both ship by default, and were two keys.
+    const byTarget = new Map();
+    for (const e of events) {
+      if (!e.target || e.kind !== "tool") continue;
+      if (!WRITING_TOOLS.has(e.tool)) continue;
+      if (now - e.ts > COLLISION_WINDOW_MS) continue;
+
+      const key = `${(e.repo || "").toLowerCase()}\u0000${e.target.toLowerCase()}`;
+      const bucket = byTarget.get(key) || { target: e.target, repo: e.repo, who: new Map() };
+      const participant = `${e.actor}\u0000${e.machine || ""}`;
+      const prev = bucket.who.get(participant);
+      if (!prev || e.ts > prev.ts) {
+        bucket.who.set(participant, { actor: e.actor, machine: e.machine || "", ts: e.ts });
+      }
+      byTarget.set(key, bucket);
+    }
+
+    const collisions = [];
+    for (const bucket of byTarget.values()) {
+      if (bucket.who.size < 2) continue;
+      const actors = [...bucket.who.values()].sort((x, y) => y.ts - x.ts);
+      // When two participants share a display name, say which machine is which —
+      // otherwise the card reads "andrew and andrew" and looks like a bug.
+      const nameCount = new Map();
+      for (const a of actors) nameCount.set(a.actor, (nameCount.get(a.actor) || 0) + 1);
+      for (const a of actors) {
+        a.label = nameCount.get(a.actor) > 1 && a.machine ? `${a.actor} (${a.machine})` : a.actor;
+      }
+      collisions.push({ target: bucket.target, repo: bucket.repo, actors, lastTs: actors[0].ts });
+    }
+    collisions.sort((x, y) => y.lastTs - x.lastTs);
+
+    return { now, roster, collisions, events: events.slice(-300).map(show), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
+  };
+
+  return board;
 }
 
+/** The DEFAULT team is this file's pre-existing single-tenant behaviour,
+ *  under a name: `accounts`/`TOKEN`/the board above are it. Every install in
+ *  the field, and every call that does not send `team`, resolves here. */
+const DEFAULT_TEAM = "default";
+
+/** Every session, and every DERIVED (non-override) shared token, is a sha256
+ *  hex digest: 32 bytes, 64 characters, always — accounts.mjs's `deriveAuthToken`
+ *  and its session tokens are the same width on purpose (see its own comment).
+ *  The DEFAULT team's `TOKEN` can be a different length: an operator may set
+ *  `ZEVET_TOKEN` to an arbitrary string, which is why `resolveTeam` accepts
+ *  either width rather than gating everything on `TOKEN.length` alone —
+ *  gating on TOKEN.length alone rejected every OTHER team's 64-char token
+ *  outright whenever an operator's chosen ZEVET_TOKEN was some other length.
+ *  Caught by test/team.test.mjs, which is the one place a non-default team's
+ *  real derived token is compared against a non-64-char default `ZEVET_TOKEN` (the test suite's own "test-token-…" literal). */
+const HEX_SHA256_LEN = 64;
+
 /**
- * Is this credential good?
+ * Which team does this credential belong to, if any?
  *
- * ⚠️ THE SHARED TOKEN IS CHECKED FIRST AND IN CONSTANT TIME; the session lookup
- * is a plain map hit. That asymmetry is deliberate and not an oversight. The
- * shared token is ONE long-lived value used by everybody, so a timing oracle
- * against it is worth mounting. A session is 32 fresh random bytes belonging to
- * one person, with no structure to learn a byte at a time and a ninety-day
- * life; comparing it in constant time would protect against an attack that
- * cannot be run.
+ * ⚠️ THE SHARED-TOKEN COMPARE STAYS CONSTANT-TIME, PER TEAM — same reasoning
+ * as before this had more than one team: a shared token is one long-lived
+ * value everyone on that team holds, so a timing oracle against it is worth
+ * mounting. A session is 32 fresh random bytes with no structure to learn a
+ * byte at a time, so the session pass below is a plain map hit.
  *
- * Both are the same length, so the length check that precedes everything does
- * not distinguish them and cannot be used to tell which kind a hub is holding.
+ * ponytail: this scans every team for the shared-token pass, deliberately —
+ * indexing by token would trade the constant-time compare for a hash lookup,
+ * which is the property this function exists to keep. MAX_TEAMS bounds it at
+ * a few hundred sha256s and compares per request; revisit if a hub ever hosts
+ * enough teams for that to show up in a profile.
  */
-function tokenOk(given) {
-  if (typeof given !== "string" || given.length !== TOKEN.length) return false;
-  try {
-    if (timingSafeEqual(Buffer.from(given), Buffer.from(TOKEN))) return true;
-  } catch {
-    /* fall through to the session check */
+function resolveTeam(given) {
+  if (typeof given !== "string") return null;
+  if (given.length !== TOKEN.length && given.length !== HEX_SHA256_LEN) return null;
+  for (const [team, acc] of teamAccounts) {
+    // The DEFAULT team's shared credential is `TOKEN` — `ZEVET_TOKEN` when an
+    // operator set one, otherwise deriveAuthToken(accounts.secret) — exactly
+    // as it always has been, INCLUDING the case where an operator's chosen
+    // ZEVET_TOKEN is not the secret's derivative at all (boot only refuses
+    // that combination when ZEVET_SECRET is also set; ZEVET_TOKEN alone is a
+    // supported override). A created team has no such override: its shared
+    // credential IS its derived secret token.
+    let shared = "";
+    if (team === DEFAULT_TEAM) {
+      shared = TOKEN;
+    } else {
+      try {
+        shared = deriveAuthToken(acc.secret);
+      } catch {
+        continue;
+      }
+    }
+    if (shared.length !== given.length) continue;
+    try {
+      if (timingSafeEqual(Buffer.from(given), Buffer.from(shared))) return { team, accounts: acc, session: null, token: given };
+    } catch {
+      /* not reachable given the length check above */
+    }
   }
-  return accounts.session(given) !== null;
+  for (const [team, acc] of teamAccounts) {
+    const session = acc.session(given);
+    if (session) return { team, accounts: acc, session, token: given };
+  }
+  return null;
+}
+
+function tokenOk(given) {
+  return resolveTeam(given) !== null;
 }
 
 const COOKIE = "zevet_session";
@@ -462,122 +630,62 @@ function sessionCookie(req, token) {
   return parts.join("; ");
 }
 
-function record(evt) {
-  events.push(evt);
-  while (events.length > MAX_EVENTS) events.shift();
-  // Best effort, and deliberately synchronous: one small append per event, no
-  // queue to drain and no background writer to lose on crash. A hub that
-  // cannot write its log keeps serving — the board is live either way — but
-  // the first failure is said once on stderr, because a log that silently
-  // never lands is a restart away from an empty board nobody expected.
-  try {
-    appendFileSync(EVENTS_FILE, `${JSON.stringify(evt)}\n`);
-  } catch (err) {
-    if (!record.warned) {
-      record.warned = true;
-      console.error(`zevet: event log unwritable (${err.message}) — board will not survive a restart`);
-    }
+/** One board per team — see `makeBoard` above. */
+const boards = new Map([[DEFAULT_TEAM, makeBoard(EVENTS_FILE)]]);
+
+/* ── Teams: more than one independent account/board on one hub ──────────────
+ *
+ * Until now this hub WAS a team: one Accounts, one master secret, one board.
+ * `/team/create` lets it host several — each with its OWN Accounts (so its
+ * own master secret, ownership and allowlist, exactly like the default team
+ * gets by being trust-on-first-use'd) and its OWN board (its own events, so
+ * one team's agent activity never appears in another's feed). A brand new
+ * team is unclaimed, precisely like an unclaimed default hub: the FIRST
+ * sign-in against it becomes its owner (Accounts#mayEnter, unchanged), which
+ * is what makes "create a team" and "sign in" the same two clicks a person
+ * already knows from joining one.
+ *
+ * The default team is UNCHANGED — still `accounts`/`TOKEN`/the board this
+ * file has always kept — reachable under the slug "default" for a client
+ * that has never heard of teams. Every install in the field today never
+ * sends `team` on a sign-in call, which resolves here to "default" and
+ * behaves exactly as it always has.
+ *
+ * ⚠️ NOT SCOPED PER TEAM: the WebSocket document rooms below (`rooms`). A
+ * room name is client-chosen and already opaque to the hub; two teams
+ * picking the same name would relay to each other. That is a real,
+ * deliberately-deferred gap — team creation here covers sign-in, ownership,
+ * invites and the activity board, not yet a full tenant boundary — tracked
+ * in DECISIONS.md rather than silently shipped as if it were closed.
+ */
+const teamAccounts = new Map([[DEFAULT_TEAM, accounts]]);
+const MAX_TEAMS = Number(process.env.ZEVET_MAX_TEAMS || 200);
+const TEAMS_DIR = path.dirname(ACCOUNTS_FILE || defaultAccountsFile(HERE));
+
+function createTeam() {
+  if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
+    return { ok: false, status: 503, error: "this hub has no sign-in configured" };
   }
-  const frame = `event: activity\ndata: ${JSON.stringify(evt)}\n\n`;
-  for (const res of listeners) {
-    // MEASURED: `res.write()` on a reset socket returns false, it does NOT
-    // throw. The try/catch that used to be here — and the comment claiming it
-    // dropped dead listeners and warned about them — could never once have
-    // run. Listeners are actually removed by the "close" handler on the
-    // request, which does work, so nothing leaked; but the stated safety net
-    // was imaginary, and a comforting comment about a branch that cannot
-    // execute is worse than no comment.
-    if (res.destroyed || res.writableEnded) {
-      listeners.delete(res);
-      continue;
-    }
-    // A socket that is open but not draining — a sleeping laptop, a tab behind
-    // a stalled proxy — buffers in this process with no backpressure and no
-    // cap. Cut it loose rather than growing the hub's memory on its behalf.
-    if (!res.write(frame) && res.writableLength > 1_000_000) {
-      console.error("zevet: dropping a listener that stopped draining (>1MB buffered)");
-      listeners.delete(res);
-      res.destroy();
-    }
+  if (teamAccounts.size - 1 >= MAX_TEAMS) {
+    return { ok: false, status: 503, error: "this hub is holding as many teams as it will" };
   }
+  let slug;
+  do {
+    slug = randomBytes(5).toString("hex");
+  } while (teamAccounts.has(slug));
+  // No `secret` passed — Accounts mints a fresh random master secret exactly
+  // the way it does for a hub with no ZEVET_SECRET. That fresh secret is what
+  // makes this team's documents unreadable by any other team's members.
+  const acc = new Accounts({ file: path.join(TEAMS_DIR, `accounts-${slug}.json`) });
+  teamAccounts.set(slug, acc);
+  boards.set(slug, makeBoard(path.join(TEAMS_DIR, `events-${slug}.jsonl`)));
+  return { ok: true, team: slug };
 }
 
-/** Presence, collisions and recent files, derived fresh — nothing cached to drift. */
-function snapshot() {
-  const now = Date.now();
-  // Prompt bodies and shell commands age out of the served board after
-  // ZEVET_DETAIL_TTL_MS (0, the default, keeps everything). Structure —
-  // who, what tool, what file, what repo — is the board's long memory and is
-  // never trimmed; `detail` is the sensitive half and the only thing with a
-  // TTL. The log file is compacted the same way at boot (see above), so this
-  // is retention, not a view filter.
-  const show = (e) =>
-    DETAIL_TTL_MS > 0 && now - e.ts > DETAIL_TTL_MS ? { ...e, detail: "" } : e;
-  const actors = new Map();
-  for (const e of events) {
-    const a = actors.get(e.actor) || { actor: e.actor, hue: null, lastTs: 0, lastEvent: null, turns: 0, tools: 0 };
-    a.lastTs = Math.max(a.lastTs, e.ts);
-    if (!a.lastEvent || e.ts >= a.lastEvent.ts) a.lastEvent = show(e);
-    if (e.kind === "prompt") a.turns += 1;
-    if (e.kind === "tool") a.tools += 1;
-    actors.set(e.actor, a);
-  }
-  const roster = [...actors.values()]
-    .sort((x, y) => x.actor.localeCompare(y.actor))
-    .map((a, i) => ({ ...a, hue: i, idle: now - a.lastTs > IDLE_AFTER_MS, agoMs: now - a.lastTs }));
-
-  // Collisions: one file, two people, both writing, both inside the window.
-  //
-  // Four defects lived in the first version of this, all found by driving it
-  // rather than reading it, and all of them made the headline feature lie:
-  //
-  //   1. READS COUNTED. Every Claude Code session opens by reading CLAUDE.md,
-  //      README.md and package.json, so the alert panel lit up within seconds
-  //      of two people starting work, on files neither was changing. `e.tool`
-  //      was already on the event and simply never consulted. Alert fatigue
-  //      kills a warning nobody can act on.
-  //   2. THE TRUE POSITIVE DISAPPEARED. Participants were keyed by display
-  //      name, and the name defaults to the OS username. Two machines both
-  //      reporting `Administrator` or `User` — routine on Windows — collapsed
-  //      to one participant, so `size < 2` skipped exactly the case where two
-  //      real people were about to clobber one file. Keyed by name AND machine
-  //      now, which is why the hook reports a machine at all.
-  //   3. CROSS-REPO FALSE POSITIVES. The key was the repo-relative path alone,
-  //      so `src/index.ts` in two different repos collided permanently.
-  //   4. CASE. `src/DB.ts` and `src/db.ts` are one file on the case-insensitive
-  //      filesystems Windows and macOS both ship by default, and were two keys.
-  const byTarget = new Map();
-  for (const e of events) {
-    if (!e.target || e.kind !== "tool") continue;
-    if (!WRITING_TOOLS.has(e.tool)) continue;
-    if (now - e.ts > COLLISION_WINDOW_MS) continue;
-
-    const key = `${(e.repo || "").toLowerCase()}\u0000${e.target.toLowerCase()}`;
-    const bucket = byTarget.get(key) || { target: e.target, repo: e.repo, who: new Map() };
-    const participant = `${e.actor}\u0000${e.machine || ""}`;
-    const prev = bucket.who.get(participant);
-    if (!prev || e.ts > prev.ts) {
-      bucket.who.set(participant, { actor: e.actor, machine: e.machine || "", ts: e.ts });
-    }
-    byTarget.set(key, bucket);
-  }
-
-  const collisions = [];
-  for (const bucket of byTarget.values()) {
-    if (bucket.who.size < 2) continue;
-    const actors = [...bucket.who.values()].sort((x, y) => y.ts - x.ts);
-    // When two participants share a display name, say which machine is which —
-    // otherwise the card reads "andrew and andrew" and looks like a bug.
-    const nameCount = new Map();
-    for (const a of actors) nameCount.set(a.actor, (nameCount.get(a.actor) || 0) + 1);
-    for (const a of actors) {
-      a.label = nameCount.get(a.actor) > 1 && a.machine ? `${a.actor} (${a.machine})` : a.actor;
-    }
-    collisions.push({ target: bucket.target, repo: bucket.repo, actors, lastTs: actors[0].ts });
-  }
-  collisions.sort((x, y) => y.lastTs - x.lastTs);
-
-  return { now, roster, collisions, events: events.slice(-300).map(show), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
+/** `tokenFrom`, resolved to which team (and whose Accounts) it belongs to. */
+function teamFrom(req, url) {
+  const token = tokenFrom(req, url);
+  return token ? resolveTeam(token) : null;
 }
 
 /**
@@ -755,6 +863,18 @@ const server = createServer(async (req, res) => {
     if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "this hub has no GitHub sign-in configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
+    // `team` is optional and new: absent (every install in the field today)
+    // it resolves to the default team, so this is backward compatible with a
+    // client that has never heard of teams.
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      body = {};
+    }
+    const team = String((body && body.team) || DEFAULT_TEAM);
+    if (!teamAccounts.has(team)) return json(res, 404, { error: "no such team — create one first" });
+
     const r = await deviceStart({ clientId: GITHUB_CLIENT_ID });
     if (!r.ok) return json(res, 502, { error: r.error });
     return json(res, 200, {
@@ -765,6 +885,7 @@ const server = createServer(async (req, res) => {
       verificationUriComplete: r.verificationUriComplete,
       interval: r.interval,
       expiresIn: r.expiresIn,
+      team,
     });
   }
 
@@ -779,6 +900,10 @@ const server = createServer(async (req, res) => {
       return json(res, 400, { error: "expected JSON" });
     }
 
+    const team = String((body && body.team) || DEFAULT_TEAM);
+    const acc = teamAccounts.get(team);
+    if (!acc) return json(res, 404, { error: "no such team — create one first" });
+
     const polled = await devicePoll({ clientId: GITHUB_CLIENT_ID, deviceCode: body && body.deviceCode });
     if (!polled.ok) return json(res, 400, { error: polled.error });
     // Still waiting on the browser. A 200 with `pending` rather than a 202 or a
@@ -789,7 +914,11 @@ const server = createServer(async (req, res) => {
     const who = await githubUser({ accessToken: polled.accessToken });
     if (!who.ok) return json(res, 502, { error: who.error });
 
-    const may = accounts.mayEnter(who, { requiredOwner: GITHUB_OWNER });
+    // ZEVET_GITHUB_OWNER reserves the DEFAULT team for a named person; a team
+    // created at runtime has no such reservation — trust-on-first-use hands
+    // it to whoever signs into it first, which is its creator, because nobody
+    // else yet has the slug.
+    const may = acc.mayEnter(who, { requiredOwner: team === DEFAULT_TEAM ? GITHUB_OWNER : "" });
     if (!may.ok) {
       // Counted as an auth failure: this is somebody who authenticated to
       // GitHub successfully and is still not allowed here, which is precisely
@@ -798,8 +927,8 @@ const server = createServer(async (req, res) => {
       return json(res, 403, { error: may.error });
     }
 
-    const sess = accounts.signIn(who);
-    console.log(`zevet: ${sess.owner ? "OWNER " : ""}sign-in by @${sess.login}`);
+    const sess = acc.signIn(who);
+    console.log(`zevet: ${sess.owner ? "OWNER " : ""}sign-in by @${sess.login}${team === DEFAULT_TEAM ? "" : ` (team ${team})`}`);
 
     /* ⚠️ THIS RESPONSE CARRIES THE MASTER SECRET. It is the only route that
      * does, it is over TLS, and it is the whole of the tradeoff documented at
@@ -809,9 +938,10 @@ const server = createServer(async (req, res) => {
     return json(res, 200, {
       ok: true,
       token: sess.token,
-      secret: accounts.secret,
+      secret: acc.secret,
       login: sess.login,
       owner: sess.owner,
+      team,
     });
   }
 
@@ -831,6 +961,19 @@ const server = createServer(async (req, res) => {
     if (!GOOGLE_ON) return json(res, 503, { error: "this hub has no Google sign-in configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      body = {};
+    }
+    const team = String((body && body.team) || DEFAULT_TEAM);
+    if (!teamAccounts.has(team)) return json(res, 404, { error: "no such team — create one first" });
+    // Only the DEFAULT team's Workspace domain auto-admits by rule; a team
+    // created at runtime is invite-only beyond its owner, so no `hd` hint is
+    // sent and readIdToken below is not asked to enforce one.
+    const domain = team === DEFAULT_TEAM ? GOOGLE_DOMAIN : "";
+
     sweepGooglePairs();
     if (googlePairs.size >= GOOGLE_PAIRS_MAX) return json(res, 429, { error: "too many sign-ins in flight — try again in a minute" });
     /* The per-address budget, checked BEFORE the global ceiling is reached, so
@@ -841,16 +984,20 @@ const server = createServer(async (req, res) => {
     }
 
     const pairCode = randomBytes(32).toString("hex");
-    googlePairs.set(pairCode, { at: Date.now(), ip, result: null, error: null, tried: false });
+    // ⚠️ `team` travels through the pair record, not through Google's
+    // redirect: `callback` only ever sees `state` (this pairCode), so this is
+    // the one place the team for this attempt is recorded.
+    googlePairs.set(pairCode, { at: Date.now(), ip, team, result: null, error: null, tried: false });
     return json(res, 200, {
       ok: true,
       pairCode,
-      authUrl: authorizeUrl({ clientId: GOOGLE_CLIENT_ID, redirectUri: GOOGLE_REDIRECT, state: pairCode, domain: GOOGLE_DOMAIN }),
+      authUrl: authorizeUrl({ clientId: GOOGLE_CLIENT_ID, redirectUri: GOOGLE_REDIRECT, state: pairCode, domain }),
       // Google has nothing to say about how fast to poll, unlike GitHub's
       // device flow. Two seconds is the app waiting on a human in a browser.
       interval: 2,
       expiresIn: Math.floor(GOOGLE_PAIR_TTL_MS / 1000),
-      domain: GOOGLE_DOMAIN,
+      domain,
+      team,
     });
   }
 
@@ -896,33 +1043,42 @@ const server = createServer(async (req, res) => {
       return googlePage(res, 502, ex.error);
     }
 
+    const acc = teamAccounts.get(pair.team || DEFAULT_TEAM);
+    if (!acc) {
+      pair.error = "that team no longer exists";
+      return googlePage(res, 404, pair.error);
+    }
+    const domain = pair.team === DEFAULT_TEAM || !pair.team ? GOOGLE_DOMAIN : "";
+
     /* ⚠️ THE IDENTITY COMES FROM HERE AND NOWHERE ELSE. Not from the query
      * string, not from anything the browser carried — from an id token this
      * process just fetched from Google over TLS. See google-auth.mjs for why
      * that is also the reason its signature is not separately verified. */
-    const who = readIdToken(ex.idToken, { clientId: GOOGLE_CLIENT_ID, domain: GOOGLE_DOMAIN });
+    const who = readIdToken(ex.idToken, { clientId: GOOGLE_CLIENT_ID, domain });
     if (!who.ok) {
       pair.error = who.error;
       authFailed(req, url);
       return googlePage(res, 403, who.error);
     }
 
-    const may = accounts.mayEnter(who, { requiredOwner: GOOGLE_OWNER, domain: GOOGLE_DOMAIN });
+    const may = acc.mayEnter(who, { requiredOwner: domain ? GOOGLE_OWNER : "", domain });
     if (!may.ok) {
       pair.error = may.error;
       authFailed(req, url);
       return googlePage(res, 403, may.error);
     }
 
-    const sess = accounts.signIn(who);
-    console.log(`zevet: ${sess.owner ? "OWNER " : ""}sign-in by ${sess.login}${may.byDomain ? ` (${GOOGLE_DOMAIN} Workspace)` : ""}`);
+    const sess = acc.signIn(who);
+    console.log(
+      `zevet: ${sess.owner ? "OWNER " : ""}sign-in by ${sess.login}${may.byDomain ? ` (${domain} Workspace)` : ""}${pair.team && pair.team !== DEFAULT_TEAM ? ` (team ${pair.team})` : ""}`,
+    );
 
     /* ⚠️ THIS HOLDS THE MASTER SECRET, in memory, until the app claims it or it
      * expires. Same tradeoff as the GitHub finish route documents; the
      * difference is only that it waits here for a few seconds first. It is not
      * written to disk, not logged, and NOT PUT IN THIS PAGE — the browser that
      * completes the sign-in never sees a credential. */
-    pair.result = { token: sess.token, secret: accounts.secret, login: sess.login, owner: sess.owner };
+    pair.result = { token: sess.token, secret: acc.secret, login: sess.login, owner: sess.owner, team: pair.team || DEFAULT_TEAM };
     return googlePage(res, 200, `Signed in as ${sess.login}. You can close this tab and go back to zevet.`);
   }
 
@@ -961,25 +1117,27 @@ const server = createServer(async (req, res) => {
 
   /* Who am I, and who else is allowed? Session-gated like everything else. */
   if (url.pathname === "/auth/whoami") {
-    const tok = tokenFrom(req, url);
-    if (!tok) return refuse(req, res, url);
-    const sess = accounts.session(tok);
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
     return json(res, 200, {
       ok: true,
+      team: auth.team,
       // A shared-token caller is authenticated but anonymous. Saying so is
       // better than inventing a name for it, and it is what the settings pane
       // shows a hook-only machine.
       login: sess ? sess.login : null,
       shared: !sess,
-      owner: Boolean(sess && accounts.owner === sess.login),
+      owner: Boolean(sess && acc.owner === sess.login),
       githubSignIn: Boolean(GITHUB_CLIENT_ID),
       // Kept alongside `githubSignIn` rather than replacing it with a single
       // `providers` list: a board cached before Google existed reads that exact
       // field to decide whether to show its connect button, and it is served by
       // this same hub on a slower refresh cycle than the hub itself.
       googleSignIn: GOOGLE_ON,
-      googleDomain: GOOGLE_DOMAIN,
-      people: accounts.list().map(person),
+      googleDomain: auth.team === DEFAULT_TEAM ? GOOGLE_DOMAIN : "",
+      people: acc.list().map(person),
     });
   }
 
@@ -990,9 +1148,9 @@ const server = createServer(async (req, res) => {
    * logs out nothing — which is also why this cannot be used to end anybody
    * else's session: the only session it can name is the caller's own. */
   if (url.pathname === "/auth/logout" && req.method === "POST") {
-    const tok = tokenFrom(req, url);
-    if (!tok) return refuse(req, res, url);
-    const r = accounts.logout(tok);
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const r = auth.accounts.logout(auth.token);
     res.writeHead(200, {
       "content-type": "application/json",
       "cache-control": "no-store",
@@ -1007,17 +1165,18 @@ const server = createServer(async (req, res) => {
    * not enough, because the shared token is the thing being replaced and
    * anybody holding it could otherwise add themselves permanently. */
   if ((url.pathname === "/auth/allow" || url.pathname === "/auth/revoke") && req.method === "POST") {
-    const tok = tokenFrom(req, url);
-    if (!tok) return refuse(req, res, url);
-    const sess = accounts.session(tok);
-    if (!sess || accounts.owner !== sess.login) {
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    if (!sess || acc.owner !== sess.login) {
       // "only @the owner" was the first wording, and it is what an UNCLAIMED
       // hub printed -- a sentence that reads like a bug. An unclaimed hub has
       // nobody who can do this, and saying that is more use than naming a
       // person who does not exist.
       return json(res, 403, {
-        error: accounts.owner
-          ? `only @${accounts.owner} can change this list`
+        error: acc.owner
+          ? `only @${acc.owner} can change this list`
           : "nobody has claimed this hub yet — the first sign-in becomes its owner",
       });
     }
@@ -1027,26 +1186,44 @@ const server = createServer(async (req, res) => {
     } catch {
       return json(res, 400, { error: "expected JSON" });
     }
-    const r = url.pathname === "/auth/allow" ? accounts.allow(body && body.login) : accounts.revoke(body && body.login);
+    const r = url.pathname === "/auth/allow" ? acc.allow(body && body.login) : acc.revoke(body && body.login);
     if (!r.ok) return json(res, 400, { error: r.error });
-    return json(res, 200, { ok: true, people: accounts.list().map(person) });
+    return json(res, 200, { ok: true, people: acc.list().map(person) });
+  }
+
+  /* Minting a new, independent team on this hub: its own Accounts (so its own
+   * master secret, ownership and allowlist) and its own activity board. See
+   * the team registry above `createTeam` for the design. Unauthenticated —
+   * same reasoning as the sign-in "start" routes above: it hands out a slug
+   * and decides nothing, and the team stays unclaimed until someone signs
+   * into it. */
+  if (url.pathname === "/team/create" && req.method === "POST") {
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+    const r = createTeam();
+    if (!r.ok) return json(res, r.status || 503, { error: r.error });
+    return json(res, 200, { ok: true, team: r.team });
   }
 
   if (url.pathname === "/healthz") {
     // `events` and `listeners` are load-bearing for anything already watching
-    // this endpoint; the two ws counters are added beside them, never in place
-    // of them.
+    // this endpoint; the two ws counters and `teams` are added beside them,
+    // never in place of them. Reports the DEFAULT team's board only, exactly
+    // as it always has — an ops probe watching this number should not see it
+    // move because somebody created an unrelated team.
+    const board = boards.get(DEFAULT_TEAM);
     return json(res, 200, {
       ok: true,
-      events: events.length,
-      listeners: listeners.size,
+      events: board.events.length,
+      listeners: board.listeners.size,
       rooms: rooms.size,
       wsListeners: wsClients.size,
+      teams: teamAccounts.size,
     });
   }
 
   if (url.pathname === "/ingest" && req.method === "POST") {
-    if (!tokenFrom(req, url)) return refuse(req, res, url);
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
     let parsed;
     try {
       parsed = JSON.parse(await readBody(req));
@@ -1074,25 +1251,28 @@ const server = createServer(async (req, res) => {
       // are two participants, and without this they were one.
       machine: String(parsed.machine || "").slice(0, 60),
     };
-    record(evt);
+    boards.get(auth.team).record(evt);
     return json(res, 200, { ok: true });
   }
 
   if (url.pathname === "/api/state") {
-    if (!tokenFrom(req, url)) return refuse(req, res, url);
-    return json(res, 200, snapshot());
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    return json(res, 200, boards.get(auth.team).snapshot());
   }
 
   if (url.pathname === "/events") {
-    if (!tokenFrom(req, url)) return refuse(req, res, url);
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const board = boards.get(auth.team);
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-store",
       connection: "keep-alive",
       "x-accel-buffering": "no",
     });
-    res.write(`event: hello\ndata: ${JSON.stringify(snapshot())}\n\n`);
-    listeners.add(res);
+    res.write(`event: hello\ndata: ${JSON.stringify(board.snapshot())}\n\n`);
+    board.listeners.add(res);
     // A proxy that sees nothing for a minute will close the stream. Ping.
     const ping = setInterval(() => {
       try {
@@ -1103,7 +1283,7 @@ const server = createServer(async (req, res) => {
     }, 25000);
     req.on("close", () => {
       clearInterval(ping);
-      listeners.delete(res);
+      board.listeners.delete(res);
     });
     return;
   }

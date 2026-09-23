@@ -1014,7 +1014,9 @@ describe("observability", () => {
     const fresh = await startHub();
     try {
       const before = await (await fetch(`${fresh.base}/healthz`)).json();
-      assert.deepEqual(before, { ok: true, events: 0, listeners: 0, rooms: 0, wsListeners: 0 });
+      // `teams` is additive too, same rule as the two ws counts: a hub with
+      // no teams created yet still has the DEFAULT one.
+      assert.deepEqual(before, { ok: true, events: 0, listeners: 0, rooms: 0, wsListeners: 0, teams: 1 });
 
       const a = connect(fresh.base);
       const b = connect(fresh.base);
