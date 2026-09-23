@@ -263,6 +263,35 @@ describe("the desktop state machine", () => {
     const s = new GithubSignIn({ hub: "http://hub", fetchImpl: f });
     await assert.rejects(() => s.start(), /GitHub sign-in is not configured for this hub/);
   });
+
+  test("a chosen team rides along on both start and finish, so the hub can bind the device code to it", async () => {
+    const bodies = [];
+    const f = hubFetch((url, body) => {
+      bodies.push(body);
+      return url.includes("start")
+        ? { body: { deviceCode: "dc", userCode: "A", verificationUriComplete: "u", interval: 1, expiresIn: 900, team: "abc123" } }
+        : { body: { ok: true, token: "t".repeat(64), secret: "a".repeat(48), login: "kai", team: "abc123" } };
+    });
+    const s = new GithubSignIn({ hub: "http://hub", team: "abc123", fetchImpl: f, sleep: async () => {} });
+    await s.start();
+    await s.wait();
+    assert.equal(bodies[0].team, "abc123", "start carries the team");
+    assert.equal(bodies[1].team, "abc123", "finish carries it again — the hub cannot recover it from a device code alone");
+  });
+
+  test("no team chosen sends none — the hub then resolves the default team, unaffected by this feature", async () => {
+    const bodies = [];
+    const f = hubFetch((url, body) => {
+      bodies.push(body);
+      return url.includes("start")
+        ? { body: { deviceCode: "dc", userCode: "A", verificationUriComplete: "u", interval: 1, expiresIn: 900 } }
+        : { body: { ok: true, pending: true } };
+    });
+    const s = new GithubSignIn({ hub: "http://hub", fetchImpl: f, sleep: async () => s.cancel() });
+    await s.start();
+    await assert.rejects(() => s.wait(), /cancelled/);
+    assert.equal(bodies[0].team, "", "an unset team is sent as empty, not omitted or undefined");
+  });
 });
 
 describe("the hub's gate, without GitHub", () => {

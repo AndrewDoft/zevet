@@ -49,9 +49,12 @@ class SignInError extends Error {}
  * both would leave the window blank for the whole flow.
  */
 class GithubSignIn {
-  constructor({ hub, fetchImpl, now = () => Date.now(), sleep } = {}) {
+  constructor({ hub, team = "", fetchImpl, now = () => Date.now(), sleep } = {}) {
     if (!hub) throw new SignInError("Enter a hub address.");
     this.base = String(hub).replace(/\/+$/, "");
+    // Empty/absent means the hub's DEFAULT team — every existing install and
+    // every call that does not pass one. See hub/server.mjs's team registry.
+    this.team = String(team || "");
     this.fetch = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
     this.now = now;
     // Injectable so a test does not spend real seconds inside a poll loop.
@@ -89,7 +92,7 @@ class GithubSignIn {
   }
 
   async start() {
-    const r = await this.#post("/auth/github/start", {});
+    const r = await this.#post("/auth/github/start", { team: this.team });
     this.device = r;
     this.deadline = this.now() + Math.min(MAX_WAIT_MS, (Number(r.expiresIn) || 900) * 1000);
     this.intervalMs = Math.max(1, Number(r.interval) || 5) * 1000;
@@ -125,7 +128,7 @@ class GithubSignIn {
         throw new SignInError("Sign-in expired. Try again for a new code.");
       }
 
-      const r = await this.#post("/auth/github/finish", { deviceCode: this.device.deviceCode });
+      const r = await this.#post("/auth/github/finish", { deviceCode: this.device.deviceCode, team: this.team });
       if (r && r.pending) {
         if (r.slowDown) this.intervalMs += SLOW_DOWN_STEP_MS;
         continue;

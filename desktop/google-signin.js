@@ -45,9 +45,12 @@ class SignInError extends Error {}
  * `cancel()` stops the polling; `wait()` then rejects with "cancelled".
  */
 class GoogleSignIn {
-  constructor({ hub, fetchImpl, now = () => Date.now(), sleep } = {}) {
+  constructor({ hub, team = "", fetchImpl, now = () => Date.now(), sleep } = {}) {
     if (!hub) throw new SignInError("Enter a hub address.");
     this.base = String(hub).replace(/\/+$/, "");
+    // Empty/absent means the hub's DEFAULT team. `finish`/`callback` need no
+    // copy of this — the hub records it against the pairCode at `start`.
+    this.team = String(team || "");
     this.fetch = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
     this.now = now;
     // Injectable so a test does not spend real seconds inside a poll loop.
@@ -85,7 +88,7 @@ class GoogleSignIn {
   }
 
   async start() {
-    const r = await this.#post("/auth/google/start", {});
+    const r = await this.#post("/auth/google/start", { team: this.team });
     if (!r || !r.pairCode || !r.authUrl) throw new SignInError("The hub did not start a Google sign-in. Try again.");
     this.pair = r;
     this.deadline = this.now() + Math.min(MAX_WAIT_MS, (Number(r.expiresIn) || 600) * 1000);

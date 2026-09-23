@@ -994,10 +994,10 @@ ipcMain.handle("zevet:save", (_e, cfg) => {
  */
 let signIn = null;
 
-ipcMain.handle("zevet:githubStart", async (_e, { hub } = {}) => {
+ipcMain.handle("zevet:githubStart", async (_e, { hub, team } = {}) => {
   try {
     if (signIn) signIn.cancel();
-    signIn = new GithubSignIn({ hub: hub || (readConfig() || {}).hub });
+    signIn = new GithubSignIn({ hub: hub || (readConfig() || {}).hub, team });
     const r = await signIn.start();
     // Opened from the MAIN process, never by the renderer. The board window
     // loads remote HTML from the hub, and a renderer that could open arbitrary
@@ -1026,10 +1026,10 @@ ipcMain.handle("zevet:githubStart", async (_e, { hub } = {}) => {
  * flow racing is the same bug with two names, and each would try to write the
  * config over the other.
  */
-ipcMain.handle("zevet:googleStart", async (_e, { hub } = {}) => {
+ipcMain.handle("zevet:googleStart", async (_e, { hub, team } = {}) => {
   try {
     if (signIn) signIn.cancel();
-    signIn = new GoogleSignIn({ hub: hub || (readConfig() || {}).hub });
+    signIn = new GoogleSignIn({ hub: hub || (readConfig() || {}).hub, team });
     const r = await signIn.start();
     // Opened from the MAIN process, never by the renderer — same rule as the
     // GitHub flow above, and it matters more here: this URL carries the pairing
@@ -1103,6 +1103,35 @@ const cancelSignIn = () => {
 };
 ipcMain.handle("zevet:githubCancel", cancelSignIn);
 ipcMain.handle("zevet:googleCancel", cancelSignIn);
+
+/* ── Creating a team ───────────────────────────────────────────────────────
+ *
+ * A first-run person has no team address to type and, until now, no way to
+ * get one: the setup window offered only "join", never "create". This asks
+ * the hub to mint a brand new, independently-owned team (hub/server.mjs's
+ * `/team/create`) and hands back its slug; the renderer then passes it to
+ * `githubStart`/`googleStart` so the sign-in that follows claims that team
+ * (trust-on-first-use, exactly like an unclaimed hub) rather than the
+ * hub's default one. Unauthenticated on the hub side — this call decides
+ * nothing by itself, same as the sign-in "start" calls above.
+ */
+ipcMain.handle("zevet:teamCreate", async (_e, { hub } = {}) => {
+  const base = String(hub || "").replace(/\/+$/, "");
+  if (!base) return { ok: false, error: "Enter a team address." };
+  try {
+    const res = await fetch(`${base}/team/create`, { method: "POST", signal: AbortSignal.timeout(15000) });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      return { ok: false, error: `The hub returned an invalid response (HTTP ${res.status}).` };
+    }
+    if (!res.ok || !body || !body.ok) return { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
+    return { ok: true, team: body.team };
+  } catch (err) {
+    return { ok: false, error: `Could not reach the hub: ${err && err.message ? err.message : String(err)}` };
+  }
+});
 
 /* ── Sign out of GitHub, from Settings ─────────────────────────────────────
  *
@@ -3047,7 +3076,14 @@ const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
   dir: path.join(app.getPath("userData"), "updates"),
-  onStatus: (s) => toBoard("app:update", s),
+  // toBoard() only reaches boardWindow, and a person stuck on setup — no hub
+  // configured yet, or not signed in — has no board window at all. Sent to
+  // setupWindow too, so "0.2.57 is ready" shows up on the screen a first-run
+  // person is actually looking at, not just one that may never open.
+  onStatus: (s) => {
+    toBoard("app:update", s);
+    if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send("app:update", s);
+  },
   log: (m) => console.log(`[zevet-app-update] ${m}`),
   openImpl: (f) => shell.openPath(f),
   quitImpl: () => {

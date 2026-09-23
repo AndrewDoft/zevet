@@ -99,6 +99,21 @@
   </header>
   <p class="lede">Connect to your team.</p>
 
+  <div id="updateNote" class="note" hidden>
+    <span id="updateText"></span>
+    <div class="row"><button id="updateBtn" class="primary" hidden></button></div>
+  </div>
+
+  <!-- No account yet, and nowhere to get one: that was the whole bug. This
+       defaults the team address to Andrew's hosted hub and mints a brand new,
+       independently-owned team there (hub/server.mjs's /team/create) before
+       sign-in even starts — trust-on-first-use then makes whoever signs in
+       next its owner, same as claiming a fresh hub. -->
+  <div class="row">
+    <button id="createTeam" class="primary">Create a team</button>
+  </div>
+  <div id="createNote" class="hint" hidden>Team created — sign in below to claim it.</div>
+
   <label>
     <span class="lbl">Team address</span>
     <input id="hub" class="mono" placeholder="https://zevet.example.com" autocomplete="off" spellcheck="false" />
@@ -189,6 +204,11 @@
   var $ = function (id) { return document.getElementById(id); };
   var verified = false;
 
+  // The hub Andrew runs for anyone who downloads zevet without standing up
+  // their own — see MEMORY "zevet hub is live". "Create a team" points here.
+  var HOSTED_HUB = "https://34-74-69-129.sslip.io";
+  var createdTeam = "";
+
   function say(kind, html) {
     var m = $("msg");
     m.hidden = false;
@@ -205,6 +225,69 @@
     if (!$("hub").value) $("hub").value = c.hub || "";
     if (!$("actor").value) $("actor").value = c.actor || "";
   });
+
+  /* ── Creating a team ───────────────────────────────────────────────────────
+   *
+   * Mints a brand new team on the hosted hub, then leaves the actual sign-in
+   * to the Google/GitHub buttons below (unchanged): trust-on-first-use makes
+   * whoever signs in next its owner. `createdTeam` rides along on that
+   * sign-in; editing the hub by hand clears it (see the input listener below)
+   * so a stale team is never sent against a different address.
+   */
+  $("createTeam").addEventListener("click", async function () {
+    $("createTeam").disabled = true;
+    $("hub").value = HOSTED_HUB;
+    say("", "Creating your team…");
+    var r = await window.zevet.teamCreate(HOSTED_HUB);
+    $("createTeam").disabled = false;
+    if (!r.ok) {
+      say("bad", "Could not create a team. Use your team key below, or ask for an invite.");
+      return;
+    }
+    createdTeam = r.team;
+    $("msg").hidden = true;
+    $("createNote").hidden = false;
+    $("google").textContent = "Create with Google";
+    $("gh").textContent = "Create with GitHub";
+  });
+
+  /* ── Staying current before there is anything to sign in to ────────────────
+   *
+   * The updater (desktop/app-update.js) checks the PUBLIC download feed, not
+   * the hub, and runs whether or not a team is configured — see main.js's
+   * appUpdater.start(). This is the missing half: painting what it finds on
+   * the one window a person with no hub yet is actually looking at.
+   */
+  function paintUpdate(s) {
+    var note = $("updateNote"), text = $("updateText"), btn = $("updateBtn");
+    if (!s || (s.phase !== "downloading" && s.phase !== "ready" && s.phase !== "error")) {
+      note.hidden = true;
+      return;
+    }
+    note.hidden = false;
+    if (s.phase === "downloading") {
+      var pct = Math.max(0, Math.min(100, Math.floor(Number(s.percent) || 0)));
+      text.textContent = "Downloading " + s.version + " — " + pct + "%";
+      btn.hidden = true;
+    } else if (s.phase === "ready" && s.canInstall) {
+      text.textContent = "v" + s.version + " is ready.";
+      btn.hidden = false;
+      btn.textContent = s.manual ? "Open installer" : "Restart to install";
+      btn.onclick = function () {
+        btn.disabled = true;
+        window.zevetLocal.updateInstall();
+      };
+    } else if (s.phase === "error") {
+      text.textContent = s.error || "Update check failed.";
+      btn.hidden = true;
+    } else {
+      note.hidden = true;
+    }
+  }
+  if (window.zevetLocal) {
+    if (typeof window.zevetLocal.onUpdate === "function") window.zevetLocal.onUpdate(paintUpdate);
+    if (typeof window.zevetLocal.updateStatus === "function") window.zevetLocal.updateStatus().then(paintUpdate);
+  }
 
   /* ── The GitHub path ───────────────────────────────────────────────────────
    *
@@ -227,7 +310,7 @@
 
     say("", "Starting sign-in…");
     ghBusy(true);
-    var started = await window.zevet.githubStart(hub);
+    var started = await window.zevet.githubStart(hub, createdTeam);
     if (!started.ok) {
       ghBusy(false);
       // The hub having no OAuth app is the likeliest failure on a self-hosted
@@ -285,7 +368,7 @@
 
     say("", "Starting sign-in…");
     googleBusy(true);
-    var started = await window.zevet.googleStart(hub);
+    var started = await window.zevet.googleStart(hub, createdTeam);
     if (!started.ok) {
       googleBusy(false);
       // Same reasoning as the GitHub branch: a hub with no Google client is a
@@ -385,6 +468,13 @@
     $(id).addEventListener("input", function () {
       verified = false;
       $("finish").disabled = true;
+      if (id === "hub" && createdTeam) {
+        // A team slug is only valid against the address it was minted on.
+        createdTeam = "";
+        $("createNote").hidden = true;
+        $("google").textContent = "Sign in with Google";
+        $("gh").textContent = "Sign in with GitHub";
+      }
     });
   });
 </script>

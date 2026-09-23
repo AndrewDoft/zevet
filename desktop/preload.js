@@ -70,11 +70,15 @@ contextBridge.exposeInMainWorld("zevet", {
    * hub, so anything on this bridge is something a hub that has been taken over
    * can read out of its own page. The renderer is told a login and a yes.
    */
-  githubStart: (hub) => ipcRenderer.invoke("zevet:githubStart", { hub }),
+  githubStart: (hub, team) => ipcRenderer.invoke("zevet:githubStart", { hub, team }),
   githubWait: () => ipcRenderer.invoke("zevet:githubWait"),
   githubCancel: () => ipcRenderer.invoke("zevet:githubCancel"),
   /** End this machine's GitHub session, hub-side and locally. */
   githubLogout: () => ipcRenderer.invoke("zevet:githubLogout"),
+  /** Mint a brand new, independently-owned team on the given hub — see
+   *  main.js's `zevet:teamCreate` and hub/server.mjs's `/team/create`.
+   *  Resolves `{ ok, team }` or `{ ok: false, error }`. */
+  teamCreate: (hub) => ipcRenderer.invoke("zevet:teamCreate", { hub }),
   /**
    * Sign in with Google.
    *
@@ -88,7 +92,7 @@ contextBridge.exposeInMainWorld("zevet", {
    * ⚠️ NEITHER CALL RETURNS THE SECRET OR THE SESSION — the same rule as the
    * GitHub pair, for the same reason.
    */
-  googleStart: (hub) => ipcRenderer.invoke("zevet:googleStart", { hub }),
+  googleStart: (hub, team) => ipcRenderer.invoke("zevet:googleStart", { hub, team }),
   googleWait: () => ipcRenderer.invoke("zevet:googleWait"),
   googleCancel: () => ipcRenderer.invoke("zevet:googleCancel"),
   /** End this machine's session, hub-side and locally. A session does not
