@@ -30,7 +30,7 @@ node scripts/run-tests.mjs 2>&1 | tee /tmp/zevet-gate.log
 status=${PIPESTATUS[0]}
 
 echo
-grep -E "^ℹ (tests|pass|fail|cancelled|skipped|todo) " /tmp/zevet-gate.log | tail -6
+grep -E "^(ℹ|#) (tests|pass|fail|cancelled|skipped|todo) " /tmp/zevet-gate.log | tail -6
 
 if [ "$status" -ne 0 ]; then
   echo
@@ -40,7 +40,7 @@ if [ "$status" -ne 0 ]; then
 fi
 
 # A suite that ran zero tests exits 0. That is not green, it is empty.
-count=$(grep -E "^ℹ tests " /tmp/zevet-gate.log | tail -1 | tr -dc '0-9')
+count=$(grep -E "^(ℹ|#) tests " /tmp/zevet-gate.log | tail -1 | tr -dc '0-9')
 if [ -z "$count" ] || [ "$count" -lt 1 ]; then
   echo "GATE RED — the runner reported no tests at all."
   exit 1

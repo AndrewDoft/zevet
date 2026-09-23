@@ -17,6 +17,15 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const voice = require("../desktop/zevet-voice.js");
 
+/** Pins process.platform for the duration of a test — find() now branches on it
+ *  for real (c5d4b75), so a test whose fixture is shaped for one OS must not be
+ *  left to inherit whatever OS the suite happens to be running on. */
+function asPlatform(t, value) {
+  const real = process.platform;
+  Object.defineProperty(process, "platform", { value });
+  t.after(() => Object.defineProperty(process, "platform", { value: real }));
+}
+
 /** A throwaway %LOCALAPPDATA% with, optionally, the app installed in it. */
 function fakeHome(t, { installed = false, legacy = false, hotkey = null } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "zevet-voice-"));
@@ -46,6 +55,7 @@ function fakeHome(t, { installed = false, legacy = false, hotkey = null } = {}) 
 
 describe("masora voice", () => {
   test("finds the per-user install where install.ps1 puts it", (t) => {
+    asPlatform(t, "win32");
     const env = fakeHome(t, { installed: true });
     const exe = voice.find(env);
     assert.ok(exe, "the installed exe was not found");
@@ -71,6 +81,7 @@ describe("masora voice", () => {
   });
 
   test("start runs the exe detached, so the tray app outlives zevet", (t) => {
+    asPlatform(t, "win32");
     const env = fakeHome(t, { installed: true });
     const calls = [];
     let unrefs = 0;
@@ -118,6 +129,7 @@ describe("the microphone gesture", () => {
   });
 
   test("a running instance dictates on the first press", async (t) => {
+    asPlatform(t, "win32");
     const env = fakeHome(t, { installed: true });
     let started = 0;
     const r = await voice.mic(env, {
@@ -132,6 +144,7 @@ describe("the microphone gesture", () => {
   });
 
   test("a cold machine is raised and says so, rather than losing the signal", async (t) => {
+    asPlatform(t, "win32");
     const env = fakeHome(t, { installed: true });
     let started = 0;
     const r = await voice.mic(env, {
@@ -145,6 +158,7 @@ describe("the microphone gesture", () => {
   });
 
   test("an old build is named as old, and is not restarted on top of itself", async (t) => {
+    asPlatform(t, "win32");
     const env = fakeHome(t, { installed: true });
     let started = 0;
     const r = await voice.mic(env, {
@@ -174,9 +188,7 @@ describe("macOS", () => {
   }
 
   function asDarwin(t) {
-    const real = process.platform;
-    Object.defineProperty(process, "platform", { value: "darwin" });
-    t.after(() => Object.defineProperty(process, "platform", { value: real }));
+    asPlatform(t, "darwin");
   }
 
   test("finds the current bundle under /Applications-shaped HOME", (t) => {
@@ -217,6 +229,7 @@ describe("macOS", () => {
   test("Windows candidates() is untouched by the mac path", (t) => {
     // find() must still branch on process.platform, not silently prefer macCandidates
     // whenever a HOME happens to be set — Windows sessions have one too.
+    asPlatform(t, "win32");
     const env = fakeHome(t, { installed: true });
     assert.match(voice.find(env), /zevet Voice\.exe$/);
   });
@@ -224,6 +237,7 @@ describe("macOS", () => {
 
 describe("the rename", () => {
   test("an install under the OLD name is still found", (t) => {
+    asPlatform(t, "win32");
     // The two apps update independently, so there is a window where zevet has
     // the new name and the machine still has "Masora Voice". Reporting that as
     // "not installed" would offer somebody a download they already have.
@@ -235,6 +249,7 @@ describe("the rename", () => {
   });
 
   test("the new name wins when a machine carries both", (t) => {
+    asPlatform(t, "win32");
     const env = fakeHome(t, { installed: true, legacy: true });
     assert.match(
       voice.find(env),

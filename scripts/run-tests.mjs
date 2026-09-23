@@ -32,7 +32,12 @@ child.stderr.on("data", (chunk) => {
 });
 
 child.on("close", (code) => {
-  const m = out.match(/^ℹ cancelled (\d+)/m);
+  // node --test prints this summary with an "ℹ " prefix on a TTY (spec
+  // reporter) and a bare "# " prefix once stdout is piped, as it always is
+  // here (CI, and this script's own spawn) — the TAP reporter. Both must match
+  // or CI always hits the "no cancelled line" branch below regardless of the
+  // actual run.
+  const m = out.match(/^(?:ℹ|#) cancelled (\d+)/m);
   if (!m) {
     console.error("\nGATE RED — node --test's summary had no 'cancelled' line to read; cannot call this green.");
     process.exit(1);
