@@ -31,9 +31,32 @@ export function applyMirror(entries, storage) {
   }
 }
 
+/** Every "zevet.*" key already sitting in `storage`, as a flat map. Uses the
+ *  standard Web Storage enumeration (`length`/`key(i)`) rather than
+ *  `Object.keys` so a plain object stood in for `storage` in a test has to
+ *  say so explicitly instead of accidentally working. */
+export function collectExisting(storage) {
+  const out = {};
+  const len = typeof storage.length === "number" ? storage.length : 0;
+  for (let i = 0; i < len; i++) {
+    const key = storage.key(i);
+    if (typeof key !== "string" || !key.startsWith("zevet.")) continue;
+    const value = storage.getItem(key);
+    if (typeof value === "string") out[key] = value;
+  }
+  return out;
+}
+
 /** Fetch the mirror and apply it. Split from `applyMirror` only so the fetch
  *  failure (no desktop bridge, or a main process that errored) is swallowed
- *  in one place rather than at every call site. */
+ *  in one place rather than at every call site.
+ *
+ *  An EMPTY mirror is also a seeding opportunity: an existing user upgrading
+ *  from a build without this mirror has every preference sitting only in
+ *  this origin's localStorage, and would otherwise lose all of it on their
+ *  first hub switch — the exact loss this file exists to prevent. Seeded
+ *  once, in one batched call, so the mirror is never empty again after the
+ *  first hydrate on a machine that already had prefs. */
 export async function hydratePrefsMirror(storage, mirror) {
   if (!mirror || typeof mirror.prefs !== "function") return;
   let entries;
@@ -43,6 +66,15 @@ export async function hydratePrefsMirror(storage, mirror) {
     return;
   }
   applyMirror(entries, storage);
+  if (entries && typeof entries === "object" && Object.keys(entries).length > 0) return;
+  if (typeof mirror.setPrefs !== "function") return;
+  const existing = collectExisting(storage);
+  if (Object.keys(existing).length === 0) return;
+  try {
+    await mirror.setPrefs(existing);
+  } catch {
+    // desktop bridge misbehaved — nothing lost, just try again next hydrate
+  }
 }
 
 /** A localStorage-shaped store, backed by `storage`, that also mirrors every

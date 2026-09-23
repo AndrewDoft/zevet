@@ -280,6 +280,9 @@ export interface LocalBridge {
    *  `window.localStorage`. */
   prefs?: () => Promise<Record<string, string>>;
   setPref?: (key: string, value: string | null) => Promise<unknown>;
+  /** Seed the mirror in one batch — see prefs-mirror.mjs's `hydratePrefsMirror`,
+   *  called once for an existing user upgrading from a build without it. */
+  setPrefs?: (entries: Record<string, string>) => Promise<unknown>;
   indexEnable?: (root: string | null) => Promise<{ ok?: boolean; indexed?: number; skipped?: number; error?: string } | null | undefined>;
   updateCheck: () => Promise<unknown>;
   updateStatus: () => Promise<unknown>;

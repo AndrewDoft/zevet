@@ -8,16 +8,22 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ROOT } from "./helpers.mjs";
 
-const { applyMirror, hydratePrefsMirror, mirroredStorage } = await import(
+const { applyMirror, collectExisting, hydratePrefsMirror, mirroredStorage } = await import(
   pathToFileURL(path.join(ROOT, "board", "src", "lib", "prefs-mirror.mjs")).href
 );
 
+/** Implements the standard Web Storage enumeration (length/key) too, exactly
+ *  like the real window.localStorage this stands in for. */
 function fakeStorage(initial = {}) {
   const map = new Map(Object.entries(initial));
   return {
     getItem: (k) => (map.has(k) ? map.get(k) : null),
     setItem: (k, v) => map.set(k, String(v)),
     removeItem: (k) => map.delete(k),
+    get length() {
+      return map.size;
+    },
+    key: (i) => [...map.keys()][i] ?? null,
     map,
   };
 }
@@ -75,6 +81,62 @@ describe("hydratePrefsMirror", () => {
     const s = fakeStorage({ "zevet.view": "ide" });
     await hydratePrefsMirror(s, { prefs: async () => { throw new Error("no desktop"); } });
     assert.equal(s.map.get("zevet.view"), "ide");
+  });
+
+  describe("seeding an empty mirror from an existing user's localStorage", () => {
+    test("an empty mirror is seeded, in one batched call, from every zevet.* key already in storage", async () => {
+      const s = fakeStorage({ "zevet.view": "ide", "zevet.theme": "dark", "not-zevet": "ignore me" });
+      const seeded = [];
+      await hydratePrefsMirror(s, {
+        prefs: async () => ({}),
+        setPrefs: async (entries) => { seeded.push(entries); },
+      });
+      assert.deepEqual(seeded, [{ "zevet.view": "ide", "zevet.theme": "dark" }]);
+    });
+
+    test("a non-empty mirror is never re-seeded", async () => {
+      const s = fakeStorage({ "zevet.view": "ide" });
+      const seeded = [];
+      await hydratePrefsMirror(s, {
+        prefs: async () => ({ "zevet.theme": "dark" }),
+        setPrefs: async (entries) => { seeded.push(entries); },
+      });
+      assert.deepEqual(seeded, []);
+    });
+
+    test("nothing to seed (empty mirror, empty storage) makes no call at all", async () => {
+      const s = fakeStorage();
+      const seeded = [];
+      await hydratePrefsMirror(s, {
+        prefs: async () => ({}),
+        setPrefs: async (entries) => { seeded.push(entries); },
+      });
+      assert.deepEqual(seeded, []);
+    });
+
+    test("an older desktop build with no setPrefs is left alone, not thrown at", async () => {
+      const s = fakeStorage({ "zevet.view": "ide" });
+      await assert.doesNotReject(hydratePrefsMirror(s, { prefs: async () => ({}) }));
+    });
+
+    test("a failed batch write is swallowed, same as a failed fetch", async () => {
+      const s = fakeStorage({ "zevet.view": "ide" });
+      await assert.doesNotReject(hydratePrefsMirror(s, {
+        prefs: async () => ({}),
+        setPrefs: async () => { throw new Error("disk full"); },
+      }));
+    });
+  });
+});
+
+describe("collectExisting", () => {
+  test("every zevet.* key, and nothing else", () => {
+    const s = fakeStorage({ "zevet.view": "agent", "aui-modal-size": "{}", "zevet.theme": "dark" });
+    assert.deepEqual(collectExisting(s), { "zevet.view": "agent", "zevet.theme": "dark" });
+  });
+
+  test("empty storage collects nothing", () => {
+    assert.deepEqual(collectExisting(fakeStorage()), {});
   });
 });
 

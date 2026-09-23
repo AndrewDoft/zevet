@@ -247,6 +247,9 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    *  the person across a reload, an app update, or a change of hub. */
   prefs: () => ipcRenderer.invoke("local:prefs"),
   setPref: (key, value) => ipcRenderer.invoke("local:setPref", { key, value }),
+  /** Seed the mirror in one round trip — an existing user upgrading from a
+   *  build without it has every pref sitting only in localStorage. */
+  setPrefs: (entries) => ipcRenderer.invoke("local:setPrefs", { entries }),
   schedules: () => ipcRenderer.invoke("local:schedules"),
   scheduleSave: (s) => ipcRenderer.invoke("local:scheduleSave", { schedule: s }),
   scheduleRemove: (id) => ipcRenderer.invoke("local:scheduleRemove", { id }),

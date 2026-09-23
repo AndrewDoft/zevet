@@ -1750,6 +1750,20 @@ ipcMain.handle("local:setPref", (_e, arg) => {
   return { ok: true };
 });
 
+/** One round trip for many keys at once — prefs-mirror.mjs's
+ *  `hydratePrefsMirror` seeding the mirror from an existing user's
+ *  localStorage the first time it finds the mirror empty. */
+ipcMain.handle("local:setPrefs", (_e, arg) => {
+  const entries = arg && arg.entries;
+  if (!entries || typeof entries !== "object") return { ok: false };
+  const all = readPrefs();
+  for (const [key, value] of Object.entries(entries)) {
+    if (key && typeof value === "string") all[key] = value;
+  }
+  writePrefs(all);
+  return { ok: true };
+});
+
 function readSchedules() {
   try {
     const raw = JSON.parse(fs.readFileSync(SCHEDULES, "utf8"));
