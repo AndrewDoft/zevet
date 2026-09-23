@@ -83,7 +83,14 @@ const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
  */
 const DEFAULT_PROVIDER = "github";
 
-const EMPTY = () => ({ version: 1, secret: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null });
+const EMPTY = () => ({ version: 1, secret: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null, credentials: [] });
+
+/** A stored credential record, minus its `key` — what everything except
+ *  /team/credentials/:id/secret itself is allowed to see. */
+function credentialMeta(c) {
+  const { key, ...meta } = c;
+  return meta;
+}
 
 /** Same person? Provider AND id, never id alone. A record with no id yet (an
  *  invitation nobody has accepted) matches nobody — it is matched by login, at
@@ -162,6 +169,60 @@ export class Accounts {
   /** The login that set this hub up, or null if nobody has yet. */
   get owner() {
     return this.state.owner ? this.state.owner.login : null;
+  }
+
+  /** Every team-held model credential, metadata only — never the secret.
+   *  Stored like `secret` — plaintext in the 0600 accounts file — because
+   *  wrapping one field under `secret` in the SAME file protects it against
+   *  nothing that does not already have `secret`. */
+  listCredentials() {
+    return this.state.credentials.map(credentialMeta);
+  }
+
+  /** One credential's metadata (no key), or null. Used both to answer a
+   *  single lookup and, in hub/server.mjs, to learn who added it before a
+   *  delete is allowed to proceed. */
+  credential(id) {
+    const c = this.state.credentials.find((c) => c.id === id);
+    return c ? credentialMeta(c) : null;
+  }
+
+  /** The raw secret for one credential, or null. Never logged — the only
+   *  caller is /team/credentials/:id/secret's own response. */
+  credentialKey(id) {
+    const c = this.state.credentials.find((c) => c.id === id);
+    return c ? c.key : null;
+  }
+
+  /** Add a team credential. `provider`/`kind`/format validation is
+   *  hub/server.mjs's job, before this is called — this layer only persists
+   *  what it is handed and mints the id. Returns the new record's metadata
+   *  (no key). */
+  addCredential({ label, provider, kind, key, addedBy }) {
+    const rec = {
+      id: randomBytes(8).toString("hex"),
+      label: String(label || "").trim() || `${provider} ${kind === "subscription_token" ? "subscription token" : "key"}`,
+      provider: String(provider),
+      kind: String(kind),
+      key: String(key),
+      last4: String(key).slice(-4),
+      addedBy: String(addedBy || ""),
+      createdAt: new Date(this.now()).toISOString(),
+    };
+    this.state.credentials.push(rec);
+    this.#save();
+    return credentialMeta(rec);
+  }
+
+  /** Remove one credential by id. Returns whether one existed to remove —
+   *  the caller decides WHO may do this (owner, or whoever added it) before
+   *  calling; this only performs the removal. */
+  removeCredential(id) {
+    const before = this.state.credentials.length;
+    this.state.credentials = this.state.credentials.filter((c) => c.id !== id);
+    if (this.state.credentials.length === before) return false;
+    this.#save();
+    return true;
   }
 
   /** Everyone permitted, owner first. `provider` is normalised on the way out
@@ -444,6 +505,11 @@ export class Accounts {
         blocked: Array.isArray(raw.blocked) ? raw.blocked.filter((b) => b && b.login && b.id).map(tag) : [],
         sessions,
         createdAt: typeof raw.createdAt === "number" ? raw.createdAt : null,
+        // A malformed entry (no id or no key) is dropped rather than kept as
+        // a row that can never be fetched or deleted by id.
+        credentials: Array.isArray(raw.credentials)
+          ? raw.credentials.filter((c) => c && c.id && c.key).map((c) => ({ ...c }))
+          : [],
       };
     } catch (err) {
       // ⚠️ A CORRUPT FILE IS NOT SILENTLY REPLACED. Starting empty would mean

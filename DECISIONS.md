@@ -736,3 +736,95 @@ summary line node already computes for this purpose.
 **Reversibility.** High — the wrapper is a thin layer around the same
 `node --test` invocation; deleting it and pointing `npm test` back at the raw
 command returns to the previous (less strict) behavior exactly.
+
+---
+
+## D-018 — team and personal model credentials, spawned by (provider, kind), plus an optional per-member Auto ladder
+
+**2026-09-23**
+
+**Decision.** An agent needs a model credential to run at all, and "everyone
+pastes their own into their own shell" was never written down anywhere — it
+was just how it happened to work. Two scopes now exist, chosen by where a
+credential is safe to live:
+
+- **Team credentials** live on the hub, in the SAME `Accounts` file S already
+  lives in (`hub/accounts.mjs`'s `credentials: []`, plaintext in the 0600
+  file — wrapping one more field under `secret` in that same file protects it
+  against nothing that does not already have `secret`). `kind` MUST be
+  `api_key`: a `subscription_token` (an OAuth sign-in credential, e.g.
+  `sk-ant-oat…`) is refused at `/team/credentials`' POST, both by its
+  declared `kind` and by sniffing the key's own prefix in case it was
+  mislabelled — a Claude subscription is priced and administered per person,
+  so sharing that credential would let a whole team spend against one
+  person's plan under their own identity, silently. Any signed-in member may
+  add one (`addedBy` records who); the owner or whoever added it may remove
+  it; ANY authenticated member — including the shared token, deliberately,
+  same reasoning `/ingest` already uses — may read the raw secret from its
+  own dedicated `/team/credentials/:id/secret` route, because that is not
+  actually a privilege boundary: the whole point of a team credential is that
+  every member's agents run on it, on that member's own machine, so every
+  member already has it in an environment variable regardless of whether the
+  hub also hands it back.
+
+- **Personal credentials** never leave the member's machine —
+  `desktop/credentials.js`, `~/.zevet/credentials.json`, encrypted with
+  `safeStorage` exactly like the Masora device token (D-010's own
+  precedent, including the injected-`encrypt`/`decrypt` testing shape). Any
+  `kind` is allowed here, INCLUDING `subscription_token` — a subscription is
+  single-person by nature, which is exactly why it belongs on one person's
+  own machine and nowhere a teammate could read it, rather than being
+  disallowed outright.
+
+Both scopes funnel into one small table, `CREDENTIAL_ENV` — `(provider,
+kind) -> env var` (`anthropic:api_key -> ANTHROPIC_API_KEY`,
+`anthropic:subscription_token -> CLAUDE_CODE_OAUTH_TOKEN`,
+`openai:api_key -> OPENAI_API_KEY`) — DUPLICATED verbatim in
+`hub/server.mjs` and `desktop/main.js` for the same reason `deriveAuthToken`
+already is: the hub must not import out of `client/`, the one directory it
+and the Electron app could otherwise both load from, and there is no other
+shared module in this repo. An unknown combination is rejected at add time
+rather than stored as something nothing will ever read. At spawn
+(`desktop/agent-console.js`'s two spawn sites, both now forwarding a plain
+`options.env`), every env var ANY table entry could set is deleted from the
+child's environment first, THEN the chosen one is set — a stray
+`ANTHROPIC_API_KEY` left over in the person's own shell must never silently
+outrank the credential they just picked in Settings.
+
+A member picks a spawn default (`~/.zevet/config.json`'s
+`defaultCredential: {scope, id}`) or **Auto**: an ordered ladder
+(`credentialLadder: [{credentialId, untilPct}]`, e.g. Andrew's own
+`[engine1→50, engine2→80, engine1→99, engine2→100]`) walked at every spawn by
+`desktop/credential-ladder.js`'s pure `choose(ladder, usageById)` — the first
+rung whose credential's utilization is strictly below its own `untilPct`
+wins; a rung with unknown usage (a failed probe) is skipped, not treated as
+either empty or full; if nothing qualifies, the LAST rung is used regardless
+of its own reading, because rotation has to land on something.
+Utilization itself is `desktop/credential-usage.js`: `max(5h, 7d)` from a
+1-token `POST /v1/messages` probe's own `anthropic-ratelimit-unified-{5h,7d}-utilization`
+headers for a `subscription_token`; an `api_key` has no plan window at all,
+so it reads `0` on a successful probe and `undefined` (skip this rung, not
+"wide open") on a failed one. Each reading is cached ~60s per credential id
+— the ladder is walked on every launch, and re-probing every rung on every
+spawn would be one live request per rung per launch for no benefit.
+
+**Alternatives.** One shared team key only (this decision's own first draft,
+2026-09-23 same day) — rejected once it was clear a real team already runs
+mixed credentials: someone's personal Claude Pro/Max plan alongside a
+company Anthropic API key, sometimes several of each, and a single hub field
+cannot represent that. A new keychain dependency for the personal store —
+rejected same as D-010: `safeStorage` already does the job. Fetching
+utilization on every ladder rung with no cache — rejected as one avoidable
+network round trip to api.anthropic.com per rung per agent launch. A new
+launch-time credential-override dialog — deliberately NOT built: the
+existing launch surface has no options dialog to extend, and the per-member
+default (plus Auto) covers the requirement without inventing UI nothing
+asked for.
+
+**Reversibility.** Medium. Team credentials are additive rows in a file
+that already existed (`accounts.json`'s `credentials: []`), trivially
+droppable. Personal credentials, like the Masora token, are
+`safeStorage`-encrypted per OS keychain: unreadable after a keychain-scheme
+migration with no re-pairing story beyond "add it again" —
+`credentialKey()` fails closed (`null`, never a throw) exactly like
+`masora.loadToken()` already does for the same reason.

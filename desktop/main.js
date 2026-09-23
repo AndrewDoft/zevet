@@ -47,6 +47,9 @@ const { createConsoleLog } = require("./console-log.js");
 const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
+const credentials = require("./credentials.js");
+const credentialLadder = require("./credential-ladder.js");
+const credentialUsage = require("./credential-usage.js");
 const masoraPush = require("./masora-push.js");
 const masoraConnect = require("./masora-connect.js");
 const chats = require("./chat.js");
@@ -368,6 +371,131 @@ function authFor(cfg) {
   // authenticating with the OLD credential while the settings pane reports the
   // new one.
   return secret.resolveAuth({ env: {}, file: { secret: cfg.secret, token: cfg.token, session: cfg.session } });
+}
+
+/**
+ * Which env var a spawned agent reads a credential from, by (provider,
+ * kind). DUPLICATED from hub/server.mjs's own copy of this table — see its
+ * comment for why: the hub must not import out of `client/`, the one
+ * directory it and this app could otherwise both load from, and there is no
+ * other shared module. Four lines twice beats a package for four lines.
+ */
+const CREDENTIAL_ENV = {
+  "anthropic:api_key": "ANTHROPIC_API_KEY",
+  "anthropic:subscription_token": "CLAUDE_CODE_OAUTH_TOKEN",
+  "openai:api_key": "OPENAI_API_KEY",
+};
+
+/** Every env var ANY entry in CREDENTIAL_ENV could set, deleted from the
+ *  child's env before the chosen one (if any) is applied. Without this, a
+ *  stray ANTHROPIC_API_KEY the person already had in their shell would
+ *  silently outrank the credential they just picked in Settings — same
+ *  bug shape as authFor's `env: {}`, a few lines up, and the same fix. */
+const ALL_CREDENTIAL_ENV_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY"];
+
+/**
+ * One credential id, resolved to `{provider, kind, key}` — or null if it
+ * exists in neither store, or fetching/decrypting it fails.
+ *
+ * `scope`, when given, skips straight to that store. Omitted (the ladder's
+ * case: a step only carries a bare `credentialId`, never a scope), it tries
+ * the personal store first — cheap and local — then falls back to the team
+ * one. A team lookup is two hub round trips (list, then the id's own
+ * `/secret`) rather than one, because the list route is what the board's
+ * settings pane also calls and this reuses it instead of inventing a
+ * "give me one credential's metadata" route for a single caller.
+ */
+async function resolveCredential(id, cfg, scope) {
+  if (!id) return null;
+
+  if (scope !== "team") {
+    const meta = credentials.listCredentials().find((c) => c.id === id);
+    if (meta) {
+      if (!safeStorage.isEncryptionAvailable()) return null;
+      const key = credentials.credentialKey(id, (b) => safeStorage.decryptString(b));
+      return key ? { provider: meta.provider, kind: meta.kind, key } : null;
+    }
+    if (scope === "personal") return null;
+  }
+
+  const auth = authFor(cfg || {});
+  const hub = String((cfg && cfg.hub) || "").replace(/\/+$/, "");
+  if (auth.error || !auth.token || !hub) return null;
+  try {
+    const listRes = await fetch(`${hub}/team/credentials`, { headers: { "x-zevet-token": auth.token }, signal: AbortSignal.timeout(8000) });
+    const list = listRes.ok ? await listRes.json() : null;
+    const meta = list && Array.isArray(list.credentials) ? list.credentials.find((c) => c.id === id) : null;
+    if (!meta) return null;
+    const secretRes = await fetch(`${hub}/team/credentials/${encodeURIComponent(id)}/secret`, {
+      headers: { "x-zevet-token": auth.token },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!secretRes.ok) return null;
+    const body = await secretRes.json();
+    return typeof body.key === "string" && body.key ? { provider: meta.provider, kind: meta.kind, key: body.key } : null;
+  } catch (err) {
+    console.log(`zevet: could not reach the hub for a team credential (${err.message})`);
+    return null;
+  }
+}
+
+/**
+ * The env to spawn an agent with, from this member's chosen default
+ * (`cfg.defaultCredential: {scope: "personal"|"team", id}`, or
+ * `{scope: "auto"}` to walk `cfg.credentialLadder` — see
+ * credential-ladder.js) — or undefined (spawn exactly as before, inheriting
+ * process.env) when nothing is chosen, or anything about resolving it fails.
+ *
+ * A team credential and an Auto probe are both fetched fresh on every call
+ * rather than cached at this layer — the owner may have rotated or removed
+ * a credential since the last agent started, and one extra request per
+ * launch is nothing. (The Auto path's utilization READING is cached, for
+ * 60s, but that is credential-usage.js's concern, not this function's.) A
+ * personal credential never leaves this machine: it is decrypted locally via
+ * safeStorage, the same as masora.js's own token.
+ *
+ * Any failure (no config, no default set, the hub down, an older hub
+ * without the route, decryption failing) is treated the same as "no
+ * credential chosen": the agent still starts, and only a one-line note says
+ * why — never the key itself, in that note or anywhere else logged.
+ */
+async function credentialEnvFor() {
+  const cfg = readConfig();
+  const def = cfg && cfg.defaultCredential;
+  if (!def || !def.scope) return undefined;
+
+  let cred = null;
+  if (def.scope === "auto") {
+    const ladder = Array.isArray(cfg.credentialLadder) ? cfg.credentialLadder : [];
+    if (!ladder.length) return undefined;
+
+    const usageById = {};
+    const probed = new Set();
+    for (const step of ladder) {
+      if (probed.has(step.credentialId)) continue; // a rung can reuse an earlier id (Andrew's own ladder does)
+      probed.add(step.credentialId);
+      const c = await resolveCredential(step.credentialId, cfg);
+      if (!c) continue; // no such credential, or it could not be fetched — the choice below just skips this rung
+      const u = await credentialUsage.utilizationFor(step.credentialId, c, { fetchImpl: fetch });
+      if (u !== undefined) usageById[step.credentialId] = u;
+    }
+    const chosenId = credentialLadder.choose(ladder, usageById);
+    cred = chosenId ? await resolveCredential(chosenId, cfg) : null;
+  } else if (def.scope === "personal" || def.scope === "team") {
+    if (!def.id) return undefined;
+    cred = await resolveCredential(def.id, cfg, def.scope);
+  } else {
+    return undefined;
+  }
+  if (!cred) return undefined;
+
+  const envVar = CREDENTIAL_ENV[`${cred.provider}:${cred.kind}`];
+  if (!envVar) return undefined;
+
+  const env = { ...process.env };
+  for (const v of ALL_CREDENTIAL_ENV_VARS) delete env[v];
+  env[envVar] = cred.key;
+  return env;
 }
 
 /**
@@ -1289,6 +1417,135 @@ ipcMain.handle("masora:connect", async (_e, { provider } = {}) => {
   });
 });
 
+/* ── Model credentials (D-0NN) ──────────────────────────────────────────
+ *
+ * Team credentials live on the hub (hub/accounts.mjs + its /team/credentials
+ * routes) and are reached over HTTP, same as everything else authFor()
+ * gates. Personal credentials never leave this machine (desktop/credentials.js,
+ * safeStorage-encrypted like masora.js's own token) and are reached only
+ * through these IPC calls — the board never sees a personal secret, only its
+ * metadata, same rule zevet:config already follows for the hub secret.
+ *
+ * `credentialEnvFor()`, a few hundred lines up, is what actually reads the
+ * chosen default at spawn time; these four handlers are Settings' CRUD on
+ * top of the same two stores.
+ */
+
+/** List, tagged by scope, plus the member's own default (if any). A team
+ *  fetch that fails (no hub, no auth, hub down) degrades to "no team
+ *  credentials" rather than failing the whole call — the personal list is
+ *  still useful on its own. */
+ipcMain.handle("zevet:listCredentials", async () => {
+  const cfg = readConfig() || {};
+  const personal = credentials.listCredentials().map((c) => ({ ...c, scope: "personal" }));
+
+  let team = [];
+  const auth = authFor(cfg);
+  const hub = String(cfg.hub || "").replace(/\/+$/, "");
+  if (!auth.error && auth.token && hub) {
+    try {
+      const res = await fetch(`${hub}/team/credentials`, { headers: { "x-zevet-token": auth.token }, signal: AbortSignal.timeout(8000) });
+      if (res.ok) {
+        const body = await res.json();
+        if (Array.isArray(body.credentials)) team = body.credentials.map((c) => ({ ...c, scope: "team" }));
+      }
+    } catch {
+      // Hub unreachable or too old for the route — team list stays empty.
+    }
+  }
+
+  return { ok: true, credentials: [...team, ...personal], default: cfg.defaultCredential || null };
+});
+
+/** Add a credential in the given scope. Team validation (provider/kind,
+ *  Anthropic key shape, subscription tokens refused) all happens on the hub,
+ *  same as it does for a board client talking to it directly — this is a
+ *  second caller of the same route, not a second copy of the rule. */
+ipcMain.handle("zevet:addCredential", async (_e, { scope, label, provider, kind, key } = {}) => {
+  if (scope === "personal") {
+    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: "This machine's OS keychain is unavailable." };
+    const { id } = credentials.addCredential({ label, provider, kind, key }, (s) => safeStorage.encryptString(s));
+    return { ok: true, id };
+  }
+  if (scope === "team") {
+    const cfg = readConfig() || {};
+    const auth = authFor(cfg);
+    const hub = String(cfg.hub || "").replace(/\/+$/, "");
+    if (auth.error || !auth.token || !hub) return { ok: false, error: auth.error || "not connected to a hub" };
+    try {
+      const res = await fetch(`${hub}/team/credentials`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-zevet-token": auth.token },
+        body: JSON.stringify({ label, provider, kind, key }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+      return { ok: true, id: body.id };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err) };
+    }
+  }
+  return { ok: false, error: `unknown scope: ${scope}` };
+});
+
+ipcMain.handle("zevet:removeCredential", async (_e, { scope, id } = {}) => {
+  if (scope === "personal") return { ok: credentials.removeCredential(id) };
+  if (scope === "team") {
+    const cfg = readConfig() || {};
+    const auth = authFor(cfg);
+    const hub = String(cfg.hub || "").replace(/\/+$/, "");
+    if (auth.error || !auth.token || !hub) return { ok: false, error: auth.error || "not connected to a hub" };
+    try {
+      const res = await fetch(`${hub}/team/credentials/${encodeURIComponent(String(id || ""))}`, {
+        method: "DELETE",
+        headers: { "x-zevet-token": auth.token },
+        signal: AbortSignal.timeout(8000),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err) };
+    }
+  }
+  return { ok: false, error: `unknown scope: ${scope}` };
+});
+
+/** Which credential this member's agents spawn with: `{scope, id}`, or
+ *  `{scope: "auto"}` to walk `credentialLadder` (below) instead of a single
+ *  fixed choice. `null`/omitted clears it — spawn exactly as today,
+ *  inheriting process.env — see credentialEnvFor. */
+ipcMain.handle("zevet:setDefaultCredential", (_e, arg) => {
+  const cfg = readConfig() || {};
+  const next = { ...cfg };
+  if (arg && arg.scope === "auto") next.defaultCredential = { scope: "auto" };
+  else if (arg && arg.scope && arg.id) next.defaultCredential = { scope: arg.scope, id: arg.id };
+  else delete next.defaultCredential;
+  writeConfig(next);
+  return { ok: true, default: next.defaultCredential || null };
+});
+
+/**
+ * The "Auto" rotation ladder: an ordered list of `{credentialId, untilPct}`.
+ * Saved and read back verbatim — credential-ladder.js's `choose()` is the
+ * only thing that interprets it, at spawn time, and it does not run here so
+ * that a member can edit the ladder while offline or before either
+ * credential it names has been probed even once.
+ */
+ipcMain.handle("zevet:credentialLadder", () => (readConfig() || {}).credentialLadder || []);
+
+ipcMain.handle("zevet:setCredentialLadder", (_e, ladder) => {
+  const cfg = readConfig() || {};
+  const clean = Array.isArray(ladder)
+    ? ladder
+        .filter((s) => s && typeof s.credentialId === "string" && s.credentialId && Number.isFinite(s.untilPct))
+        .map((s) => ({ credentialId: s.credentialId, untilPct: Math.max(0, Math.min(100, s.untilPct)) }))
+    : [];
+  writeConfig({ ...cfg, credentialLadder: clean });
+  return { ok: true, ladder: clean };
+});
+
 // ---- the local workspace ---------------------------------------------------
 
 /** Folders this machine has opened. Stored beside the config, never on the hub. */
@@ -1900,11 +2157,13 @@ async function runDueSchedules() {
         // Same handle-indirection as local:startAgent: onEvent can fire before
         // `started` is assigned, so the id it needs is read off a mutable box.
         const handle = { id: null };
+        const env = await credentialEnvFor();
         const started = agentConsole.startConsole({
           agent: s.agent,
           cwd: place.cwd,
           model: s.model,
           mode: s.mode,
+          env,
           onEvent: (evt) => {
             if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
             notePlacement(place, evt, handle.id);
@@ -2681,12 +2940,14 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   // zone — reading it throws a ReferenceError out of the error path, which is
   // the worst possible place to add a second failure.
   const handle = { id: null };
+  const env = await credentialEnvFor();
   const started = agentConsole.startConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt,
+    env,
     ...(mcpConfig
       ? {
           mcpConfig: mcpConfig.file,
@@ -2775,6 +3036,7 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
   }
 
   const handle = { id: null };
+  const env = await credentialEnvFor();
   const started = agentConsole.startConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
@@ -2782,6 +3044,7 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt: settings.systemPrompt,
     resumeFrom: resumeFrom.trim(),
+    env,
     ...(mcpConfig
       ? {
           mcpConfig: mcpConfig.file,

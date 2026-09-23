@@ -631,6 +631,12 @@ function killTree(child, spawnFn) {
  *   — deterministically, offline, for free, on a machine with no agent
  *   installed at all. The seam is the product of that requirement.
  *
+ * opts.env — passed straight through to BOTH spawn sites below as the
+ *   child's environment. Omitted (undefined), the child inherits
+ *   process.env exactly as it always has. The caller (desktop/main.js) is
+ *   what decides whether to pass `{...process.env, ANTHROPIC_API_KEY: key}` —
+ *   this function has no opinion and does no fetching of its own.
+ *
  * onEvent receives, in order of arrival:
  *   { type:"agent",       payload }   a parsed JSONL object from the agent
  *   { type:"stdout-line", line }      a stdout line that was not JSON
@@ -695,6 +701,10 @@ function startConsole(opts) {
       const inv = buildShimInvocation(resolved.file, args);
       child = spawnFn(inv.command, inv.args, {
         cwd: options.cwd,
+        // undefined when the caller did not supply one, which node treats the
+        // same as omitting the option entirely: the child inherits
+        // process.env, exactly as it did before this existed.
+        env: options.env,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
         ...inv.options,
@@ -702,6 +712,7 @@ function startConsole(opts) {
     } else {
       child = spawnFn(resolved.file, args, {
         cwd: options.cwd,
+        env: options.env,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
         // POSIX only: become a process-group leader so stop() can signal the
