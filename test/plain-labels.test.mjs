@@ -36,8 +36,10 @@ test("the empty pane keeps project tools behind a closed disclosure", () => {
 
 test("app chrome does not expose installation commands or backend badges", () => {
   assert.ok(!src("tree.tsx").includes("node client/install.mjs"));
+  // The rail's corner is Andrew's status line, on purpose: branch, commit and
+  // live on one line, cindex and graph on the next, spend below (strip.tsx).
   const strip = src("strip.tsx");
-  for (const leak of ['text="cindex"', 'text="graph"', 'repo.sha', 'g.head', 'text="hook fail"']) assert.ok(!strip.includes(leak), leak);
+  for (const kept of ['text="cindex"', 'text="graph"', 'repo.sha', 'g.head']) assert.ok(strip.includes(kept), kept);
   const sessions = src("sessions.tsx");
   assert.ok(!sessions.includes("WHERE_LABEL"));
   assert.ok(!sessions.includes("Showing {"));
@@ -63,8 +65,7 @@ test("working label and empty-tree explanation are plain", () => {
 test("token counts and cost are not shown by default", () => {
   // The rail read "spent 5h 150k 7d 150k $0.16"; the composer a "$0.16" chip
   // and "5h 50%" on every run.
-  const strip = src("strip.tsx");
-  for (const leak of ['text="spent"', "burn.cost", "live.cost"]) assert.ok(!strip.includes(leak), leak);
+  // Spend stays on the rail's status corner (strip.tsx), which Andrew asked for.
   const controls = src("composercontrols.tsx");
   assert.ok(!/<span[^>]*>\{money\(usage\.cost\)\}<\/span>/.test(controls), "the cost chip is back");
   assert.match(controls, /usage\.cost != null \? money\(usage\.cost\) : null/);
