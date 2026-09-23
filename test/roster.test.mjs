@@ -17,6 +17,7 @@ import { ROOT } from "./helpers.mjs";
 const {
   AGENT_MARKS,
   clampPaneWidth,
+  dailyActivity,
   followAllows,
   lastToolFor,
   liveActorsOf,
@@ -342,5 +343,36 @@ describe("repo wording", () => {
     const tree = src("components/tree.tsx");
     assert.ok(tree.includes("export function FollowControl"), "FollowControl is not exported");
     assert.ok(app.includes("<FollowControl"), "the rail does not render the follow control");
+  });
+});
+
+describe("daily activity", () => {
+  const DAY = 86400000;
+  const NOW = 10 * DAY + 12 * 3600 * 1000; // partway through "day 10"
+
+  test("buckets real events by day and fills the quiet ones with 0", () => {
+    const events = [
+      ev({ ts: NOW - 2 * DAY }),
+      ev({ ts: NOW - 2 * DAY + 1000 }),
+      ev({ ts: NOW }),
+    ];
+    const points = dailyActivity(events, 3, NOW);
+    assert.equal(points.length, 3, "3 days asked for, 3 days back");
+    assert.deepEqual(points.map((p) => p.count), [2, 0, 1], "day -2, -1 (quiet), today");
+    // ISO date strings, not epoch numbers - what the heat-graph element wants.
+    assert.match(points[0].date, /^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  test("nothing outside the window counts, and nothing is invented for an empty feed", () => {
+    const points = dailyActivity([ev({ ts: NOW - 30 * DAY })], 7, NOW);
+    assert.deepEqual(points.map((p) => p.count), [0, 0, 0, 0, 0, 0, 0], "the old event must not leak in");
+
+    const empty = dailyActivity([], 5, NOW);
+    assert.equal(empty.length, 5);
+    assert.ok(empty.every((p) => p.count === 0), "no events means honestly-zero, not a fabricated trend");
+  });
+
+  test("malformed events do not crash the bucket count", () => {
+    assert.doesNotThrow(() => dailyActivity([null, {}, ev({ ts: NOW })], 2, NOW));
   });
 });

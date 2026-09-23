@@ -14,8 +14,10 @@ import { Thread } from "./assistant-ui/elements/thread.aui";
 import { TurnToolGroup } from "./toolgroup";
 import { ThinkingIndicator } from "./assistant-ui/elements/thinking-indicator";
 import { EmptyState, EmptyStateGreeting } from "./assistant-ui/elements/empty-state";
+import { ActivityGraph } from "./assistant-ui/elements/activity-graph";
 import { useEffect, useState } from "react";
-import { selectActiveConsole, useBoard } from "../lib/board";
+import { selectActiveConsole, selectEvents, useBoard } from "../lib/board";
+import { dailyActivity } from "../lib/roster.mjs";
 import { bridge } from "../lib/bridge";
 import { Launcher } from "./launcher";
 import { QuoteToComposer } from "./guards";
@@ -91,6 +93,40 @@ function Thinking() {
   );
 }
 
+/**
+ * A small "what has been happening lately" card, above the composer, while
+ * this conversation has nothing in it yet.
+ *
+ * ⚠️ NOTHING HERE IS INVENTED. The board only ever knows the hub's own event
+ * feed (`selectEvents`, ~300 most recent, see hub/server.mjs) — there is no
+ * history further back than that to draw on, so the day buckets it produces
+ * are real counts, and a quiet day reads as 0 rather than being smoothed over
+ * or left out. See dailyActivity in lib/roster.mjs, and panels.test.mjs's
+ * "nothing is invented" rule, which this follows on purpose.
+ *
+ * Gone the moment the transcript has a first message: it is a "here is what
+ * the team has been doing" greeting, not a permanent header competing with
+ * the thread underneath it.
+ */
+function StartupActivity({ reading }: { reading: boolean }) {
+  const active = useBoard(selectActiveConsole);
+  const events = useBoard(selectEvents);
+  const started = Boolean(active && active.transcript.messages.length > 0);
+  if (reading || started) return null;
+  const points = dailyActivity(events, 14);
+  const total = points.reduce((n, p) => n + p.count, 0);
+  return (
+    <ActivityGraph
+      className="mx-4 mt-3 mb-1"
+      data={points}
+      start={points[0].date}
+      end={points[points.length - 1].date}
+      title="Recent activity"
+      total={`${total} event${total === 1 ? "" : "s"} · 14d`}
+    />
+  );
+}
+
 export function Conversation() {
   const local = Boolean(bridge.local);
   const active = useBoard(selectActiveConsole);
@@ -159,6 +195,10 @@ export function Conversation() {
       {reading ? null : <PermitQueue />}
       {reading ? null : <AskPrompt />}
       {reading ? null : <AskQueue />}
+      {/* Above the chat box, in both views - see StartupActivity's own
+          comment for what it draws and why it is gone after the first
+          message. */}
+      <StartupActivity reading={reading} />
       <div className="chat-thread-body">
         <Thread autoFocus={false} components={TURN_COMPONENTS} />
         {/* A tick per message down the right edge. It is the one thing that

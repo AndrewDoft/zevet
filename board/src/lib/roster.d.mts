@@ -6,6 +6,7 @@ export type EventLike = {
   target?: string | null;
   detail?: string;
   repo?: string;
+  ts?: number;
 } | null;
 
 export function clampPaneWidth(v: unknown, min: number, max: number): number;
@@ -35,6 +36,11 @@ export function verbFor(e: EventLike | null | undefined): string;
 export function folderOf(e: EventLike | null | undefined): string;
 export function ago(ms: number): string;
 export function agoText(now: number, ts: number): string;
+export function dailyActivity(
+  events: EventLike[] | null | undefined,
+  days: number,
+  now?: number,
+): Array<{ date: string; count: number }>;
 export function liveActorsOf(
   roster: RosterEntryLike[],
   repoName: string | null | undefined,
