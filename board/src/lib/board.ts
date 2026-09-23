@@ -1477,6 +1477,9 @@ export function fileEvents(): HubEvent[] {
   return scoped().filter((e) => !g.localRoot || localActivity(e));
 }
 
+/** Mirrors desktop/local-fs.js's DEFAULT_SKIP -- names listTree never shows. */
+const TREE_SKIP = new Set([".git", "node_modules", ".next", "dist", "out", ".venv", "__pycache__", ".DS_Store"]);
+
 export function buildTree(): { root: TreeNode; now: number } {
   const now = serverNow();
   const g = useBoard.getState();
@@ -1498,6 +1501,12 @@ export function buildTree(): { root: TreeNode; now: number } {
   fileEvents().forEach((e) => {
     if (!e.target || e.kind !== "tool") return;
     const parts = String(e.target).split("/").filter(Boolean);
+    // A tool touching a path under a directory local-fs.js's listTree never
+    // shows (node_modules, .git, dist, ...) must not fabricate a tree node
+    // for it -- that would auto-expand and dot a folder the tree otherwise
+    // hides. Mirrors desktop/local-fs.js's DEFAULT_SKIP rather than
+    // re-parsing ignore rules in the renderer.
+    if (parts.some((p) => TREE_SKIP.has(p))) return;
     let node = root;
     parts.forEach((part, i) => {
       const isFile = i === parts.length - 1;

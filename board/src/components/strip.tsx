@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import { useBoard, selectStrip } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { WorkspacePicker } from "./workspaces";
+import { ago } from "../lib/fmt";
 import type { Conn } from "../lib/types";
 
 /* `bar` and `tint` went with ctx and cache. They drew the sparkline and the
@@ -89,6 +90,10 @@ export function Strip() {
     const b: ReactNode[] = [<Sp key="k" cls="k" text="spent" />];
     (["5h", "7d"] as const).forEach((w) => {
       if (burn[w] && burn[w].tokens) {
+        // A middle dot between the two windows, so "5h 73k 7d 73k" — two
+        // numbers back to back with nothing marking where one window ends and
+        // the next begins — reads as "5h 73k · 7d 73k" instead.
+        if (b.length > 1) b.push(<Sp key={w + "sep"} cls="dim" text="·" />);
         b.push(<Sp key={w} cls="dim" text={w} />);
         b.push(<Sp key={w + "v"} cls="v" text={tokens(burn[w].tokens)} />);
       }
@@ -120,7 +125,10 @@ export function Strip() {
   }
 
   const g = machine && (machine.graph as { state?: string; count?: number | null; head?: string; detail?: string } | undefined);
-  if (g && g.state !== "missing") {
+  // "missing" also covers a corrupt health file (status-sources.js's
+  // vaultHealth returns detail "unreadable" for one) — only the true
+  // no-file case, which carries no detail, should stay silent.
+  if (g && (g.state !== "missing" || g.detail)) {
     const cls = g.state === "errors" ? "bad" : g.state === "ok" ? "ok" : "warn";
     const gs: ReactNode[] = [<Sp key="k" cls="k" text="graph" />];
     if (g.state === "ok") {
@@ -141,7 +149,7 @@ export function Strip() {
     rest.push(
       <Seg key="hook">
         <Sp cls="bad" text="hook fail" />
-        <Sp cls="dim" text={hook.failedAgo} />
+        <Sp cls="dim" text={ago(hook.failedAgo * 1000)} />
       </Seg>,
     );
   }

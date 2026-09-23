@@ -16,7 +16,9 @@ const run = (source, context) => vm.runInNewContext(source
   .replace(/: "dir" \| "file"/g, '')
   .replace(/e\.target!/g, 'e.target'), context);
 const fn = (file, name) => read(file).match(new RegExp(`(?:export )?function ${name}\\([^]*?^}`, 'm'))[0].replace(/^export /, '');
+const cnst = (file, name) => read(file).match(new RegExp(`const ${name} = [^;]+;`))[0];
 const board = 'board/src/lib/board.ts';
+const treeSrc = (names) => cnst(board, 'TREE_SKIP') + '\n' + names.map((name) => fn(board, name)).join('\n');
 const checkout = (root) => createHash('sha256').update(root.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()).digest('hex');
 
 const activityCases = [
@@ -39,12 +41,32 @@ for (const [label, fields, allowed] of activityCases) {
     const g = { localRoot: 'C:/dev/zw/zevet/', localCheckout: checkout('C:/dev/zw/zevet'), localEntries: [], events: [e], selectedRepo: null, followMode: 'all', myActor: 'me', myMachine: 'my-pc' };
     const opened = [];
     const context = { e, useBoard: { getState: () => g, setState: (p) => Object.assign(g, p) }, bridge: { local: {} }, serverNow: () => 2, scoped: () => g.events, revealPath: () => {}, toggleSelection: (p) => opened.push(p), pendingAgentLine: null };
-    run(['localActivity', 'fileEvents', 'blankNode', 'buildTree', 'followEvent'].map((name) => fn(board, name)).join('\n') + '\nthis.tree = buildTree(); followEvent(e);', context);
+    run(treeSrc(['localActivity', 'fileEvents', 'blankNode', 'buildTree', 'followEvent']) + '\nthis.tree = buildTree(); followEvent(e);', context);
     assert.deepEqual(Object.keys(context.tree.root.children), allowed ? ['detail.tsx'] : []);
     assert.deepEqual(opened, allowed ? ['detail.tsx'] : []);
     assert.equal(g.selectedRepo, allowed ? 'zevet' : null);
   });
 }
+
+for (const target of ['board/node_modules/x/index.js', '.git/hooks/pre-commit', 'a/dist/bundle.js']) {
+  test(`buildTree does not dot or expand an ignored path: ${target}`, () => {
+    const e = { kind: 'tool', repo: 'zevet', actor: 'me', ts: 1, target };
+    const g = { localRoot: 'C:/dev/zw/zevet/', localCheckout: checkout('C:/dev/zw/zevet'), localEntries: [], events: [e], selectedRepo: null, followMode: 'all', myActor: 'me', myMachine: 'my-pc' };
+    const context = { useBoard: { getState: () => g, setState: (p) => Object.assign(g, p) }, bridge: { local: {} }, serverNow: () => 2, scoped: () => g.events };
+    run(treeSrc(['localActivity', 'fileEvents', 'blankNode', 'buildTree']) + '\nthis.tree = buildTree();', context);
+    assert.deepEqual(Object.keys(context.tree.root.children), []);
+  });
+}
+
+test('buildTree still dots and shows a real touched file', () => {
+  const e = { kind: 'tool', repo: 'zevet', actor: 'me', ts: 1, target: 'board/src/detail.tsx' };
+  const g = { localRoot: 'C:/dev/zw/zevet/', localCheckout: checkout('C:/dev/zw/zevet'), localEntries: [], events: [e], selectedRepo: null, followMode: 'all', myActor: 'me', myMachine: 'my-pc' };
+  const context = { useBoard: { getState: () => g, setState: (p) => Object.assign(g, p) }, bridge: { local: {} }, serverNow: () => 2, scoped: () => g.events };
+  run(treeSrc(['localActivity', 'fileEvents', 'blankNode', 'buildTree']) + '\nthis.tree = buildTree();', context);
+  assert.deepEqual(Object.keys(context.tree.root.children), ['board']);
+  assert.deepEqual(Object.keys(context.tree.root.children.board.children.src.children), ['detail.tsx']);
+  assert.equal(context.tree.root.children.board.children.src.children['detail.tsx'].who.me, 1);
+});
 
 test('desktop config supplies the event producers machine identity', () => {
   const source = read('desktop/main.js').match(/ipcMain\.handle\("zevet:config", \(\) => \{[^]*?^\}\);/m)[0];
@@ -130,7 +152,7 @@ test('verified activity builds nested paths and follow opens them', () => {
   const g = { localRoot: 'C:/dev/zw/zevet', localCheckout: id, localEntries: [], events: [e], followMode: 'mine', myActor: 'me' };
   const opened = [];
   const context = { e, useBoard: { getState: () => g, setState: (p) => Object.assign(g, p) }, bridge: { local: {} }, serverNow: () => 2, scoped: () => g.events, revealPath: () => {}, toggleSelection: (p) => opened.push(p), pendingAgentLine: null };
-  run(['localActivity', 'fileEvents', 'blankNode', 'buildTree', 'followEvent'].map((name) => fn(board, name)).join('\n') + '\nthis.tree = buildTree(); followEvent(e);', context);
+  run(treeSrc(['localActivity', 'fileEvents', 'blankNode', 'buildTree', 'followEvent']) + '\nthis.tree = buildTree(); followEvent(e);', context);
   assert.equal(context.tree.root.children.board.children.src.children['detail.tsx'].who.me, 1);
   assert.deepEqual(opened, ['board/src/detail.tsx']);
 });

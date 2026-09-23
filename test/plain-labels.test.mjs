@@ -73,3 +73,24 @@ test("token counts and cost are not shown by default", () => {
   assert.match(quota, /if \(used < 80\) return null;/);
   assert.match(quota, /\{used\}% of \{label\} limit/);
 });
+
+test("the spend segment separates its two windows", () => {
+  // "spent 5h 73k 7d 73k" reads as one run-on number; a middle dot between
+  // the windows ("spent 5h 73k · 7d 73k") is what actually tells them apart.
+  const strip = src("strip.tsx");
+  const burn = strip.slice(strip.indexOf("const burn ="), strip.indexOf("const cost ="));
+  assert.match(burn, /text="·"/, "no separator pushed between the 5h and 7d windows");
+});
+
+test("the hook-fail age is formatted, not a raw second count", () => {
+  const strip = src("strip.tsx");
+  assert.match(strip, /text=\{ago\(hook\.failedAgo \* 1000\)\}/, "hook.failedAgo is rendered raw");
+});
+
+test("the graph segment still shows a corrupt health file's detail", () => {
+  // status-sources.js's vaultHealth returns state:"missing", detail:"unreadable"
+  // for a corrupt (non-object) health file, and "missing" with an empty detail
+  // for the ordinary no-vault case — only the latter should stay silent.
+  const strip = src("strip.tsx");
+  assert.match(strip, /g\.state !== "missing" \|\| g\.detail/, "the unreadable case is still swallowed");
+});
