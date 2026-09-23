@@ -288,6 +288,9 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * clobber this exists to prevent. See `fire()` in desktop/file-watch.js.
    */
   onFileChanged: (fn) => subscribe("local:fileChanged", fn),
+  /** A due schedule just ran (or was skipped); the board's own list is
+      otherwise only refreshed after a save/toggle/remove round-trip. */
+  onSchedulesChanged: (fn) => subscribe("local:schedulesChanged", fn),
   /** Which agents are installed on this machine. */
   agents: () => ipcRenderer.invoke("local:agents"),
   /** Start an agent in a folder. Returns { ok, id }. */

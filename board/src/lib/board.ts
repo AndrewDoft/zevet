@@ -2808,6 +2808,14 @@ export function boot(): void {
   }
 
   attachFileChanged();
+  if (bridge.local && typeof bridge.local.onSchedulesChanged === "function") {
+    /* main.js pushes this after a due schedule runs; the board otherwise only
+       reloads the list from refreshStats()'s poll, so the Schedules card and
+       RepoTimeline could sit stale for up to a minute after a run. */
+    bridge.local.onSchedulesChanged(() => {
+      void refreshSchedules();
+    });
+  }
   if (bridge.local && typeof bridge.local.onPermitRequest === "function") {
     /* An agent has asked to do something and is BLOCKED on the answer. There
        is no "later" here: the ask-server denies on timeout, so an unanswered

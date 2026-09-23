@@ -226,6 +226,7 @@ export interface LocalBridge {
   unwatch: (root: string, relPath: string) => Promise<unknown>;
   diffHunks?: (root: string, rel: string) => Promise<{ ok: boolean; hunks?: Array<{ start?: number }> }>;
   onFileChanged: (cb: (p: { root: string; relPath: string; text?: string; bom?: boolean; eol?: string }) => void) => () => void;
+  onSchedulesChanged?: (cb: (list: unknown) => void) => () => void;
   onAgentEvent: (cb: (evt: AgentEvent) => void) => () => void;
   /* Zevet Chat (desktop/chat.js). Optional: an older desktop build has none,
      and the Code | Chat switch is then not offered. */
