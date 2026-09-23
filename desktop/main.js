@@ -48,6 +48,7 @@ const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const masoraPush = require("./masora-push.js");
+const masoraConnect = require("./masora-connect.js");
 const chats = require("./chat.js");
 const { createClaudeCli } = require("./chat-claude.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
@@ -1195,6 +1196,47 @@ ipcMain.handle("zevet:masoraPairCancel", () => {
 ipcMain.handle("zevet:masoraUnpair", () => {
   masora.unpair();
   return true;
+});
+
+ipcMain.handle("masora:sources", async () => {
+  const cfg = masora.readConfig();
+  if (!cfg.paired) return { sources: [] };
+  const token = masora.loadToken((b) => safeStorage.decryptString(b));
+  if (!token) return { error: "Could not decrypt token" };
+  try {
+    const url = cfg.url;
+    const res = await fetch(`${url.replace(/\/+$/, "")}/api/sources`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return { error: "token" }; // 401/403 → auth issue
+    const data = await res.json();
+    if (!Array.isArray(data)) return { sources: [] };
+    return {
+      sources: data.map((s) => ({
+        kind: s.kind || s.type || "unknown",
+        status: s.status || "unknown",
+      })),
+    };
+  } catch {
+    return { error: "network" };
+  }
+});
+
+ipcMain.handle("masora:connect", async (_e, { provider } = {}) => {
+  const cfg = masora.readConfig();
+  if (!cfg.paired) {
+    return { error: "Not paired with Masora" };
+  }
+  const token = masora.loadToken((b) => safeStorage.decryptString(b));
+  if (!token) return { error: "Could not decrypt token" };
+  return masoraConnect.connectProvider({
+    provider,
+    baseUrl: cfg.url,
+    token,
+    shell,
+    fetchImpl: fetch,
+  });
 });
 
 // ---- the local workspace ---------------------------------------------------

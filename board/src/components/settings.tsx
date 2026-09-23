@@ -747,6 +747,111 @@ function MasoraSection() {
   );
 }
 
+/**
+ * Connections to external services via Masora (Linear, GitHub, Slack, Google
+ * Drive, Gmail, Google Calendar, Notion, Zoom). Each provider's OAuth flow is
+ * initiated by Masora's /api/oauth/{provider}/install, opened in the system
+ * browser. Status is fetched from Masora's /api/sources. Zevet holds no secrets.
+ */
+function ConnectionsSection() {
+  const [sources, setSources] = useState<Record<string, string> | null>(null);
+  const [cfg, setCfg] = useState<{ paired: boolean } | null>(null);
+  const [connecting, setConnecting] = useState<string | null>(null);
+
+  const PROVIDERS = [
+    { id: "linear", label: "Linear" },
+    { id: "github", label: "GitHub" },
+    { id: "slack", label: "Slack" },
+    { id: "gdrive", label: "Google Drive" },
+    { id: "gmail", label: "Gmail" },
+    { id: "gcal", label: "Google Calendar" },
+    { id: "notion", label: "Notion" },
+    { id: "zoom", label: "Zoom" },
+  ];
+
+  function refresh() {
+    window.zevet?.masoraConfig?.().then((c) => {
+      if (c) setCfg(c);
+    });
+    if (cfg?.paired) {
+      window.zevet?.masoraSources?.().then((r) => {
+        if (r && r.sources) {
+          const map: Record<string, string> = {};
+          for (const s of r.sources) {
+            map[s.kind] = s.status === "connected" ? "connected" : "reconnect";
+          }
+          setSources(map);
+        } else if (r && r.error === "token") {
+          // Token auth failed; show "—" status
+          setSources({});
+        }
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (!cfg) {
+      window.zevet?.masoraConfig?.().then((c) => {
+        if (c) setCfg(c);
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const handleFocus = () => refresh();
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg?.paired]);
+
+  if (!cfg) return null;
+  if (!cfg.paired) return null;
+
+  if (!bridge.local) return null;
+
+  function statusLabel(provider: string): string {
+    if (!sources) return "loading…";
+    if (sources[provider] === "connected") return "connected";
+    if (sources[provider] === "reconnect") return "reconnect";
+    return "—";
+  }
+
+  function buttonLabel(provider: string): string {
+    const status = statusLabel(provider);
+    return status === "connected" ? "Connected" : "Connect";
+  }
+
+  function connect(provider: string) {
+    setConnecting(provider);
+    window.zevet?.masoraConnect?.({ provider }).finally(() => {
+      setConnecting(null);
+      setTimeout(() => refresh(), 1000);
+    });
+  }
+
+  return (
+    <SSection title="Connections" summary={sources ? "configured" : "loading…"}>
+      <SNote>Connect services to link your Masora context.</SNote>
+      {PROVIDERS.map((p) => (
+        <div className="srow" key={p.id}>
+          <span className="k">{p.label}</span>
+          <span className="v">
+            <button
+              className={MAKE_BTN}
+              type="button"
+              disabled={connecting === p.id}
+              onClick={() => connect(p.id)}
+            >
+              {connecting === p.id ? "Opening…" : buttonLabel(p.id)}
+            </button>
+          </span>
+        </div>
+      ))}
+    </SSection>
+  );
+}
+
 function credentialLabel() {
   const c = bridge.cfg;
   if (!c) return "unknown";
@@ -870,6 +975,7 @@ export function SettingsSheet() {
         <AccountSection />
         <IndexSection />
         <MasoraSection />
+        <ConnectionsSection />
 
         <SSection title="Connection" summary={credentialLabel()}>
           <SRow k="Team address" v={bridge.hub} mono />
