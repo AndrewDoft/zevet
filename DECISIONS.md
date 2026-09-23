@@ -613,3 +613,126 @@ them. Practically low-severity while a hub hosts a handful of teams whose
 document-room names are drawn from real repo/branch state, not an attacker
 picking a name on purpose — but it is not a security boundary, and is not
 described as one anywhere in the desktop UI.
+
+**CLOSED 2026-09-23 — see INSUF-008.** Rooms are now scoped by team too:
+`joinRoom(conn, roomKey(conn.team, room))`, `conn.team` fixed once at the WS
+upgrade from `resolveTeam(tokenFrom(req, url))`. The "not yet" in this
+decision's title is now just "not": every route D-014 isolated, plus the one
+it named as still open, is isolated. Room-name collisions across teams no
+longer relay.
+
+---
+
+## D-015 — unclaimed teams expire on a timer, not through an admin UI
+
+**2026-09-23**
+
+**Decision.** The hosted hub had one team created by a test `POST
+/team/create`: unclaimed, no owner, nobody coming back to claim it, sitting
+in `teamAccounts` forever because nothing ever removes a team once minted.
+Rather than build an owner-only or super-admin surface (new auth concept —
+this hub has no notion of "admin" above a team's own owner, and an unclaimed
+team has no owner to authorize the deletion in the first place) to list and
+delete these by hand, `hub/accounts.mjs`'s `Accounts` gained a `createdAt`
+stamp (same one-time-fill-and-save idiom as its master secret) and
+`hub/server.mjs` gained `sweepUnclaimedTeams()`: any non-default team with no
+owner, older than `ZEVET_TEAM_EXPIRY_MS` (24h default), is deleted —
+in-memory registry entry, board, and both on-disk files
+(`accounts-<slug>.json`, `events-<slug>.jsonl`). Runs lazily before every
+`/team/create` (mirrors the existing `sweepGooglePairs` pattern) and hourly on
+a timer, so both a create-heavy and a quiet hub stay clean.
+
+**Alternatives.**
+
+1. *A manual `GET`/`DELETE` admin route, gated on... something.* Rejected:
+   there is no existing "hub admin" identity to gate it on that isn't itself
+   new surface, and the task this decision answers explicitly named automatic
+   expiry as the smallest honest option if it fit `hub/accounts.mjs`'s shape.
+   It does.
+2. *Expire on next boot only (scan `TEAMS_DIR` at startup).* Rejected: teams
+   are not currently reloaded from disk at boot at all (`teamAccounts` starts
+   with only the default team, and a created team is unreachable again after
+   a restart regardless of this change) — building that reload path just to
+   hang expiry off it would be strictly more code than the sweep this shipped
+   with, for a hub that in practice restarts rarely.
+
+**Reversibility.** High. `ZEVET_TEAM_EXPIRY_MS` set enormous (or the sweep
+calls removed) returns every created team to living forever, exactly as
+before. The `createdAt` field is additive and ignored by every other code
+path.
+
+**Cost.** A team created and never claimed within 24 hours is gone, including
+any `/ingest` activity that was posted to it via its shared token without
+anyone ever signing in — accepted, since that is precisely the orphan state
+this closes, and any real onboarding flow claims a team (signs in) within
+minutes of creating it, not a day later.
+
+---
+
+## D-016 — macOS voice detection checks three bundle names, read from Contents/MacOS, not one guessed executable
+
+**2026-09-23**
+
+**Decision.** `desktop/zevet-voice.js`'s `find()` only ever searched
+`%LOCALAPPDATA%`/`%ProgramFiles%`, so the mic read "not installed" on every
+Mac regardless of whether zevet Voice was there. Added a `darwin` branch that
+searches `/Applications` and `~/Applications` for the bundle under its
+current name and the two it shipped under before — read from zevet-voice's
+own git history of `release/build_macos.sh` rather than guessed: `Masora
+Voice.app` (first published build, `masora-voice-0.1.6-macos-arm64.dmg`,
+2026-09-19) → `zevet Voice.app` → the current `zevet voice.app`. The bundle's
+executable name is read out of `Contents/MacOS/` at runtime (`macExe()`)
+rather than hard-coded per bundle name, because that name changed too
+(`masora-voice` → `zevet voice`, the `macos_launcher.c` rename) and a bundle
+only ever holds the one binary there.
+
+**Alternatives.** Matching only the current bundle name was rejected for the
+same reason the existing Windows `PRODUCTS` migration comment gives: the two
+apps update independently, and reporting "not installed" to someone running
+a Mac build from before the rename offers a download they do not need.
+
+**Reversibility.** High — `MAC_APPS`/`macCandidates`/`macExe` are additive
+and exported for testing; removing the `darwin` branch returns to the
+pre-existing Windows-only behavior exactly.
+
+**Cost/scope note.** This closes the readiness check only (`status().installed`,
+which is what drives the Settings/composer "not installed" UI). `start()`
+works unchanged on macOS once `find()` returns a real path (it already just
+spawns whatever `find()` finds). `dictate()`'s "admin record" trigger is
+Windows-only machinery (a named Win32 event; see the file's own header
+comment) and was deliberately left alone — there is no verified macOS
+equivalent to wire it to (masora_dictation's compiled launcher on macOS
+always runs the app's `__main__`, never a `-m masora_dictation.admin`
+sub-invocation), and building one would be exactly the kind of API invented
+from memory CLAUDE.md-style projects ban. A macOS press of the mic against a
+cold app therefore behaves like any other "not running yet" case: it raises
+the app and asks for a second press, which is honest, not broken.
+
+---
+
+## D-017 — a CANCELLED test fails the gate by reading node's own summary, not by re-deriving pass/fail
+
+**2026-09-23**
+
+**Decision.** `node --test` already exits non-zero when a test is cancelled
+in the Node version this repo currently runs (verified: a top-level `before()`
+throw inside a `describe()` block reproduces "cancelled", not "fail", and the
+process still exits 1) — but nothing printed that fact in a way a person
+skimming a log would catch, and exit-code semantics for "cancelled" are not
+something this repo controls or should trust to hold across a Node upgrade.
+`scripts/run-tests.mjs` reads the `ℹ cancelled N` line node's own summary
+already prints and fails loudly and explicitly on `N > 0`, independent of
+node's exit code. `npm test`, `scripts/gate.sh` and the CI `Test` step all now
+go through it.
+
+**Alternatives.** Relying on node's current exit-code behavior alone was
+rejected: it is unverified across the Node versions this repo's `engines`
+field allows (`>=20`) and across whatever CI happens to run, and CLAUDE.md's
+own §9.11 is exactly the pattern of inferring a pipeline's state from what
+should happen rather than reading what did. Parsing the full test-runner
+output for `✖`/failure text was rejected as more fragile than reading the one
+summary line node already computes for this purpose.
+
+**Reversibility.** High — the wrapper is a thin layer around the same
+`node --test` invocation; deleting it and pointing `npm test` back at the raw
+command returns to the previous (less strict) behavior exactly.

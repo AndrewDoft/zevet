@@ -259,7 +259,7 @@ Masora. The masora2-side half of the same contract (T5's other track) has its
 own request/response tests against the real FastAPI app in MOCK_MODE and is
 not blocked by this entry.
 
-## INSUF-008 — a created team's WebSocket document rooms are not isolated from other teams on the same hub — **OPEN**
+## INSUF-008 — a created team's WebSocket document rooms are not isolated from other teams on the same hub — **CLOSED 2026-09-23**
 
 **What is missing.** D-014 gives each team created via `POST /team/create` its
 own master secret, ownership/allowlist and activity board (events, `/api/state`,
@@ -291,3 +291,14 @@ cross-team-collision test before it can be called closed.
 this ships. Document content, not credentials or account data: a room-name
 collision could relay live document edits between two teams' editors, never
 authenticate one team's caller as another's.
+
+**Closed.** Shipped almost exactly the shape sketched above: `roomKey(team,
+name)` at `joinRoom`'s one call site (`` `${team}\u0000${name}` ``), the
+connecting socket's `team` fixed once at the WS upgrade from the same
+`resolveTeam(tokenFrom(...))` the HTTP routes already use, and no client
+change — the editor never sees the hub's internal room key, exactly as
+predicted. `test/hub-ws.test.mjs`'s existing 48 tests are unchanged and green;
+added a "cross-team room isolation" describe (4 tests: no cross-traffic, no
+replay leak across teams, default-vs-created team, same-team relay still
+works), mutation-checked by flattening `roomKey()` to ignore `team` and
+watching it go red. Needs a hub redeploy to reach the live hub.
