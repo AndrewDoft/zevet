@@ -5,7 +5,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import zlib from "node:zlib";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { tempDir, ROOT } from "./helpers.mjs";
@@ -20,12 +20,15 @@ const masora = require(path.join(ROOT, "desktop", "masora.js"));
 const { _internals } = require(path.join(ROOT, "desktop", "agent-console.js"));
 const stream = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "chat-stream.mjs")).href);
 
+const { readMode, writeMode, readLastChat, writeLastChat } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "mode.mjs")).href);
+const { mirroredStorage, hydratePrefsMirror } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "prefs-mirror.mjs")).href);
+
 const ID = "6f0c2b8e-1d3a-4c5b-9e7f-0a1b2c3d4e5f";
 
 describe("chatArgs: the claude invocation for a chat", () => {
   test("first turn names the session, later turns resume it", () => {
-    const first = chats.chatArgs({ id: ID, started: false });
-    const later = chats.chatArgs({ id: ID, started: true });
+    const first = chats.chatArgs({ sessionId: ID, started: false });
+    const later = chats.chatArgs({ sessionId: ID, started: true });
     assert.deepEqual(first.slice(first.indexOf("--session-id"), first.indexOf("--session-id") + 2), ["--session-id", ID]);
     assert.ok(!first.includes("--resume"));
     assert.deepEqual(later.slice(later.indexOf("--resume"), later.indexOf("--resume") + 2), ["--resume", ID]);
@@ -33,20 +36,20 @@ describe("chatArgs: the claude invocation for a chat", () => {
   });
 
   test("no built-in tools, no MCP servers but Masora's, headless stream-json both ways", () => {
-    const a = chats.chatArgs({ id: ID, started: false });
+    const a = chats.chatArgs({ sessionId: ID, started: false });
     assert.deepEqual(a.slice(a.indexOf("--tools"), a.indexOf("--tools") + 2), ["--tools", ""]);
     assert.ok(a.includes("--strict-mcp-config"));
     for (const f of ["-p", "--verbose", "--include-partial-messages"]) assert.ok(a.includes(f), f);
     assert.equal(a[a.indexOf("--input-format") + 1], "stream-json");
     assert.equal(a[a.indexOf("--output-format") + 1], "stream-json");
     assert.ok(!a.includes("--mcp-config") && !a.includes("--allowedTools"), "unpaired: no MCP at all");
-    const paired = chats.chatArgs({ id: ID, started: true, mcpConfig: "/tmp/m.json" });
+    const paired = chats.chatArgs({ sessionId: ID, started: true, mcpConfig: "/tmp/m.json" });
     assert.equal(paired[paired.indexOf("--mcp-config") + 1], "/tmp/m.json");
     assert.equal(paired[paired.indexOf("--allowedTools") + 1], "mcp__masora");
   });
 
   test("survives the .cmd shim guard: nothing on argv cmd.exe would re-parse", () => {
-    const a = chats.chatArgs({ id: ID, started: true, mcpConfig: "C:/t/m.json", model: "sonnet" });
+    const a = chats.chatArgs({ sessionId: ID, started: true, mcpConfig: "C:/t/m.json", model: "sonnet" });
     assert.deepEqual(_internals.unsafeForCmd(a), []);
   });
 });
@@ -60,17 +63,19 @@ describe("composeTurn: what a turn writes to stdin", () => {
 
 describe("persistence under ~/.zevet/chats", () => {
   test("create, turn, rename, search, remove", () => {
-    const c = chats.create();
+    const c = chats.create("andrew");
     assert.ok(chats.isId(c.id));
     assert.deepEqual(chats.read(c.id).messages, []);
-    chats.markStarted(c.id);
-    const after = chats.addTurn(c.id, "What is a kumquat?\nsecond line", "A small citrus fruit.", "claude-x");
+    assert.equal(c.owner, "andrew");
+    assert.deepEqual(c.participants, ["andrew"]);
+    const after = chats.addTurn(c.id, "What is a kumquat?\nsecond line", "A small citrus fruit.", "claude-x", "andrew");
     assert.equal(after.title, "What is a kumquat?", "untitled chat takes the first line");
-    assert.equal(after.started, true);
-    assert.deepEqual(after.messages.map((m) => [m.role, m.text]), [
-      ["user", "What is a kumquat?\nsecond line"],
-      ["assistant", "A small citrus fruit."],
+    assert.deepEqual(after.messages.map((m) => [m.role, m.author, m.text]), [
+      ["user", "andrew", "What is a kumquat?\nsecond line"],
+      ["assistant", "assistant", "A small citrus fruit."],
     ]);
+    chats.addTurn(c.id, "and you?", "fine", "", "kai");
+    assert.deepEqual(chats.read(c.id).participants, ["andrew", "kai"], "whoever speaks joins");
     assert.equal(chats.rename(c.id, "Fruit").title, "Fruit");
     assert.deepEqual(chats.list("citrus").map((x) => x.id), [c.id], "search reaches message text");
     assert.deepEqual(chats.list("nothing-like-this"), []);
@@ -180,5 +185,107 @@ describe("chat-stream: token streaming over transcript.mjs", () => {
     assert.equal(stream.visibleMessages(t)[1].status.type, "incomplete");
     const f = stream.failTurn(stream.sendUser(stream.emptyChatThread(), "x"), "Still answering.");
     assert.equal(stream.visibleMessages(f)[1].status.error, "Still answering.");
+  });
+});
+
+describe("a chat's claude session never shows up in Code", () => {
+  test("agent-sessions.list skips sessions whose folder is a chat's", () => {
+    const sessions = require(path.join(ROOT, "desktop", "agent-sessions.js"));
+    const fake = tempDir("zevet-chat-claude-");
+    const was = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = process.env.USERPROFILE = fake.dir;
+    try {
+      const slug = (p) => path.resolve(p).replace(/[^A-Za-z0-9]/g, "-");
+      const line = JSON.stringify({ type: "user", timestamp: "2026-09-22T00:00:00.000Z", message: { role: "user", content: "hi" } });
+      for (const dir of [path.join(chats.CHATS, ID), path.join(fake.dir, "some-repo")]) {
+        const d = path.join(fake.dir, ".claude", "projects", slug(dir));
+        mkdirSync(d, { recursive: true });
+        writeFileSync(path.join(d, "11111111-2222-3333-4444-555555555555.jsonl"), line + "\n");
+      }
+      const got = sessions.list({}).sessions.map((s) => s.slug);
+      assert.deepEqual(got, [slug(path.join(fake.dir, "some-repo"))]);
+    } finally {
+      process.env.HOME = was.HOME;
+      process.env.USERPROFILE = was.USERPROFILE;
+    }
+  });
+});
+
+describe("one reply, one message id", () => {
+  test("the id a reply streams under is the id it ends with", () => {
+    let t = stream.sendUser(stream.emptyChatThread(), "hi");
+    const during = (tt) => stream.visibleMessages(tt).at(-1).id;
+    t = stream.chatEvent(t, { type: "agent", payload: { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "He" } } } });
+    const first = during(t);
+    t = stream.chatEvent(t, { type: "agent", payload: { type: "assistant", message: { content: [{ type: "text", text: "Hello" }] } } });
+    t = stream.chatEvent(t, { type: "agent", payload: { type: "result", is_error: false } });
+    assert.equal(during(t), first);
+    assert.equal(stream.visibleMessages(t).length, 2);
+  });
+});
+
+describe("a relaunch comes back to the mode and chat it closed on", () => {
+  const fakeLocal = () => {
+    const m = new Map();
+    return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), get length() { return m.size; }, key: (i) => [...m.keys()][i] ?? null };
+  };
+  // What desktop/main.js keeps in ~/.zevet/prefs.json (local:prefs / local:setPref).
+  const disk = {};
+  const desktop = {
+    prefs: async () => ({ ...disk }),
+    setPref: async (k, v) => { if (v == null) delete disk[k]; else disk[k] = String(v); },
+    setPrefs: async (e) => Object.assign(disk, e),
+  };
+
+  test("Chat, and its thread, survive a restart with localStorage wiped", async () => {
+    const before = mirroredStorage(fakeLocal(), () => desktop);
+    writeMode(before, "chat");
+    writeLastChat(before, ID);
+    await new Promise((r) => setImmediate(r));
+
+    const wiped = fakeLocal(); // a new origin, a cleared profile, a crash
+    await hydratePrefsMirror(wiped, desktop);
+    const after = mirroredStorage(wiped, () => desktop);
+    assert.equal(readMode(after, true), "chat");
+    assert.equal(readLastChat(after), ID);
+    assert.equal(readMode(after, false), "code", "a desktop without Chat opens Code");
+
+    writeMode(after, "code");
+    await new Promise((r) => setImmediate(r));
+    const again = fakeLocal();
+    await hydratePrefsMirror(again, desktop);
+    assert.equal(readMode(mirroredStorage(again, () => desktop), true), "code");
+  });
+});
+
+describe("the transcript travels; the claude session stays on this machine", () => {
+  test("session binding lives beside the chat, never inside it", () => {
+    const c = chats.create("andrew");
+    const s = chats.session(c.id);
+    assert.ok(chats.isId(s.sessionId));
+    assert.notEqual(s.sessionId, c.id, "a handed-over chat gets its own session");
+    assert.equal(s.started, false);
+    chats.markStarted(c.id);
+    assert.deepEqual(chats.session(c.id), { sessionId: s.sessionId, started: true });
+    const record = JSON.parse(readFileSync(path.join(chats.CHATS, `${c.id}.json`), "utf8"));
+    assert.deepEqual(Object.keys(record).sort(), ["created", "id", "messages", "owner", "participants", "title", "updated"]);
+    chats.remove(c.id);
+  });
+
+  test("a machine with no session for a chat replays its history on the first turn", () => {
+    const prior = [
+      { role: "user", author: "andrew", text: "What is a kumquat?" },
+      { role: "assistant", author: "assistant", text: "A small citrus fruit." },
+    ];
+    assert.equal(
+      chats.composeTurn("how do I eat one?", null, prior),
+      "<prior-conversation>\n[andrew]: What is a kumquat?\n\n[assistant]: A small citrus fruit.\n</prior-conversation>\n\nhow do I eat one?",
+    );
+  });
+
+  test("the Masora record names its participants, from which its audience is derived", () => {
+    const r = chats.toRecord({ id: ID, owner: "andrew", participants: ["andrew", "kai"], messages: [] });
+    assert.equal(r.owner, "andrew");
+    assert.deepEqual(r.participants, ["andrew", "kai"]);
   });
 });

@@ -14,8 +14,8 @@
 //   --tools ""            no built-in tools (init event reported `tools: []`)
 //   --strict-mcp-config   only servers from --mcp-config (none, unless Masora
 //                         is paired), never the user's other MCP servers
-//   --session-id <uuid>   first turn: the chat id IS the claude session id
-//   --resume <uuid>       later turns (same session_id came back)
+//   --session-id <uuid>   first turn on this machine: a fresh claude session
+//   --resume <uuid>       later turns (the same session_id came back)
 //   --allowedTools mcp__masora
 //       pre-approves every tool of that one server; probed with a stub server
 //       named `probe`: `mcp__probe` let `mcp__probe__secret_word` run with
@@ -24,6 +24,15 @@
 //
 // Conversations persist as ~/.zevet/chats/<id>.json, beside the rest of
 // zevet's local state, the way consoles and prefs do.
+//
+// SHAPED TO TRAVEL. A chat is {id (uuid, global), title, owner,
+// participants[], messages[{role, author, text, at}], created, updated}: the
+// whole of it is the transcript, and it serializes on its own. The claude
+// session that answers it is NOT in it. That binding is this machine's
+// (~/.zevet/chats/<id>/session.json), so a chat handed to someone else is
+// resumed on their machine from the transcript alone: with no binding there,
+// the first turn replays the messages to a fresh session (composeTurn's
+// `prior`).
 "use strict";
 
 const fs = require("node:fs");
@@ -44,7 +53,8 @@ const SYSTEM_PROMPT =
   "You are Zevet Chat, a general conversation assistant. This conversation has no repository " +
   "and no file or shell access. When a turn opens with a masora-context block, it is cited " +
   "evidence from the user's own Masora workspace: use it, cite the titles you rely on, and say " +
-  "plainly when the answer is not in it instead of guessing.";
+  "plainly when the answer is not in it instead of guessing. A prior-conversation block is this " +
+  "chat's history so far, carried over from another session.";
 
 function isId(id) {
   return typeof id === "string" && ID.test(id);
@@ -80,12 +90,14 @@ function read(id) {
 }
 
 function summary(c) {
-  return { id: c.id, title: c.title || "", created: c.created, updated: c.updated };
+  return { id: c.id, title: c.title || "", created: c.created, updated: c.updated, owner: c.owner || "" };
 }
 
-function create() {
+/** `owner` is the hub login of whoever started it, and its first participant. */
+function create(owner) {
   const now = Date.now();
-  return write({ id: randomUUID(), title: "", created: now, updated: now, started: false, messages: [] });
+  const who = String(owner || "");
+  return write({ id: randomUUID(), title: "", owner: who, participants: who ? [who] : [], created: now, updated: now, messages: [] });
 }
 
 /** Newest first. `query` matches the title or any message, case-insensitive. */
@@ -122,17 +134,43 @@ function remove(id) {
   return true;
 }
 
-function markStarted(id) {
-  const c = read(id);
-  if (c && !c.started) write({ ...c, started: true });
+/* ── this machine's claude session for a chat (never in the transcript) ── */
+
+function sessionFile(id) {
+  return path.join(dirOf(id), "session.json");
 }
 
-/** One finished exchange. The first one names an untitled chat. */
-function addTurn(id, user, assistant, model) {
+/** `{ sessionId, started }`; a new, unstarted one when this machine has none. */
+function session(id) {
+  try {
+    const s = JSON.parse(fs.readFileSync(sessionFile(id), "utf8"));
+    if (s && isId(s.sessionId)) return { sessionId: s.sessionId, started: s.started === true };
+  } catch {
+    // none on this machine yet
+  }
+  const fresh = { sessionId: randomUUID(), started: false };
+  fs.writeFileSync(sessionFile(id), JSON.stringify(fresh), "utf8");
+  return fresh;
+}
+
+function markStarted(id) {
+  const s = session(id);
+  if (!s.started) fs.writeFileSync(sessionFile(id), JSON.stringify({ ...s, started: true }), "utf8");
+}
+
+/** One finished exchange, by `author` (a hub login). The first one names an
+ *  untitled chat. */
+function addTurn(id, user, assistant, model, author) {
   const c = read(id);
   if (!c) return null;
   const at = Date.now();
-  c.messages.push({ role: "user", text: String(user), at }, { role: "assistant", text: String(assistant), at });
+  const who = String(author || c.owner || "");
+  c.messages.push(
+    { role: "user", author: who, text: String(user), at },
+    { role: "assistant", author: "assistant", text: String(assistant), at },
+  );
+  const participants = Array.isArray(c.participants) ? c.participants : [];
+  if (who && !participants.includes(who)) c.participants = [...participants, who];
   c.updated = at;
   if (model) c.model = String(model);
   if (!c.title) c.title = String(user).trim().split("\n")[0].slice(0, 60);
@@ -140,22 +178,33 @@ function addTurn(id, user, assistant, model) {
 }
 
 /** argv for one chat process. Pure; see the flag notes at the top. */
-function chatArgs({ id, started, mcpConfig, model } = {}) {
+function chatArgs({ sessionId, started, mcpConfig, model } = {}) {
   return [
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
     "--include-partial-messages",
     "--tools", "",
     "--strict-mcp-config",
-    ...(started ? ["--resume", id] : ["--session-id", id]),
+    ...(started ? ["--resume", sessionId] : ["--session-id", sessionId]),
     "--append-system-prompt", SYSTEM_PROMPT,
     ...(mcpConfig ? ["--mcp-config", mcpConfig, "--allowedTools", "mcp__masora"] : []),
     ...(model ? ["--model", model] : []),
   ];
 }
 
-/** What goes on stdin for one turn: the C2 brief, when there is one, then the words. */
-function composeTurn(text, brief) {
-  return brief ? `<masora-context>\n${brief}\n</masora-context>\n\n${text}` : text;
+/**
+ * What goes on stdin for one turn: the conversation so far when this
+ * machine's session has never seen it (a handed-over chat, or a lost
+ * session), the C2 brief when there is one, then the words.
+ */
+function composeTurn(text, brief, prior) {
+  const parts = [];
+  if (prior && prior.length) {
+    const log = prior.map((m) => `[${m.role === "user" ? m.author || "user" : "assistant"}]: ${m.text}`).join("\n\n");
+    parts.push(`<prior-conversation>\n${log}\n</prior-conversation>`);
+  }
+  if (brief) parts.push(`<masora-context>\n${brief}\n</masora-context>`);
+  parts.push(text);
+  return parts.join("\n\n");
 }
 
 /** The C1 `zevet_chat` record for one chat. No repository: a chat has none. */
@@ -174,7 +223,10 @@ function toRecord(chat) {
     updated_at: new Date(chat.updated || Date.now()).toISOString(),
     content_text: content,
     model: chat.model || "",
-    participants: [],
+    owner: chat.owner || "",
+    // C1: the audience is derived from participants. Today Masora grants
+    // only the pairing person; see docs/contracts/cross_app_context.md.
+    participants: Array.isArray(chat.participants) ? chat.participants : [],
   };
 }
 
@@ -188,6 +240,7 @@ module.exports = {
   list,
   rename,
   remove,
+  session,
   markStarted,
   addTurn,
   chatArgs,

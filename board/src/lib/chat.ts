@@ -16,9 +16,9 @@ import {
   sendUser,
   type ChatThread,
 } from "./chat-stream.mjs";
+import { readLastChat, readMode, writeLastChat, writeMode } from "./mode.mjs";
 
 export type Mode = "code" | "chat";
-const MODE_KEY = "zevet.mode";
 
 /** Chat needs a desktop build that has it (0.2.53+). */
 export function chatAvailable(): boolean {
@@ -44,14 +44,14 @@ interface ChatState {
 }
 
 export const useChat = create<ChatState>((set, get) => ({
-  mode: zStorage.getItem(MODE_KEY) === "chat" && chatAvailable() ? "chat" : "code",
+  mode: readMode(zStorage, chatAvailable()),
   chats: [],
   query: "",
   activeId: null,
   threads: {},
 
   setMode: (m) => {
-    zStorage.setItem(MODE_KEY, m);
+    writeMode(zStorage, m);
     set({ mode: m });
     document.body.dataset.mode = m;
     if (m === "chat") void get().refresh();
@@ -71,13 +71,23 @@ export const useChat = create<ChatState>((set, get) => ({
 
   /* A new chat is only a blank thread until its first Send: an empty chat
      that was never written to must not litter the list. */
-  newChat: () => set({ activeId: null }),
+  newChat: () => {
+    writeLastChat(zStorage, null);
+    set({ activeId: null });
+  },
 
   open: async (id) => {
+    writeLastChat(zStorage, id);
     set({ activeId: id });
     if (get().threads[id]) return;
     const c = await bridge.local?.chatGet?.(id);
-    set((s) => ({ threads: { ...s.threads, [id]: c ? fromStored(c.messages) : emptyChatThread() } }));
+    if (!c) {
+      // Deleted elsewhere, or a hand-edited prefs file: back to a new chat.
+      writeLastChat(zStorage, null);
+      set((s) => (s.activeId === id ? { activeId: null } : {}));
+      return;
+    }
+    set((s) => ({ threads: { ...s.threads, [id]: fromStored(c.messages) } }));
   },
 
   rename: async (id, title) => {
@@ -92,6 +102,7 @@ export const useChat = create<ChatState>((set, get) => ({
       delete threads[id];
       return { threads, activeId: s.activeId === id ? null : s.activeId };
     });
+    if (readLastChat(zStorage) === id) writeLastChat(zStorage, null);
     await get().refresh();
   },
 
@@ -102,6 +113,7 @@ export const useChat = create<ChatState>((set, get) => ({
     if (!id) {
       const c = await l.chatCreate();
       id = c.id;
+      writeLastChat(zStorage, c.id);
       set((s) => ({ activeId: c.id, threads: { ...s.threads, [c.id]: emptyChatThread() } }));
     }
     const chatId = id;
@@ -119,10 +131,16 @@ export const useChat = create<ChatState>((set, get) => ({
   },
 }));
 
+/* BEFORE FIRST PAINT. This module is imported by App, which main.tsx imports
+   only after the prefs mirror has hydrated and before it renders anything, so
+   the body already says which mode it is when the first frame is drawn: a
+   relaunch into Chat never flashes Code. */
+document.body.dataset.mode = useChat.getState().mode;
+
 let wired = false;
-/** Once, at boot: desktop events into the threads they belong to. */
+/** Once, at boot: desktop events into the threads they belong to, and the
+ *  chat that was open when the app closed. */
 export function wireChat(): void {
-  document.body.dataset.mode = useChat.getState().mode;
   const l = bridge.local;
   if (wired || !l?.onChatEvent || !chatAvailable()) return;
   wired = true;
@@ -135,5 +153,7 @@ export function wireChat(): void {
       s.threads[id] ? { threads: { ...s.threads, [id]: chatEvent(s.threads[id], evt) } } : {},
     );
   });
+  const last = readLastChat(zStorage);
+  if (last) void useChat.getState().open(last);
   if (useChat.getState().mode === "chat") void useChat.getState().refresh();
 }

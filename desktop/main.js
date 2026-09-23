@@ -2831,7 +2831,7 @@ function finishChatTurn(run, reply, error) {
   const turn = run.turn;
   run.turn = null;
   if (!turn || error || !reply) return;
-  const chat = chats.addTurn(run.id, turn.user, reply, run.model);
+  const chat = chats.addTurn(run.id, turn.user, reply, run.model, chatAuthor());
   if (!chat) return;
   toBoard("chat:event", { id: run.id, evt: { type: "saved", chat: { id: chat.id, title: chat.title, updated: chat.updated } } });
   void pushChat(chat).catch((err) => console.error(`zevet: chat push failed: ${err.message}`));
@@ -2858,11 +2858,14 @@ async function spawnChat(chat) {
     mcpConfig = path.join(app.getPath("temp"), `zevet-chat-mcp-${process.pid}.json`);
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: masora.mcpServerEntry(cfg.url) }), "utf8");
   }
-  const run = { id: chat.id, console: null, turn: null, model: chat.model || "" };
+  // This machine's claude session for the chat. A chat that arrives with
+  // history but no session here replays it on the first turn (chat.js).
+  const sess = chats.session(chat.id);
+  const run = { id: chat.id, console: null, turn: null, model: chat.model || "", replay: !sess.started };
   const started = agentConsole.startConsole({
     agent: "claude",
     cwd: chats.dirOf(chat.id),
-    args: chats.chatArgs({ id: chat.id, started: chat.started, mcpConfig }),
+    args: chats.chatArgs({ sessionId: sess.sessionId, started: sess.started, mcpConfig }),
     onEvent: (evt) => {
       const p = evt && evt.type === "agent" ? evt.payload : null;
       if (p && p.type === "system" && p.subtype === "init") {
@@ -2888,7 +2891,13 @@ async function spawnChat(chat) {
 
 ipcMain.handle("chat:list", (_e, arg) => chats.list(arg && arg.query));
 ipcMain.handle("chat:get", (_e, id) => chats.read(String(id || "")));
-ipcMain.handle("chat:create", () => chats.create());
+/** Who a chat belongs to: the hub login this app signs in as. */
+function chatAuthor() {
+  const cfg = readConfig();
+  return (cfg && typeof cfg.actor === "string" && cfg.actor) || os.userInfo().username;
+}
+
+ipcMain.handle("chat:create", () => chats.create(chatAuthor()));
 ipcMain.handle("chat:rename", (_e, arg) => chats.rename(arg && arg.id, arg && arg.title));
 ipcMain.handle("chat:remove", (_e, id) => {
   if (chatRun && chatRun.id === id) stopChatRun();
@@ -2926,7 +2935,9 @@ ipcMain.handle("chat:send", async (_e, arg) => {
     chatRun = s.run;
   }
   chatRun.turn = { user: text, reply: "" };
-  const sent = chatRun.console.send(chats.composeTurn(text, brief));
+  const prior = chatRun.replay ? chat.messages : null;
+  chatRun.replay = false;
+  const sent = chatRun.console.send(chats.composeTurn(text, brief, prior));
   if (!sent || sent.ok === false) {
     chatRun.turn = null;
     stopChatRun();

@@ -31,9 +31,17 @@ export function fromStored(messages) {
   return { transcript: t, draft: "", busy: false };
 }
 
-/** The person's words, shown the moment Send is pressed. */
+let turns = 0;
+
+/** The person's words, shown the moment Send is pressed, and the reply's
+ *  message opened under them. Opening it NOW keeps one id from the first
+ *  streamed token to the last block: a draft message that the real one later
+ *  replaced read to assistant-ui as a second branch ("2 / 2" under a reply
+ *  that was only ever given once, seen in the running app). */
 export function sendUser(thread, text) {
-  return { ...thread, transcript: appendUserText(thread.transcript, text), draft: "", busy: true };
+  const t = appendUserText(thread.transcript, text);
+  const messages = t.messages.concat({ id: `zc-${++turns}`, role: "assistant", content: [], status: { type: "running" } });
+  return { ...thread, transcript: { ...t, messages, openIndex: messages.length - 1 }, draft: "", busy: true };
 }
 
 /** One `chat:event` evt from the desktop side. */

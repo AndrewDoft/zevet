@@ -184,14 +184,17 @@ export interface HeldConsole {
 export interface ChatSummary {
   id: string;
   title: string;
+  owner?: string;
   created: number;
   updated: number;
 }
 
+/** desktop/chat.js's record: the whole transcript, and nothing machine-local. */
 export interface StoredChat extends ChatSummary {
-  started: boolean;
+  owner?: string;
+  participants?: string[];
   model?: string;
-  messages: Array<{ role: "user" | "assistant"; text: string; at?: number }>;
+  messages: Array<{ role: "user" | "assistant"; author?: string; text: string; at?: number }>;
 }
 
 export interface LocalBridge {

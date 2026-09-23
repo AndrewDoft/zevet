@@ -53,6 +53,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { CHATS } = require("./chat.js");
 
 /** How much of each end of a file `list` reads for metadata. */
 const ENDS = 64 * 1024;
@@ -482,7 +483,12 @@ function listCodex() {
  * filesystem.
  */
 function list({ cwd = null, limit = MAX_SESSIONS } = {}) {
-  const found = listClaude().concat(listCodex());
+  // Zevet Chat's own claude sessions (desktop/chat.js) are conversations, not
+  // work in a repo: they belong to Chat, never to Code's session lists.
+  const chatSlug = path.resolve(CHATS).replace(/[^A-Za-z0-9]/g, "-").toLowerCase() + "-";
+  const found = listClaude()
+    .filter((f) => !f.slug.toLowerCase().startsWith(chatSlug))
+    .concat(listCodex());
 
   // Sort BEFORE describing. Describing is two file reads each; doing it for
   // every session on the disk in order to show forty is reading 90 MB for
