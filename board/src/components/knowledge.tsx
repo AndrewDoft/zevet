@@ -140,11 +140,15 @@ function searchCalls(messages: readonly ThreadMessageLike[]): SearchCall[] {
     const sources: Source[] = lines(resultText(c.result))
       .filter((l) => /https?:\/\//.test(l))
       .slice(0, 8)
-      .map((l) => ({
-        domain: domainOf(l),
-        title: l.replace(/https?:\/\/\S+/, "").trim().slice(0, 90) || l,
-        snippet: "",
-      }));
+      .map((l) => {
+        const match = l.match(/https?:\/\/\S+/);
+        return {
+          domain: domainOf(l),
+          title: l.replace(/https?:\/\/\S+/, "").trim().slice(0, 90) || l,
+          snippet: "",
+          url: match ? match[0] : undefined,
+        };
+      });
     if (sources.length) out.push({ idx, query, sources });
   });
   return out;

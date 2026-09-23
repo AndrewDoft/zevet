@@ -9,6 +9,7 @@ export interface Source {
   domain: string;
   title: string;
   snippet: string;
+  url?: string;
 }
 
 interface CitationProps {
@@ -58,6 +59,15 @@ function Citation({ index, source, open, onOpenChange }: CitationProps) {
             <p className="text-foreground/50 mt-1 text-[13px] leading-relaxed">
               {source.snippet}
             </p>
+            {source.url ? (
+              <button
+                type="button"
+                className="text-foreground/45 hover:text-foreground/90 mt-2 text-[12px] underline"
+                onClick={() => window.open(source.url, "_blank", "noopener,noreferrer")}
+              >
+                Open source
+              </button>
+            ) : null}
           </PreviewCard.Popup>
         </PreviewCard.Positioner>
       </PreviewCard.Portal>
