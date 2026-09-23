@@ -651,12 +651,11 @@ const boards = new Map([[DEFAULT_TEAM, makeBoard(EVENTS_FILE)]]);
  * sends `team` on a sign-in call, which resolves here to "default" and
  * behaves exactly as it always has.
  *
- * ⚠️ NOT SCOPED PER TEAM: the WebSocket document rooms below (`rooms`). A
- * room name is client-chosen and already opaque to the hub; two teams
- * picking the same name would relay to each other. That is a real,
- * deliberately-deferred gap — team creation here covers sign-in, ownership,
- * invites and the activity board, not yet a full tenant boundary — tracked
- * in DECISIONS.md rather than silently shipped as if it were closed.
+ * The WebSocket document rooms below (`rooms`) ARE scoped per team — see
+ * `roomKey()` near the room constants and the `team` field `attachWebSocket`
+ * fixes on a socket at the auth layer. Was not, until INSUF-008 / D-014: a
+ * room name is client-chosen and opaque to the hub, so two teams picking the
+ * same name used to relay to each other. Closed 2026-09-23.
  */
 const teamAccounts = new Map([[DEFAULT_TEAM, accounts]]);
 const MAX_TEAMS = Number(process.env.ZEVET_MAX_TEAMS || 200);
@@ -1456,6 +1455,20 @@ export const ROOM_LOG_MAX_BYTES = Number(process.env.ZEVET_ROOM_LOG_MAX_BYTES ||
 export const MAX_ROOMS = Number(process.env.ZEVET_MAX_ROOMS || 512);
 /** Room names are opaque to the hub; length is the only thing it judges. */
 export const MAX_ROOM_NAME = 256;
+
+/**
+ * A room name, scoped to the team the connection authenticated as.
+ *
+ * Room names are client-chosen and otherwise opaque (MAX_ROOM_NAME above) — so
+ * without this, two teams that happened to pick the same document id would
+ * relay each other's edits (INSUF-008 / D-014). `team` never contains the `\0`
+ * delimiter (it is either "default" or a hex slug minted by createTeam), so this
+ * is injective: a room key can only be re-derived by a connection authenticated
+ * as that same team, never forged by a room name chosen by a different one.
+ */
+function roomKey(team, name) {
+  return `${team}\u0000${name}`;
+}
 // A socket that has stopped draining buffers in THIS process, exactly like the
 // SSE listener case above, and gets the same treatment rather than the same
 // excuse. Replaying a full room log legitimately queues ROOM_LOG_MAX_BYTES at
@@ -1830,7 +1843,7 @@ function handleControlMessage(conn, payload) {
       wsClose(conn, CLOSE_POLICY, "join needs a room name of 1..256 characters");
       return false;
     }
-    return joinRoom(conn, room);
+    return joinRoom(conn, roomKey(conn.team, room));
   }
 
   if (msg.type === "snapshot") {
@@ -1846,9 +1859,11 @@ function handleControlMessage(conn, payload) {
   return false;
 }
 
-/** Everything after a successful handshake: one socket's whole life. */
-function attachWebSocket(socket, head) {
-  const conn = { socket, room: null, joined: false, pendingSnapshot: false, sawTraffic: true };
+/** Everything after a successful handshake: one socket's whole life.
+ *  `team` is fixed for the socket's lifetime — decided once, at the auth layer,
+ *  from the token it upgraded with, never from anything the client sends after. */
+function attachWebSocket(socket, head, team) {
+  const conn = { socket, team, room: null, joined: false, pendingSnapshot: false, sawTraffic: true };
   wsClients.add(conn);
   const assemble = createAssembler();
   let buffered = head && head.length ? Buffer.from(head) : EMPTY;
@@ -1976,10 +1991,16 @@ server.on("upgrade", (req, socket, head) => {
   // Note what is deliberately NOT done, matching `refuse()`: the limit is
   // consulted only on the failure path, so a teammate holding the right token
   // is never locked out by somebody else's brute force.
-  if (!tokenFrom(req, url)) {
+  const token = tokenFrom(req, url);
+  if (!token) {
     authFailed(req, url);
     return denyUpgrade(socket, rateLimited(req) ? 429 : 401, "bad token");
   }
+  // Which team this socket belongs to, for the rest of its life — see roomKey().
+  // tokenFrom() already ran every candidate through tokenOk() (== resolveTeam()
+  // !== null), so this cannot come back null for a token that just passed.
+  const auth = resolveTeam(token);
+  const team = auth ? auth.team : DEFAULT_TEAM;
 
   const key = req.headers["sec-websocket-key"];
   if (
@@ -2003,7 +2024,7 @@ server.on("upgrade", (req, socket, head) => {
   // `head` is whatever arrived glued to the handshake. A client that sends
   // frames before it has seen the 101 is within its rights, and those bytes are
   // already off the wire — dropping them loses a message for no reason.
-  attachWebSocket(socket, head);
+  attachWebSocket(socket, head, team);
 });
 
 // Without this, restarting while the old hub still holds the port prints an

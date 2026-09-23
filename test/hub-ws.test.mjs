@@ -19,7 +19,11 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
 import { randomBytes } from "node:crypto";
+import { readFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { startHub, TOKEN } from "./helpers.mjs";
+import { deriveAuthToken } from "../hub/accounts.mjs";
 
 // Importing the hub would normally seize a port; ZEVET_NO_LISTEN says load the
 // module and do not listen. ZEVET_TOKEN because the hub refuses to exist
@@ -416,6 +420,25 @@ function collect(socket, rest = Buffer.alloc(0)) {
   });
   return frames;
 }
+
+/** A hub with sign-in configured, so /team/create works — same shape as team.test.mjs's teamHub(). */
+async function teamHub(extraEnv = {}) {
+  const dir = mkdtempSync(path.join(tmpdir(), "zevet-ws-team-accounts-"));
+  const h = await startHub({
+    ZEVET_GITHUB_CLIENT_ID: "test-client-id",
+    ZEVET_ACCOUNTS: path.join(dir, "accounts.json"),
+    ...extraEnv,
+  });
+  h.accountsDir = dir;
+  return h;
+}
+
+function tokenFor(hub, team) {
+  const file = path.join(hub.accountsDir, team === "default" ? "accounts.json" : `accounts-${team}.json`);
+  return deriveAuthToken(JSON.parse(readFileSync(file, "utf8")).secret);
+}
+
+const createTeam = (base) => fetch(`${base}/team/create`, { method: "POST" }).then((r) => r.json());
 
 let hub;
 before(async () => {
@@ -885,6 +908,112 @@ describe("rooms", () => {
         await until(() => c.closed.seen, `the hub to refuse ${text}`);
         assert.equal(c.closed.code, 1008, text);
       }
+    } finally {
+      await fresh.stop();
+    }
+  });
+});
+
+describe("cross-team room isolation", () => {
+  test("a member of team B cannot join team A's room by name — no traffic crosses", async () => {
+    const fresh = await teamHub();
+    try {
+      const a = await createTeam(fresh.base);
+      const b = await createTeam(fresh.base);
+      const tokenA = tokenFor(fresh, a.team);
+      const tokenB = tokenFor(fresh, b.team);
+
+      const inA = connect(fresh.base, tokenA);
+      const inB = connect(fresh.base, tokenB);
+      await Promise.all([inA.open, inB.open]);
+      // Same room NAME, deliberately — this is exactly the collision INSUF-008
+      // named: two teams that happen to pick the same document id.
+      inA.join("shared-doc-id");
+      inB.join("shared-doc-id");
+
+      inA.send([9, 9]);
+      await settle();
+      assert.equal(inB.got.length, 0, "team B must never see team A's room traffic");
+
+      inB.send([7]);
+      await settle();
+      assert.equal(inA.got.length, 0, "and not the other way either");
+
+      inA.close();
+      inB.close();
+    } finally {
+      await fresh.stop();
+    }
+  });
+
+  test("a late joiner in team B does not replay team A's log for the same room name", async () => {
+    const fresh = await teamHub();
+    try {
+      const a = await createTeam(fresh.base);
+      const b = await createTeam(fresh.base);
+      const tokenA = tokenFor(fresh, a.team);
+      const tokenB = tokenFor(fresh, b.team);
+
+      const inA = connect(fresh.base, tokenA);
+      const other = connect(fresh.base, tokenA);
+      await Promise.all([inA.open, other.open]);
+      inA.join("notes");
+      other.join("notes");
+      inA.send([1]);
+      await until(() => other.got.length === 1, "team A's own peer to receive the log entry");
+
+      const lateB = connect(fresh.base, tokenB);
+      await lateB.open;
+      lateB.join("notes");
+      await settle();
+      assert.equal(lateB.got.length, 0, "team B's room starts empty, regardless of team A's history");
+
+      inA.close();
+      other.close();
+      lateB.close();
+    } finally {
+      await fresh.stop();
+    }
+  });
+
+  test("the default team and a created team do not share a room of the same name", async () => {
+    const fresh = await teamHub();
+    try {
+      const a = await createTeam(fresh.base);
+      const tokenA = tokenFor(fresh, a.team);
+
+      const inDefault = connect(fresh.base, TOKEN);
+      const inA = connect(fresh.base, tokenA);
+      await Promise.all([inDefault.open, inA.open]);
+      inDefault.join("room-x");
+      inA.join("room-x");
+
+      inDefault.send([5]);
+      await settle();
+      assert.equal(inA.got.length, 0, "the default team's traffic must not reach a created team");
+
+      inDefault.close();
+      inA.close();
+    } finally {
+      await fresh.stop();
+    }
+  });
+
+  test("two teammates on the SAME team still relay normally through the scoping", async () => {
+    const fresh = await teamHub();
+    try {
+      const a = await createTeam(fresh.base);
+      const tokenA = tokenFor(fresh, a.team);
+      const one = connect(fresh.base, tokenA);
+      const two = connect(fresh.base, tokenA);
+      await Promise.all([one.open, two.open]);
+      one.join("doc");
+      two.join("doc");
+      one.send([1, 2]);
+      await until(() => two.got.length === 1, "teammates must still relay to each other");
+      assert.deepEqual([...two.got[0]], [1, 2]);
+      one.close();
+      two.close();
     } finally {
       await fresh.stop();
     }
