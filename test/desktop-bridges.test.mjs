@@ -136,13 +136,20 @@ describe("the bridge surface the renderer is written against", () => {
       //   way as an invoke, from a click. Denial is the default: the
       //   ask-server times out into a refusal, so a board that never answers
       //   costs the agent an action rather than granting one.
+      //   local:askRequest — the SAME gate, for a question rather than a
+      //   yes/no: the agent is blocked on `ask_user` (desktop/ask-server.js's
+      //   /ask route) and the board is the only place a person can answer it.
+      //   Carries the bounded question text and its options (desktop/
+      //   zevet-mcp.js's cleanQuestion caps both before this is ever sent);
+      //   the answer travels back as an invoke, from a click, and silence
+      //   times out to "no answer" rather than blocking forever.
       //   chat:event — Zevet Chat's own stream (desktop/chat.js), the same
       //   agent/exit events local:agentEvent carries for a console, keyed by
       //   chat id, plus a `saved` notice with the chat's id, title and time.
       //   The words are the person's own conversation, which the page already
       //   holds because it sent them; it is a separate channel only so a chat
       //   is never drawn as a console in Code.
-      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentEvent", "local:fileChanged", "local:indexEvent", "local:permitRequest"],
+      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentEvent", "local:askRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {

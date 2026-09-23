@@ -16,6 +16,7 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { ROOT } from "./helpers.mjs";
@@ -162,5 +163,35 @@ describe("the gate that carries it", () => {
     } finally {
       await gate.close();
     }
+  });
+});
+
+describe("the desktop side actually wires the gate up", () => {
+  // ask-server.js has always accepted an `onAsk` option (tested above) and
+  // board.ts/bridge.ts/fixture.ts have always declared onAskRequest/askAnswer
+  // (they are a demo-bridge-only capability without this) — but until now
+  // desktop/main.js's ensureAskServer() passed only `onPermit`, so `/ask`
+  // 404'd on every real desktop build and AskPrompt could never render.
+  // Source assertions for the same reason test/desktop-bridges.test.mjs uses
+  // them: importing main.js outside Electron throws on require("electron").
+  const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
+  const preload = readFileSync(path.join(ROOT, "desktop", "preload.js"), "utf8");
+
+  test("ensureAskServer passes an onAsk handler to the gate", () => {
+    const start = main.indexOf("askServer.start(");
+    assert.ok(start >= 0, "main.js never calls askServer.start");
+    const end = main.indexOf("ipcMain.handle(", start);
+    const body = main.slice(start, end < 0 ? start + 1000 : end);
+    assert.match(body, /onPermit:/, "sanity: onPermit should still be in this slice");
+    assert.match(body, /onAsk:/, "askServer.start is missing onAsk — /ask stays 404 forever");
+  });
+
+  test("local:askAnswer is handled, and answers with the picked labels", () => {
+    assert.match(main, /ipcMain\.handle\("local:askAnswer"/);
+  });
+
+  test("preload exposes onAskRequest and askAnswer on window.zevetLocal", () => {
+    assert.match(preload, /onAskRequest:/);
+    assert.match(preload, /askAnswer:\s*\(id,\s*picked\)\s*=>\s*ipcRenderer\.invoke\("local:askAnswer"/);
   });
 });

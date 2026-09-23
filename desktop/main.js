@@ -2524,6 +2524,10 @@ const MCP_SERVER = path.join(__dirname, "zevet-mcp.js");
 
 /** Requests waiting on a person, by id. */
 const pendingPermits = new Map();
+/** Questions waiting on a person, by id — same idea as pendingPermits, one
+ *  map per ask-server route because a permit id and an ask id share no
+ *  namespace and must never be answerable through the other's channel. */
+const pendingAsks = new Map();
 let permitSeq = 0;
 let askServerPromise = null;
 
@@ -2540,6 +2544,12 @@ function ensureAskServer() {
           // the correct end for a question nobody can be asked.
           toBoard("local:permitRequest", { id, ...(request || {}) });
         }),
+      onAsk: (request) =>
+        new Promise((resolve) => {
+          const id = `a${++permitSeq}`;
+          pendingAsks.set(id, resolve);
+          toBoard("local:askRequest", { id, ...(request || {}) });
+        }),
     });
   }
   return askServerPromise;
@@ -2552,6 +2562,17 @@ ipcMain.handle("local:permitAnswer", (_e, arg) => {
   if (!resolve) return { ok: false, error: "no such request" };
   pendingPermits.delete(id);
   resolve({ ok: arg && arg.allow === true, reason: (arg && arg.reason) || "refused" });
+  return { ok: true };
+});
+
+/** The person's answer to one question. */
+ipcMain.handle("local:askAnswer", (_e, arg) => {
+  const id = arg && typeof arg.id === "string" ? arg.id : "";
+  const resolve = pendingAsks.get(id);
+  if (!resolve) return { ok: false, error: "no such request" };
+  pendingAsks.delete(id);
+  const picked = Array.isArray(arg && arg.picked) ? arg.picked.filter((p) => typeof p === "string") : [];
+  resolve({ ok: picked.length > 0, picked });
   return { ok: true };
 });
 
