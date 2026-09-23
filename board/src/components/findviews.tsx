@@ -20,6 +20,7 @@ import {
   useBoard,
 } from "../lib/board";
 import { zStorage } from "../lib/bridge";
+import { draftChange } from "../lib/drafts.mjs";
 import {
   ConversationSearch,
   type SearchHit,
@@ -284,27 +285,19 @@ export function DraftRestore() {
     setOffer(key ? (loadDrafts()[key] ?? null) : null);
   }, [key]);
 
-  // Mirror the live composer text into storage as the user types. `sawText`
-  // guards the very first effect run per key: without it, a console that
-  // mounts with an empty composer (the normal case) would immediately wipe
-  // the leftover draft the effect above just found, before it's ever shown.
-  const sawText = useRef(false);
+  // Mirror the live composer text into this thread's draft — see
+  // lib/drafts.mjs for which changes count.
+  const last = useRef<{ key: string; text: string } | null>(null);
   useEffect(() => {
-    sawText.current = false;
-  }, [key]);
-  useEffect(() => {
-    if (!key) return;
-    if (composerText) {
-      sawText.current = true;
-      const drafts = loadDrafts();
-      drafts[key] = { text: composerText, savedAt: Date.now() };
-      saveDrafts(drafts);
-    } else if (sawText.current) {
-      sawText.current = false;
-      const drafts = loadDrafts();
-      delete drafts[key];
-      saveDrafts(drafts);
-    }
+    const change = draftChange(last.current, key, composerText);
+    last.current = key ? { key, text: composerText } : null;
+    if (!change) return;
+    const drafts = loadDrafts();
+    if (change === "save") drafts[key!] = { text: composerText, savedAt: Date.now() };
+    else delete drafts[key!];
+    saveDrafts(drafts);
+    // Typing here replaces the leftover, so it is not offered back after a send.
+    setOffer(null);
   }, [key, composerText]);
 
   if (!active || !offer || !composerEmpty) return null;

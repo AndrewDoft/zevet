@@ -635,7 +635,8 @@ function killTree(child, spawnFn) {
  *   { type:"agent",       payload }   a parsed JSONL object from the agent
  *   { type:"stdout-line", line }      a stdout line that was not JSON
  *   { type:"stderr",      text }      raw stderr, unbuffered and unparsed
- *   { type:"exit",        code, signal, error? }  exactly once, ever
+ *   { type:"exit",        code, signal, error?, stopped? }  exactly once, ever
+ *                                    (`stopped`: we killed it — see stop())
  *
   * All three emit JSONL on stdout in the modes used here (claude via
   * --output-format stream-json, codex via --json, opencode via --format json,
@@ -722,6 +723,10 @@ function startConsole(opts) {
   const id = randomUUID();
   let exited = false;
   let stopped = false;
+  // Set before the kill, not after: taskkill /F ends the process with code 1,
+  // which without this reads as a crash and draws an error under a turn the
+  // person stopped themselves, or that a follow-up replaced.
+  let killing = false;
 
   const stdout = makeLineSplitter((line) => {
     // Defensive by contract: a line that is not JSON is DATA, not an error.
@@ -782,7 +787,7 @@ function startConsole(opts) {
     emitExit({ code: null, signal: null, error: err && err.message ? err.message : String(err) });
   });
 
-  child.on("exit", (code, signal) => emitExit({ code, signal }));
+  child.on("exit", (code, signal) => emitExit({ code, signal, ...(killing ? { stopped: true } : {}) }));
 
   // stdin breaks when the agent exits while we are mid-write. That is an EPIPE
   // and it is expected, not exceptional; swallowing it here is not a bare catch
@@ -874,6 +879,7 @@ function startConsole(opts) {
         // fine — we are about to kill it anyway. The kill result is what gets
         // reported to the caller.
       }
+      killing = true;
       const killed = killTree(child, spawnFn);
       if (!killed || killed.ok !== false) stopped = true;
       return killed;

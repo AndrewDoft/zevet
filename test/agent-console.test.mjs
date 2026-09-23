@@ -566,6 +566,22 @@ describe("startConsole — stopping", () => {
     assert.deepEqual(kill.args, ["/pid", "4242", "/T", "/F"]);
   });
 
+  test("an exit we caused with stop() says so, whatever its code", (t) => {
+    const { handle, events, child } = start(t);
+    assert.equal(handle.ok, true, handle.error);
+    handle.stop();
+    // taskkill /F ends a process with code 1 — which read as a crash.
+    child.emit("exit", 1, null);
+    assert.equal(events.find((e) => e.type === "exit").stopped, true);
+  });
+
+  test("an exit nobody asked for is not marked stopped", (t) => {
+    const { handle, events, child } = start(t);
+    assert.equal(handle.ok, true, handle.error);
+    child.emit("exit", 1, null);
+    assert.equal(events.find((e) => e.type === "exit").stopped, undefined);
+  });
+
   test("stop() after the process already exited does not kill anything", (t) => {
     const { handle, spawnFn, child } = start(t);
     assert.equal(handle.ok, true, handle.error);

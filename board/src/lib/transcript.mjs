@@ -194,7 +194,7 @@ export function appendAgentPayload(state, payload, opts = {}) {
  * opens a turn to carry it. A run that ends with no output and NO error still
  * adds nothing.
  */
-export function closeTranscript(state, { code = null, error = null } = {}) {
+export function closeTranscript(state, { code = null, error = null, stopped = false } = {}) {
   let s = { ...state, running: false };
   if (s.openIndex < 0 && !error) return s;
   /* ⚠️ A FAILED RUN CLOSES TWICE. codex emits both an `error` event and a
@@ -214,7 +214,10 @@ export function closeTranscript(state, { code = null, error = null } = {}) {
   messages[index] = {
     ...messages[index],
     status:
-      error || (code !== null && code !== 0)
+      /* A run WE ended — the stop button, or a follow-up replacing the
+       * process — exits non-zero (taskkill /F is code 1). That is not a
+       * failure, and nothing is drawn for it. */
+      error || (code !== null && code !== 0 && !stopped)
         ? { type: "incomplete", reason: "error", error: error || "The run stopped." }
         : { type: "complete", reason: "stop" },
   };

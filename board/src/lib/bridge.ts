@@ -162,6 +162,7 @@ export interface AgentEvent {
   type: string;
   code?: number | null;
   signal?: string | null;
+  stopped?: boolean;
   text?: string;
   payload?: unknown;
   dropped?: number;

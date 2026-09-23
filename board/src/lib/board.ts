@@ -12,7 +12,7 @@ import { clearModelLimit, isLimitMessage, recordModelLimit, resetFromPayload } f
 import { learnModels } from "./models.mjs";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
 import type { TranscriptState } from "./transcript.d.mts";
-import { mainSurface, showConversation, showFile } from "./view.mjs";
+import { mainSurface, repoToFollow, showConversation, showFile } from "./view.mjs";
 import {
   canInstallState,
   createUpdateControl,
@@ -1703,7 +1703,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
     c.running = false;
     c.exitCode = evt.code ?? null;
     pushConsoleLine(c, "meta", `agent exited (${evt.code === null ? "signal " + evt.signal : "code " + evt.code})`);
-    c.transcript = closeTranscript(c.transcript, { code: evt.code ?? null });
+    c.transcript = closeTranscript(c.transcript, { code: evt.code ?? null, stopped: Boolean(evt.stopped) });
   } else if (evt.type === "stderr") {
     /* ⚠️ STDERR IS NOT THE AGENT SPEAKING, and it used to be rendered as if it
        were. This called `appendRaw`, which appends to the OPEN ASSISTANT
@@ -3156,6 +3156,17 @@ useBoard.subscribe((s) => {
   const seenRuns = [...s.seenRuns, c.id].slice(-SEEN_RUNS_CAP);
   useBoard.setState({ seenRuns });
   zStorage.setItem(SEEN_RUNS_KEY, JSON.stringify(seenRuns));
+});
+
+/* ⚠️ THE RAIL'S REPO IS THE OPEN THREAD'S. The picker and branch read
+   `localRoot`, which only a pick in the picker ever set — so opening a thread
+   from repo A kept showing repo B and B's branch under it. */
+let frontRoot: string | null = null;
+useBoard.subscribe((s) => {
+  const root = selectActiveConsole(s)?.root ?? null;
+  const follow = repoToFollow(frontRoot, root, s.localRoot);
+  frontRoot = root;
+  if (follow) s.openLocalRoot(follow);
 });
 
 export const selectLaunching = (s: BoardState) => s.launching;

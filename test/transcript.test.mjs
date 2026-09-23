@@ -182,6 +182,20 @@ describe("endings", () => {
     assert.equal(s.messages[0].status.error, "The run stopped.");
   });
 
+  test("a run we stopped ends clean, with no error, whatever its exit code", () => {
+    let s = claude(text("half"));
+    s = closeTranscript(s, { code: 1, stopped: true });
+    assert.deepEqual(s.messages[0].status, { type: "complete", reason: "stop" });
+  });
+
+  test("a process replaced by a follow-up adds nothing under the new prompt", () => {
+    let s = claude(text("done"));
+    s = claude({ type: "result", subtype: "success" }, s);
+    s = appendUserText(s, "and then?");
+    s = closeTranscript(s, { code: 1, stopped: true });
+    assert.deepEqual(s.messages.map((m) => m.role), ["assistant", "user"]);
+  });
+
   test("an error with nothing open still lands on a message", () => {
     const s = closeTranscript(appendUserText(emptyTranscript(), "ok"), { error: "The model returned an error." });
     assert.deepEqual(s.messages.map((m) => m.role), ["user", "assistant"]);

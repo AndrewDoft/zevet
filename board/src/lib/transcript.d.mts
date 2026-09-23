@@ -43,7 +43,7 @@ export function appendAgentPayload(
 ): TranscriptState;
 export function closeTranscript(
   state: TranscriptState,
-  ending?: { code?: number | null; error?: string | null },
+  ending?: { code?: number | null; error?: string | null; stopped?: boolean },
 ): TranscriptState;
 export function assembleTranscript(
   events: TranscriptEvent[],

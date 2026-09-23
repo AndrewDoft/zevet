@@ -38,3 +38,24 @@ describe("IDE main surface", () => {
     }
   });
 });
+
+describe("the rail's repo", () => {
+  test("follows the thread in front to its repo, and only on a move", async () => {
+    const { repoToFollow } = await import(
+      pathToFileURL(path.join(ROOT, "board", "src", "lib", "view.mjs")).href
+    );
+    // Thread from A opened while B is showing: A.
+    assert.equal(repoToFollow("C:/b", "C:/a", "C:/b"), "C:/a");
+    // Already showing it: nothing to do.
+    assert.equal(repoToFollow("C:/b", "C:/a", "C:/a"), null);
+    // Same thread in front, folder picked by hand: the pick stands.
+    assert.equal(repoToFollow("C:/a", "C:/a", "C:/b"), null);
+    // No thread in front (a new one being started): leave it.
+    assert.equal(repoToFollow("C:/a", null, "C:/b"), null);
+  });
+
+  test("board.ts wires it to the thread in front", () => {
+    const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
+    assert.match(board, /repoToFollow\(frontRoot, root, s\.localRoot\)[\s\S]{0,120}openLocalRoot\(follow\)/);
+  });
+});
