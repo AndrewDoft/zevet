@@ -359,6 +359,9 @@ export interface ZevetBridge {
   masoraPairWait?: () => Promise<{ ok: boolean; cancelled?: boolean; error?: string | null }>;
   masoraPairCancel?: () => void;
   masoraUnpair?: () => Promise<boolean>;
+  /** Connections panel: linked-source status, and connecting a new one. */
+  masoraSources?: () => Promise<{ sources?: { kind: string; status: string }[]; error?: string }>;
+  masoraConnect?: (arg: { provider: string }) => Promise<{ ok?: boolean; error?: string }>;
 }
 
 declare global {

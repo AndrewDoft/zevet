@@ -3,6 +3,9 @@
 // status mapping, and the OAuth flow with authorize URL or admin fallback.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   OAUTH_PROVIDERS,
   PROVIDER_MAP,
@@ -234,6 +237,28 @@ describe("OAuth flow", () => {
     });
     assert.equal(result.ok, false);
     assert.equal(result.error, "Unknown provider");
+  });
+});
+
+describe("the Connections panel's bridge exists (settings.md P0s)", () => {
+  // settings.tsx has always called window.zevet?.masoraSources?.() and
+  // window.zevet?.masoraConnect?.(...) — main.js has always handled
+  // "masora:sources"/"masora:connect" — but neither call was ever exposed on
+  // window.zevet in preload.js, so both optional chains silently resolved to
+  // undefined: the status row never left "loading…" and Connect buttons never
+  // left "Opening…". Source assertions because preload.js touches Electron.
+  const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const preload = readFileSync(path.join(ROOT, "desktop", "preload.js"), "utf8");
+  const bridge = readFileSync(path.join(ROOT, "board", "src", "lib", "bridge.ts"), "utf8");
+
+  test("preload exposes masoraSources and masoraConnect on window.zevet", () => {
+    assert.match(preload, /masoraSources:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("masora:sources"\)/);
+    assert.match(preload, /masoraConnect:\s*\(arg\)\s*=>\s*ipcRenderer\.invoke\("masora:connect",\s*arg\)/);
+  });
+
+  test("ZevetBridge declares both, so a caller cannot silently miss them", () => {
+    assert.match(bridge, /masoraSources\?:/);
+    assert.match(bridge, /masoraConnect\?:/);
   });
 });
 

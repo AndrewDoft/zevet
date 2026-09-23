@@ -197,7 +197,7 @@ function GoogleConnectBox({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState<
     | { phase: "idle" }
     | { phase: "starting" }
-    | { phase: "waiting" }
+    | { phase: "waiting"; url?: string }
     | { phase: "done"; login: string }
     | { phase: "fail"; message: string }
   >({ phase: "idle" });
@@ -215,7 +215,7 @@ function GoogleConnectBox({ onDone }: { onDone: () => void }) {
         setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
         return;
       }
-      setState({ phase: "waiting" });
+      setState({ phase: "waiting", url: r.url });
       window.zevet?.googleWait?.().then(
         (done) => {
           if (!done || !done.ok) {
@@ -240,7 +240,21 @@ function GoogleConnectBox({ onDone }: { onDone: () => void }) {
       <button className={MAKE_BTN} type="button" disabled={state.phase === "starting"} onClick={click}>
         {label}
       </button>
-      <span className="v">{value}</span>
+      <span className="v">
+        {value}
+        {state.phase === "waiting" && state.url ? (
+          <>
+            {" "}
+            <button
+              className={MAKE_BTN}
+              type="button"
+              onClick={() => window.open(state.url, "_blank", "noopener,noreferrer")}
+            >
+              Open link
+            </button>
+          </>
+        ) : null}
+      </span>
     </div>
   );
 }
@@ -320,6 +334,17 @@ function AccountSection() {
     );
   }
 
+  if (whoState.ok === false) {
+    return (
+      <SSection title="Account" summary="error">
+        <SNote>Could not load account.</SNote>
+        <button className={MAKE_BTN} type="button" onClick={() => refreshWhoami()}>
+          Retry
+        </button>
+      </SSection>
+    );
+  }
+
   const login = typeof whoState.login === "string" ? whoState.login : "";
   const shared = Boolean(whoState.shared);
   const owner = Boolean(whoState.owner);
@@ -338,19 +363,22 @@ function AccountSection() {
      reason: a button that is not there IS the message. */
   const out: ReactNode[] = [];
 
-  if (shared) {
-    if (!login && !localSession) {
-      if (canConnect) out.push(<GithubConnectBox key="connect-github" onDone={() => refreshWhoami()} />);
-      if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" onDone={() => refreshWhoami()} />);
-      if (!canConnect && !canConnectGoogle) out.push(<SNote key="note">Sign in from the desktop app.</SNote>);
-    } else {
-      if (local && window.zevet && typeof window.zevet.githubLogout === "function") {
-        out.push(<GithubDisconnectRow key="disc-github" onDone={() => refreshWhoami()} />);
-      }
-      if (local && window.zevet && typeof window.zevet.googleLogout === "function") {
-        out.push(<GoogleDisconnectRow key="disc-google" onDone={() => refreshWhoami()} />);
-      }
+  /* `shared` means "on the anonymous team token, no personal session" (hub's
+     `shared: !sess`) -- a real personal session (`login` set) always has
+     `shared: false`. Gating this whole block on `shared` alone meant a person
+     genuinely signed in never saw a Disconnect row at all: `login` first, so
+     that case and the shared-but-locally-linked one both offer it. */
+  if (login || localSession) {
+    if (local && window.zevet && typeof window.zevet.githubLogout === "function") {
+      out.push(<GithubDisconnectRow key="disc-github" onDone={() => refreshWhoami()} />);
     }
+    if (local && window.zevet && typeof window.zevet.googleLogout === "function") {
+      out.push(<GoogleDisconnectRow key="disc-google" onDone={() => refreshWhoami()} />);
+    }
+  } else if (shared) {
+    if (canConnect) out.push(<GithubConnectBox key="connect-github" onDone={() => refreshWhoami()} />);
+    if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" onDone={() => refreshWhoami()} />);
+    if (!canConnect && !canConnectGoogle) out.push(<SNote key="note">Sign in from the desktop app.</SNote>);
   }
 
   const list: ReactNode[] = [];
@@ -498,6 +526,9 @@ function IndexSection() {
             setIndex({
               progressText: r && r.ok ? "done \u2014 " + r.indexed + " indexed, " + r.skipped + " skipped" : "failed: " + ((r && r.error) || "unknown"),
             });
+            refreshIndexStatus();
+          }).catch((err: unknown) => {
+            setIndex({ progressText: "failed: " + (err instanceof Error ? err.message : "unknown") });
             refreshIndexStatus();
           });
       }}
@@ -719,9 +750,7 @@ function MasoraSection() {
               </span>
             </div>
           ) : null}
-          <SNote>
-            Sessions push only from folders opted in below (C1: private by default, ACL closed to you).
-          </SNote>
+          <SNote>Off by default, per folder.</SNote>
           {(localWorkspaces || []).map((w) => (
             <div className="srow" key={w.dir}>
               <span className="k">{w.name}</span>
@@ -832,7 +861,6 @@ function ConnectionsSection() {
 
   return (
     <SSection title="Connections" summary={sources ? "configured" : "loading…"}>
-      <SNote>Connect services to link your Masora context.</SNote>
       {PROVIDERS.map((p) => (
         <div className="srow" key={p.id}>
           <span className="k">{p.label}</span>

@@ -115,6 +115,11 @@ contextBridge.exposeInMainWorld("zevet", {
   masoraUnpair: () => ipcRenderer.invoke("zevet:masoraUnpair"),
   /** Zevet Chat push to Masora (C1 `zevet_chat`), off by default. */
   masoraChatPush: (on) => ipcRenderer.invoke("zevet:masoraChatPush", { on }),
+  /** Connections panel: which sources are linked, and connecting a new one.
+      Channel names have no "zevet:" prefix -- they are `masora:sources` /
+      `masora:connect`, matching main.js's own registration. */
+  masoraSources: () => ipcRenderer.invoke("masora:sources"),
+  masoraConnect: (arg) => ipcRenderer.invoke("masora:connect", arg),
   /** Native folder picker; resolves to a path or null. */
   pickRepo: () => ipcRenderer.invoke("zevet:pickRepo"),
   /** Install the hooks into that repo. */

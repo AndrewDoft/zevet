@@ -11,15 +11,6 @@ export const MODES: { id: LaunchMode; label: string }[] = [
   { id: "dangerous", label: "Skip permissions" },
 ];
 
-/** One line each, for the settings pane. The flags these turn into live in
- *  desktop/agent-console.js MODES; these describe what they MEAN. */
-export const MODE_NOTE: Record<string, string> = {
-  plan: "Reads and plans. Changes nothing.",
-  ask: "Asks before every edit and command.",
-  auto: "Edits freely, asks before anything else.",
-  dangerous: "Never asks. Full access to this machine.",
-};
-
 export const MODE_LABEL: Record<string, string> = Object.fromEntries(
   MODES.map((m) => [m.id, m.label]),
 );

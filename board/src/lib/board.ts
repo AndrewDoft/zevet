@@ -733,6 +733,14 @@ export const useBoard = create<BoardState>((set, get) => ({
         if (launch && launch.prompt) get().sendPrompt(c.key, launch.prompt);
       }
       signalConsolesChanged();
+    }).catch((err: unknown) => {
+      // Same failure shape as the `!r.ok` branch above -- a rejected IPC call
+      // left the optimistic `running: true` console spinning forever with no
+      // error line, instead of the ok:false path just above it.
+      c.running = false;
+      c.error = err instanceof Error ? err.message : "could not start";
+      pushConsoleLine(c, "err", c.error);
+      signalConsolesChanged();
     });
   },
 
@@ -937,6 +945,10 @@ export const useBoard = create<BoardState>((set, get) => ({
         });
       }
       get().refreshStats(true);
+    }).catch(() => {
+      // A rejected IPC call left `localEntries: null` forever, i.e. the tree
+      // stuck on "loading" -- same failure shape as the `!r.ok` branch above.
+      set({ localEntries: [], localError: "could not read that folder", localTruncated: null });
     });
   },
 
@@ -951,7 +963,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       if (w) {
         void get().refreshLocalWorkspaces().then(() => get().openLocalRoot(w.dir));
       }
-    });
+    }).catch(() => {}); // The native picker's own cancel already resolves with null.
   },
 
   refreshLocalAgents: () => {
@@ -1025,9 +1037,13 @@ export const useBoard = create<BoardState>((set, get) => ({
     fetch("/auth/whoami", { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
       .then((r) => {
-        if (r && r.ok) set({ who: { state: r, busy: false } });
+        // `state: { ok: false }` is not null, so this settles the section
+        // out of "loading…" instead of leaving it there forever on a 401 or
+        // a network error -- AccountSection renders that as an explicit
+        // error with a Retry, rather than the comment here just claiming one.
+        set({ who: { state: r && r.ok ? r : { ok: false }, busy: false } });
       })
-      .catch(() => { /* the section says it cannot tell */ });
+      .catch(() => set({ who: { state: { ok: false }, busy: false } }));
   },
   setWhoBusy: (v) => set((g) => ({ who: { ...g.who, busy: v } })),
 

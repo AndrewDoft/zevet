@@ -74,7 +74,7 @@ export function JobProgress({
         <span className={cn(mono, "text-foreground/35 shrink-0 tabular-nums")}>
           {finished ? "done" : eta}
         </span>
-        {!finished && (
+        {!finished && onCancel && (
           <button
             type="button"
             aria-label="Cancel the job"
