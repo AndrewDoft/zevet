@@ -875,7 +875,7 @@ function VersionSection() {
         disabled={checking || installing || (s && s.phase === "checking") || (s && s.phase === "downloading") || false}
         onClick={() => updateCheck()}
       >
-        {checking || (s && s.phase === "checking") ? "Checking…" : "Check now"}
+        {checking || (s && s.phase === "checking") ? "Checking…" : s?.authRequired ? "Sign in for updates" : "Check now"}
       </button>,
     );
   }

@@ -34,6 +34,21 @@ const has = (check = true, install = true) => ({ hasCheck: check, hasInstall: in
 const ready = { current: "0.2.0", phase: "ready", version: "0.2.1", canInstall: true, manual: true };
 
 describe("the update controls", () => {
+  test("missing update access offers explicit sign-in through the normal check action", async () => {
+    let approvals = 0;
+    const ui = board({ updateCheck: async () => { approvals++; return ready; } });
+    ui.ctl.receiveUpdate({ phase: "error", authRequired: true, error: "Sign in to Masora to enable updates." });
+    assert.match(updateStatusText(ui.ctl.updates.state, up()), /Sign in/);
+    assert.deepEqual(updateCommand(ui.ctl.updates.state, up(), has()), {
+      kind: "check", disabled: false, label: "Sign in for updates",
+    });
+    assert.equal(approvals, 0, "receiving a background error cannot open approval");
+    ui.ctl.check();
+    await flush();
+    assert.equal(approvals, 1);
+    assert.equal(ui.ctl.updates.state.phase, "ready");
+  });
+
   test("a real update check refreshes the status through checking, download progress and install", async () => {
     let controller;
     const ui = board({

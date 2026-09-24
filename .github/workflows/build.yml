@@ -3,7 +3,8 @@
 # Exists because a .dmg cannot be produced on Windows: electron-builder needs
 # macOS to make one, and both of Andrew's teammates are on Apple silicon. This
 # runs the mac build on a mac runner and the Windows build on a Windows runner,
-# and hands both back as artifacts.
+# validates both. Installers are distributed only by the private Masora2
+# zevet-private-desktop workflow; this public run uploads no binary artifacts.
 #
 # Run it from the Actions tab (workflow_dispatch), or push a v* tag.
 name: build
@@ -21,10 +22,8 @@ jobs:
         include:
           - os: windows-latest
             script: dist:win
-            artifact: zevet-windows
           - os: macos-latest
             script: dist:mac
-            artifact: zevet-macos
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -106,15 +105,11 @@ jobs:
           ZEVET_EXPECT_SIGNED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && '1' || '0' }}
         run: npm run smoke:mac
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: |
-            desktop/out/*.exe
-            desktop/out/*.dmg
-            desktop/out/*.zip
-          if-no-files-found: error
-          retention-days: 30
+      - name: Private distribution only
+        shell: bash
+        run: |
+          echo 'Build verified. No installers are uploaded from this public repository.'
+          echo 'For distribution, run zevet-private-desktop in private mshvid1101/masora2 with the reviewed source commit.'
 # ---------------------------------------------------------------------------
 # UNSIGNED, AND WHAT THAT COSTS
 #

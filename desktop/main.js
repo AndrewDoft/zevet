@@ -36,6 +36,7 @@ const embedder = require("./embedder.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
 const { AppUpdater } = require("./app-update.js");
+const { UpdateAccess } = require("./update-access.js");
 const runtime = require("./runtime.js");
 const askServer = require("./ask-server.js");
 const { GithubSignIn } = require("./github-signin.js");
@@ -1414,7 +1415,7 @@ const family = new Family({
   openExternal: (url) => shell.openExternal(url),
   // The normal self-update: look, and if a build is ready, install it.
   runUpdate: async () => {
-    const s = await appUpdater.check();
+    const s = await checkUpdatesWithAccess();
     if (s && s.phase === "ready" && s.canInstall) await appUpdater.install();
   },
   version: app.getVersion(),
@@ -3449,8 +3450,8 @@ ipcMain.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(a
  * The updater lives in app-update.js and is deliberately ignorant of Electron;
  * this block is the whole of the wiring. What it decides here:
  *
- *   - WHERE the feed is. The public download host, overridable with
- *     ZEVET_APP_FEED for testing against something that is not production.
+ *   - WHERE the feed is. Masora's private download host. An override may name
+ *     another feed on that host; credentials never go to another origin.
  *   - WHERE the download lands: a directory of our own under userData, NOT the
  *     system temp directory. Windows disk cleanup empties temp, and an
  *     installer that vanishes between "ready" and the click is a bug report
@@ -3458,9 +3459,15 @@ ipcMain.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(a
  *   - That the renderer is TOLD, and never asked. The board shows a row; the
  *     person clicks it or does not.
  * ======================================================================== */
+const updateAccess = new UpdateAccess({
+  product: "zevet",
+  file: path.join(app.getPath("userData"), "update-access.json"),
+  storage: safeStorage,
+});
 const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
+  fetchImpl: (url, options) => updateAccess.fetch(url, options),
   dir: path.join(app.getPath("userData"), "updates"),
   // toBoard() only reaches boardWindow, and a person stuck on setup — no hub
   // configured yet, or not signed in — has no board window at all. Sent to
@@ -3479,6 +3486,30 @@ const appUpdater = new AppUpdater({
     app.exit(0);
   },
 });
+
+function checkUpdatesWithAccess() {
+  return updateAccess.manualCheck({
+    check: () => appUpdater.check(),
+    name: "Zevet",
+    setError: (error) => {
+      appUpdater._set({ phase: "error", error, authRequired: true, canInstall: false });
+      return appUpdater.status();
+    },
+    approve: async ({ userCode, verifyUrl }) => {
+      const options = {
+        type: "info",
+        message: "Sign in to Masora for updates",
+        detail: `Approve Zevet in your browser using code ${userCode}. Zevet will wait for approval for up to 15 minutes.`,
+        buttons: ["Open Masora", "Cancel"], defaultId: 0, cancelId: 1,
+      };
+      const parent = [boardWindow, setupWindow].find((w) => w && !w.isDestroyed());
+      const { response } = await (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options));
+      if (response !== 0) return false;
+      await shell.openExternal(verifyUrl);
+      return true;
+    },
+  });
+}
 
 /* ========================================================================
  * MASORA VOICE
@@ -3518,7 +3549,7 @@ ipcMain.handle("local:voiceStart", () => masoraVoice.start());
 ipcMain.handle("local:voiceMic", () => masoraVoice.mic());
 
 ipcMain.handle("app:updateStatus", () => appUpdater.status());
-ipcMain.handle("app:updateCheck", () => appUpdater.check());
+ipcMain.handle("app:updateCheck", () => checkUpdatesWithAccess());
 ipcMain.handle("app:updateInstall", () => appUpdater.install());
 
 app.whenReady().then(() => {
