@@ -20,8 +20,10 @@ The renderer receives status only. Plaintext-equivalent Linux storage is refused
 Stage the new clients and verify both native platform gates before enforcing
 the server download guard. Old clients cannot authenticate private downloads.
 After enforcement, remaining old clients must be upgraded from the signed-in
-Access page. Keep metadata and installer access gated together; never add a
-public updater fallback. Detailed rollout contract:
+Access page. The hosted edge permits only the three exact public metadata feeds
+used by the product pages; every installer, alias, script, and unknown download
+path remains protected. Zevet's updater still authenticates both its metadata
+and installer requests and never falls back to anonymous fetching. Detailed rollout contract:
 `Masora2/apps/desktop/shell/PRIVATE_UPDATES.md`.
 
 
@@ -127,7 +129,9 @@ shell cannot read that directory and so the pattern never matches. Wrap it:
 
 Then verify the exact published filenames, sizes, and checksums through an
 approved browser session and the candidate's product-scoped updater credential.
-After enforcement, anonymous manifest and installer requests must return 401.
+After enforcement, anonymous installer requests must be denied. The exact
+`zevet-latest.json` metadata feed remains publicly readable with `no-store`;
+this does not grant access to any installer named by that feed.
 
 ## 5. The landing page points itself
 
