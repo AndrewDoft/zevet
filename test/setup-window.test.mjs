@@ -79,7 +79,8 @@ after(async () => {
 describe("a fresh install's setup window", () => {
   test("shows the controls a first-run person needs, with Finish disabled", () => {
     const { outline } = drive("snapshot");
-    assert.match(outline, /button#createTeam[^\n]*"Create a team"/);
+    assert.match(outline, /input#teamName/);
+    assert.match(outline, /button#createTeam[^\n]*"Create team"/);
     assert.match(outline, /button#google[^\n]*"Sign in with Google"/);
     assert.match(outline, /button#gh[^\n]*"Sign in with GitHub"/);
     assert.match(outline, /button#finish[^\n]*disabled[^\n]*"Open zevet"/);
@@ -114,18 +115,24 @@ describe("a fresh install's setup window", () => {
     assert.match(outline, /div#msg[^\n]*"Create a team, or paste your team address\."/);
   });
 
-  test("b). Create a team mints one on the hosted hub's address and updates the buttons", async () => {
-    // Point the page's own HOSTED_HUB at this test's local hub rather than
-    // Andrew's production one — `var HOSTED_HUB` in a classic (non-module)
-    // inline script is a `window` property, reassignable from here.
-    drive("eval", `window.HOSTED_HUB = ${JSON.stringify(hub.base)}`);
+  test("b). Create team without a name says so and creates nothing", () => {
+    drive("click", "#createTeam");
+    const { outline } = drive("snapshot");
+    assert.match(outline, /div#msg(?!.*hidden)[^\n]*"Name your team\."/);
+    assert.match(outline, /div#createNote[^\n]*hidden/);
+  });
+
+  test("b). Create team mints a NAMED team on the address that was typed, not the hosted one", async () => {
+    // A dead hosted hub: creation can only succeed if the typed address wins.
+    drive("eval", `window.HOSTED_HUB = "http://127.0.0.1:1"`);
+    drive("type", "#hub", hub.base);
+    drive("type", "#teamName", "Acme platform");
     drive("click", "#createTeam");
     // teamCreate is a single awaited IPC round trip to a hub on localhost;
     // give it a moment rather than asserting on the very next tick.
     const outline = await waitFor((o) => /div#createNote(?!.*hidden)/.test(o));
-    const hubValuePattern = new RegExp(`input#hub[^\\n]*"${hub.base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`);
-    assert.match(outline, hubValuePattern, "hub field is set to the hosted (here: test) hub address");
-    assert.match(outline, /div#createNote(?!.*hidden)[^\n]*"Team created/);
+    assert.ok(outline.split("\n").some((l) => l.startsWith("input#hub") && l.endsWith(`"${hub.base}"`)));
+    assert.match(outline, /div#createNote(?!.*hidden)[^\n]*"Created Acme platform\./);
     assert.match(outline, /button#google[^\n]*"Create with Google"/);
     assert.match(outline, /button#gh[^\n]*"Create with GitHub"/);
   });
@@ -136,6 +143,15 @@ describe("a fresh install's setup window", () => {
     assert.match(outline, /button#google[^\n]*"Sign in with Google"/);
     assert.match(outline, /button#gh[^\n]*"Sign in with GitHub"/);
     assert.match(outline, /div#createNote[^\n]*hidden/);
+  });
+
+  test("b). Create team with no address typed falls back to the hosted hub", async () => {
+    drive("eval", `window.HOSTED_HUB = ${JSON.stringify(hub.base)}`);
+    drive("type", "#hub", "");
+    drive("type", "#teamName", "Fallback Co");
+    drive("click", "#createTeam");
+    const outline = await waitFor((o) => /div#createNote(?!.*hidden)/.test(o));
+    assert.match(outline, /div#createNote(?!.*hidden)[^\n]*"Created Fallback Co\./);
   });
 
   test("d). the manual team-key path connects, enables Finish, and reveals Connect a folder", async () => {

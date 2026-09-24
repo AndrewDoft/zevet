@@ -83,7 +83,7 @@ const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
  */
 const DEFAULT_PROVIDER = "github";
 
-const EMPTY = () => ({ version: 1, secret: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null, credentials: [] });
+const EMPTY = () => ({ version: 1, secret: "", name: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null, credentials: [] });
 
 /** A stored credential record, minus its `key` — what everything except
  *  /team/credentials/:id/secret itself is allowed to see. */
@@ -164,6 +164,16 @@ export class Accounts {
    *  server.mjs, the one caller that reads this today. */
   get createdAt() {
     return this.state.createdAt;
+  }
+
+  /** What the team calls itself; "" for a team made before names existed. */
+  get name() {
+    return this.state.name;
+  }
+
+  setName(name) {
+    this.state.name = name;
+    this.#save();
   }
 
   /** The login that set this hub up, or null if nobody has yet. */
@@ -497,6 +507,7 @@ export class Accounts {
       return {
         version: 1,
         secret: typeof raw.secret === "string" ? raw.secret : "",
+        name: typeof raw.name === "string" ? raw.name : "",
         owner: raw.owner && raw.owner.login ? tag(raw.owner) : null,
         allowed: Array.isArray(raw.allowed) ? raw.allowed.filter((a) => a && a.login).map(tag) : [],
         // A block with no id blocks nobody — `samePerson` needs one — so a

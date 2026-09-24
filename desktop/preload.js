@@ -78,7 +78,7 @@ contextBridge.exposeInMainWorld("zevet", {
   /** Mint a brand new, independently-owned team on the given hub — see
    *  main.js's `zevet:teamCreate` and hub/server.mjs's `/team/create`.
    *  Resolves `{ ok, team }` or `{ ok: false, error }`. */
-  teamCreate: (hub) => ipcRenderer.invoke("zevet:teamCreate", { hub }),
+  teamCreate: (hub, name) => ipcRenderer.invoke("zevet:teamCreate", { hub, name }),
   /**
    * Sign in with Google.
    *
@@ -100,18 +100,16 @@ contextBridge.exposeInMainWorld("zevet", {
    *  `githubLogout` under the name the Google button expects. */
   googleLogout: () => ipcRenderer.invoke("zevet:googleLogout"),
   /**
-   * Pairing with Masora (T5, docs/contracts/cross_app_context.md). Same
-   * shape as the GitHub/Google trio above and the same reason for it: a code
-   * has to paint immediately and then the flow sits for up to fifteen
-   * minutes. `masoraPairWait` never returns the token -- it is written
-   * straight to the OS keychain in the main process (masora.js) and this
-   * bridge has no call that reads it back.
+   * Linking with Masora (T5, docs/contracts/cross_app_context.md). The link
+   * runs in the main process in the background; the renderer reads its status
+   * and can retry or open the approval page. The token is written straight to
+   * the OS keychain there and this bridge has no call that reads it back.
    */
   masoraConfig: () => ipcRenderer.invoke("zevet:masoraConfig"),
   masoraSaveUrl: (url) => ipcRenderer.invoke("zevet:masoraSaveUrl", { url }),
-  masoraPairStart: () => ipcRenderer.invoke("zevet:masoraPairStart"),
-  masoraPairWait: () => ipcRenderer.invoke("zevet:masoraPairWait"),
-  masoraPairCancel: () => ipcRenderer.invoke("zevet:masoraPairCancel"),
+  masoraLinkStatus: () => ipcRenderer.invoke("zevet:masoraLinkStatus"),
+  masoraLinkStart: () => ipcRenderer.invoke("zevet:masoraLinkStart"),
+  masoraLinkApprove: () => ipcRenderer.invoke("zevet:masoraLinkApprove"),
   masoraUnpair: () => ipcRenderer.invoke("zevet:masoraUnpair"),
   /** Zevet Chat push to Masora (C1 `zevet_chat`), off by default. */
   masoraChatPush: (on) => ipcRenderer.invoke("zevet:masoraChatPush", { on }),

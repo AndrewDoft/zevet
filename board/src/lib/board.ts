@@ -396,6 +396,7 @@ interface WhoStateShape {
   ok?: boolean;
   actor?: string;
   login?: string;
+  teamName?: string;
   owner?: boolean;
   allow?: string[];
   shared?: boolean;

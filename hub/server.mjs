@@ -717,7 +717,20 @@ function sweepUnclaimedTeams() {
 }
 setInterval(sweepUnclaimedTeams, 60 * 60 * 1000).unref(); // hourly is plenty against a 24h default
 
-function createTeam() {
+/** A team's display name: the one it was given, else something readable for a
+ *  team made before names existed (or by a client that predates them). */
+function teamName(slug, acc) {
+  if (acc.name) return acc.name;
+  return slug === DEFAULT_TEAM ? process.env.ZEVET_TEAM_NAME || "Main team" : `Team ${slug.slice(0, 4)}`;
+}
+
+/** Trimmed, single-spaced, 1-48 characters, no control characters; else null. */
+export function cleanTeamName(raw) {
+  const n = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
+  return n && n.length <= 48 && !/[\u0000-\u001f\u007f]/.test(n) ? n : null;
+}
+
+function createTeam(name) {
   if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
     return { ok: false, status: 503, error: "this hub has no sign-in configured" };
   }
@@ -733,6 +746,7 @@ function createTeam() {
   // the way it does for a hub with no ZEVET_SECRET. That fresh secret is what
   // makes this team's documents unreadable by any other team's members.
   const acc = new Accounts({ file: path.join(TEAMS_DIR, `accounts-${slug}.json`) });
+  if (name) acc.setName(name);
   teamAccounts.set(slug, acc);
   boards.set(slug, makeBoard(path.join(TEAMS_DIR, `events-${slug}.jsonl`)));
   return { ok: true, team: slug };
@@ -1180,6 +1194,7 @@ const server = createServer(async (req, res) => {
     return json(res, 200, {
       ok: true,
       team: auth.team,
+      teamName: teamName(auth.team, acc),
       // A shared-token caller is authenticated but anonymous. Saying so is
       // better than inventing a name for it, and it is what the settings pane
       // shows a hook-only machine.
@@ -1327,9 +1342,22 @@ const server = createServer(async (req, res) => {
    * into it. */
   if (url.pathname === "/team/create" && req.method === "POST") {
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
-    const r = createTeam();
+    // A client that sends a JSON body must name the team. A body-less POST is
+    // a build from before names existed: it still works and gets a default name.
+    let name = "";
+    if (/json/i.test(String(req.headers["content-type"] || ""))) {
+      let body = null;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        body = null;
+      }
+      name = cleanTeamName(body && body.name);
+      if (!name) return json(res, 400, { error: "name the team (1-48 characters)" });
+    }
+    const r = createTeam(name);
     if (!r.ok) return json(res, r.status || 503, { error: r.error });
-    return json(res, 200, { ok: true, team: r.team });
+    return json(res, 200, { ok: true, team: r.team, name: teamName(r.team, teamAccounts.get(r.team)) });
   }
 
   if (url.pathname === "/healthz") {

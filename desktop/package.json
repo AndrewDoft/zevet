@@ -57,6 +57,7 @@
       "github-signin.js",
       "google-signin.js",
       "masora.js",
+      "masora-link.js",
       "masora-connect.js",
       "masora-push.js",
       "credentials.js",

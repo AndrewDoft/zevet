@@ -104,21 +104,24 @@
     <div class="row"><button id="updateBtn" class="primary" hidden></button></div>
   </div>
 
-  <!-- No account yet, and nowhere to get one: that was the whole bug. This
-       defaults the team address to Andrew's hosted hub and mints a brand new,
-       independently-owned team there (hub/server.mjs's /team/create) before
-       sign-in even starts — trust-on-first-use then makes whoever signs in
-       next its owner, same as claiming a fresh hub. -->
-  <div class="row">
-    <button id="createTeam" class="primary">Create a team</button>
-  </div>
-  <div id="createNote" class="hint" hidden>Team created — sign in below to claim it.</div>
-
   <label>
     <span class="lbl">Team address</span>
     <input id="hub" class="mono" placeholder="https://zevet.example.com" autocomplete="off" spellcheck="false" />
-    <span class="hint">Use the address your team shared.</span>
   </label>
+
+  <!-- No account yet, and nowhere to get one: that was the whole bug. This
+       mints a brand new, independently-owned, NAMED team (hub/server.mjs's
+       /team/create) on the address below -- Andrew's hosted hub when that is
+       left empty -- before sign-in even starts; trust-on-first-use then makes
+       whoever signs in next its owner, same as claiming a fresh hub. -->
+  <label>
+    <span class="lbl">Team name</span>
+    <input id="teamName" placeholder="Acme platform" maxlength="48" autocomplete="off" spellcheck="false" />
+  </label>
+  <div class="row" style="margin-top:0">
+    <button id="createTeam" class="primary">Create team</button>
+  </div>
+  <div id="createNote" class="hint" hidden></div>
 
   <!-- ⚠️ THE GITHUB PATH IS THE DEFAULT AND THE SECRET IS FOLDED AWAY BEHIND IT.
        That ordering is the feature. Andrew, 2026-09-19: "people should be able
@@ -183,7 +186,6 @@
   <label>
     <span class="lbl">Display name</span>
     <input id="actor" placeholder="kai" autocomplete="off" spellcheck="false" />
-    <span class="hint">Defaults to the account you signed in with.</span>
   </label>
 
   <div class="row">
@@ -208,6 +210,18 @@
   // their own — see MEMORY "zevet hub is live". "Create a team" points here.
   var HOSTED_HUB = "https://34-74-69-129.sslip.io";
   var createdTeam = "";
+
+  function esc(t) {
+    return String(t).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  // "Signed in as kai to Acme platform. Owner."
+  function signedIn(done) {
+    say("good", "Signed in as <b>" + esc(done.login) + "</b>" +
+      (done.teamName ? " to <b>" + esc(done.teamName) + "</b>" : "") + "." +
+      (done.owner ? " Owner. Invite teammates in Settings." : ""));
+  }
 
   function say(kind, html) {
     var m = $("msg");
@@ -235,18 +249,23 @@
    * so a stale team is never sent against a different address.
    */
   $("createTeam").addEventListener("click", async function () {
+    var name = $("teamName").value.trim();
+    if (!name) { say("bad", "Name your team."); $("teamName").focus(); return; }
+    var hub = $("hub").value.trim() || HOSTED_HUB;
+    if (!/^https?:\/\//i.test(hub)) { say("bad", "Team address needs https:// or http://."); return; }
     $("createTeam").disabled = true;
-    $("hub").value = HOSTED_HUB;
-    say("", "Creating your team…");
-    var r = await window.zevet.teamCreate(HOSTED_HUB);
+    $("hub").value = hub;
+    say("", "Creating…");
+    var r = await window.zevet.teamCreate(hub, name);
     $("createTeam").disabled = false;
     if (!r.ok) {
-      say("bad", "Could not create a team. Use your team key below, or ask for an invite.");
+      say("bad", "Could not create the team: " + esc(r.error || "no answer") + ". Use your team key below, or ask for an invite.");
       return;
     }
     createdTeam = r.team;
     $("msg").hidden = true;
     $("createNote").hidden = false;
+    $("createNote").innerHTML = "Created <b>" + esc(r.name || name) + "</b>. Sign in to claim it.";
     $("google").textContent = "Create with Google";
     $("gh").textContent = "Create with GitHub";
   });
@@ -316,30 +335,32 @@
       // The hub having no OAuth app is the likeliest failure on a self-hosted
       // hub, and it is not the user's fault -- point them at the fallback that
       // is sitting right there rather than leaving them at a dead end.
-      say("bad", "Use your team key below.");
+      say("bad", "GitHub sign-in failed: " + esc(started.error || "no answer") + ". Use your team key below.");
       $("manual").open = true;
       return;
     }
 
     $("ghCode").textContent = started.userCode;
     $("ghUrl").textContent = started.url;
-    $("ghState").textContent = "Waiting for approval…";
+    $("ghState").textContent = started.opened === false
+      ? "Your browser did not open. Visit the address above."
+      : "Waiting for approval…";
     $("msg").hidden = true;
 
     var done = await window.zevet.githubWait();
     ghBusy(false);
     if (!done.ok) {
       if (done.cancelled) { say("", "Sign-in cancelled."); return; }
-      say("bad", "Could not sign in.");
+      say("bad", "Could not sign in: " + esc(done.error || "no answer") + ".");
       return;
     }
 
     verified = true;
     $("finish").disabled = false;
     if (!$("actor").value.trim()) $("actor").value = done.login;
-    say("good", "Signed in as <b>" + done.login + "</b>." +
-      (done.owner ? " Owner. Invite teammates in Settings." : ""));
+    signedIn(done);
     $("repoStep").hidden = false;
+    $("repoStep").scrollIntoView();
   });
 
   $("ghCancel").addEventListener("click", function () {
@@ -373,21 +394,23 @@
       googleBusy(false);
       // Same reasoning as the GitHub branch: a hub with no Google client is a
       // deployment problem, and the fallback is sitting right there.
-      say("bad", "Use GitHub above, or your team key below.");
+      say("bad", "Google sign-in failed: " + esc(started.error || "no answer") + ". Use GitHub above, or your team key below.");
       return;
     }
 
     $("googleUrl").textContent = started.url;
-    $("googleState").textContent = started.domain
-      ? "Waiting for your browser — sign in with your " + started.domain + " account…"
-      : "Waiting for your browser…";
+    $("googleState").textContent = started.opened === false
+      ? "Your browser did not open. Visit the address above."
+      : started.domain
+        ? "Waiting for your browser — sign in with your " + started.domain + " account…"
+        : "Waiting for your browser…";
     $("msg").hidden = true;
 
     var done = await window.zevet.googleWait();
     googleBusy(false);
     if (!done.ok) {
       if (done.cancelled) { say("", "Sign-in cancelled."); return; }
-      say("bad", "Could not sign in.");
+      say("bad", "Could not sign in: " + esc(done.error || "no answer") + ".");
       return;
     }
 
@@ -397,9 +420,9 @@
     // "andrew@usemasora.com" is a board where the domain is repeated on every
     // line and the name is the part nobody can see. Still overridable.
     if (!$("actor").value.trim()) $("actor").value = String(done.login).split("@")[0];
-    say("good", "Signed in as <b>" + done.login + "</b>." +
-      (done.owner ? " Owner. Invite teammates in Settings." : ""));
+    signedIn(done);
     $("repoStep").hidden = false;
+    $("repoStep").scrollIntoView();
   });
 
   $("googleCancel").addEventListener("click", function () {
@@ -424,7 +447,7 @@
     var hub = $("hub").value.trim();
     var res = await window.zevet.test(hub, $("token").value);
     $("check").disabled = false;
-    if (!res.ok) { verified = false; $("finish").disabled = true; say("bad", "Could not connect."); return; }
+    if (!res.ok) { verified = false; $("finish").disabled = true; say("bad", esc(res.why || "Could not connect.")); return; }
 
     verified = true;
     $("finish").disabled = false;

@@ -47,6 +47,7 @@ const { createConsoleLog } = require("./console-log.js");
 const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
+const { MasoraLink } = require("./masora-link.js");
 const credentials = require("./credentials.js");
 const credentialLadder = require("./credential-ladder.js");
 const credentialUsage = require("./credential-usage.js");
@@ -548,6 +549,8 @@ function openBoard(cfg) {
     boardWindow.focus();
     return;
   }
+  // Background, after onboarding: never awaited, so it cannot gate the window.
+  masoraLink.start();
   boardWindow = new BrowserWindow({
     width: 1240,
     height: 820,
@@ -742,7 +745,7 @@ function openSetup(existing) {
   }
   setupWindow = new BrowserWindow({
     width: 620,
-    height: 700,
+    height: 820,
     resizable: false,
     backgroundColor: PAPER,
     title: "Set up zevet",
@@ -1130,11 +1133,10 @@ ipcMain.handle("zevet:githubStart", async (_e, { hub, team } = {}) => {
     // Opened from the MAIN process, never by the renderer. The board window
     // loads remote HTML from the hub, and a renderer that could open arbitrary
     // URLs in the system browser is a hub that can too.
-    shell.openExternal(r.verificationUriComplete).catch(() => {
-      /* No browser, or none that would take it. The code is on screen; that is
-       * the entire reason it is on screen. */
-    });
-    return { ok: true, userCode: r.userCode, url: r.verificationUriComplete, expiresIn: r.expiresIn };
+    // No browser, or none that would take it: the code is on screen, that is the
+    // entire reason it is on screen, and `opened` lets the window say so.
+    const opened = await shell.openExternal(r.verificationUriComplete).then(() => true, () => false);
+    return { ok: true, userCode: r.userCode, url: r.verificationUriComplete, expiresIn: r.expiresIn, opened };
   } catch (err) {
     signIn = null;
     return { ok: false, error: err.message };
@@ -1162,18 +1164,32 @@ ipcMain.handle("zevet:googleStart", async (_e, { hub, team } = {}) => {
     // Opened from the MAIN process, never by the renderer — same rule as the
     // GitHub flow above, and it matters more here: this URL carries the pairing
     // code that a completed sign-in will be handed over for.
-    shell.openExternal(r.authUrl).catch(() => {
-      /* No browser, or none that would take it. The URL goes back to the window
-       * so it can offer a copyable link rather than being a dead end. */
-    });
+    // No browser, or none that would take it: the URL goes back to the window
+    // with `opened: false` so it can say so rather than wait on nothing.
+    const opened = await shell.openExternal(r.authUrl).then(() => true, () => false);
     // No `userCode`: there is nothing for the person to read or type, which is
     // the whole reason this flow is the web one and not Google's device flow.
-    return { ok: true, url: r.authUrl, expiresIn: r.expiresIn, domain: r.domain };
+    return { ok: true, url: r.authUrl, expiresIn: r.expiresIn, domain: r.domain, opened };
   } catch (err) {
     signIn = null;
     return { ok: false, error: err.message };
   }
 });
+
+/** The team's name from the hub, for the setup window. "" when the hub is an
+ *  older build, or slow: the name is a label, never a reason to fail sign-in. */
+async function fetchTeamName(hub, token) {
+  try {
+    const res = await fetch(`${String(hub).replace(/\/+$/, "")}/auth/whoami`, {
+      headers: { "x-zevet-token": token },
+      signal: AbortSignal.timeout(4000),
+    });
+    const body = res.ok ? await res.json() : null;
+    return body && typeof body.teamName === "string" ? body.teamName : "";
+  } catch {
+    return "";
+  }
+}
 
 /**
  * What happens once a sign-in succeeds — ONE implementation, both providers.
@@ -1210,7 +1226,7 @@ async function awaitSignIn(what) {
       actor: existing.actor || String(r.login || "").split("@")[0],
       login: r.login,
     });
-    return { ok: true, login: r.login, owner: r.owner };
+    return { ok: true, login: r.login, owner: r.owner, teamName: await fetchTeamName(hub, r.token) };
   } catch (err) {
     return { ok: false, error: err.message, cancelled: err.message === "cancelled" };
   } finally {
@@ -1243,11 +1259,18 @@ ipcMain.handle("zevet:googleCancel", cancelSignIn);
  * hub's default one. Unauthenticated on the hub side — this call decides
  * nothing by itself, same as the sign-in "start" calls above.
  */
-ipcMain.handle("zevet:teamCreate", async (_e, { hub } = {}) => {
+ipcMain.handle("zevet:teamCreate", async (_e, { hub, name } = {}) => {
   const base = String(hub || "").replace(/\/+$/, "");
   if (!base) return { ok: false, error: "Enter a team address." };
+  const teamName = String(name || "").trim();
+  if (!teamName) return { ok: false, error: "Name the team." };
   try {
-    const res = await fetch(`${base}/team/create`, { method: "POST", signal: AbortSignal.timeout(15000) });
+    const res = await fetch(`${base}/team/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: teamName }),
+      signal: AbortSignal.timeout(15000),
+    });
     let body = null;
     try {
       body = await res.json();
@@ -1255,7 +1278,7 @@ ipcMain.handle("zevet:teamCreate", async (_e, { hub } = {}) => {
       return { ok: false, error: `The hub returned an invalid response (HTTP ${res.status}).` };
     }
     if (!res.ok || !body || !body.ok) return { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
-    return { ok: true, team: body.team };
+    return { ok: true, team: body.team, name: body.name || teamName };
   } catch (err) {
     return { ok: false, error: `Could not reach the hub: ${err && err.message ? err.message : String(err)}` };
   }
@@ -1321,58 +1344,45 @@ ipcMain.handle("zevet:done", () => {
   return true;
 });
 
-/* ── Pairing with Masora (T5, docs/contracts/cross_app_context.md) ─────────
+/* ── Linking with Masora (T5, docs/contracts/cross_app_context.md) ─────────
  *
- * Same two-call device-flow shape as GithubSignIn above, against masora2's
- * own /api/connector/register (the protocol its Go desktop connector uses --
- * read from apps/connector/internal/register/register.go, not guessed). The
- * token this ends with is a workspace-scoped connector bearer, encrypted at
- * rest with safeStorage (desktop/masora.js) -- never handed to a renderer.
+ * The device-code pairing against masora2's /api/connector/register runs in
+ * the BACKGROUND (masora-link.js), started by openBoard() and never awaited by
+ * onboarding. Settings reads `masoraLinkStatus`; the only browser open is
+ * `masoraLinkApprove`, from a click. The token ends in safeStorage
+ * (desktop/masora.js) -- never handed to a renderer.
  */
-let masoraPairSession = null;
+const masoraLink = new MasoraLink({
+  readConfig: () => masora.readConfig(),
+  MasoraPair: masora.MasoraPair,
+  saveToken: (token) => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error("This machine's OS keychain is unavailable.");
+    masora.saveToken(token, (s) => safeStorage.encryptString(s));
+  },
+  openExternal: (url) => shell.openExternal(url),
+  host: os.hostname(),
+  platform: process.platform,
+});
 
 ipcMain.handle("zevet:masoraConfig", () => masora.readConfig());
 
-ipcMain.handle("zevet:masoraSaveUrl", (_e, { url } = {}) => masora.saveUrl(url));
-
-ipcMain.handle("zevet:masoraPairStart", async () => {
-  try {
-    if (masoraPairSession) masoraPairSession.cancel();
-    const { url } = masora.readConfig();
-    masoraPairSession = new masora.MasoraPair({ baseUrl: url });
-    const r = await masoraPairSession.start();
-    shell.openExternal(r.verifyUrl).catch(() => {});
-    return { ok: true, userCode: r.userCode, verifyUrl: r.verifyUrl };
-  } catch (err) {
-    return { ok: false, error: err && err.message ? err.message : String(err) };
-  }
+ipcMain.handle("zevet:masoraSaveUrl", (_e, { url } = {}) => {
+  const cfg = masora.saveUrl(url);
+  masoraLink.cancel();
+  masoraLink.start(); // a new address is a new attempt
+  return cfg;
 });
 
-ipcMain.handle("zevet:masoraPairWait", async () => {
-  if (!masoraPairSession) return { ok: false, error: "Start pairing first." };
-  try {
-    const { token } = await masoraPairSession.wait(os.hostname(), process.platform);
-    if (!safeStorage.isEncryptionAvailable()) {
-      return { ok: false, error: "This machine's OS keychain is unavailable." };
-    }
-    masora.saveToken(token, (s) => safeStorage.encryptString(s));
-    return { ok: true };
-  } catch (err) {
-    const cancelled = err && err.message === "cancelled";
-    return { ok: false, cancelled, error: cancelled ? null : (err && err.message) || String(err) };
-  } finally {
-    masoraPairSession = null;
-  }
+ipcMain.handle("zevet:masoraLinkStatus", () => masoraLink.status());
+ipcMain.handle("zevet:masoraLinkStart", () => {
+  masoraLink.start();
+  return masoraLink.status();
 });
-
-ipcMain.handle("zevet:masoraPairCancel", () => {
-  if (masoraPairSession) masoraPairSession.cancel();
-  masoraPairSession = null;
-  return true;
-});
+ipcMain.handle("zevet:masoraLinkApprove", () => masoraLink.approve());
 
 ipcMain.handle("zevet:masoraUnpair", () => {
   masora.unpair();
+  masoraLink.cancel();
   return true;
 });
 

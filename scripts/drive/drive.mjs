@@ -80,6 +80,14 @@ async function cmdLaunch() {
       env: {
         ...process.env,
         ZEVET_HOME: home,
+        // The installer writes ~/.codex, ~/.config/opencode and ~/.claude, so a
+        // throwaway ZEVET_HOME alone still edits the real user's agent configs.
+        HOME: base,
+        USERPROFILE: base,
+        // Never let a test run start a pairing against a Masora that is really running here.
+        ZEVET_MASORA_URL: process.env.ZEVET_MASORA_URL || "http://127.0.0.1:1",
+        APPDATA: path.join(base, "appdata"),
+        LOCALAPPDATA: path.join(base, "localappdata"),
         ZEVET_TEST_HOOKS: "1",
         ZEVET_ALLOW_MULTI: "1",
       },

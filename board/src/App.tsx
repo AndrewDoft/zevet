@@ -91,6 +91,16 @@ function RailFoot() {
   );
 }
 
+/** The team's name, under the mode switch. Nothing until the hub has answered. */
+function TeamName() {
+  const name = useBoard((s) => (s.who.state as { teamName?: string } | null)?.teamName);
+  return name ? (
+    <div className="rail-team" id="railTeam" title="Team">
+      {name}
+    </div>
+  ) : null;
+}
+
 function App() {
   const viewMode = useBoard(selectViewMode);
   const theme = useBoard(selectTheme);
@@ -111,6 +121,7 @@ function App() {
   useEffect(() => {
     boot();
     wireChat();
+    useBoard.getState().refreshWhoami();
   }, []);
 
   useEffect(() => {
@@ -162,6 +173,7 @@ function App() {
       <div className="shell" inert={sheetOpen ? true : undefined}>
         <aside className="pane rail">
           <ModeSwitch />
+          <TeamName />
           <ChatRail />
           <div className="rail-code">
           {/* The follow control sits here now, not in the Files column's own

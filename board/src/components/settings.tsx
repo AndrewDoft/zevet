@@ -388,7 +388,7 @@ function AccountSection() {
       list.push(
         <div className="srow" key={p.login}>
           <span className="k">
-            {"@" + p.login + (p.owner ? "  \u00b7 owner" : p.pending ? "  \u00b7 invited" : "")}
+            {handle(p.login) + (p.owner ? "  \u00b7 owner" : p.pending ? "  \u00b7 invited" : "")}
           </span>
           <span className="v">
             {owner && !p.owner ? (
@@ -431,7 +431,7 @@ function AccountSection() {
   if (whoErr) out.push(<SNote key="err">{whoErr}</SNote>);
 
   return (
-    <SSection title="Account" summary={login ? "@" + login : "not signed in"}>
+    <SSection title="Account" summary={login ? handle(login) : "not signed in"}>
       {out}
     </SSection>
   );
@@ -904,64 +904,53 @@ function VersionSection() {
 }
 
 /**
- * Pairing with Masora (T5, docs/contracts/cross_app_context.md). Settings
- * row idiom per commit 27d7004: the closed row already says what this is set
- * to -- "not paired", or the paired host -- so nothing needs opening to read
- * the one fact this section exists for.
+ * Linking with Masora (T5, docs/contracts/cross_app_context.md). The link runs
+ * in the background from the moment the board opens (desktop/masora-link.js);
+ * this section only reports it. Settings row idiom per commit 27d7004: the
+ * closed row already says the state -- the linked host, "waiting for approval",
+ * "not running" -- so nothing needs opening to read it.
  */
+type MasoraLinkState = { phase: string; paired?: boolean; code?: string; error?: string };
+
+const LINK_SUMMARY: Record<string, string> = {
+  waiting: "waiting for approval",
+  unreachable: "not running",
+  error: "error",
+};
+
 function MasoraSection() {
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
   const [cfg, setCfg] = useState<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean } | null>(null);
   const [urlDraft, setUrlDraft] = useState("");
-  const [pair, setPair] = useState<
-    | { phase: "idle" }
-    | { phase: "starting" }
-    | { phase: "waiting"; code: string }
-    | { phase: "fail"; message: string }
-  >({ phase: "idle" });
+  const [link, setLink] = useState<MasoraLinkState | null>(null);
 
   function refresh() {
     window.zevet?.masoraConfig?.().then((c) => {
       if (c) {
         setCfg(c);
-        setUrlDraft(c.url);
+        setUrlDraft((d) => d || c.url);
       }
     });
   }
   useEffect(() => {
-    if (!cfg) refresh();
+    refresh();
+    const poll = () =>
+      window.zevet?.masoraLinkStatus?.().then((s: MasoraLinkState | undefined) => {
+        if (!s) return;
+        setLink((prev) => {
+          // The background link just finished: re-read the config so the row
+          // flips to the linked host and the Chat/repo switches appear.
+          if (s.paired && !(prev && prev.paired)) refresh();
+          return s;
+        });
+      });
+    poll();
+    const t = setInterval(poll, 2000);
+    return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!bridge.local) return null;
-
-  function pairClick() {
-    if (pair.phase === "waiting") {
-      window.zevet?.masoraPairCancel?.();
-      setPair({ phase: "idle" });
-      return;
-    }
-    setPair({ phase: "starting" });
-    window.zevet?.masoraPairStart?.().then((r) => {
-      if (!r || !r.ok) {
-        setPair({ phase: "fail", message: (r && r.error) || "Could not start pairing." });
-        return;
-      }
-      setPair({ phase: "waiting", code: r.userCode || "" });
-      window.zevet?.masoraPairWait?.().then(
-        (done) => {
-          if (!done || !done.ok) {
-            if (done && done.cancelled) setPair({ phase: "idle" });
-            else setPair({ phase: "fail", message: (done && done.error) || "Pairing failed." });
-            return;
-          }
-          setPair({ phase: "idle" });
-          refresh();
-        },
-        (err) => setPair({ phase: "fail", message: (err && err.message) || "Pairing failed." }),
-      );
-    }, (err) => setPair({ phase: "fail", message: (err && err.message) || "Could not start pairing." }));
-  }
 
   function hostOf(url: string): string {
     try {
@@ -971,7 +960,8 @@ function MasoraSection() {
       // malformed saved value must still render a row rather than crash one.
     }
   }
-  const summary = !cfg ? "loading…" : cfg.paired ? hostOf(cfg.url) : "not paired";
+  const phase = link ? link.phase : "";
+  const summary = !cfg ? "loading…" : cfg.paired ? hostOf(cfg.url) : LINK_SUMMARY[phase] || "not linked";
 
   return (
     <SSection title="Masora" summary={summary}>
@@ -1002,14 +992,24 @@ function MasoraSection() {
           </button>
         </div>
       ) : (
-        <div className="srow">
-          <button className={MAKE_BTN} type="button" disabled={pair.phase === "starting"} onClick={pairClick}>
-            {pair.phase === "waiting" ? "Cancel" : pair.phase === "starting" ? "Starting…" : "Pair with Masora"}
-          </button>
-          {pair.phase === "waiting" ? <span className="v mono">{pair.code}</span> : null}
+        <div className="srow" id="masoraLinkRow">
+          {phase === "waiting" ? (
+            <button className={MAKE_BTN} type="button" onClick={() => window.zevet?.masoraLinkApprove?.()}>
+              Approve
+            </button>
+          ) : (
+            <button
+              className={MAKE_BTN}
+              type="button"
+              onClick={() => window.zevet?.masoraLinkStart?.().then((s: MasoraLinkState | undefined) => s && setLink(s))}
+            >
+              Link now
+            </button>
+          )}
+          {phase === "waiting" && link && link.code ? <span className="v mono">{link.code}</span> : null}
         </div>
       )}
-      {pair.phase === "fail" ? <SNote style={{ color: "var(--bad)" }}>{pair.message}</SNote> : null}
+      {phase === "error" && link && link.error ? <SNote style={{ color: "var(--bad)" }}>{link.error}</SNote> : null}
       {cfg && cfg.paired ? (
         <>
           {window.zevet?.masoraChatPush ? (
@@ -1157,11 +1157,16 @@ function ConnectionsSection() {
   );
 }
 
+/** "@octocat" for a GitHub login; a Google login is already an address. */
+function handle(login: string) {
+  return login.includes("@") ? login : "@" + login;
+}
+
 function credentialLabel() {
   const c = bridge.cfg;
   if (!c) return "unknown";
   if (c.legacy) return "Set up shared editing";
-  if (c.session) return "GitHub sign-in" + (c.hasSecret ? " + team key" : " \u00b7 team key missing");
+  if (c.session) return "Signed in" + (c.hasSecret ? " + team key" : " \u00b7 team key missing");
   return c.hasSecret ? "team key" : "none configured";
 }
 
@@ -1172,6 +1177,7 @@ export function SettingsSheet() {
   const setView = useBoard((s) => s.setView);
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
   const myActor = useBoard((s) => s.myActor);
+  const teamName = useBoard((s) => (s.who.state as { teamName?: string } | null)?.teamName || "");
 
   const sheetRef = useRef<HTMLDivElement>(null);
   const wasOpen = useRef(false);
@@ -1284,6 +1290,7 @@ export function SettingsSheet() {
         <ConnectionsSection />
 
         <SSection title="Connection" summary={credentialLabel()}>
+          {teamName ? <SRow k="Team" v={teamName} /> : null}
           <SRow k="Team address" v={bridge.hub} mono />
           <SRow k="You" v={myActor || "unknown"} />
         </SSection>
