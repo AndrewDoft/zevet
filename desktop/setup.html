@@ -252,7 +252,7 @@
     if (!c.ok) {
       if (c.error === "Taken" && c.suggest) {
         say("bad", "Taken<button class=\"suggest\" id=\"suggest\" type=\"button\">" + esc(c.suggest) + "</button>");
-        $("suggest").addEventListener("click", function () { $("teamName").value = c.suggest; $("msg").hidden = true; });
+        document.getElementById("suggest").addEventListener("click", function () { $("teamName").value = c.suggest; $("msg").hidden = true; });
       } else {
         say("bad", esc(short(c.error, "Failed")));
       }

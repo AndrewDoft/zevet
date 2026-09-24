@@ -77,6 +77,20 @@ describe("the setup window is frameless like the board", () => {
   });
 });
 
+describe("Settings", () => {
+  const s = read("board", "src", "components", "settings.tsx");
+  test("the connect buttons show the provider mark and keep an aria-label", () => {
+    assert.match(s, /aria-label=\{label\}[^>]*>\s*\{idle \? <><GithubMark \/> GitHub<\/> : label\}/);
+    assert.match(s, /aria-label=\{label\}[^>]*>\s*\{idle \? <><GoogleMark \/> Google<\/> : label\}/);
+  });
+  test("the Family panel lists Masora and Zevet Voice with one chip each", () => {
+    assert.match(s, /function FamilySection/);
+    assert.match(s, /\{r\.state\}/);
+    assert.match(s, /<FamilySection \/>/);
+    assert.doesNotMatch(s, /Team address/);
+  });
+});
+
 describe("the family runs from the main process", () => {
   test("it starts with the app, stops with it, and the bridge exposes the panel", () => {
     assert.match(main, /appUpdater\.start\(\);\s*family\.start\(\)/);
