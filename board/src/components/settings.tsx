@@ -11,6 +11,7 @@ import {
 import { updateCommand, updatePercent, updateStatusText } from "../lib/update.mjs";
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { Twist } from "./twist";
+import { GithubMark, GoogleMark } from "./logos";
 
 function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   return (
@@ -154,13 +155,14 @@ function GithubConnectBox({ onDone }: { onDone: () => void }) {
   }
 
   const label = connectPhaseLabel(state.phase, "GitHub");
+  const idle = state.phase === "idle" || state.phase === "done";
 
   const value = connectValue(state.phase, state, "GitHub");
 
   return (
     <div className="srow">
-      <button className={MAKE_BTN} type="button" disabled={state.phase === "starting"} onClick={click}>
-        {label}
+      <button className={MAKE_BTN} type="button" aria-label={label} disabled={state.phase === "starting"} onClick={click}>
+        {idle ? <><GithubMark /> GitHub</> : label}
       </button>
       <span className="v">{value}</span>
     </div>
@@ -233,13 +235,14 @@ function GoogleConnectBox({ onDone }: { onDone: () => void }) {
   }
 
   const label = connectPhaseLabel(state.phase, "Google");
+  const idle = state.phase === "idle" || state.phase === "done";
 
   const value = connectValue(state.phase, state, "Google");
 
   return (
     <div className="srow">
-      <button className={MAKE_BTN} type="button" disabled={state.phase === "starting"} onClick={click}>
-        {label}
+      <button className={MAKE_BTN} type="button" aria-label={label} disabled={state.phase === "starting"} onClick={click}>
+        {idle ? <><GoogleMark /> Google</> : label}
       </button>
       <span className="v">
         {value}
@@ -329,17 +332,14 @@ function AccountSection() {
 
   if (!whoState) {
     return (
-      <SSection title="Account" summary="loading…">
-        <SNote>Loading account…</SNote>
-      </SSection>
+      <SSection title="Account" summary="loading…">{null}</SSection>
     );
   }
 
   if (whoState.ok === false) {
     return (
-      <SSection title="Account" summary="error">
-        <SNote>Could not load account.</SNote>
-        <button className={MAKE_BTN} type="button" onClick={() => refreshWhoami()}>
+      <SSection title="Account" summary="Error">
+                <button className={MAKE_BTN} type="button" onClick={() => refreshWhoami()}>
           Retry
         </button>
       </SSection>
@@ -379,7 +379,6 @@ function AccountSection() {
   } else if (shared) {
     if (canConnect) out.push(<GithubConnectBox key="connect-github" onDone={() => refreshWhoami()} />);
     if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" onDone={() => refreshWhoami()} />);
-    if (!canConnect && !canConnectGoogle) out.push(<SNote key="note">Sign in from the desktop app.</SNote>);
   }
 
   const list: ReactNode[] = [];
@@ -575,7 +574,6 @@ function LadderEditor({ credentials, ladder, onSaved }: { credentials: Credentia
 
   return (
     <div style={{ marginTop: "6px" }}>
-      <SNote>Rotates in order: each launch uses the first step whose credential is below its own usage ceiling.</SNote>
       {rows.map((r, i) => (
         <div className="srow" key={i}>
           <Select
@@ -653,9 +651,7 @@ function CredentialsSection() {
 
   if (!available) {
     return (
-      <SSection title="Model credentials" summary="desktop app only">
-        <SNote>Manage credentials from the Zevet desktop app.</SNote>
-      </SSection>
+      <SSection title="Model credentials" summary="desktop only">{null}</SSection>
     );
   }
 
@@ -735,26 +731,18 @@ function IndexSection() {
   const m = stripMachine as (StatusResultView & { cindex?: boolean; cindexPort?: number }) | null;
   if (m && m.cindex === true) {
     return (
-      <SSection title="Code search" summary="external">
-        <SNote>
-          Managed externally.
-        </SNote>
-      </SSection>
+      <SSection title="Code search" summary="external">{null}</SSection>
     );
   }
   if (!bridge.local || typeof bridge.local.indexStatus !== "function") {
     return (
-      <SSection title="Code search" summary="unavailable">
-        <SNote>Not available in this build.</SNote>
-      </SSection>
+      <SSection title="Code search" summary="unavailable">{null}</SSection>
     );
   }
   const st = (indexStatus || null) as IndexStatusView | null;
   if (!st) {
     return (
-      <SSection title="Code search" summary="checking…">
-        <SNote>Checking this machine…</SNote>
-      </SSection>
+      <SSection title="Code search" summary="checking…">{null}</SSection>
     );
   }
 
@@ -772,7 +760,6 @@ function IndexSection() {
 
   if (!st.capable) {
     node.push(<SRow key="status" k="Status" v="not enabled on this machine" />);
-    node.push(<SNote key="why">{st.reasons.join("  \u00b7  ")}</SNote>);
     return (
       <SSection title="Code search" summary="off">{node}</SSection>
     );
@@ -814,7 +801,6 @@ function IndexSection() {
     </button>,
   );
 
-  if (!localRoot) node.push(<SNote key="pick">Open a folder to build its index.</SNote>);
   if (index.progressText !== "ready") node.push(<SNote key="prog">{index.progressText}</SNote>);
   if (index.barPct > 0 && index.barPct < 100) {
     node.push(
@@ -845,9 +831,7 @@ function VersionSection() {
   const updateInstall = useBoard((s) => s.updateInstall);
   if (!bridge.local || typeof bridge.local.updateStatus !== "function") {
     return (
-      <SSection title="Version" summary="web">
-        <SNote>Get the latest version at usemasora.com/zevet.</SNote>
-      </SSection>
+      <SSection title="Version" summary="web">{null}</SSection>
     );
   }
   const up = { checking, installing };
@@ -920,7 +904,7 @@ const LINK_SUMMARY: Record<string, string> = {
 
 function MasoraSection() {
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
-  const [cfg, setCfg] = useState<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean } | null>(null);
+  const [cfg, setCfg] = useState<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean } | null>(null);
   const [urlDraft, setUrlDraft] = useState("");
   const [link, setLink] = useState<MasoraLinkState | null>(null);
 
@@ -952,21 +936,13 @@ function MasoraSection() {
 
   if (!bridge.local) return null;
 
-  function hostOf(url: string): string {
-    try {
-      return new URL(url).host;
-    } catch {
-      return url; // the URL field can't be hand-edited once paired, but a
-      // malformed saved value must still render a row rather than crash one.
-    }
-  }
   const phase = link ? link.phase : "";
-  const summary = !cfg ? "loading…" : cfg.paired ? hostOf(cfg.url) : LINK_SUMMARY[phase] || "not linked";
+  const summary = !cfg ? "loading…" : cfg.paired ? cfg.member || "Linked" : LINK_SUMMARY[phase] || "not linked";
 
   return (
     <SSection title="Masora" summary={summary}>
-      <div className="srow">
-        <span className="k">URL</span>
+      {cfg && cfg.paired ? null : <div className="srow">
+        <span className="k">Address</span>
         <input
           className="mono"
           type="text"
@@ -977,10 +953,9 @@ function MasoraSection() {
               window.zevet?.masoraSaveUrl?.(urlDraft.trim()).then((c) => c && setCfg(c));
             }
           }}
-          disabled={Boolean(cfg && cfg.paired)}
           spellCheck={false}
         />
-      </div>
+      </div>}
       {cfg && cfg.paired ? (
         <div className="srow">
           <button
@@ -1027,7 +1002,6 @@ function MasoraSection() {
               </span>
             </div>
           ) : null}
-          <SNote>Off by default, per folder.</SNote>
           {(localWorkspaces || []).map((w) => (
             <div className="srow" key={w.dir}>
               <span className="k">{w.name}</span>
@@ -1049,6 +1023,114 @@ function MasoraSection() {
           ))}
         </>
       ) : null}
+    </SSection>
+  );
+}
+
+/**
+ * The Masora family: one chip per sibling app, Install | Update | Connect |
+ * Connected, and the chip is the action. State comes from desktop/family.js.
+ */
+type FamilyRow = {
+  app: string;
+  name: string;
+  state: "Install" | "Update" | "Connect" | "Connected";
+  version: string | null;
+  running: boolean;
+  member: string | null;
+  lastSeen: string | null;
+  page: string;
+  download: string | null;
+};
+
+function FamilyCard({ row, onClose, onChange }: { row: FamilyRow; onClose: () => void; onChange: () => void }) {
+  const [msg, setMsg] = useState("");
+  const startVersion = useRef(row.version);
+  const act = (action: string) =>
+    window.zevet?.familyAct?.(row.app, action).then((r) => {
+      if (!r) return;
+      if (r.download) window.open(r.download, "_blank", "noopener,noreferrer");
+      else if (action === "update") setMsg("Updating…");
+      else if (action === "connect") setMsg(r.pairing === "no_owner" ? "Sign in to Masora" : "Connecting…");
+      onChange();
+    });
+  // The sibling's heartbeat moved to a new version: the update is done.
+  const updating = msg === "Updating…" && row.version === startVersion.current;
+  return (
+    <>
+      <div className="sheet-back fcard-back" onClick={onClose} />
+      <div className="fcard" role="dialog" aria-label={row.name}>
+        <div className="sheet-head">
+          <h2>{row.name}</h2>
+          <button className="sheet-close" type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="fcard-body">
+          {row.state === "Install" ? (
+            <>
+              <iframe className="fcard-frame" src={row.page} title={row.name} sandbox="allow-scripts allow-same-origin allow-popups" referrerPolicy="no-referrer" />
+              {row.download ? (
+                <button className={MAKE_BTN} type="button" onClick={() => window.open(row.download as string, "_blank", "noopener,noreferrer")}>
+                  Download
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          {row.state === "Update" ? (
+            <button className={MAKE_BTN} type="button" disabled={updating} onClick={() => act("update")}>
+              {updating ? "Updating…" : row.running ? "Update" : "Download"}
+            </button>
+          ) : null}
+          {row.state === "Connect" ? (
+            <button className={MAKE_BTN} type="button" onClick={() => act("connect")}>
+              Connect
+            </button>
+          ) : null}
+          {row.state === "Connected" ? (
+            <>
+              {row.member ? <SRow k="Account" v={row.member} /> : null}
+              {row.lastSeen ? <SRow k="Seen" v={new Date(row.lastSeen).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} /> : null}
+              {row.app === "masora" ? (
+                <button className={MAKE_BTN} type="button" onClick={() => window.zevet?.familyAct?.("masora", "disconnect").then(onChange)}>
+                  Disconnect
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          {msg && row.state !== "Connected" && !updating ? <span className="snote">{msg}</span> : null}
+          {updating ? <span className="snote">Updating…</span> : null}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function FamilySection() {
+  const [rows, setRows] = useState<FamilyRow[] | null>(null);
+  const [card, setCard] = useState("");
+  const refresh = () => window.zevet?.familyStatus?.().then((r) => Array.isArray(r) && setRows(r as FamilyRow[]));
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 4000);
+    return () => clearInterval(t);
+  }, []);
+  if (!bridge.local || !window.zevet?.familyStatus) return null;
+  const open = rows?.find((r) => r.app === card);
+  const pending = rows?.find((r) => r.state !== "Connected");
+  return (
+    <SSection title="Family" id="settingsFamily" summary={!rows ? "…" : pending ? `${pending.name} · ${pending.state}` : "Connected"}>
+      {(rows || []).map((r) => (
+        <div className="srow" key={r.app}>
+          <span className="k">{r.name}</span>
+          <span className="v">
+            <button className={MAKE_BTN + " fchip"} type="button" data-state={r.state} onClick={() => setCard(r.app)}>
+              {r.state}
+            </button>
+          </span>
+        </div>
+      ))}
+      {open ? <FamilyCard row={open} onClose={() => setCard("")} onChange={refresh} /> : null}
     </SSection>
   );
 }
@@ -1268,7 +1350,7 @@ export function SettingsSheet() {
           summary={!local ? "desktop only" : localWorkspaces.length ? String(localWorkspaces.length) : "none"}
         >
           {!local ? (
-            <SNote>Use the desktop app to open local folders.</SNote>
+            <SNote>Desktop only.</SNote>
           ) : (
             <>
               {(localWorkspaces || []).map((w) => (
@@ -1287,11 +1369,11 @@ export function SettingsSheet() {
         <CredentialsSection />
         <IndexSection />
         <MasoraSection />
+        <FamilySection />
         <ConnectionsSection />
 
         <SSection title="Connection" summary={credentialLabel()}>
           {teamName ? <SRow k="Team" v={teamName} /> : null}
-          <SRow k="Team address" v={bridge.hub} mono />
           <SRow k="You" v={myActor || "unknown"} />
         </SSection>
 

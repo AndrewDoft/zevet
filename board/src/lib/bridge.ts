@@ -352,13 +352,16 @@ export interface ZevetBridge {
   /* Linking with Masora (T5, docs/contracts/cross_app_context.md). The link
      runs in the background in the main process; this reads its status. No call
      returns a token -- it is written straight to the OS keychain there. */
-  masoraConfig?: () => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean }>;
+  masoraConfig?: () => Promise<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean }>;
   masoraChatPush?: (on: boolean) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean }>;
   masoraSaveUrl?: (url: string) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean> }>;
   masoraLinkStatus?: () => Promise<{ phase: string; paired?: boolean; code?: string; error?: string }>;
   masoraLinkStart?: () => Promise<{ phase: string; paired?: boolean; code?: string; error?: string }>;
   masoraLinkApprove?: () => Promise<boolean>;
   masoraUnpair?: () => Promise<boolean>;
+  /* Family panel (desktop/family.js). */
+  familyStatus?: () => Promise<unknown[]>;
+  familyAct?: (app: string, action: string) => Promise<{ ok?: boolean; download?: string | null; requested?: boolean; pairing?: string } | undefined>;
   /** Connections panel: linked-source status, and connecting a new one. */
   masoraSources?: () => Promise<{ sources?: { kind: string; status: string }[]; error?: string }>;
   masoraConnect?: (arg: { provider: string }) => Promise<{ ok?: boolean; error?: string }>;
