@@ -717,6 +717,34 @@ function sweepUnclaimedTeams() {
 }
 setInterval(sweepUnclaimedTeams, 60 * 60 * 1000).unref(); // hourly is plenty against a 24h default
 
+/**
+ * ⚠️ TEAMS SURVIVE A RESTART. `teamAccounts` used to be filled only by
+ * `createTeam`, so every redeploy forgot every team it hosted: the accounts
+ * file was still on disk, but the slug 404'd ("no such team") and every
+ * session the team's members held stopped resolving. Anyone who had created a
+ * team was locked out of it by the next deploy.
+ */
+function loadTeams() {
+  let files = [];
+  try {
+    files = readdirSync(TEAMS_DIR);
+  } catch {
+    return; // no directory yet: nothing has ever been created
+  }
+  for (const f of files) {
+    const m = /^accounts-([a-z0-9-]+)\.json$/.exec(f); // named slugs, and the random ones from before names
+    if (!m || m[1] === DEFAULT_TEAM || teamAccounts.has(m[1])) continue;
+    try {
+      teamAccounts.set(m[1], new Accounts({ file: path.join(TEAMS_DIR, f) }));
+      boards.set(m[1], makeBoard(path.join(TEAMS_DIR, `events-${m[1]}.jsonl`)));
+    } catch (err) {
+      teamAccounts.delete(m[1]);
+      console.error(`zevet: could not load team ${m[1]} (${f}): ${err.message}`);
+    }
+  }
+}
+loadTeams();
+
 /** A team's display name: the one it was given, else something readable for a
  *  team made before names existed (or by a client that predates them). */
 function teamName(slug, acc) {
@@ -783,15 +811,6 @@ function createTeam(name) {
   teamAccounts.set(slug, acc);
   boards.set(slug, makeBoard(path.join(TEAMS_DIR, `events-${slug}.jsonl`)));
   return { ok: true, team: slug };
-}
-
-// Teams outlive a restart: the name is the address, so a hub that forgot its
-// teams would hand their names to strangers.
-for (const f of existsSync(TEAMS_DIR) ? readdirSync(TEAMS_DIR) : []) {
-  const m = /^accounts-([a-z0-9-]+)\.json$/.exec(f);
-  if (!m || teamAccounts.has(m[1]) || m[1] === DEFAULT_TEAM) continue;
-  teamAccounts.set(m[1], new Accounts({ file: path.join(TEAMS_DIR, f) }));
-  boards.set(m[1], makeBoard(path.join(TEAMS_DIR, `events-${m[1]}.jsonl`)));
 }
 
 /** `tokenFrom`, resolved to which team (and whose Accounts) it belongs to. */
@@ -984,8 +1003,8 @@ const server = createServer(async (req, res) => {
     } catch {
       body = {};
     }
-    const team = String((body && body.team) || DEFAULT_TEAM);
-    if (!teamAccounts.has(team)) return json(res, 404, { error: "no such team — create one first" });
+    const team = body && body.team ? findTeam(body.team) : DEFAULT_TEAM;
+    if (!team) return json(res, 404, { error: "no such team — create one first" });
 
     const r = await deviceStart({ clientId: GITHUB_CLIENT_ID });
     if (!r.ok) return json(res, 502, { error: r.error });
@@ -1012,9 +1031,9 @@ const server = createServer(async (req, res) => {
       return json(res, 400, { error: "expected JSON" });
     }
 
-    const team = String((body && body.team) || DEFAULT_TEAM);
+    const team = body && body.team ? findTeam(body.team) : DEFAULT_TEAM;
+    if (!team) return json(res, 404, { error: "no such team — create one first" });
     const acc = teamAccounts.get(team);
-    if (!acc) return json(res, 404, { error: "no such team — create one first" });
 
     const polled = await devicePoll({ clientId: GITHUB_CLIENT_ID, deviceCode: body && body.deviceCode });
     if (!polled.ok) return json(res, 400, { error: polled.error });
@@ -1079,8 +1098,8 @@ const server = createServer(async (req, res) => {
     } catch {
       body = {};
     }
-    const team = String((body && body.team) || DEFAULT_TEAM);
-    if (!teamAccounts.has(team)) return json(res, 404, { error: "no such team — create one first" });
+    const team = body && body.team ? findTeam(body.team) : DEFAULT_TEAM;
+    if (!team) return json(res, 404, { error: "no such team — create one first" });
     // Only the DEFAULT team's Workspace domain auto-admits by rule; a team
     // created at runtime is invite-only beyond its owner, so no `hd` hint is
     // sent and readIdToken below is not asked to enforce one.
