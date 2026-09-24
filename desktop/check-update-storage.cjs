@@ -31,14 +31,17 @@ if (!process.versions.electron) {
     if (mode === "write") {
       access.saveToken(TOKEN, "storage-test-device");
       assert.ok(!fs.readFileSync(file, "utf8").includes(TOKEN));
+      assert.equal(access.readToken(), TOKEN, "same-process decryption failed");
     } else {
       assert.equal(access.readToken(), TOKEN);
       access.clear();
       assert.equal(access.readToken(), null);
     }
-    app.exit(0);
+    // Graceful shutdown flushes Chromium Local State, which holds the
+    // OS-protected encryption key on Windows. exit() skips normal shutdown.
+    app.quit();
   }).catch(() => {
-    console.error("OS-encrypted update storage verification failed.");
+    console.error(`OS-encrypted update storage verification failed during ${mode}.`);
     app.exit(1);
   });
 }
