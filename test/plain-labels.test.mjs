@@ -49,7 +49,7 @@ test("app chrome does not expose installation commands or backend badges", () =>
 test("setup uses plain results while retaining sign-in and folder actions", () => {
   const setup = readFileSync(new URL("../desktop/setup.html", import.meta.url), "utf8");
   for (const leak of ['"Connecting " + repo', '"Connected: " + repo', ' + r.detail', 'say("bad", done.error)', 'say("bad", res.why)']) assert.ok(!setup.includes(leak), leak);
-  for (const action of ["githubStart(hub, team)", "googleStart(hub, team)", "window.zevet.install(repo)", "window.zevet.save("]) assert.ok(setup.includes(action), action);
+  for (const action of ["githubStart(null, team)", "googleStart(null, team)", "window.zevet.install(repo)", "window.zevet.save("]) assert.ok(setup.includes(action), action);
   new Function(setup.match(/<script>([\s\S]*?)<\/script>/)[1]);
 });
 

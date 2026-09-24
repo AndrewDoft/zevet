@@ -147,7 +147,7 @@ describe("a created team is isolated", () => {
     });
     assert.equal(res.status, 403);
     const body = await res.json();
-    assert.match(body.error, /nobody has claimed this hub yet/);
+    assert.match(body.error, /nobody has claimed this team yet/);
   });
 
   test("/healthz counts teams created, but keeps reporting only the default team's board", async () => {

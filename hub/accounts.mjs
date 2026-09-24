@@ -275,12 +275,12 @@ export class Accounts {
     // ⚠️ CHECKED BEFORE EVERYTHING, INCLUDING TRUST-ON-FIRST-USE. A revoked
     // person must not be able to claim an unowned hub, and must not be let back
     // in by the domain rule at the bottom.
-    if (this.#blocked(me)) return { ok: false, error: `${display(me)} was removed from this hub` };
+    if (this.#blocked(me)) return { ok: false, error: `${display(me)} was removed from this team` };
 
     if (!this.state.owner) {
       const want = String(requiredOwner || "").trim().toLowerCase().replace(/^@/, "");
       if (want && want !== me.login) {
-        return { ok: false, error: `this hub is reserved for ${display({ ...me, login: want })}` };
+        return { ok: false, error: `this team is reserved for ${display({ ...me, login: want })}` };
       }
       return { ok: true, first: true };
     }
@@ -316,7 +316,7 @@ export class Accounts {
     // `display(this.state.owner)`, not `this.owner` — the latter is the bare
     // login, and printing it raw drops the "@" that every other mention of a
     // GitHub user in this file carries.
-    return { ok: false, error: `${display(me)} is not on this hub's list — ask ${display(this.state.owner)} to add you` };
+    return { ok: false, error: `${display(me)} is not on this team's list — ask ${display(this.state.owner)} to add you` };
   }
 
   /**

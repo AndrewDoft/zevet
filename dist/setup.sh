@@ -22,16 +22,15 @@ major="$(node --version | sed 's/^v//' | cut -d. -f1)"
 # SHA-256("zevet-auth\0" || secret) instead. client/secret.mjs is the
 # specification; the derivation is repeated below rather than imported, because
 # it is needed to fetch the client and the client is not on disk yet.
-HUB="${1:-${ZEVET_HUB:-}}"
+HUB="${1:-${ZEVET_HUB:-https://34-74-69-129.sslip.io}}"
 SECRET="${2:-${ZEVET_SECRET:-}}"
 NAME="${3:-${ZEVET_ACTOR:-}}"
 REPO="${4:-}"
 
-[ -n "$HUB" ]    || { printf 'Hub URL (ask Andrew): '; read -r HUB; }
 [ -n "$SECRET" ] || { printf 'Master secret (ask Andrew): '; read -r SECRET; }
 [ -n "$NAME" ]   || { printf 'Your name on the board (e.g. kai): '; read -r NAME; }
 HUB="${HUB%/}"
-[ -n "$HUB" ] && [ -n "$SECRET" ] && [ -n "$NAME" ] || fail "hub, master secret and name are all required."
+[ -n "$HUB" ] && [ -n "$SECRET" ] && [ -n "$NAME" ] || fail "team key and name are required."
 
 # --- Derive the token this machine will present --------------------------
 # INLINED, NOT IMPORTED, and the drift that invites is covered by a test rather
@@ -70,7 +69,7 @@ TOKEN="$(node -e 'const c=require("node:crypto");const s=String(process.argv[pro
 case "$HUB" in
   https://*|http://127.0.0.1*|http://localhost*) ;;
   *)
-    printf '\n  Note: %s is plain HTTP.\n' "$HUB" >&2
+    printf '\n  Note: connection is not encrypted.\n' >&2
     printf '  The token and everything zevet reports travel unencrypted, and anyone\n' >&2
     printf '  who can alter traffic on the way can replace the client code this\n' >&2
     printf '  installs. Fine on a trusted LAN; not fine on cafe wifi.\n\n' >&2
@@ -89,13 +88,13 @@ cleanup_staging() { rm -rf "$STAGING"; }
 trap cleanup_staging EXIT
 
 # --- Pull the current client --------------------------------------------
-printf 'Fetching the current client from %s ...\n' "$HUB"
+printf 'Fetching the current client ...\n'
 MANIFEST="$STAGING/manifest.json"
 # --proto -all,https,http and no -L: a redirect would carry the x-zevet-token
 # header to wherever it points (only Authorization and Cookie are stripped on
 # a cross-origin redirect), handing the team secret to a third party.
 if ! curl -fsS --max-time 20 -H "x-zevet-token: $TOKEN" "$HUB/dist/manifest.json" -o "$MANIFEST"; then
-  fail "could not reach the hub, or the token was rejected. Check both with Andrew."
+  fail "could not connect, or the key was rejected."
 fi
 
 # Validate the WHOLE manifest before fetching any of it. A name is a plain
@@ -113,7 +112,7 @@ for (const f of m.files) {
 }
 console.log(m.files.map((f) => f.name).join("\n"));
 ' "$MANIFEST")"; then
-  fail "the hub offered a manifest this installer will not act on. Nothing was installed."
+  fail "the server offered a manifest this installer will not act on. Nothing was installed."
 fi
 
 # Download and verify into staging; only then move into place.
@@ -125,7 +124,7 @@ while IFS= read -r name; do
     || fail "could not download $name. Nothing was installed."
   got="$(shasum -a 256 "$tmp" | awk '{print $1}')"
   if [ "$got" != "$want" ]; then
-    fail "$name did not match the hub's checksum. Nothing was installed."
+    fail "$name did not match its checksum. Nothing was installed."
   fi
   printf '  ok  %s\n' "$name"
 done <<< "$names"
@@ -170,8 +169,7 @@ fi
 
 # Deliberately not echoing the MASTER SECRET back: this line gets pasted into
 # chat, and the secret is also the document key.
-printf 'The board: %s/?token=<the derived token printed below>\n' "$HUB"
-printf "Updates install themselves from the hub; there's nothing to re-download.\n"
+printf "Updates install themselves.\n"
 
 # --- The line the hub operator needs -------------------------------------
 # The derived token IS printed, and that is a considered trade rather than an

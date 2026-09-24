@@ -21,6 +21,8 @@ import { startHub, ROOT } from "./helpers.mjs";
 
 const DRIVE = path.join(ROOT, "scripts", "drive", "drive.mjs");
 const SECRET = randomBytes(24).toString("hex");
+/** What a person must never see: a hub, its address, or its host. */
+const HUB_COPY = /\bhub\b|sslip|https?:\/\//i;
 
 function drive(...args) {
   const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout: 30000 });
@@ -64,6 +66,9 @@ before(async () => {
     ZEVET_GITHUB_CLIENT_ID: "test-client-id",
     ZEVET_ACCOUNTS: path.join(accountsDir, "accounts.json"),
   });
+  // The app resolves the hub itself (desktop/hub-target.js); this is how the
+  // driven one is pointed at the test hub, since setup has no field for it.
+  process.env.ZEVET_HUB = hub.base;
   drive("launch");
 });
 after(async () => {
@@ -119,7 +124,6 @@ describe("a fresh install's setup window", () => {
   });
 
   test("Create makes the team on the hub, named by what was typed", async () => {
-    drive("eval", `window.HOSTED_HUB = ${JSON.stringify(hub.base)}`);
     drive("type", "#teamName", "Acme platform");
     drive("click", "#google");
     // The hub has no Google client, so sign-in itself fails; the team is made first.
@@ -152,22 +156,18 @@ describe("a fresh install's setup window", () => {
     assert.doesNotMatch(outline, /No team/);
   });
 
-  test("Other hub is folded away, and a typed one wins over the hosted default", async () => {
-    assert.match(drive("snapshot").outline, /details#other(?!.*open)/);
-    drive("eval", `window.HOSTED_HUB = "http://127.0.0.1:1"`);
-    drive("click", "#modeCreate");
-    drive("click", "#other summary");
-    drive("type", "#hub", hub.base);
-    drive("type", "#teamName", "Elsewhere");
-    drive("click", "#gh");
-    await waitFor((o) => /div#msg(?!.*hidden)[^\n]*"Sign-in failed"/.test(o));
-    const r = await (await fetch(`${hub.base}/team/resolve?name=elsewhere`)).json();
-    assert.equal(r.exists, true);
+  test("there is nothing to type a hub into, and no hub text is rendered", () => {
+    const html = drive("eval", `(function () {
+      var c = document.body.cloneNode(true);
+      c.querySelectorAll("script,style").forEach(function (n) { n.remove(); });
+      return c.outerHTML + " " + document.title;
+    })()`);
+    assert.doesNotMatch(String(html.result ?? html.value ?? html), HUB_COPY);
+    assert.doesNotMatch(drive("snapshot").outline, /input#hub|details#other/);
   });
 
   test("the team-key path connects, enables Open, and reveals Folder", async () => {
     drive("click", "#manual summary");
-    drive("type", "#hub", hub.base);
     drive("type", "#token", SECRET);
     drive("type", "#actor", "trevor");
     drive("click", "#check");

@@ -132,8 +132,7 @@ function GithubConnectBox({ onDone }: { onDone: () => void }) {
       return;
     }
     setState({ phase: "starting" });
-    const hub = (bridge.cfg && bridge.cfg.hub) || undefined;
-    window.zevet?.githubStart?.(hub).then((r) => {
+    window.zevet?.githubStart?.().then((r) => {
       if (!r || !r.ok) {
         setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
         return;
@@ -212,8 +211,7 @@ function GoogleConnectBox({ onDone }: { onDone: () => void }) {
       return;
     }
     setState({ phase: "starting" });
-    const hub = (bridge.cfg && bridge.cfg.hub) || undefined;
-    window.zevet?.googleStart?.(hub).then((r) => {
+    window.zevet?.googleStart?.().then((r) => {
       if (!r || !r.ok) {
         setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
         return;
@@ -1244,14 +1242,6 @@ function handle(login: string) {
   return login.includes("@") ? login : "@" + login;
 }
 
-function credentialLabel() {
-  const c = bridge.cfg;
-  if (!c) return "unknown";
-  if (c.legacy) return "Set up shared editing";
-  if (c.session) return "Signed in" + (c.hasSecret ? " + team key" : " \u00b7 team key missing");
-  return c.hasSecret ? "team key" : "none configured";
-}
-
 export function SettingsSheet() {
   const sheetOpen = useBoard((s) => s.sheetOpen);
   const closeSettings = useBoard((s) => s.closeSettings);
@@ -1372,8 +1362,7 @@ export function SettingsSheet() {
         <FamilySection />
         <ConnectionsSection />
 
-        <SSection title="Connection" summary={credentialLabel()}>
-          {teamName ? <SRow k="Team" v={teamName} /> : null}
+        <SSection title="Team" summary={teamName}>
           <SRow k="You" v={myActor || "unknown"} />
         </SSection>
 

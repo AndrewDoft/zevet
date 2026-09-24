@@ -69,8 +69,8 @@ function workspaceCriterion(localRoot: string | null, workspaces: LocalWorkspace
 
 function hubCriterion(conn: Conn): ScoreCriterion {
   const score = conn === "live" ? 10 : conn === "init" ? 5 : 0;
-  const note = conn === "live" ? "hub connection live" : conn === "init" ? "hub still connecting" : "hub unreachable";
-  return { label: "Hub reachable", score, weight: WEIGHT.hub, note };
+  const note = conn === "live" ? "online" : conn === "init" ? "connecting" : "offline";
+  return { label: "Online", score, weight: WEIGHT.hub, note };
 }
 
 /** `null` when the store has not polled a git status yet — that is "board
@@ -150,8 +150,8 @@ function phraseFor(c: ScoreCriterion): string {
       return c.score >= 10 ? "signed in" : "no agent signed in";
     case "Workspace open":
       return c.score >= 10 ? "repo open" : c.score > 0 ? "workspace open, not a repo" : "no workspace open";
-    case "Hub reachable":
-      return c.score >= 10 ? "hub live" : c.score > 0 ? "hub connecting" : "hub down";
+    case "Online":
+      return c.score >= 10 ? "online" : c.score > 0 ? "connecting" : "offline";
     case "Git state":
       return c.score >= 10 ? "git ready" : c.score > 0 ? "detached HEAD" : "not a git repo";
     case "Semantic index":

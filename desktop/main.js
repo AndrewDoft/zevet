@@ -39,6 +39,7 @@ const { AppUpdater } = require("./app-update.js");
 const runtime = require("./runtime.js");
 const askServer = require("./ask-server.js");
 const { GithubSignIn } = require("./github-signin.js");
+const { resolveHub } = require("./hub-target.js");
 const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
@@ -436,7 +437,7 @@ async function resolveCredential(id, cfg, scope) {
     const body = await secretRes.json();
     return typeof body.key === "string" && body.key ? { provider: meta.provider, kind: meta.kind, key: body.key } : null;
   } catch (err) {
-    console.log(`zevet: could not reach the hub for a team credential (${err.message})`);
+    console.log(`zevet: could not reach the server for a team credential (${err.message})`);
     return null;
   }
 }
@@ -527,6 +528,17 @@ function readConfig() {
     // No config yet, or unreadable — treated the same: run setup.
   }
   return null;
+}
+
+/** The hub for this machine: see hub-target.js. Never taken from a renderer. */
+function targetHub() {
+  let raw = null;
+  try {
+    raw = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
+  } catch {
+    // No config yet: the hosted default.
+  }
+  return resolveHub({ env: process.env, cfg: raw });
 }
 
 function writeConfig(cfg) {
@@ -713,12 +725,10 @@ function statusPageStyle() {
 
 const STATUS_BRAND = `<div class="brand"><svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true" fill="currentColor"><circle cx="16" cy="8.2" r="3.5"/><circle cx="7" cy="23.8" r="3.5"/><circle cx="25" cy="23.8" r="3.5"/></svg>Zevet</div>`;
 
-function unreachablePage(hub, why) {
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Can't reach the hub</title>${statusPageStyle()}
-  <main>${STATUS_BRAND}<h1>Can't reach the hub.</h1>
-  <p>Tried <code>${hub.replace(/[<&]/g, "")}</code> and got: ${String(why).replace(/[<&]/g, "")}</p>
-  <p>Check your connection and hub address, then reload.
-  Change the address in <b>zevet &rsaquo; Change hub…</b>.</p></main></html>`;
+function unreachablePage(_hub, why) {
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Offline</title>${statusPageStyle()}
+  <main>${STATUS_BRAND}<h1>Offline</h1>
+  <p>${String(why).replace(/[<&]/g, "")}</p></main></html>`;
 }
 
 /**
@@ -733,10 +743,10 @@ function unreachablePage(hub, why) {
  * which names the fault without ever containing the value.
  */
 function credentialPage(why) {
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Can't sign in</title>${statusPageStyle()}
-  <main>${STATUS_BRAND}<h1>This machine can't sign in.</h1>
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Signed out</title>${statusPageStyle()}
+  <main>${STATUS_BRAND}<h1>Signed out</h1>
   <p>${String(why).replace(/[<&]/g, "")}</p>
-  <p>Open <b>zevet &rsaquo; Change hub…</b> and sign in again, or check the team's secret.</p></main></html>`;
+  <p>zevet &rsaquo; Team…</p></main></html>`;
 }
 
 function openSetup(existing) {
@@ -766,7 +776,7 @@ function openSetup(existing) {
     },
   });
   setupWindow.loadFile(path.join(__dirname, "setup.html"), {
-    query: existing ? { hub: existing.hub, actor: existing.actor || "" } : {},
+    query: existing ? { actor: existing.actor || "" } : {},
   });
   setupWindow.on("closed", () => {
     setupWindow = null;
@@ -803,7 +813,7 @@ async function startCollisionWatch(cfg) {
         signal: controller.signal,
         headers: { accept: "text/event-stream" },
       });
-      if (!res.ok || !res.body) throw new Error(`hub answered ${res.status}`);
+      if (!res.ok || !res.body) throw new Error(`server answered ${res.status}`);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -868,7 +878,7 @@ function buildMenu() {
           click: () => wireRepoFromMenu(),
         },
         {
-          label: "Change hub…",
+          label: "Team…",
           click: () => openSetup(readConfig()),
         },
         { type: "separator" },
@@ -1026,7 +1036,7 @@ ipcMain.handle("zevet:config", () => {
  * sent as an empty token and coming back as "the hub rejected that token" —
  * which would be true, useless, and point at the wrong end of the problem.
  */
-ipcMain.handle("zevet:test", async (_e, { hub, token }) => {
+ipcMain.handle("zevet:test", async (_e, { token }) => {
   const auth = authFor({ secret: String(token || "") });
   if (auth.error) return { ok: false, why: `That secret is not usable: ${auth.error}` };
   // An empty field resolves cleanly to an empty token — `resolveAuth` has
@@ -1034,13 +1044,13 @@ ipcMain.handle("zevet:test", async (_e, { hub, token }) => {
   // "it rejected that token", which is true and points at the wrong end.
   if (!auth.token) return { ok: false, why: "There is no secret to check yet." };
   try {
-    const base = String(hub).replace(/\/+$/, "");
+    const base = targetHub();
     const res = await fetch(`${base}/dist/manifest.json`, {
       headers: { "x-zevet-token": auth.token },
       signal: AbortSignal.timeout(8000),
     });
-    if (res.status === 401) return { ok: false, why: "The hub is there, but it rejected that token." };
-    if (!res.ok) return { ok: false, why: `The hub answered ${res.status}.` };
+    if (res.status === 401) return { ok: false, why: "Rejected" };
+    if (!res.ok) return { ok: false, why: `Server error ${res.status}` };
     const m = await res.json();
     return { ok: true, version: m.version };
   } catch (err) {
@@ -1076,7 +1086,7 @@ ipcMain.handle("zevet:test", async (_e, { hub, token }) => {
  * because nothing here can know.
  */
 ipcMain.handle("zevet:save", (_e, cfg) => {
-  const hub = String(cfg.hub).replace(/\/+$/, "");
+  const hub = targetHub();
   const actor = String(cfg.actor);
   // `token` is what setup.html still calls the field; what it holds is now the
   // master secret. The field name is not worth a coordinated rename across a
@@ -1133,10 +1143,10 @@ ipcMain.handle("zevet:save", (_e, cfg) => {
  */
 let signIn = null;
 
-ipcMain.handle("zevet:githubStart", async (_e, { hub, team } = {}) => {
+ipcMain.handle("zevet:githubStart", async (_e, { team } = {}) => {
   try {
     if (signIn) signIn.cancel();
-    signIn = new GithubSignIn({ hub: hub || (readConfig() || {}).hub, team });
+    signIn = new GithubSignIn({ hub: targetHub(), team });
     const r = await signIn.start();
     // Opened from the MAIN process, never by the renderer. The board window
     // loads remote HTML from the hub, and a renderer that could open arbitrary
@@ -1164,10 +1174,10 @@ ipcMain.handle("zevet:githubStart", async (_e, { hub, team } = {}) => {
  * flow racing is the same bug with two names, and each would try to write the
  * config over the other.
  */
-ipcMain.handle("zevet:googleStart", async (_e, { hub, team } = {}) => {
+ipcMain.handle("zevet:googleStart", async (_e, { team } = {}) => {
   try {
     if (signIn) signIn.cancel();
-    signIn = new GoogleSignIn({ hub: hub || (readConfig() || {}).hub, team });
+    signIn = new GoogleSignIn({ hub: targetHub(), team });
     const r = await signIn.start();
     // Opened from the MAIN process, never by the renderer — same rule as the
     // GitHub flow above, and it matters more here: this URL carries the pairing
@@ -1267,9 +1277,8 @@ ipcMain.handle("zevet:googleCancel", cancelSignIn);
  * hub's default one. Unauthenticated on the hub side — this call decides
  * nothing by itself, same as the sign-in "start" calls above.
  */
-ipcMain.handle("zevet:teamCreate", async (_e, { hub, name } = {}) => {
-  const base = String(hub || "").replace(/\/+$/, "");
-  if (!base) return { ok: false, error: "Enter a team address." };
+ipcMain.handle("zevet:teamCreate", async (_e, { name } = {}) => {
+  const base = targetHub();
   const teamName = String(name || "").trim();
   if (!teamName) return { ok: false, error: "Name the team." };
   try {
@@ -1283,7 +1292,7 @@ ipcMain.handle("zevet:teamCreate", async (_e, { hub, name } = {}) => {
     try {
       body = await res.json();
     } catch {
-      return { ok: false, error: `The hub returned an invalid response (HTTP ${res.status}).` };
+      return { ok: false, error: `Server error ${res.status}` };
     }
     if (!res.ok || !body || !body.ok) {
       return { ok: false, error: res.status === 409 ? "Taken" : (body && body.error) || `HTTP ${res.status}`, ...(body && body.suggest ? { suggest: body.suggest } : {}) };
@@ -1295,9 +1304,9 @@ ipcMain.handle("zevet:teamCreate", async (_e, { hub, name } = {}) => {
 });
 
 /** Does a team by this name exist on the hub? `{ ok, exists, team }`. */
-ipcMain.handle("zevet:teamResolve", async (_e, { hub, name } = {}) => {
-  const base = String(hub || "").replace(/\/+$/, "");
-  if (!base || !String(name || "").trim()) return { ok: false, error: "Name?" };
+ipcMain.handle("zevet:teamResolve", async (_e, { name } = {}) => {
+  const base = targetHub();
+  if (!String(name || "").trim()) return { ok: false, error: "Name?" };
   try {
     const res = await fetch(`${base}/team/resolve?name=${encodeURIComponent(String(name))}`, { signal: AbortSignal.timeout(15000) });
     const body = await res.json();
@@ -1531,7 +1540,7 @@ ipcMain.handle("zevet:addCredential", async (_e, { scope, label, provider, kind,
     const cfg = readConfig() || {};
     const auth = authFor(cfg);
     const hub = String(cfg.hub || "").replace(/\/+$/, "");
-    if (auth.error || !auth.token || !hub) return { ok: false, error: auth.error || "not connected to a hub" };
+    if (auth.error || !auth.token || !hub) return { ok: false, error: auth.error || "not connected" };
     try {
       const res = await fetch(`${hub}/team/credentials`, {
         method: "POST",
@@ -1555,7 +1564,7 @@ ipcMain.handle("zevet:removeCredential", async (_e, { scope, id } = {}) => {
     const cfg = readConfig() || {};
     const auth = authFor(cfg);
     const hub = String(cfg.hub || "").replace(/\/+$/, "");
-    if (auth.error || !auth.token || !hub) return { ok: false, error: auth.error || "not connected to a hub" };
+    if (auth.error || !auth.token || !hub) return { ok: false, error: auth.error || "not connected" };
     try {
       const res = await fetch(`${hub}/team/credentials/${encodeURIComponent(String(id || ""))}`, {
         method: "DELETE",

@@ -156,14 +156,6 @@
     <div class="row"><button id="check" type="button">Connect</button></div>
   </details>
 
-  <details id="other">
-    <summary>Other hub</summary>
-    <label>
-      <span class="lbl">Hub</span>
-      <input id="hub" class="mono" placeholder="https://" autocomplete="off" spellcheck="false" />
-    </label>
-  </details>
-
   <label>
     <span class="lbl">Name</span>
     <input id="actor" placeholder="kai" autocomplete="off" spellcheck="false" />
@@ -185,9 +177,7 @@
   var verified = false;
   var mode = "create";
 
-  // The hub Andrew runs for anyone who downloads zevet without their own.
-  var HOSTED_HUB = "https://34-74-69-129.sslip.io";
-  var created = null; // { hub, name, team } once this name exists on this hub
+  var created = null; // { name, team } once this name exists
 
   function esc(t) {
     return String(t).replace(/[&<>"']/g, function (c) {
@@ -200,16 +190,11 @@
     m.className = "note " + kind;
     m.innerHTML = html;
   }
-  // Errors are a word or two; anything longer is the hub talking, not us.
+  // Errors are a word or two; anything longer is the server talking, not us.
   function short(e, fallback) {
     e = String(e || "");
     return e && e.length <= 24 ? e : fallback;
   }
-  function hubUrl() {
-    return $("hub").value.trim().replace(/\/+$/, "") || HOSTED_HUB;
-  }
-  function validHub(h) { return /^https?:\/\//i.test(h); }
-
   function setMode(m) {
     mode = m;
     $("modeCreate").setAttribute("aria-pressed", String(m === "create"));
@@ -221,34 +206,25 @@
 
   // Re-opened from the menu: prefill what is already configured.
   var q = new URLSearchParams(location.search);
-  function prefillHub(h) {
-    if (h && h.replace(/\/+$/, "") !== HOSTED_HUB && !$("hub").value) {
-      $("hub").value = h;
-      $("other").open = true;
-    }
-  }
-  prefillHub(q.get("hub"));
   if (q.get("actor")) $("actor").value = q.get("actor");
   window.zevet.config().then(function (c) {
     if (!c) return;
-    prefillHub(c.hub);
     if (!$("actor").value) $("actor").value = c.actor || "";
   });
 
-  /* Which team a sign-in should land in. Create makes it (once per name+hub);
+  /* Which team a sign-in should land in. Create makes it (once per name);
      Join looks it up. Resolves a slug, or null after saying why. */
-  async function teamFor(hub) {
+  async function teamFor() {
     var name = $("teamName").value.trim();
     if (!name) { say("bad", "Name?"); $("teamName").focus(); return null; }
-    if (!validHub(hub)) { say("bad", "Bad hub"); return null; }
     if (mode === "join") {
-      var r = await window.zevet.teamResolve(hub, name);
+      var r = await window.zevet.teamResolve(null, name);
       if (!r.ok) { say("bad", esc(short(r.error, "Failed"))); return null; }
       if (!r.exists) { say("bad", "No team"); return null; }
       return r.team;
     }
-    if (created && created.hub === hub && created.name === name) return created.team;
-    var c = await window.zevet.teamCreate(hub, name);
+    if (created && created.name === name) return created.team;
+    var c = await window.zevet.teamCreate(null, name);
     if (!c.ok) {
       if (c.error === "Taken" && c.suggest) {
         say("bad", "Taken<button class=\"suggest\" id=\"suggest\" type=\"button\">" + esc(c.suggest) + "</button>");
@@ -258,7 +234,7 @@
       }
       return null;
     }
-    created = { hub: hub, name: name, team: c.team };
+    created = { name: name, team: c.team };
     return c.team;
   }
 
@@ -314,12 +290,11 @@
   }
 
   $("gh").addEventListener("click", async function () {
-    var hub = hubUrl();
     busy(true, "gh");
     say("", "…");
-    var team = await teamFor(hub);
+    var team = await teamFor();
     if (team === null) { busy(false); return; }
-    var started = await window.zevet.githubStart(hub, team);
+    var started = await window.zevet.githubStart(null, team);
     if (!started.ok) {
       busy(false);
       say("bad", esc(short(started.error, "Sign-in failed")));
@@ -347,12 +322,11 @@
   });
 
   $("google").addEventListener("click", async function () {
-    var hub = hubUrl();
     busy(true, "google");
     say("", "…");
-    var team = await teamFor(hub);
+    var team = await teamFor();
     if (team === null) { busy(false); return; }
-    var started = await window.zevet.googleStart(hub, team);
+    var started = await window.zevet.googleStart(null, team);
     if (!started.ok) {
       busy(false);
       say("bad", esc(short(started.error, "Sign-in failed")));
@@ -380,20 +354,17 @@
     $("msg").hidden = true;
   });
 
-  /* ── The team key: for a hub with no OAuth app, and installs already out there. ── */
+  /* ── The team key: for a server with no OAuth app, and installs already out there. ── */
   $("check").addEventListener("click", async function () {
-    var hub = hubUrl();
     if (!$("token").value) { say("bad", "Key?"); return; }
     if (!$("actor").value.trim()) { say("bad", "Name?"); $("actor").focus(); return; }
-    if (!validHub(hub)) { say("bad", "Bad hub"); return; }
     $("check").disabled = true;
     say("", "…");
-    var res = await window.zevet.test(hub, $("token").value);
+    var res = await window.zevet.test(null, $("token").value);
     $("check").disabled = false;
     if (!res.ok) { verified = false; $("finish").disabled = true; say("bad", "Failed"); return; }
-    var plain = /^http:\/\//i.test(hub) && !/^http:\/\/(127\.0\.0\.1|localhost)/i.test(hub);
-    say(plain ? "warn" : "good", plain ? "Connected · not encrypted" : "Connected");
-    await window.zevet.save(hub, $("token").value, $("actor").value.trim());
+    say("good", "Connected");
+    await window.zevet.save(null, $("token").value, $("actor").value.trim());
     verified = true;
     $("finish").disabled = false;
     $("repoStep").hidden = false;
@@ -412,14 +383,11 @@
   $("finish").addEventListener("click", async function () {
     if (!verified) return;
     // An empty credential is understood by `zevet:save` as "keep what you have".
-    await window.zevet.save(hubUrl(), $("token").value, $("actor").value.trim());
+    await window.zevet.save(null, $("token").value, $("actor").value.trim());
     window.zevet.done();
   });
 
-  // A team made for one hub is not valid on another; a new name is a new team.
-  ["hub", "token"].forEach(function (id) {
-    $(id).addEventListener("input", function () { verified = false; $("finish").disabled = true; });
-  });
+  $("token").addEventListener("input", function () { verified = false; $("finish").disabled = true; });
 </script>
 </body>
 </html>

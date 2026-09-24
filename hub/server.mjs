@@ -782,11 +782,11 @@ function findTeam(name) {
 
 function createTeam(name) {
   if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
-    return { ok: false, status: 503, error: "this hub has no sign-in configured" };
+    return { ok: false, status: 503, error: "sign-in is not configured" };
   }
   sweepUnclaimedTeams();
   if (teamAccounts.size - 1 >= MAX_TEAMS) {
-    return { ok: false, status: 503, error: "this hub is holding as many teams as it will" };
+    return { ok: false, status: 503, error: "too many teams" };
   }
   let slug;
   if (name) {
@@ -991,7 +991,7 @@ const server = createServer(async (req, res) => {
    * fifteen minutes, so there is nothing here to guess at anyway.
    */
   if (url.pathname === "/auth/github/start" && req.method === "POST") {
-    if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "this hub has no GitHub sign-in configured" });
+    if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "GitHub sign-in is not configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
     // `team` is optional and new: absent (every install in the field today)
@@ -1021,7 +1021,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/auth/github/finish" && req.method === "POST") {
-    if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "this hub has no GitHub sign-in configured" });
+    if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "GitHub sign-in is not configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
     let body = null;
@@ -1089,7 +1089,7 @@ const server = createServer(async (req, res) => {
    * itself), and `finish` returns only what `callback` already established.
    */
   if (url.pathname === "/auth/google/start" && req.method === "POST") {
-    if (!GOOGLE_ON) return json(res, 503, { error: "this hub has no Google sign-in configured" });
+    if (!GOOGLE_ON) return json(res, 503, { error: "Google sign-in is not configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
     let body = null;
@@ -1133,7 +1133,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/auth/google/callback" && req.method === "GET") {
-    if (!GOOGLE_ON) return googlePage(res, 503, "Google sign-in is not configured on this hub.");
+    if (!GOOGLE_ON) return googlePage(res, 503, "Google sign-in is not configured.");
 
     const state = url.searchParams.get("state") || "";
     const pair = googlePairs.get(state);
@@ -1214,7 +1214,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/auth/google/finish" && req.method === "POST") {
-    if (!GOOGLE_ON) return json(res, 503, { error: "this hub has no Google sign-in configured" });
+    if (!GOOGLE_ON) return json(res, 503, { error: "Google sign-in is not configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
     let body = null;
@@ -1309,7 +1309,7 @@ const server = createServer(async (req, res) => {
       return json(res, 403, {
         error: acc.owner
           ? `only @${acc.owner} can change this list`
-          : "nobody has claimed this hub yet — the first sign-in becomes its owner",
+          : "nobody has claimed this team yet — the first sign-in becomes its owner",
       });
     }
     let body = null;
@@ -1963,7 +1963,7 @@ function joinRoom(conn, name) {
       // answer: evicting a room people are sitting in would silently
       // desynchronise them, which is a worse failure than a failed join
       // because nobody would see it happen.
-      wsClose(conn, CLOSE_TRY_LATER, "the hub is holding as many rooms as it will");
+      wsClose(conn, CLOSE_TRY_LATER, "too many rooms");
       return false;
     }
     room = { log: [], bytes: 0, sockets: new Set(), used: Date.now() };

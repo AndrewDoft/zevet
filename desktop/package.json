@@ -55,6 +55,7 @@
       "agent-sessions.js",
       "agent-catalogs.js",
       "github-signin.js",
+      "hub-target.js",
       "google-signin.js",
       "masora.js",
       "masora-link.js",
