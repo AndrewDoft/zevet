@@ -74,4 +74,14 @@ describe("team names", () => {
     const r = await fetch(`${h.base}/auth/whoami`, { headers: { "x-zevet-token": deriveAuthToken(secret) } }).then((x) => x.json());
     assert.equal(r.teamName, "Main team");
   });
+  test("the hub's original team resolves by its ZEVET_TEAM_NAME and that name is taken", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "zevet-team-name-"));
+    const hub = await startHub({ ZEVET_GITHUB_CLIENT_ID: "test-client-id", ZEVET_ACCOUNTS: path.join(dir, "accounts.json"), ZEVET_TEAM_NAME: "Masoretes" });
+    hubs.push(hub);
+    const found = await (await fetch(`${hub.base}/team/resolve?name=masoretes`)).json();
+    assert.equal(found.exists, true);
+    const dup = await create(hub.base, { name: "Masoretes" });
+    assert.equal(dup.status, 409);
+  });
+
 });

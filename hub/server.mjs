@@ -775,6 +775,10 @@ export function slugify(name) {
 function findTeam(name) {
   const s = slugify(name);
   if (!s || s === DEFAULT_TEAM) return null;
+  // The hub's original team has no stored name, only ZEVET_TEAM_NAME; its name must
+  // resolve (join by name) and be taken (no second team can claim it).
+  const def = teamAccounts.get(DEFAULT_TEAM);
+  if (def && slugify(teamName(DEFAULT_TEAM, def)) === s) return DEFAULT_TEAM;
   if (teamAccounts.has(s)) return s;
   for (const [slug, acc] of teamAccounts) if (slug !== DEFAULT_TEAM && acc.name && slugify(acc.name) === s) return slug;
   return null;
