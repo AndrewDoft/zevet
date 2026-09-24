@@ -23,11 +23,11 @@ function handler(channel) {
 describe("sign-in opens the system browser", () => {
   test("GitHub and Google both call shell.openExternal with the URL the hub gave, and report whether it opened", () => {
     const gh = handler("zevet:githubStart");
-    assert.match(gh, /shell\.openExternal\(r\.verificationUriComplete\)/);
-    assert.match(gh, /opened/);
+    assert.match(gh, /opened = await shell\.openExternal\(r\.verificationUriComplete\)\.then\(\(\) => true, \(\) => false\)/);
+    assert.match(gh, /expiresIn: r\.expiresIn, opened/);
     const g = handler("zevet:googleStart");
-    assert.match(g, /shell\.openExternal\(r\.authUrl\)/);
-    assert.match(g, /opened/);
+    assert.match(g, /opened = await shell\.openExternal\(r\.authUrl\)\.then\(\(\) => true, \(\) => false\)/);
+    assert.match(g, /domain: r\.domain, opened/);
   });
 
   test("the setup window says so when the browser did not open", () => {
@@ -81,7 +81,7 @@ describe("the Masora link is a background job", () => {
 describe("Settings copy is provider-neutral", () => {
   test("a Google login is not prefixed with @, and the session is not called GitHub's", () => {
     const s = read("board", "src", "components", "settings.tsx");
-    assert.doesNotMatch(s, /"@" \+ (p\.)?login/);
+    assert.doesNotMatch(s, /"@" \+ p\.login|summary=\{login \? "@"/);
     assert.match(s, /login\.includes\("@"\) \? login/);
     assert.doesNotMatch(s, /"GitHub sign-in" \+ \(c\.hasSecret/);
   });
