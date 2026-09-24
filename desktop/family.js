@@ -27,7 +27,8 @@ const APPS = {
     name: "Masora",
     page: "https://usemasora.com/context",
     feed: "https://usemasora.com/download/masora-context-latest.json",
-    installed: "Masora Context",
+    // "Masora Context" until 0.3.9; both install names are found.
+    installed: ["Masora", "Masora Context"],
   },
   voice: {
     name: "Zevet Voice",
@@ -144,6 +145,14 @@ class Family {
     this.timers = [];
     this.busy = false;
   }
+  async detectAny(names) {
+    for (const n of names) {
+      const hit = await this.detect(n, this.platform).catch(() => null);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
 
   /* ── heartbeat ─────────────────────────────────────────────────────────── */
 
@@ -308,7 +317,7 @@ class Family {
     if (!installed) {
       let f = this.found.get(app);
       if (!f || this.now() - f.at > 5 * 60 * 1000) {
-        f = { at: this.now(), hit: await this.detect(APPS[app].installed, this.platform).catch(() => null) };
+        f = { at: this.now(), hit: await this.detectAny([].concat(APPS[app].installed)) };
         this.found.set(app, f);
       }
       if (f.hit) {

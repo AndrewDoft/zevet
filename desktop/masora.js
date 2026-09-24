@@ -35,7 +35,7 @@ const path = require("node:path");
 const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
 const CONFIG_PATH = path.join(HOME, "masora.json");
 
-// Masora runs on this machine (Masora Context); usemasora.com only hosts downloads.
+// Masora runs on this machine (the Masora desktop app); usemasora.com only hosts downloads.
 const DEFAULT_URL = process.env.ZEVET_MASORA_URL || "http://127.0.0.1:3210";
 
 /** Matches apps/connector/main.go's own `-poll-interval`/`-poll-deadline` defaults. */
