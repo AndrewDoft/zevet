@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld("zevet", {
    *  main.js's `zevet:teamCreate` and hub/server.mjs's `/team/create`.
    *  Resolves `{ ok, team }` or `{ ok: false, error }`. */
   teamCreate: (hub, name) => ipcRenderer.invoke("zevet:teamCreate", { hub, name }),
+  teamResolve: (hub, name) => ipcRenderer.invoke("zevet:teamResolve", { hub, name }),
   /**
    * Sign in with Google.
    *

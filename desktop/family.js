@@ -100,6 +100,22 @@ async function osDetect(displayName, platform = process.platform) {
   return null;
 }
 
+/**
+ * usemasora.com refuses to be framed (X-Frame-Options: DENY, CSP frame-ancestors
+ * 'none'). The Family card embeds its /context and /voice pages, so main.js
+ * strips those two headers from exactly those sub-frame responses.
+ */
+const FRAME_URLS = ["https://usemasora.com/context*", "https://usemasora.com/voice*"];
+function frameable(headers) {
+  const out = {};
+  for (const [k, v] of Object.entries(headers || {})) {
+    const key = k.toLowerCase();
+    if (key === "x-frame-options") continue;
+    out[k] = key === "content-security-policy" ? v.map((x) => x.replace(/frame-ancestors[^;]*;?\s*/i, "")) : v;
+  }
+  return out;
+}
+
 class Family {
   constructor({
     dir,
@@ -367,4 +383,4 @@ class Family {
   }
 }
 
-module.exports = { Family, familyDir, cmpVersion, APPS };
+module.exports = { Family, familyDir, cmpVersion, APPS, frameable, FRAME_URLS };

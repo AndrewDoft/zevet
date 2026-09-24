@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ROOT } from "./helpers.mjs";
 
-const { Family, familyDir, cmpVersion } = createRequire(import.meta.url)(`${ROOT}/desktop/family.js`);
+const { Family, familyDir, cmpVersion, frameable } = createRequire(import.meta.url)(`${ROOT}/desktop/family.js`);
 
 let srv, web;
 const fake = { runtime: "masora-desktop", pair: { status: 200, body: { token: "tok-1", member_email: "a@b.co" } }, pairs: [] };
@@ -246,5 +246,18 @@ describe("panel states", () => {
     assert.deepEqual(r.s.opened, [web]);
     await r.f.act("voice", "connect");
     assert.equal(JSON.parse(readFileSync(path.join(r.dir, "voice.request.json"), "utf8")).action, "connect");
+  });
+});
+
+describe("framing usemasora.com pages", () => {
+  test("drops X-Frame-Options and frame-ancestors, keeps everything else", () => {
+    const out = frameable({
+      "X-Frame-Options": ["DENY"],
+      "Content-Security-Policy": ["default-src 'self'; frame-ancestors 'none'; form-action 'self'"],
+      "Content-Type": ["text/html"],
+    });
+    assert.equal(out["X-Frame-Options"], undefined);
+    assert.equal(out["Content-Security-Policy"][0], "default-src 'self'; form-action 'self'");
+    assert.deepEqual(out["Content-Type"], ["text/html"]);
   });
 });

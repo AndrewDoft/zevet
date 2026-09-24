@@ -50,13 +50,42 @@ describe("hubs are named", () => {
 
   test("setup requires a name before creating, and shows the name it got back", () => {
     assert.match(setup, /id="teamName"/);
-    assert.match(setup, /Name your team\./);
+    assert.match(setup, /"Name\?"/);
     assert.match(setup, /teamCreate\(hub, name\)/);
+  });
+
+  test("the address is the name: setup derives hub and team from it, hosted hub by default", () => {
+    assert.match(setup, /HOSTED_HUB = "https:\/\/34-74-69-129\.sslip\.io"/);
+    assert.match(setup, /teamResolve\(hub, name\)/);
+    assert.match(handler("zevet:teamResolve"), /\/team\/resolve\?name=/);
+    assert.match(setup, /<details id="other">\s*<summary>Other hub/);
   });
 
   test("the rail and Settings show it", () => {
     assert.match(read("board", "src", "App.tsx"), /id="railTeam"/);
     assert.match(read("board", "src", "components", "settings.tsx"), /<SRow k="Team" v=\{teamName\}/);
+  });
+});
+
+describe("the setup window is frameless like the board", () => {
+  const open = main.slice(main.indexOf("function openSetup"), main.indexOf("setupWindow.loadFile"));
+  test("same titleBarStyle/overlay treatment as openBoard, with a drag bar in the page", () => {
+    assert.match(open, /titleBarStyle: "hidden"/);
+    assert.match(open, /titleBarStyle: "hiddenInset"/);
+    assert.match(open, /titleBarOverlay: chromeFor\("light", 0\)/);
+    assert.match(setup, /\.titlebar \{[^}]*-webkit-app-region: drag/);
+  });
+});
+
+describe("the family runs from the main process", () => {
+  test("it starts with the app, stops with it, and the bridge exposes the panel", () => {
+    assert.match(main, /appUpdater\.start\(\);\s*family\.start\(\)/);
+    assert.match(main, /before-quit", \(\) => family\.stop\(\)/);
+    for (const n of ["familyStatus", "familyAct"]) assert.match(preload, new RegExp(n + ":"));
+    assert.ok(pkg.build.files.includes("family.js"));
+  });
+  test("a 401 from Masora re-pairs", () => {
+    assert.match(handler("masora:sources"), /res\.status === 401\) void family\.repair\(\)/);
   });
 });
 

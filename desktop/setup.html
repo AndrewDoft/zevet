@@ -6,7 +6,6 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self'" />
 <title>Set up zevet</title>
 <style>
-  /* The same self-hosted face and palette as Masora's home page. */
   @font-face {
     font-family: "Space Grotesk";
     src: url("fonts/space-grotesk-variable.woff2") format("woff2");
@@ -25,6 +24,7 @@
     color-scheme: light;
     --paper: #eae7e2;
     --ink: #2c2f44;
+    --cerulean: #2c2f44; /* Zevet Cerulean: the same token the board uses */
     --muted: #5f6274;
     --line: #cfccc6;
     --fill: #dbdae1;
@@ -35,20 +35,21 @@
   html { background: var(--paper); }
   body {
     margin: 0 auto; min-height: 100vh; max-width: 620px;
-    background: var(--paper);
-    color: var(--ink);
-    font-family: var(--font-sans); font-size: 14px; line-height: 1.5; font-weight: 400;
-    letter-spacing: -0.006em;
-    -webkit-font-smoothing: antialiased;
-    padding: 34px 36px 30px;
+    background: var(--paper); color: var(--ink);
+    font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
+    letter-spacing: -0.006em; -webkit-font-smoothing: antialiased;
+    padding: 64px 36px 30px;
   }
+  /* The window has no native frame (see openSetup): this bar is the drag
+     region. Windows draws its buttons over the right end, macOS its lights at
+     the left. Nothing else sits in the top 46px. */
+  .titlebar { position: fixed; top: 0; left: 0; right: 0; height: 46px; -webkit-app-region: drag; }
   ::selection { background: var(--fill); color: var(--ink); }
-  .heading { display: flex; align-items: center; gap: 9px; }
-  .brand-mark { display: block; flex: none; width: 18px; height: 18px; }
+  .heading { display: flex; align-items: center; gap: 9px; margin-bottom: 26px; }
+  .brand-mark { display: block; flex: none; width: 18px; height: 18px; color: var(--cerulean); }
   h1 { font-size: 23px; line-height: 1.3; font-weight: 500; margin: 0; letter-spacing: -0.02em; }
-  .lede { color: var(--muted); margin: 8px 0 28px; max-width: 46ch; }
   label { display: block; margin: 0 0 16px; }
-  .lbl { display: block; font-size: 12px; color: var(--ink); margin-bottom: 6px; }
+  .lbl { display: block; font-size: 12px; margin-bottom: 6px; }
   input {
     width: 100%; min-height: 40px; padding: 9px 11px;
     background: transparent; color: var(--ink);
@@ -56,7 +57,7 @@
     font: inherit; font-size: 13px;
   }
   input::placeholder { color: var(--muted); opacity: 1; }
-  input:focus { outline: 2px solid var(--ink); outline-offset: 2px; border-color: var(--ink); }
+  input:focus { outline: 2px solid var(--cerulean); outline-offset: 2px; border-color: var(--cerulean); }
   .mono, code { font-family: var(--font-mono); }
   input.mono { font-size: 12px; }
   .hint { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
@@ -65,218 +66,213 @@
   button {
     font: inherit; font-size: 13px; min-height: 36px; padding: 7px 0;
     border: 0; border-bottom: 1px solid var(--muted); border-radius: 0;
-    background: transparent; color: var(--muted);
-    cursor: pointer;
+    background: transparent; color: var(--muted); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 8px;
   }
-  button.primary { color: var(--ink); border-bottom-color: var(--ink); }
-  button:hover:not(:disabled) { color: var(--ink); border-bottom-color: var(--ink); }
-  button:focus-visible, summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 5px; }
-  button:disabled, button.primary:disabled { color: var(--muted); border-bottom-color: var(--line); cursor: not-allowed; }
+  button.primary { color: var(--cerulean); border-bottom-color: var(--cerulean); }
+  button:hover:not(:disabled) { color: var(--cerulean); border-bottom-color: var(--cerulean); }
+  button:focus-visible, summary:focus-visible { outline: 2px solid var(--cerulean); outline-offset: 5px; }
+  button:disabled { color: var(--muted); border-bottom-color: var(--line); cursor: not-allowed; }
+  button svg { flex: none; }
+  .modes { display: flex; gap: 22px; margin-bottom: 20px; }
+  .modes button[aria-pressed="true"] { color: var(--cerulean); border-bottom: 2px solid var(--cerulean); }
 
-  details { margin: 18px 0 26px; }
-  summary { width: fit-content; max-width: 100%; cursor: pointer; font-size: 12px; color: var(--muted); }
-  summary:hover { color: var(--ink); }
-  details[open] summary { margin-bottom: 18px; }
-  .note { margin-top: 22px; padding: 12px 0; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
-  .note.bad, .note.warn { border-top-color: var(--ink); color: var(--ink); }
-  .note.good { color: var(--ink); }
-  .note b { color: var(--ink); font-weight: 500; }
-  .note code { font-size: 12px; }
-  #ghCode { font-size: 22px; letter-spacing: 3px; margin: 10px 0 4px; color: var(--ink); }
-  #repoMsg { margin-top: 9px; }
+  details { margin: 16px 0; }
+  summary { width: fit-content; cursor: pointer; font-size: 12px; color: var(--muted); }
+  summary:hover { color: var(--cerulean); }
+  details[open] summary { margin-bottom: 14px; }
+  .note { margin-top: 18px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+  .note.bad, .note.warn, .note.good { border-top-color: var(--cerulean); color: var(--ink); }
+  .note b { font-weight: 500; }
+  .note button.suggest { min-height: 0; padding: 0; margin-left: 6px; color: var(--cerulean); }
+  #ghCode { font-size: 22px; letter-spacing: 3px; margin: 6px 0 2px; }
   [hidden] { display: none !important; }
-  @media (max-width: 400px) { body { padding: 28px 24px; } }
+  @media (max-width: 400px) { body { padding: 64px 24px 28px; } }
 </style>
 </head>
 <body>
+  <div class="titlebar"></div>
   <header class="heading">
     <svg class="brand-mark" width="18" height="18" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true" focusable="false" data-brand-mark="therefore">
       <circle cx="16" cy="8.2" r="3.5" />
       <circle cx="7" cy="23.8" r="3.5" />
       <circle cx="25" cy="23.8" r="3.5" />
     </svg>
-    <h1>Set up zevet</h1>
+    <h1>zevet</h1>
   </header>
-  <p class="lede">Connect to your team.</p>
 
   <div id="updateNote" class="note" hidden>
     <span id="updateText"></span>
     <div class="row"><button id="updateBtn" class="primary" hidden></button></div>
   </div>
 
-  <label>
-    <span class="lbl">Team address</span>
-    <input id="hub" class="mono" placeholder="https://zevet.example.com" autocomplete="off" spellcheck="false" />
-  </label>
-
-  <!-- No account yet, and nowhere to get one: that was the whole bug. This
-       mints a brand new, independently-owned, NAMED team (hub/server.mjs's
-       /team/create) on the address below -- Andrew's hosted hub when that is
-       left empty -- before sign-in even starts; trust-on-first-use then makes
-       whoever signs in next its owner, same as claiming a fresh hub. -->
-  <label>
-    <span class="lbl">Team name</span>
-    <input id="teamName" placeholder="Acme platform" maxlength="48" autocomplete="off" spellcheck="false" />
-  </label>
-  <div class="row" style="margin-top:0">
-    <button id="createTeam" class="primary">Create team</button>
+  <div class="modes" role="group" aria-label="Mode">
+    <button id="modeCreate" type="button" aria-pressed="true">Create</button>
+    <button id="modeJoin" type="button" aria-pressed="false">Join</button>
   </div>
-  <div id="createNote" class="hint" hidden></div>
 
-  <!-- ⚠️ THE GITHUB PATH IS THE DEFAULT AND THE SECRET IS FOLDED AWAY BEHIND IT.
-       That ordering is the feature. Andrew, 2026-09-19: "people should be able
-       to use the app without having to enter some long code." A pasted 48-char
-       secret is still ACCEPTED -- hubs without an OAuth app configured, and the
-       installs already in the field, both need it -- but it is no longer the
-       thing a new person is shown first, because what people are shown first is
-       what they do. -->
-  <div class="row">
-    <!-- Shown unconditionally. There is no way to ask a hub which providers it
-         has before signing in — `/auth/whoami` is session-gated, and it is
-         session-gated precisely so an unauthenticated stranger cannot enumerate
-         the team. So a hub without Google answers the button with "Google
-         sign-in is not configured for this hub", which is one wasted click and
-         a sentence that names the cause. -->
-    <button id="google" class="primary">Sign in with Google</button>
-    <button id="gh" class="primary">Sign in with GitHub</button>
+  <label>
+    <span class="lbl">Team</span>
+    <input id="teamName" placeholder="metrodora" maxlength="48" autocomplete="off" spellcheck="false" />
+  </label>
+
+  <div class="row" style="margin-top:0">
+    <button id="google" class="primary" type="button" aria-label="Sign in with Google">
+      <svg viewBox="0 0 48 48" width="16" height="16" aria-hidden="true" focusable="false" data-brand="google">
+        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+      </svg>
+      Google
+    </button>
+    <button id="gh" class="primary" type="button" aria-label="Sign in with GitHub">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true" focusable="false" data-brand="github">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+      </svg>
+      GitHub
+    </button>
   </div>
 
   <div id="ghStep" class="note" hidden>
-    <b>Approve on GitHub.</b> No browser? Visit
-    <code id="ghUrl"></code>, enter this code:
     <div id="ghCode" class="mono"></div>
-    <div id="ghState" class="hint">Waiting for approval…</div>
-    <div class="row">
-      <button id="ghCancel">Cancel</button>
-    </div>
+    <div id="ghState" class="hint">…</div>
+    <code id="ghUrl" class="hint" hidden></code>
+    <div class="row"><button id="ghCancel" type="button">Cancel</button></div>
   </div>
 
-  <!-- ⚠️ NO CODE HERE, AND THAT IS THE DIFFERENCE, NOT AN OMISSION. Google's
-       web flow finishes in the browser and lands back on the hub, so there is
-       nothing for the person to read or type. The URL is still shown, for the
-       same reason the GitHub code is: a browser that opened on the wrong
-       profile, or did not open at all, must not be a dead end. -->
   <div id="googleStep" class="note" hidden>
-    <b>Finish in your browser.</b> Didn't it open?
-    <code id="googleUrl"></code>
-    <div id="googleState" class="hint">Waiting for your browser…</div>
-    <div class="row">
-      <button id="googleCancel">Cancel</button>
-    </div>
+    <div id="googleState" class="hint">…</div>
+    <code id="googleUrl" class="hint" hidden></code>
+    <div class="row"><button id="googleCancel" type="button">Cancel</button></div>
   </div>
 
   <details id="manual">
-    <summary>
-      Use a team key instead
-    </summary>
+    <summary>Key</summary>
     <label>
-      <span class="lbl">Team key</span>
-      <input id="token" class="mono" type="password" placeholder="Your team key" autocomplete="off" spellcheck="false" />
-      <!-- It is NOT "the token", and the difference is the whole security
-           model: the hub is given SHA-256("zevet-auth" || this), and the key
-           that encrypts shared editing is HKDF(this). The input id stays
-           `token` so the script below keeps working. -->
-      <span class="hint">Your team key stays on this device.</span>
+      <span class="lbl">Key</span>
+      <input id="token" class="mono" type="password" autocomplete="off" spellcheck="false" />
     </label>
-    <div class="row">
-      <button id="check">Connect</button>
-    </div>
+    <div class="row"><button id="check" type="button">Connect</button></div>
+  </details>
+
+  <details id="other">
+    <summary>Other hub</summary>
+    <label>
+      <span class="lbl">Hub</span>
+      <input id="hub" class="mono" placeholder="https://" autocomplete="off" spellcheck="false" />
+    </label>
   </details>
 
   <label>
-    <span class="lbl">Display name</span>
+    <span class="lbl">Name</span>
     <input id="actor" placeholder="kai" autocomplete="off" spellcheck="false" />
   </label>
 
   <div class="row">
-    <button id="finish" class="primary" disabled>Open zevet</button>
+    <button id="finish" class="primary" type="button" disabled>Open</button>
   </div>
 
   <div id="msg" class="note" hidden></div>
 
   <div id="repoStep" class="note" hidden>
-    <b>Connect a folder</b> to share agent activity. Or later, from the menu.
-    <div class="row">
-      <button id="pick">Connect a folder…</button>
-    </div>
-    <div id="repoMsg" hidden></div>
+    <button id="pick" type="button">Folder</button>
+    <span id="repoMsg" class="hint" hidden></span>
   </div>
 
 <script>
   var $ = function (id) { return document.getElementById(id); };
   var verified = false;
+  var mode = "create";
 
-  // The hub Andrew runs for anyone who downloads zevet without standing up
-  // their own — see MEMORY "zevet hub is live". "Create a team" points here.
+  // The hub Andrew runs for anyone who downloads zevet without their own.
   var HOSTED_HUB = "https://34-74-69-129.sslip.io";
-  var createdTeam = "";
+  var created = null; // { hub, name, team } once this name exists on this hub
 
   function esc(t) {
     return String(t).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
-  // "Signed in as kai to Acme platform. Owner."
-  function signedIn(done) {
-    say("good", "Signed in as <b>" + esc(done.login) + "</b>" +
-      (done.teamName ? " to <b>" + esc(done.teamName) + "</b>" : "") + "." +
-      (done.owner ? " Owner. Invite teammates in Settings." : ""));
-  }
-
   function say(kind, html) {
     var m = $("msg");
     m.hidden = false;
     m.className = "note " + kind;
     m.innerHTML = html;
   }
+  // Errors are a word or two; anything longer is the hub talking, not us.
+  function short(e, fallback) {
+    e = String(e || "");
+    return e && e.length <= 24 ? e : fallback;
+  }
+  function hubUrl() {
+    return $("hub").value.trim().replace(/\/+$/, "") || HOSTED_HUB;
+  }
+  function validHub(h) { return /^https?:\/\//i.test(h); }
 
-  // Prefill when re-opened from the menu to change the hub.
+  function setMode(m) {
+    mode = m;
+    $("modeCreate").setAttribute("aria-pressed", String(m === "create"));
+    $("modeJoin").setAttribute("aria-pressed", String(m === "join"));
+    $("msg").hidden = true;
+  }
+  $("modeCreate").addEventListener("click", function () { setMode("create"); });
+  $("modeJoin").addEventListener("click", function () { setMode("join"); });
+
+  // Re-opened from the menu: prefill what is already configured.
   var q = new URLSearchParams(location.search);
-  if (q.get("hub")) $("hub").value = q.get("hub");
+  function prefillHub(h) {
+    if (h && h.replace(/\/+$/, "") !== HOSTED_HUB && !$("hub").value) {
+      $("hub").value = h;
+      $("other").open = true;
+    }
+  }
+  prefillHub(q.get("hub"));
   if (q.get("actor")) $("actor").value = q.get("actor");
   window.zevet.config().then(function (c) {
     if (!c) return;
-    if (!$("hub").value) $("hub").value = c.hub || "";
+    prefillHub(c.hub);
     if (!$("actor").value) $("actor").value = c.actor || "";
   });
 
-  /* ── Creating a team ───────────────────────────────────────────────────────
-   *
-   * Mints a brand new team on the hosted hub, then leaves the actual sign-in
-   * to the Google/GitHub buttons below (unchanged): trust-on-first-use makes
-   * whoever signs in next its owner. `createdTeam` rides along on that
-   * sign-in; editing the hub by hand clears it (see the input listener below)
-   * so a stale team is never sent against a different address.
-   */
-  $("createTeam").addEventListener("click", async function () {
+  /* Which team a sign-in should land in. Create makes it (once per name+hub);
+     Join looks it up. Resolves a slug, or null after saying why. */
+  async function teamFor(hub) {
     var name = $("teamName").value.trim();
-    if (!name) { say("bad", "Name your team."); $("teamName").focus(); return; }
-    var hub = $("hub").value.trim() || HOSTED_HUB;
-    if (!/^https?:\/\//i.test(hub)) { say("bad", "Team address needs https:// or http://."); return; }
-    $("createTeam").disabled = true;
-    $("hub").value = hub;
-    say("", "Creating…");
-    var r = await window.zevet.teamCreate(hub, name);
-    $("createTeam").disabled = false;
-    if (!r.ok) {
-      say("bad", "Could not create the team: " + esc(r.error || "no answer") + ". Use your team key below, or ask for an invite.");
-      return;
+    if (!name) { say("bad", "Name?"); $("teamName").focus(); return null; }
+    if (!validHub(hub)) { say("bad", "Bad hub"); return null; }
+    if (mode === "join") {
+      var r = await window.zevet.teamResolve(hub, name);
+      if (!r.ok) { say("bad", esc(short(r.error, "Failed"))); return null; }
+      if (!r.exists) { say("bad", "No team"); return null; }
+      return r.team;
     }
-    createdTeam = r.team;
-    $("msg").hidden = true;
-    $("createNote").hidden = false;
-    $("createNote").innerHTML = "Created <b>" + esc(r.name || name) + "</b>. Sign in to claim it.";
-    $("google").textContent = "Create with Google";
-    $("gh").textContent = "Create with GitHub";
-  });
+    if (created && created.hub === hub && created.name === name) return created.team;
+    var c = await window.zevet.teamCreate(hub, name);
+    if (!c.ok) {
+      if (c.error === "Taken" && c.suggest) {
+        say("bad", "Taken<button class=\"suggest\" id=\"suggest\" type=\"button\">" + esc(c.suggest) + "</button>");
+        $("suggest").addEventListener("click", function () { $("teamName").value = c.suggest; $("msg").hidden = true; });
+      } else {
+        say("bad", esc(short(c.error, "Failed")));
+      }
+      return null;
+    }
+    created = { hub: hub, name: name, team: c.team };
+    return c.team;
+  }
 
-  /* ── Staying current before there is anything to sign in to ────────────────
-   *
-   * The updater (desktop/app-update.js) checks the PUBLIC download feed, not
-   * the hub, and runs whether or not a team is configured — see main.js's
-   * appUpdater.start(). This is the missing half: painting what it finds on
-   * the one window a person with no hub yet is actually looking at.
-   */
+  function signedIn(done) {
+    var team = $("teamName").value.trim();
+    say("good", "<b>" + esc(done.teamName || team || "") + "</b> · " + esc(String(done.login).split("@")[0]) + (done.owner ? " · Owner" : ""));
+    verified = true;
+    $("finish").disabled = false;
+    $("repoStep").hidden = false;
+    $("repoStep").scrollIntoView();
+  }
+
+  /* ── Update banner: the updater checks the public feed whether or not a team
+        is configured (see main.js), so this is the window to show it on. ── */
   function paintUpdate(s) {
     var note = $("updateNote"), text = $("updateText"), btn = $("updateBtn");
     if (!s || (s.phase !== "downloading" && s.phase !== "ready" && s.phase !== "error")) {
@@ -286,18 +282,18 @@
     note.hidden = false;
     if (s.phase === "downloading") {
       var pct = Math.max(0, Math.min(100, Math.floor(Number(s.percent) || 0)));
-      text.textContent = "Downloading " + s.version + " — " + pct + "%";
+      text.textContent = s.version + " · " + pct + "%";
       btn.hidden = true;
     } else if (s.phase === "ready" && s.canInstall) {
-      text.textContent = "v" + s.version + " is ready.";
+      text.textContent = "v" + s.version;
       btn.hidden = false;
-      btn.textContent = s.manual ? "Open installer" : "Restart to install";
+      btn.textContent = s.manual ? "Open installer" : "Restart";
       btn.onclick = function () {
         btn.disabled = true;
         window.zevetLocal.updateInstall();
       };
     } else if (s.phase === "error") {
-      text.textContent = s.error || "Update check failed.";
+      text.textContent = "Update failed";
       btn.hidden = true;
     } else {
       note.hidden = true;
@@ -308,158 +304,98 @@
     if (typeof window.zevetLocal.updateStatus === "function") window.zevetLocal.updateStatus().then(paintUpdate);
   }
 
-  /* ── The GitHub path ───────────────────────────────────────────────────────
-   *
-   * ⚠️ THE CONFIG IS WRITTEN BY THE MAIN PROCESS, NOT HERE. `githubWait`
-   * resolves only after ~/.zevet/config.json has been saved, so this handler
-   * has nothing to save and is never given the secret or the session to save it
-   * with. That is the same redaction rule `config()` follows and it is why the
-   * success branch below only enables a button.
-   */
-  function ghBusy(on) {
+  /* ── Sign-in. The config is written by the main process; this window is only
+        ever told a login and a yes, never the secret or the session. ── */
+  function busy(on, which) {
     $("gh").disabled = on;
     $("google").disabled = on;
-    $("ghStep").hidden = !on;
+    $("ghStep").hidden = !(on && which === "gh");
+    $("googleStep").hidden = !(on && which === "google");
   }
 
   $("gh").addEventListener("click", async function () {
-    var hub = $("hub").value.trim();
-    if (!hub) { say("bad", "Create a team, or paste your team address."); return; }
-    if (!/^https?:\/\//i.test(hub)) { say("bad", "Team address needs https:// or http://."); return; }
-
-    say("", "Starting sign-in…");
-    ghBusy(true);
-    var started = await window.zevet.githubStart(hub, createdTeam);
+    var hub = hubUrl();
+    busy(true, "gh");
+    say("", "…");
+    var team = await teamFor(hub);
+    if (team === null) { busy(false); return; }
+    var started = await window.zevet.githubStart(hub, team);
     if (!started.ok) {
-      ghBusy(false);
-      // The hub having no OAuth app is the likeliest failure on a self-hosted
-      // hub, and it is not the user's fault -- point them at the fallback that
-      // is sitting right there rather than leaving them at a dead end.
-      say("bad", "GitHub sign-in failed: " + esc(started.error || "no answer") + ". Use your team key below.");
-      $("manual").open = true;
+      busy(false);
+      say("bad", esc(short(started.error, "Sign-in failed")));
       return;
     }
-
     $("ghCode").textContent = started.userCode;
+    $("ghUrl").hidden = started.opened !== false;
     $("ghUrl").textContent = started.url;
-    $("ghState").textContent = started.opened === false
-      ? "Your browser did not open. Visit the address above."
-      : "Waiting for approval…";
+    $("ghState").textContent = started.opened === false ? "No browser" : "…";
     $("msg").hidden = true;
-
     var done = await window.zevet.githubWait();
-    ghBusy(false);
+    busy(false);
     if (!done.ok) {
-      if (done.cancelled) { say("", "Sign-in cancelled."); return; }
-      say("bad", "Could not sign in: " + esc(done.error || "no answer") + ".");
+      if (done.cancelled) { $("msg").hidden = true; return; }
+      say("bad", esc(short(done.error, "Sign-in failed")));
       return;
     }
-
-    verified = true;
-    $("finish").disabled = false;
     if (!$("actor").value.trim()) $("actor").value = done.login;
     signedIn(done);
-    $("repoStep").hidden = false;
-    $("repoStep").scrollIntoView();
   });
-
   $("ghCancel").addEventListener("click", function () {
     window.zevet.githubCancel();
-    ghBusy(false);
-    say("", "Sign-in cancelled.");
+    busy(false);
+    $("msg").hidden = true;
   });
-
-  /* ── The Google path ───────────────────────────────────────────────────────
-   *
-   * The same three calls and the same rule about who writes the config. Two
-   * differences, both consequences of the browser finishing the flow rather
-   * than this window: there is no code to paint, and `googleWait` can sit for
-   * ten minutes while somebody picks an account.
-   */
-  function googleBusy(on) {
-    $("google").disabled = on;
-    $("gh").disabled = on;
-    $("googleStep").hidden = !on;
-  }
 
   $("google").addEventListener("click", async function () {
-    var hub = $("hub").value.trim();
-    if (!hub) { say("bad", "Create a team, or paste your team address."); return; }
-    if (!/^https?:\/\//i.test(hub)) { say("bad", "Team address needs https:// or http://."); return; }
-
-    say("", "Starting sign-in…");
-    googleBusy(true);
-    var started = await window.zevet.googleStart(hub, createdTeam);
+    var hub = hubUrl();
+    busy(true, "google");
+    say("", "…");
+    var team = await teamFor(hub);
+    if (team === null) { busy(false); return; }
+    var started = await window.zevet.googleStart(hub, team);
     if (!started.ok) {
-      googleBusy(false);
-      // Same reasoning as the GitHub branch: a hub with no Google client is a
-      // deployment problem, and the fallback is sitting right there.
-      say("bad", "Google sign-in failed: " + esc(started.error || "no answer") + ". Use GitHub above, or your team key below.");
+      busy(false);
+      say("bad", esc(short(started.error, "Sign-in failed")));
       return;
     }
-
+    $("googleUrl").hidden = started.opened !== false;
     $("googleUrl").textContent = started.url;
-    $("googleState").textContent = started.opened === false
-      ? "Your browser did not open. Visit the address above."
-      : started.domain
-        ? "Waiting for your browser — sign in with your " + started.domain + " account…"
-        : "Waiting for your browser…";
+    $("googleState").textContent = started.opened === false ? "No browser" : started.domain ? started.domain : "…";
     $("msg").hidden = true;
-
     var done = await window.zevet.googleWait();
-    googleBusy(false);
+    busy(false);
     if (!done.ok) {
-      if (done.cancelled) { say("", "Sign-in cancelled."); return; }
-      say("bad", "Could not sign in: " + esc(done.error || "no answer") + ".");
+      if (done.cancelled) { $("msg").hidden = true; return; }
+      say("bad", esc(short(done.error, "Sign-in failed")));
       return;
     }
-
-    verified = true;
-    $("finish").disabled = false;
     // The local part, not the whole address: a board full of rows labelled
-    // "andrew@usemasora.com" is a board where the domain is repeated on every
-    // line and the name is the part nobody can see. Still overridable.
+    // with the same domain hides the part that tells people apart.
     if (!$("actor").value.trim()) $("actor").value = String(done.login).split("@")[0];
     signedIn(done);
-    $("repoStep").hidden = false;
-    $("repoStep").scrollIntoView();
   });
-
   $("googleCancel").addEventListener("click", function () {
     window.zevet.googleCancel();
-    googleBusy(false);
-    say("", "Sign-in cancelled.");
+    busy(false);
+    $("msg").hidden = true;
   });
 
-  function invalid() {
-    if (!$("hub").value.trim()) return "Enter a team address.";
-    if (!$("token").value) return "Enter your team key.";
-    if (!$("actor").value.trim()) return "Enter a display name.";
-    if (!/^https?:\/\//i.test($("hub").value.trim())) return "Team address needs https:// or http://.";
-    return null;
-  }
-
+  /* ── The team key: for a hub with no OAuth app, and installs already out there. ── */
   $("check").addEventListener("click", async function () {
-    var bad = invalid();
-    if (bad) { say("bad", bad); return; }
+    var hub = hubUrl();
+    if (!$("token").value) { say("bad", "Key?"); return; }
+    if (!$("actor").value.trim()) { say("bad", "Name?"); $("actor").focus(); return; }
+    if (!validHub(hub)) { say("bad", "Bad hub"); return; }
     $("check").disabled = true;
-    say("", "Connecting…");
-    var hub = $("hub").value.trim();
+    say("", "…");
     var res = await window.zevet.test(hub, $("token").value);
     $("check").disabled = false;
-    if (!res.ok) { verified = false; $("finish").disabled = true; say("bad", esc(res.why || "Could not connect.")); return; }
-
+    if (!res.ok) { verified = false; $("finish").disabled = true; say("bad", "Failed"); return; }
+    var plain = /^http:\/\//i.test(hub) && !/^http:\/\/(127\.0\.0\.1|localhost)/i.test(hub);
+    say(plain ? "warn" : "good", plain ? "Connected · not encrypted" : "Connected");
+    await window.zevet.save(hub, $("token").value, $("actor").value.trim());
     verified = true;
     $("finish").disabled = false;
-    var warn = "";
-    if (/^http:\/\//i.test(hub) && !/^http:\/\/(127\.0\.0\.1|localhost)/i.test(hub)) {
-      warn =
-        "<br><br><b>This connection is unencrypted.</b> " +
-        "Anyone who can alter the traffic could run code on this computer. " +
-        "Use HTTPS outside a trusted network.";
-    }
-    say(warn ? "warn" : "good", "Connected." + warn);
-    await window.zevet.save(hub, $("token").value, $("actor").value.trim());
     $("repoStep").hidden = false;
   });
 
@@ -468,37 +404,21 @@
     if (!repo) return;
     var out = $("repoMsg");
     out.hidden = false;
-    out.textContent = "Connecting…";
+    out.textContent = "…";
     var r = await window.zevet.install(repo);
-    out.textContent = r.ok ? "Folder connected." : "Could not connect this folder.";
+    out.textContent = r.ok ? "Connected" : "Failed";
   });
 
   $("finish").addEventListener("click", async function () {
     if (!verified) return;
-    // The name can be edited AFTER the credential was established -- that is
-    // the normal order now, because signing in fills it in and the person then
-    // shortens it. Saving again here is what makes that edit stick; passing an
-    // empty credential is understood by `zevet:save` as "keep what you have".
-    await window.zevet.save($("hub").value.trim(), $("token").value, $("actor").value.trim());
+    // An empty credential is understood by `zevet:save` as "keep what you have".
+    await window.zevet.save(hubUrl(), $("token").value, $("actor").value.trim());
     window.zevet.done();
   });
 
-  // ⚠️ `actor` IS NOT IN THIS LIST. It is a display name, not a credential:
-  // typing it used to invalidate the connection check, which after GitHub
-  // sign-in meant filling in your own name disabled the button that finishes
-  // setup.
+  // A team made for one hub is not valid on another; a new name is a new team.
   ["hub", "token"].forEach(function (id) {
-    $(id).addEventListener("input", function () {
-      verified = false;
-      $("finish").disabled = true;
-      if (id === "hub" && createdTeam) {
-        // A team slug is only valid against the address it was minted on.
-        createdTeam = "";
-        $("createNote").hidden = true;
-        $("google").textContent = "Sign in with Google";
-        $("gh").textContent = "Sign in with GitHub";
-      }
-    });
+    $(id).addEventListener("input", function () { verified = false; $("finish").disabled = true; });
   });
 </script>
 </body>

@@ -24,7 +24,7 @@
 // that root. See openBoard() for why the board is allowed a bridge at all
 // despite loading a remote origin, and local:write below for why a WRITE over
 // that same bridge is a bigger thing to hand out than a read.
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session } = require("electron");
 const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
 const repoStats = require("./repo-stats.js");
@@ -48,7 +48,7 @@ const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const { MasoraLink } = require("./masora-link.js");
-const { Family, familyDir } = require("./family.js");
+const { Family, familyDir, frameable, FRAME_URLS } = require("./family.js");
 const credentials = require("./credentials.js");
 const credentialLadder = require("./credential-ladder.js");
 const credentialUsage = require("./credential-usage.js");
@@ -751,6 +751,13 @@ function openSetup(existing) {
     backgroundColor: PAPER,
     title: "Set up zevet",
     ...iconOption,
+    // The same frame as the board (openBoard): no accent-coloured outline. The
+    // page draws a drag bar; Windows keeps its native buttons through the
+    // overlay and macOS keeps its traffic lights.
+    titleBarStyle: "hidden",
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" }
+      : { titleBarOverlay: chromeFor("light", 0) }),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -1278,10 +1285,26 @@ ipcMain.handle("zevet:teamCreate", async (_e, { hub, name } = {}) => {
     } catch {
       return { ok: false, error: `The hub returned an invalid response (HTTP ${res.status}).` };
     }
-    if (!res.ok || !body || !body.ok) return { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
+    if (!res.ok || !body || !body.ok) {
+      return { ok: false, error: res.status === 409 ? "Taken" : (body && body.error) || `HTTP ${res.status}`, ...(body && body.suggest ? { suggest: body.suggest } : {}) };
+    }
     return { ok: true, team: body.team, name: body.name || teamName };
-  } catch (err) {
-    return { ok: false, error: `Could not reach the hub: ${err && err.message ? err.message : String(err)}` };
+  } catch {
+    return { ok: false, error: "Offline" };
+  }
+});
+
+/** Does a team by this name exist on the hub? `{ ok, exists, team }`. */
+ipcMain.handle("zevet:teamResolve", async (_e, { hub, name } = {}) => {
+  const base = String(hub || "").replace(/\/+$/, "");
+  if (!base || !String(name || "").trim()) return { ok: false, error: "Name?" };
+  try {
+    const res = await fetch(`${base}/team/resolve?name=${encodeURIComponent(String(name))}`, { signal: AbortSignal.timeout(15000) });
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: "Failed" };
+    return { ok: true, exists: body.exists === true, team: body.team || "" };
+  } catch {
+    return { ok: false, error: "Offline" };
   }
 });
 
@@ -3467,6 +3490,7 @@ app.whenReady().then(() => {
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();
   family.start();
+  session.defaultSession.webRequest.onHeadersReceived({ urls: FRAME_URLS, types: ["subFrame"] }, (d, cb) => cb({ responseHeaders: frameable(d.responseHeaders) }));
   const cfg = readConfig();
   if (cfg) openBoard(cfg);
   else openSetup(null);

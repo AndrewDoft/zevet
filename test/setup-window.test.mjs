@@ -77,113 +77,112 @@ after(async () => {
 });
 
 describe("a fresh install's setup window", () => {
-  test("shows the controls a first-run person needs, with Finish disabled", () => {
+  test("shows the controls a first-run person needs, with Open disabled", () => {
     const { outline } = drive("snapshot");
     assert.match(outline, /input#teamName/);
-    assert.match(outline, /button#createTeam[^\n]*"Create team"/);
-    assert.match(outline, /button#google[^\n]*"Sign in with Google"/);
-    assert.match(outline, /button#gh[^\n]*"Sign in with GitHub"/);
-    assert.match(outline, /button#finish[^\n]*disabled[^\n]*"Open zevet"/);
+    assert.match(outline, /button#modeCreate[^\n]*"Create"/);
+    assert.match(outline, /button#modeJoin[^\n]*"Join"/);
+    assert.match(outline, /button#google[^\n]*"Google"/);
+    assert.match(outline, /button#gh[^\n]*"GitHub"/);
+    assert.match(outline, /button#finish[^\n]*disabled[^\n]*"Open"/);
+  });
+
+  test("the sign-in buttons carry the provider mark and an accessible name", () => {
+    const r = drive("eval", `["google","gh"].map(function (id) {
+      var b = document.getElementById(id);
+      return [b.getAttribute("aria-label"), !!b.querySelector("svg[data-brand]"), b.textContent.trim()];
+    })`);
+    assert.deepEqual(r.result ?? r.value ?? r, [["Sign in with Google", true, "Google"], ["Sign in with GitHub", true, "GitHub"]]);
+  });
+
+  test("the window is frameless: a drag bar sits where the caption was", () => {
+    const r = drive("eval", `getComputedStyle(document.querySelector(".titlebar")).webkitAppRegion`);
+    assert.equal(r.result ?? r.value ?? r, "drag");
   });
 
   // Run early, deliberately: main.js's real appUpdater fires its first check
-  // FIRST_CHECK_MS (25s) after launch, and a real push landing between this
-  // test's own synthetic ones would show a real version rather than "9.9.9"
-  // — a flake this test then has to explain rather than one anyone caused.
-  test("c). the update banner paints from a status the app pushes, before any sign-in", () => {
-    const before = drive("snapshot").outline;
-    assert.match(before, /div#updateNote[^\n]*hidden/, "nothing to show yet on a version that is current");
-
+  // FIRST_CHECK_MS (25s) after launch; see the note this replaced.
+  test("the update banner paints from a status the app pushes, before any sign-in", () => {
+    assert.match(drive("snapshot").outline, /div#updateNote[^\n]*hidden/);
     drive("eval", `window.paintUpdate({ phase: "ready", version: "9.9.9", canInstall: true, manual: false })`);
     const ready = drive("snapshot").outline;
-    // div#updateNote's own captured text is the span's and the button's text
-    // concatenated (it is the outer container's textContent) — no quote sits
-    // between "ready." and "Restart", so the pattern must not require one.
-    assert.match(ready, /div#updateNote(?!.*hidden)[^\n]*"v9\.9\.9 is ready\./);
-    assert.match(ready, /button#updateBtn(?!.*hidden)[^\n]*"Restart to install"/);
-
+    assert.match(ready, /div#updateNote(?!.*hidden)[^\n]*"v9.9.9/);
+    assert.match(ready, /button#updateBtn(?!.*hidden)[^\n]*"Restart"/);
     drive("eval", `window.paintUpdate({ phase: "current" })`);
-    const gone = drive("snapshot").outline;
-    assert.match(gone, /div#updateNote[^\n]*hidden/);
+    assert.match(drive("snapshot").outline, /div#updateNote[^\n]*hidden/);
   });
 
-  test("a). clicking a sign-in button with no team address opens no browser, and says why", () => {
+  test("signing in with no team name opens no browser and says Name?", () => {
     drive("click", "#google");
-    const opened = drive("opened");
-    assert.deepEqual(opened, [], "must not open a browser with nothing to open it to");
-    const { outline } = drive("snapshot");
-    assert.match(outline, /div#msg[^\n]*"Create a team, or paste your team address\."/);
+    assert.deepEqual(drive("opened"), []);
+    assert.match(drive("snapshot").outline, /div#msg(?!.*hidden)[^\n]*"Name\?"/);
   });
 
-  test("b). Create team without a name says so and creates nothing", () => {
-    drive("click", "#createTeam");
-    const { outline } = drive("snapshot");
-    assert.match(outline, /div#msg(?!.*hidden)[^\n]*"Name your team\."/);
-    assert.match(outline, /div#createNote[^\n]*hidden/);
-  });
-
-  test("b). Create team mints a NAMED team on the address that was typed, not the hosted one", async () => {
-    // A dead hosted hub: creation can only succeed if the typed address wins.
-    drive("eval", `window.HOSTED_HUB = "http://127.0.0.1:1"`);
-    drive("type", "#hub", hub.base);
-    drive("type", "#teamName", "Acme platform");
-    drive("click", "#createTeam");
-    // teamCreate is a single awaited IPC round trip to a hub on localhost;
-    // give it a moment rather than asserting on the very next tick.
-    const outline = await waitFor((o) => /div#createNote(?!.*hidden)/.test(o));
-    assert.ok(outline.split("\n").some((l) => l.startsWith("input#hub") && l.endsWith(`"${hub.base}"`)));
-    assert.match(outline, /div#createNote(?!.*hidden)[^\n]*"Created Acme platform\./);
-    assert.match(outline, /button#google[^\n]*"Create with Google"/);
-    assert.match(outline, /button#gh[^\n]*"Create with GitHub"/);
-  });
-
-  test("editing the hub by hand clears the created team and restores the button labels", () => {
-    drive("type", "#hub", hub.base + "/extra");
-    const { outline } = drive("snapshot");
-    assert.match(outline, /button#google[^\n]*"Sign in with Google"/);
-    assert.match(outline, /button#gh[^\n]*"Sign in with GitHub"/);
-    assert.match(outline, /div#createNote[^\n]*hidden/);
-  });
-
-  test("b). Create team with no address typed falls back to the hosted hub", async () => {
+  test("Create makes the team on the hub, named by what was typed", async () => {
     drive("eval", `window.HOSTED_HUB = ${JSON.stringify(hub.base)}`);
-    drive("type", "#hub", "");
-    drive("type", "#teamName", "Fallback Co");
-    drive("click", "#createTeam");
-    const outline = await waitFor((o) => /div#createNote(?!.*hidden)/.test(o));
-    assert.match(outline, /div#createNote(?!.*hidden)[^\n]*"Created Fallback Co\./);
+    drive("type", "#teamName", "Acme platform");
+    drive("click", "#google");
+    // The hub has no Google client, so sign-in itself fails; the team is made first.
+    await waitFor((o) => /div#msg(?!.*hidden)[^\n]*"Sign-in failed"/.test(o));
+    const r = await (await fetch(`${hub.base}/team/resolve?name=acme-platform`)).json();
+    assert.deepEqual(r, { exists: true, team: "acme-platform" });
+    assert.deepEqual(drive("opened"), []);
   });
 
-  test("d). the manual team-key path connects, enables Finish, and reveals Connect a folder", async () => {
-    drive("click", "summary");
+  test("a taken name says Taken and offers name-2", async () => {
+    await fetch(`${hub.base}/team/create`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Taken Co" }) });
+    drive("type", "#teamName", "taken co");
+    drive("click", "#gh");
+    const outline = await waitFor((o) => /button#suggest/.test(o));
+    assert.match(outline, /div#msg[^\n]*"Taken/);
+    assert.match(outline, /button#suggest[^\n]*"taken-co-2"/);
+    drive("click", "#suggest");
+    assert.match(drive("snapshot").outline, /input#teamName[^\n]*"taken-co-2"/);
+  });
+
+  test("Join: an unknown team says No team; a known one goes on to sign-in", async () => {
+    drive("click", "#modeJoin");
+    drive("type", "#teamName", "nobody-here");
+    drive("click", "#google");
+    let outline = await waitFor((o) => /div#msg(?!.*hidden)[^\n]*"No team"/.test(o));
+    assert.match(outline, /"No team"/);
+    drive("type", "#teamName", "Acme Platform");
+    drive("click", "#google");
+    outline = await waitFor((o) => /div#msg(?!.*hidden)[^\n]*"Sign-in failed"/.test(o));
+    assert.doesNotMatch(outline, /No team/);
+  });
+
+  test("Other hub is folded away, and a typed one wins over the hosted default", async () => {
+    assert.match(drive("snapshot").outline, /details#other(?!.*open)/);
+    drive("eval", `window.HOSTED_HUB = "http://127.0.0.1:1"`);
+    drive("click", "#modeCreate");
+    drive("click", "#other summary");
+    drive("type", "#hub", hub.base);
+    drive("type", "#teamName", "Elsewhere");
+    drive("click", "#gh");
+    await waitFor((o) => /div#msg(?!.*hidden)[^\n]*"Sign-in failed"/.test(o));
+    const r = await (await fetch(`${hub.base}/team/resolve?name=elsewhere`)).json();
+    assert.equal(r.exists, true);
+  });
+
+  test("the team-key path connects, enables Open, and reveals Folder", async () => {
+    drive("click", "#manual summary");
     drive("type", "#hub", hub.base);
     drive("type", "#token", SECRET);
     drive("type", "#actor", "trevor");
     drive("click", "#check");
-    const outline = await waitFor((o) => !/#check[^\n]*disabled/.test(o) && /div#msg/.test(o));
-    assert.match(outline, /div#msg[^\n]*"Connected\./);
+    const outline = await waitFor((o) => !/#check[^\n]*disabled/.test(o) && /div#msg[^\n]*"Connected"/.test(o));
+    assert.match(outline, /div#msg[^\n]*"Connected"/);
     assert.doesNotMatch(outline, /button#finish[^\n]*disabled/);
-    assert.match(outline, /button#finish[^\n]*"Open zevet"/);
-    assert.match(outline, /div#repoStep[^\n]*"Connect a folder/);
-    assert.match(outline, /button#pick[^\n]*"Connect a folder…"/);
+    assert.match(outline, /button#pick[^\n]*"Folder"/);
   });
 
-  test("d). the GitHub cancel button resets the window without needing a live sign-in", () => {
-    // Simulate "a device flow is in progress" without a real GitHub round
-    // trip: unhide the step the way `ghBusy(true)` does.
+  test("the Cancel buttons reset the window without a live sign-in", () => {
     drive("eval", `document.getElementById("ghStep").hidden = false`);
     drive("click", "#ghCancel");
-    const { outline } = drive("snapshot");
-    assert.match(outline, /div#ghStep[^\n]*hidden/);
-    assert.match(outline, /div#msg[^\n]*"Sign-in cancelled\."/);
-  });
-
-  test("d). the Google cancel button resets the window the same way", () => {
+    assert.match(drive("snapshot").outline, /div#ghStep[^\n]*hidden/);
     drive("eval", `document.getElementById("googleStep").hidden = false`);
     drive("click", "#googleCancel");
-    const { outline } = drive("snapshot");
-    assert.match(outline, /div#googleStep[^\n]*hidden/);
-    assert.match(outline, /div#msg[^\n]*"Sign-in cancelled\."/);
+    assert.match(drive("snapshot").outline, /div#googleStep[^\n]*hidden/);
   });
-
 });
