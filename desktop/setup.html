@@ -329,7 +329,8 @@
 
     say("", "Starting sign-in…");
     ghBusy(true);
-    var started = await window.zevet.githubStart(hub, createdTeam);
+    var team = createdTeam || $("teamName").value.trim(); // a typed name joins that team
+    var started = await window.zevet.githubStart(hub, team);
     if (!started.ok) {
       ghBusy(false);
       // The hub having no OAuth app is the likeliest failure on a self-hosted
@@ -389,7 +390,8 @@
 
     say("", "Starting sign-in…");
     googleBusy(true);
-    var started = await window.zevet.googleStart(hub, createdTeam);
+    var team = createdTeam || $("teamName").value.trim(); // a typed name joins that team
+    var started = await window.zevet.googleStart(hub, team);
     if (!started.ok) {
       googleBusy(false);
       // Same reasoning as the GitHub branch: a hub with no Google client is a
