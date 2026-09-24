@@ -77,6 +77,7 @@ function readConfig() {
     // Zevet Chat push (C1 `zevet_chat`). Off unless the person turned it on:
     // the per-repo opt-in above says nothing about chats, which have no repo.
     chat: raw.chat === true,
+    member: typeof raw.member === "string" ? raw.member : "",
   };
 }
 
@@ -93,9 +94,9 @@ function saveUrl(url) {
 
 /** `encrypt`/`decrypt` are `Buffer -> Buffer` / `Buffer -> string`, i.e.
  *  `electron.safeStorage.encryptString`/`decryptString` bound by the caller. */
-function saveToken(token, encrypt) {
+function saveToken(token, encrypt, member) {
   const raw = readRaw();
-  writeRaw({ ...raw, tokenEnc: encrypt(String(token)).toString("base64") });
+  writeRaw({ ...raw, tokenEnc: encrypt(String(token)).toString("base64"), member: member || "" });
 }
 
 function loadToken(decrypt) {
@@ -114,6 +115,7 @@ function loadToken(decrypt) {
 function unpair() {
   const raw = readRaw();
   delete raw.tokenEnc;
+  delete raw.member;
   writeRaw(raw);
 }
 

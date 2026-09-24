@@ -48,6 +48,7 @@ const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const { MasoraLink } = require("./masora-link.js");
+const { Family, familyDir } = require("./family.js");
 const credentials = require("./credentials.js");
 const credentialLadder = require("./credential-ladder.js");
 const credentialUsage = require("./credential-usage.js");
@@ -1364,6 +1365,31 @@ const masoraLink = new MasoraLink({
   platform: process.platform,
 });
 
+/* ── The family: Masora, Zevet and Voice find each other (desktop/family.js) ──
+ * Pairs with a Masora on this machine with no click; the device-code flow above
+ * stays the fallback for one on another machine. */
+const family = new Family({
+  dir: familyDir(),
+  readMasora: () => masora.readConfig(),
+  saveUrl: (url) => masora.saveUrl(url),
+  saveToken: (token, member) => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error("This machine's OS keychain is unavailable.");
+    masora.saveToken(token, (s) => safeStorage.encryptString(s), member);
+    masoraLink.cancel(); // paired: the code flow has nothing left to wait for
+  },
+  clearToken: () => masora.unpair(),
+  openExternal: (url) => shell.openExternal(url),
+  // The normal self-update: look, and if a build is ready, install it.
+  runUpdate: async () => {
+    const s = await appUpdater.check();
+    if (s && s.phase === "ready" && s.canInstall) await appUpdater.install();
+  },
+  version: app.getVersion(),
+  installPath: path.dirname(app.getPath("exe")),
+});
+ipcMain.handle("zevet:familyStatus", () => family.status());
+ipcMain.handle("zevet:familyAct", (_e, { app: which, action } = {}) => family.act(String(which), String(action)));
+
 ipcMain.handle("zevet:masoraConfig", () => masora.readConfig());
 
 ipcMain.handle("zevet:masoraSaveUrl", (_e, { url } = {}) => {
@@ -1397,6 +1423,7 @@ ipcMain.handle("masora:sources", async () => {
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(5000),
     });
+    if (res.status === 401) void family.repair(); // a revoked token: pair again
     if (!res.ok) return { error: "token" }; // 401/403 → auth issue
     const data = await res.json();
     if (!Array.isArray(data)) return { sources: [] };
@@ -3174,6 +3201,7 @@ function stopAllConsoles() {
 }
 
 app.on("before-quit", stopAllConsoles);
+app.on("before-quit", () => family.stop());
 
 /* ==========================================================================
  * ZEVET CHAT — conversations with no repository behind them (desktop/chat.js)
@@ -3438,6 +3466,7 @@ app.whenReady().then(() => {
   // After the window, never before it: an update check that delayed the
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();
+  family.start();
   const cfg = readConfig();
   if (cfg) openBoard(cfg);
   else openSetup(null);

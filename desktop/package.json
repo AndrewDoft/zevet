@@ -58,6 +58,7 @@
       "google-signin.js",
       "masora.js",
       "masora-link.js",
+      "family.js",
       "masora-connect.js",
       "masora-push.js",
       "credentials.js",

@@ -111,6 +111,9 @@ contextBridge.exposeInMainWorld("zevet", {
   masoraLinkStart: () => ipcRenderer.invoke("zevet:masoraLinkStart"),
   masoraLinkApprove: () => ipcRenderer.invoke("zevet:masoraLinkApprove"),
   masoraUnpair: () => ipcRenderer.invoke("zevet:masoraUnpair"),
+  /** Family panel: one row per sibling app, and the click on its chip. */
+  familyStatus: () => ipcRenderer.invoke("zevet:familyStatus"),
+  familyAct: (app, action) => ipcRenderer.invoke("zevet:familyAct", { app, action }),
   /** Zevet Chat push to Masora (C1 `zevet_chat`), off by default. */
   masoraChatPush: (on) => ipcRenderer.invoke("zevet:masoraChatPush", { on }),
   /** Connections panel: which sources are linked, and connecting a new one.
