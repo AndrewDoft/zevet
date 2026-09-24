@@ -21,7 +21,12 @@ import { noteModelLimit } from "./model-limits.mjs";
 import { useBoard } from "./board";
 import type { LaunchMode } from "./types";
 
+/** "chat" is the Chat + Work side of the switch. The id is what old prefs
+ *  already hold, so a stored "chat" loads as Chat + Work with no migration. */
 export type Mode = "code" | "chat";
+
+/** The agents Chat + Work can run (desktop/chat-cli.js, chat-claude.js). */
+export const CHAT_AGENTS = ["claude", "codex", "opencode"] as const;
 
 /** Chat needs a desktop build that has it (0.2.53+). */
 export function chatAvailable(): boolean {
@@ -40,6 +45,12 @@ interface ChatState {
   query: string;
   activeId: string | null;
   threads: Record<string, ChatThread>;
+  /** The folder a blank thread will be created with. */
+  draftFolder: string;
+  /** A teammate whose work is open, read-only, in place of a thread. */
+  viewActor: string | null;
+  setFolder: (dir: string) => Promise<void>;
+  viewTeammate: (actor: string | null) => void;
   setMode: (m: Mode) => void;
   refresh: () => Promise<void>;
   setQuery: (q: string) => void;
@@ -57,6 +68,8 @@ export const useChat = create<ChatState>((set, get) => ({
   query: "",
   activeId: null,
   threads: {},
+  draftFolder: "",
+  viewActor: null,
 
   setMode: (m) => {
     writeMode(zStorage, m);
@@ -81,12 +94,26 @@ export const useChat = create<ChatState>((set, get) => ({
      that was never written to must not litter the list. */
   newChat: () => {
     writeLastChat(zStorage, null);
-    set({ activeId: null });
+    set({ activeId: null, draftFolder: "", viewActor: null });
   },
+
+  /* Attach a folder to the open thread (or to the blank one, which carries it
+     into chatCreate). "" detaches: back to plain chat. */
+  setFolder: async (dir) => {
+    const id = get().activeId;
+    if (!id) {
+      set({ draftFolder: dir });
+      return;
+    }
+    const r = await bridge.local?.chatSetFolder?.(id, dir);
+    if (r) await get().refresh();
+  },
+
+  viewTeammate: (actor) => set({ viewActor: actor }),
 
   open: async (id) => {
     writeLastChat(zStorage, id);
-    set({ activeId: id });
+    set({ activeId: id, viewActor: null });
     if (get().threads[id]) return;
     const c = await bridge.local?.chatGet?.(id);
     if (!c) {
@@ -128,13 +155,14 @@ export const useChat = create<ChatState>((set, get) => ({
   send: async (text) => {
     const l = bridge.local;
     if (!l?.chatSend || !l.chatCreate) return;
-    const { launchModel: picked, launchAgent, launchEffort, launchMode } = useBoard.getState();
-    // Chat runs the Claude CLI only: a Code pick of an opencode/codex model is
-    // not a model claude can take, so Chat falls back to claude's default.
-    const launchModel = !launchAgent || launchAgent === "claude" ? picked : "";
+    const { launchModel, launchAgent, launchEffort, launchMode } = useBoard.getState();
+    // The picked agent runs the turn. One Chat can run is one the picker
+    // offers; anything else (gemini, until desktop has it) is claude.
+    const agent = (CHAT_AGENTS as readonly string[]).includes(launchAgent) ? launchAgent : "claude";
     let id = get().activeId;
     if (!id) {
-      const c = await l.chatCreate();
+      const c = await l.chatCreate(get().draftFolder || undefined);
+      set({ draftFolder: "" });
       id = c.id;
       writeLastChat(zStorage, c.id);
       set((s) => ({ activeId: c.id, threads: { ...s.threads, [c.id]: emptyChatThread() } }));
@@ -142,8 +170,8 @@ export const useChat = create<ChatState>((set, get) => ({
     const chatId = id;
     const put = (fn: (t: ChatThread) => ChatThread) =>
       set((s) => ({ threads: { ...s.threads, [chatId]: fn(s.threads[chatId] ?? emptyChatThread()) } }));
-    put((t) => sendUser(t, text, launchModel));
-    const r = await l.chatSend(chatId, text, { model: launchModel, effort: launchEffort, mode: launchMode });
+    put((t) => sendUser(t, text, launchModel, agent));
+    const r = await l.chatSend(chatId, text, { agent, model: launchModel, effort: launchEffort, mode: launchMode });
     if (!r || !r.ok) put((t) => failTurn(t, (r && r.error) || "Could not send."));
     void get().refresh();
   },
@@ -177,15 +205,15 @@ export function wireChat(): void {
       if (!prev) return {};
       const next = chatEvent(prev, evt);
       /* Same bookkeeping as board.ts's noteModelLimit (Code), reused rather
-         than reimplemented — see model-limits.mjs. Chat is claude-only
-         (desktop/chat.js), so the key is always claude:<model>, the exact
-         namespace ModelChoice already reads for claude's group; a run that
-         hits a usage limit here grays the same picker row Code's would. */
+         than reimplemented — see model-limits.mjs. The key is
+         <agent>:<model>, the exact namespace ModelChoice reads for that
+         agent's group; a run that hits a usage limit here grays the same
+         picker row Code's would. */
       if (prev.model) {
         const last = next.transcript.messages[next.transcript.messages.length - 1] as
           | { status?: { type?: string; error?: string } }
           | undefined;
-        noteModelLimit(zStorage, `claude:${prev.model}`, last?.status, evt.payload);
+        noteModelLimit(zStorage, `${prev.agent}:${prev.model}`, last?.status, evt.payload);
       }
       return { threads: { ...s.threads, [id]: next } };
     });

@@ -6,15 +6,20 @@
 //
 //   id                 stable name, stored on every assistant message
 //   trainsOnPrompts    true = main.js skips the Masora brief step for it
-//   open({ chat, mcpConfig, model, mode, onEvent })
+//   agent              the CLI name agent-console.js knows: claude|codex|opencode
+//   open({ chat, mcpConfig, model, mode, folder, env, onEvent })
 //     -> { ok: true, send(text, { brief, prior }), stop() } | { ok: false, error }
-//   onEvent(evt)       evt is { type: "agent", payload } with payload in the
-//                      claude stream-json shape the board already renders
-//                      (`system`/init {model}, `stream_event` text_delta,
-//                      `assistant`, `result`), or { type: "exit", code, ... }.
+//   replyOf(payload)   the text of the reply a payload carries, or ""
+//   endsTurn(payload)  true when the payload is the end of a turn (claude's
+//                      `result`; the one-shot CLIs end with their process)
+//   onEvent(evt)       evt is { type: "agent", payload } in the CLI's OWN
+//                      shape, or { type: "exit", code, ... }. The board reads
+//                      it with the `agent` it sent the turn to: the same
+//                      transcript.mjs Code uses, so there is one reader.
 //
-// A provider that speaks another wire format translates to those payloads;
-// board/src/lib/chat-stream.mjs is the only reader.
+// `folder` is what makes a chat a WORK chat: the agent runs there with its
+// tools. Without one it runs in the chat's neutral folder and cannot touch
+// anything (claude: tools off; the others: their read-only posture).
 "use strict";
 
 const chats = require("./chat.js");
@@ -22,19 +27,29 @@ const chats = require("./chat.js");
 function createClaudeCli({ startConsole }) {
   return {
     id: "claude-cli",
+    agent: "claude",
     trainsOnPrompts: false,
-    open({ chat, mcpConfig, model, mode, onEvent }) {
-      // This machine's session for the chat. With history but no session
-      // here (a handed-over chat), the first send replays it.
-      const sess = chats.session(chat.id);
+    replyOf(p) {
+      return p && p.type === "assistant" && p.message && Array.isArray(p.message.content)
+        ? p.message.content.filter((b) => b && b.type === "text").map((b) => b.text).join("")
+        : "";
+    },
+    endsTurn: (p) => Boolean(p && p.type === "result"),
+    open({ chat, mcpConfig, model, mode, folder, env, onEvent }) {
+      // This machine's session for the chat, from where it runs. With history
+      // but no session here (a handed-over chat, or a new folder), the first
+      // send replays it.
+      const cwd = folder || chats.dirOf(chat.id);
+      const sess = chats.session(chat.id, cwd);
       let replay = !sess.started;
       const started = startConsole({
         agent: "claude",
-        cwd: chats.dirOf(chat.id),
-        args: chats.chatArgs({ sessionId: sess.sessionId, started: sess.started, mcpConfig, model, mode }),
+        cwd,
+        env,
+        args: chats.chatArgs({ sessionId: sess.sessionId, started: sess.started, mcpConfig, model, mode, work: Boolean(folder) }),
         onEvent: (evt) => {
           const p = evt && evt.type === "agent" ? evt.payload : null;
-          if (p && p.type === "system" && p.subtype === "init") chats.markStarted(chat.id);
+          if (p && p.type === "system" && p.subtype === "init") chats.markStarted(chat.id, cwd);
           onEvent(evt);
         },
       });

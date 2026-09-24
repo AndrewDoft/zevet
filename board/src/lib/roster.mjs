@@ -79,6 +79,23 @@ export function turnTrace(events, actor) {
   };
 }
 
+/**
+ * An actor's recent work as turns, oldest first: each prompt, the tool calls
+ * that followed it, and whether it finished. What Chat + Work opens, read-only,
+ * for a teammate — the hub carries prompts and tool calls, never replies.
+ */
+export function teammateTurns(events, actor) {
+  const turns = [];
+  for (const e of events || []) {
+    if (!e || e.actor !== actor) continue;
+    if (e.kind === "prompt" || !turns.length) turns.push({ prompt: e.kind === "prompt" ? e : null, tools: [], ended: false });
+    const t = turns[turns.length - 1];
+    if (e.kind === "tool") t.tools.push(e);
+    else if (e.kind === "turn_end") t.ended = true;
+  }
+  return turns;
+}
+
 /** The one-line mission and the current command, as the roster shows them. */
 export function turnSummary(entry, events) {
   const t = turnTrace(events, entry && entry.actor);

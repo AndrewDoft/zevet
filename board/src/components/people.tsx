@@ -47,7 +47,7 @@
  * which is a column built for a long list rather than a 250px rail. The plus
  * is in this pane's own title row (App.tsx).
  */
-import { type CSSProperties, useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { Twist } from "./twist";
 import {
   hueOf,
@@ -335,7 +335,20 @@ function RepoGroup({
   );
 }
 
-export function PeoplePane() {
+/**
+ * `threads` swaps what hangs under MY row: Code's repo -> agent tree by default,
+ * Chat + Work's threads when it is given. Everything else — the roster, the
+ * invited rows, hue, follow, the mission line — is this one pane either way,
+ * so the team reads the same on both sides of the switch. `onPerson` sees a
+ * plain click on a row (Chat + Work opens a teammate's work read-only there).
+ */
+export function PeoplePane({
+  threads,
+  onPerson,
+}: {
+  threads?: (hue: number) => ReactNode;
+  onPerson?: (actor: string, me: boolean) => void;
+} = {}) {
   const roster = useBoard(selectRoster);
   const myActor = useBoard((s) => s.myActor);
   const who = useBoard((s) => s.who.state) as
@@ -359,18 +372,18 @@ export function PeoplePane() {
   /* A running console's title is whatever its CLI has written to its session
      file by now — claude rewrites its `ai-title` as the work goes. */
   useEffect(() => {
-    if (!bridge.local) return;
+    if (!bridge.local || threads) return; // Code's instance already polls
     const t = setInterval(() => void pollConsoleFiles(), 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [threads]);
 
   /* ⚠️ THE FETCH LIVES HERE NOW, not in the history list. This pane is always
      mounted; the history is in the repo column and only renders while nothing
      is selected, so leaving the refresh there meant the live tree went stale
      the moment somebody clicked a file. */
   useEffect(() => {
-    if (bridge.local) refreshSessions(true);
-  }, [refreshSessions, localRoot]);
+    if (bridge.local && !threads) refreshSessions(true);
+  }, [refreshSessions, localRoot, threads]);
 
   function toggleExpanded(actor: string, on: boolean) {
     const next = expanded.filter((x) => x !== actor);
@@ -470,7 +483,7 @@ export function PeoplePane() {
   /* Open unless the group was shut by hand: a tree whose branches all start
      closed makes you click twice to learn what is already known. */
   const myRepos = (hue: number) =>
-    groups.map((g) => (
+    threads ? threads(hue) : groups.map((g) => (
       <RepoGroup
         key={g.repo}
         repo={g.repo}
@@ -502,6 +515,7 @@ export function PeoplePane() {
                   setSelectedActor(selectedActor === r.actor ? null : r.actor);
                   return;
                 }
+                onPerson?.(r.actor, me);
                 toggleExpanded(r.actor, !open);
               }}
             >

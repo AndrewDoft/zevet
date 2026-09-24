@@ -344,7 +344,9 @@ const MODES = {
   auto: {
     label: "Auto",
     claude: ["--permission-mode", "acceptEdits"],
-    codex: ["--sandbox", "workspace-write", "--approve-for-me"],
+    // MEASURED 2026-09-24, codex-cli 0.155.0-alpha.9.2: --approve-for-me carries the
+    // workspace-write sandbox itself and exits 2 if --sandbox is also given.
+    codex: ["--approve-for-me"],
     opencode: ["--auto"],
   },
   dangerous: {
@@ -408,6 +410,24 @@ const CAN_FORK = new Set(["claude", "codex"]);
  * `session_id`, codex `thread_id`, opencode `sessionID` on every event.
  */
 const CAN_RESUME = new Set(["claude", "codex", "opencode"]);
+
+/**
+ * `codex exec resume` takes neither --sandbox nor --approve-for-me (measured
+ * 2026-09-24, codex-cli 0.155.0-alpha.9.2: exit 2, "unexpected argument"); it
+ * takes -m, --dangerously-bypass-approvals-and-sandbox and -c key=value. So the
+ * postures become the config keys those flags set. The value is left a bare
+ * string, which codex reads as a literal when it is not TOML, so no quote ever
+ * reaches a cmd.exe shim's argv.
+ */
+function resumeSafe(extra) {
+  const out = [];
+  for (let i = 0; i < extra.length; i++) {
+    if (extra[i] === "--sandbox") out.push("-c", `sandbox_mode=${extra[++i]}`);
+    else if (extra[i] === "--approve-for-me") out.push("-c", "sandbox_mode=workspace-write", "-c", "approval_policy=never");
+    else out.push(extra[i]);
+  }
+  return out;
+}
 
 function invocationFor(agent, opts) {
   const o = opts || {};
@@ -482,7 +502,7 @@ function invocationFor(agent, opts) {
   // so it goes immediately after `exec` — before the flags and before the `-`,
   // which is still the prompt and still last.
   if (forkFrom) return ["exec", "fork", forkFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
-  if (resumeFrom) return ["exec", "resume", resumeFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
+  if (resumeFrom) return ["exec", "resume", resumeFrom, "--skip-git-repo-check", "--json", ...resumeSafe(extra), "-"];
   return ["exec", "--skip-git-repo-check", "--json", ...extra, "-"];
 }
 

@@ -57,6 +57,15 @@ const SYSTEM_PROMPT =
   "plainly when the answer is not in it instead of guessing. A prior-conversation block is this " +
   "chat's history so far, carried over from another session.";
 
+/** The same seam with a folder and tools. Same argv rule as above. */
+const WORK_PROMPT =
+  "You are Zevet, an assistant that chats and does work. This conversation has a working folder: " +
+  "you can read and change files there and run commands, using your tools, whenever the person asks " +
+  "for something done. Answer plainly when no action is needed. When a turn opens with a " +
+  "masora-context block, it is cited evidence from the user's own Masora workspace: use it, cite " +
+  "the titles you rely on, and say plainly when the answer is not in it instead of guessing. A " +
+  "prior-conversation block is this chat's history so far, carried over from another session.";
+
 function isId(id) {
   return typeof id === "string" && ID.test(id);
 }
@@ -91,14 +100,31 @@ function read(id) {
 }
 
 function summary(c) {
-  return { id: c.id, title: c.title || "", created: c.created, updated: c.updated, owner: c.owner || "" };
+  return {
+    id: c.id, title: c.title || "", created: c.created, updated: c.updated, owner: c.owner || "",
+    ...(c.folder ? { folder: c.folder } : {}),
+  };
 }
 
-/** `owner` is the hub login of whoever started it, and its first participant. */
-function create(owner) {
+/** `owner` is the hub login of whoever started it, and its first participant.
+ *  `folder` makes it a WORK thread: the agent runs there, with tools. */
+function create(owner, folder) {
   const now = Date.now();
   const who = String(owner || "");
-  return write({ id: randomUUID(), title: "", owner: who, participants: who ? [who] : [], created: now, updated: now, messages: [] });
+  return write({
+    id: randomUUID(), title: "", owner: who, participants: who ? [who] : [], created: now, updated: now, messages: [],
+    ...(folder ? { folder: String(folder) } : {}),
+  });
+}
+
+/** Attach a folder (or, with none, detach it). The caller has already checked
+ *  the folder is one the person opened; this only records it. */
+function setFolder(id, folder) {
+  const c = read(id);
+  if (!c) return null;
+  if (folder) c.folder = String(folder);
+  else delete c.folder;
+  return summary(write(c));
 }
 
 /** Newest first. `query` matches the title or any message, case-insensitive. */
@@ -135,28 +161,54 @@ function remove(id) {
   return true;
 }
 
-/* ── this machine's claude session for a chat (never in the transcript) ── */
+/* ── this machine's agent sessions for a chat (never in the transcript) ──
+   A session resumes only from the folder it ran in, so every binding carries
+   its cwd: attach a folder to a chat that has run elsewhere and the next turn
+   starts a fresh session and replays the transcript, instead of asking the CLI
+   to resume something it cannot find from there. */
 
 function sessionFile(id) {
   return path.join(dirOf(id), "session.json");
 }
 
-/** `{ sessionId, started }`; a new, unstarted one when this machine has none. */
-function session(id) {
+function readSession(id) {
   try {
     const s = JSON.parse(fs.readFileSync(sessionFile(id), "utf8"));
-    if (s && isId(s.sessionId)) return { sessionId: s.sessionId, started: s.started === true };
+    return s && typeof s === "object" ? s : {};
   } catch {
-    // none on this machine yet
+    return {}; // none on this machine yet
   }
-  const fresh = { sessionId: randomUUID(), started: false };
-  fs.writeFileSync(sessionFile(id), JSON.stringify(fresh), "utf8");
-  return fresh;
 }
 
-function markStarted(id) {
-  const s = session(id);
-  if (!s.started) fs.writeFileSync(sessionFile(id), JSON.stringify({ ...s, started: true }), "utf8");
+function writeSession(id, s) {
+  fs.writeFileSync(sessionFile(id), JSON.stringify(s), "utf8");
+}
+
+/** claude's binding: `{ sessionId, started }`; a new, unstarted one when this
+ *  machine has none for `cwd` (the chat's neutral folder unless it says). */
+function session(id, cwd) {
+  const where = cwd || dirOf(id);
+  const s = readSession(id);
+  if (isId(s.sessionId) && (s.cwd || dirOf(id)) === where) return { sessionId: s.sessionId, started: s.started === true };
+  const fresh = { ...s, sessionId: randomUUID(), started: false, cwd: where };
+  writeSession(id, fresh);
+  return { sessionId: fresh.sessionId, started: false };
+}
+
+function markStarted(id, cwd) {
+  const s = session(id, cwd);
+  if (!s.started) writeSession(id, { ...readSession(id), started: true });
+}
+
+/** The id codex or opencode gave this chat's session, if it ran from `cwd`. */
+function agentSession(id, agent, cwd) {
+  const b = (readSession(id).agents || {})[agent];
+  return b && typeof b.id === "string" && b.id && b.cwd === (cwd || dirOf(id)) ? b.id : null;
+}
+
+function bindAgentSession(id, agent, sessionId, cwd) {
+  const s = readSession(id);
+  writeSession(id, { ...s, agents: { ...(s.agents || {}), [agent]: { id: String(sessionId), cwd: cwd || dirOf(id) } } });
 }
 
 /** A prompt that IS a slash command — `/compact`, `/clear args`, not prose. */
@@ -189,14 +241,15 @@ function addTurn(id, user, assistant, model, author, provider) {
 }
 
 /** argv for one chat process. Pure; see the flag notes at the top. */
-function chatArgs({ sessionId, started, mcpConfig, model, mode } = {}) {
+function chatArgs({ sessionId, started, mcpConfig, model, mode, work } = {}) {
   const args = [
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
     "--include-partial-messages",
-    "--tools", "",
+    // A chat with no folder has no tools; one with a folder keeps claude's own.
+    ...(work ? [] : ["--tools", ""]),
     "--strict-mcp-config",
     ...(started ? ["--resume", sessionId] : ["--session-id", sessionId]),
-    "--append-system-prompt", SYSTEM_PROMPT,
+    "--append-system-prompt", work ? WORK_PROMPT : SYSTEM_PROMPT,
     ...(mcpConfig ? ["--mcp-config", mcpConfig, "--allowedTools", "mcp__masora"] : []),
     ...(model ? ["--model", model] : []),
   ];
@@ -214,9 +267,14 @@ function chatArgs({ sessionId, started, mcpConfig, model, mode } = {}) {
  * only when the line it sees starts with the command — a `<prior-conversation>`
  * block in front makes it prose about a path, and the command never fires.
  */
-function composeTurn(text, brief, prior) {
+function composeTurn(text, brief, prior, system) {
   if (isSlashPrompt(text)) return String(text);
   const parts = [];
+  // For a CLI with no system-prompt flag: the standing instructions ride the
+  // first turn of a session, in front of everything else.
+  if (system) parts.push(`<instructions>
+${system}
+</instructions>`);
   if (prior && prior.length) {
     const log = prior.map((m) => `[${m.role === "user" ? m.author || "user" : "assistant"}]: ${m.text}`).join("\n\n");
     parts.push(`<prior-conversation>\n${log}\n</prior-conversation>`);
@@ -252,15 +310,19 @@ function toRecord(chat) {
 module.exports = {
   CHATS,
   SYSTEM_PROMPT,
+  WORK_PROMPT,
   isId,
   dirOf,
   read,
   create,
+  setFolder,
   list,
   rename,
   remove,
   session,
   markStarted,
+  agentSession,
+  bindAgentSession,
   addTurn,
   chatArgs,
   composeTurn,

@@ -49,7 +49,8 @@ test("Chat's claude-only picker never writes the launch model back", () => {
   const src = readFileSync(path.join(ROOT, "board", "src", "components", "model-choice.tsx"), "utf8");
   assert.match(src, /if \(inChat \|\| !front \|\| match \|\| !selected\) return;/);
   const chat = readFileSync(path.join(ROOT, "board", "src", "lib", "chat.ts"), "utf8");
-  assert.match(chat, /const launchModel = !launchAgent \|\| launchAgent === "claude" \? picked : "";/);
+  // Chat runs every provider now, so the pick goes through as it is.
+  assert.match(chat, /chatSend\(chatId, text, \{ agent, model: launchModel/);
 });
 
 // Three IPC calls with no .catch, found auditing workspaces/launcher: a

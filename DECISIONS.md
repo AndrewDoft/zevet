@@ -828,3 +828,27 @@ droppable. Personal credentials, like the Masora token, are
 migration with no re-pairing story beyond "add it again" —
 `credentialKey()` fails closed (`null`, never a throw) exactly like
 `masora.loadToken()` already does for the same reason.
+
+## D-019 — Chat + Work: one mode, every provider, work by attaching a folder
+
+Code | Chat + Work. The stored id stays `chat`, so old prefs load as Chat + Work.
+A thread with a `folder` runs its provider's agent there with tools (claude:
+`--tools ""` dropped; codex/opencode: the chosen posture); without one it stays
+plain chat (claude tools off; codex `read-only`; opencode `plan`). Providers are
+keyed by the agent-console.js agent (`claude`, `codex`, `opencode`) and reuse
+`invocationFor`, so there is one launch stack. The board reads each CLI's own
+JSONL with the agent it sent the turn to (transcript.mjs).
+
+Measured 2026-09-24 and fixed on the way: codex `--approve-for-me` exits 2 beside
+`--sandbox` (auto is now `--approve-for-me` alone); `codex exec resume` accepts
+neither flag (posture goes through `-c sandbox_mode=`); opencode ignores the spawn
+cwd when `$PWD` is set (`--dir`); a stored model came back with the default agent
+(the agent now follows the picked model).
+
+Not done: Gemini has no adapter (CLI absent here, event shape not measured), so it
+is listed from the CLI's doc behind a Connect chip. Teammates' chats are not on
+the hub, which carries prompts and tool calls only: a teammate opens read-only
+from those. Tool activity is not stored in a chat file, so a reopened thread
+shows text.
+
+**Reversibility.** High: additive, one store field (`folder`) and one file.

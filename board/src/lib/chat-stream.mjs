@@ -15,7 +15,7 @@ import { usageOf } from "./usage.mjs";
 
 /** @returns {import("./chat-stream.d.mts").ChatThread} */
 export function emptyChatThread() {
-  return { transcript: emptyTranscript(), draft: "", busy: false, usage: null, slashCommands: null, model: null };
+  return { transcript: emptyTranscript(), draft: "", busy: false, usage: null, slashCommands: null, model: null, agent: "claude" };
 }
 
 /** A saved chat ({role, text}[]) as a closed thread. */
@@ -29,7 +29,7 @@ export function fromStored(messages) {
       t = closeTranscript(t, { code: 0 });
     }
   }
-  return { transcript: t, draft: "", busy: false, usage: null, slashCommands: null, model: null };
+  return { transcript: t, draft: "", busy: false, usage: null, slashCommands: null, model: null, agent: "claude" };
 }
 
 let turns = 0;
@@ -44,9 +44,11 @@ let turns = 0;
  *  useBoard's launchModel at Send time) — carried on the thread so a later
  *  event that closes the turn knows which model to grade a rate limit
  *  against, without re-reading a launch preference that may have moved on to
- *  a different model by the time the reply arrives. Chat is claude-only
- *  (desktop/chat.js), so this is always a claude model id, never agent-qualified. */
-export function sendUser(thread, text, model) {
+ *  a different model by the time the reply arrives. Never agent-qualified.
+ *
+ *  `agent` is the CLI the turn went to (claude|codex|opencode): each speaks its
+ *  own JSONL, and it picks the vocabulary transcript.mjs reads it with. */
+export function sendUser(thread, text, model, agent) {
   const t = appendUserText(thread.transcript, text);
   const messages = t.messages.concat({ id: `zc-${++turns}`, role: "assistant", content: [], status: { type: "running" } });
   return {
@@ -57,6 +59,7 @@ export function sendUser(thread, text, model) {
     usage: thread.usage,
     slashCommands: thread.slashCommands,
     model: model ?? thread.model ?? null,
+    agent: agent || thread.agent || "claude",
   };
 }
 
@@ -68,12 +71,10 @@ export function chatEvent(thread, evt) {
     // `result`. That lands on the thread even when nothing was said yet.
     const died = !evt.stopped && evt.code !== 0 ? evt.error || "The run stopped." : null;
     return {
+      ...thread,
       transcript: thread.busy ? closeTranscript(thread.transcript, { ...evt, error: died }) : thread.transcript,
       draft: "",
       busy: false,
-      usage: thread.usage,
-      slashCommands: thread.slashCommands,
-      model: thread.model,
     };
   }
   if (evt.type !== "agent") return thread;
@@ -91,11 +92,11 @@ export function chatEvent(thread, evt) {
       ? { ...thread, draft: thread.draft + d.text }
       : thread;
   }
-  const transcript = appendAgentPayload(thread.transcript, p);
+  const transcript = appendAgentPayload(thread.transcript, p, { agent: thread.agent, model: thread.model || "" });
   let usage = thread.usage;
   const u = usageOf(p);
   if (u) usage = u;
-  if (p.type === "result") return { transcript, draft: "", busy: false, usage, slashCommands: thread.slashCommands, model: thread.model };
+  if (p.type === "result") return { ...thread, transcript, draft: "", busy: false, usage };
   if (p.type === "assistant") return { ...thread, transcript, draft: "", usage };
   /* `/clear` lands as `conversation_reset`: the transcript empties (transcript.mjs)
      and any streamed draft must go with it, or the screen keeps old tokens. */
@@ -104,14 +105,7 @@ export function chatEvent(thread, evt) {
 
 /** A failure to even start the turn, drawn where the reply would be. */
 export function failTurn(thread, error) {
-  return {
-    transcript: closeTranscript(thread.transcript, { error }),
-    draft: "",
-    busy: false,
-    usage: thread.usage,
-    slashCommands: thread.slashCommands,
-    model: thread.model,
-  };
+  return { ...thread, transcript: closeTranscript(thread.transcript, { error }), draft: "", busy: false };
 }
 
 /** What the runtime renders: the transcript with the draft laid over it. */
