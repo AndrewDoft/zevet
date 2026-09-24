@@ -51,19 +51,21 @@ describe("hubs are named", () => {
   test("setup requires a name before creating, and shows the name it got back", () => {
     assert.match(setup, /id="teamName"/);
     assert.match(setup, /"Name\?"/);
-    assert.match(setup, /teamCreate\(hub, name\)/);
+    assert.match(setup, /teamCreate\(null, name\)/);
   });
 
-  test("the address is the name: setup derives hub and team from it, hosted hub by default", () => {
-    assert.match(setup, /HOSTED_HUB = "https:\/\/34-74-69-129\.sslip\.io"/);
-    assert.match(setup, /teamResolve\(hub, name\)/);
-    assert.match(handler("zevet:teamResolve"), /\/team\/resolve\?name=/);
-    assert.match(setup, /<details id="other">\s*<summary>Other hub/);
+  test("the address is the name: the app resolves the hub, setup never sees one", () => {
+    assert.match(setup, /teamResolve\(null, name\)/);
+    assert.doesNotMatch(setup, /HOSTED_HUB|id="hub"|Other hub/);
+    const t = handler("zevet:teamResolve");
+    assert.match(t, /\/team\/resolve\?name=/);
+    assert.match(t, /targetHub\(\)/);
+    assert.match(handler("zevet:teamCreate"), /targetHub\(\)/);
   });
 
   test("the rail and Settings show it", () => {
     assert.match(read("board", "src", "App.tsx"), /id="railTeam"/);
-    assert.match(read("board", "src", "components", "settings.tsx"), /<SRow k="Team" v=\{teamName\}/);
+    assert.match(read("board", "src", "components", "settings.tsx"), /<SSection title="Team" summary=\{teamName\}>/);
   });
 });
 

@@ -129,7 +129,7 @@ export function authorizeUrl({ clientId, redirectUri, state, domain = "", scopes
  * is a good half hour of looking at the wrong things.
  */
 export async function exchangeCode({ clientId, clientSecret, code, redirectUri, fetchImpl } = {}) {
-  if (!clientId || !clientSecret) return { ok: false, error: "this hub has no Google client configured" };
+  if (!clientId || !clientSecret) return { ok: false, error: "Google sign-in is not configured" };
   if (!code) return { ok: false, error: "Google did not return a code" };
 
   const r = await call(

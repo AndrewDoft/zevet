@@ -50,7 +50,7 @@ class SignInError extends Error {}
  */
 class GithubSignIn {
   constructor({ hub, team = "", fetchImpl, now = () => Date.now(), sleep } = {}) {
-    if (!hub) throw new SignInError("Enter a hub address.");
+    if (!hub) throw new SignInError("Offline");
     this.base = String(hub).replace(/\/+$/, "");
     // Empty/absent means the hub's DEFAULT team — every existing install and
     // every call that does not pass one. See hub/server.mjs's team registry.
@@ -73,20 +73,20 @@ class GithubSignIn {
         signal: AbortSignal.timeout(15000),
       });
     } catch (err) {
-      throw new SignInError(`Could not reach the hub: ${err && err.message ? err.message : String(err)}`);
+      throw new SignInError("Offline");
     }
     let parsed = null;
     try {
       parsed = await res.json();
     } catch {
-      throw new SignInError(`The hub returned an invalid response (HTTP ${res.status}).`);
+      throw new SignInError(`Server error ${res.status}`);
     }
     if (!res.ok) {
       // 503 is the hub saying it has no client id. That is a DEPLOYMENT
       // problem, not a user problem, and saying "sign-in failed" would send
       // somebody looking at their own GitHub account for an hour.
-      if (res.status === 503) throw new SignInError("GitHub sign-in is not configured for this hub.");
-      throw new SignInError(parsed && parsed.error ? parsed.error : `The hub returned HTTP ${res.status}.`);
+      if (res.status === 503) throw new SignInError("GitHub sign-in is off");
+      throw new SignInError(parsed && parsed.error ? parsed.error : `Server error ${res.status}`);
     }
     return parsed;
   }
@@ -134,7 +134,7 @@ class GithubSignIn {
         continue;
       }
       if (r && r.ok && r.token) return { token: r.token, secret: r.secret || "", login: r.login, owner: Boolean(r.owner) };
-      throw new SignInError((r && r.error) || "The hub returned an invalid sign-in response. Try again.");
+      throw new SignInError((r && r.error) || "Invalid sign-in response");
     }
     throw new SignInError("cancelled");
   }

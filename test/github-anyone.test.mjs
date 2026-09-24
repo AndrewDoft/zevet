@@ -63,7 +63,7 @@ describe("GitHub sign-in for anyone", () => {
 
     const b = await signIn(h.base, "acme platform"); // name, any case
     assert.equal(b.status, 403);
-    assert.match(b.body.error, /not on this hub's list — ask @alice/);
+    assert.match(b.body.error, /not on this team's list — ask @alice/);
 
     const again = await signIn(h.base, "ACME PLATFORM"); // the owner rejoins by name
     assert.equal(again.status, 200);

@@ -397,7 +397,7 @@ const COPY = [
     // zevet's hub relays events and runs nothing. The agent that kept going is
     // on somebody's own machine — the opposite claim, and the reassuring one.
     from: "Connection lost. The run kept going on the server.",
-    to: "Lost the hub. Your agents keep running on their own machines.",
+    to: "Offline",
   },
   {
     file: "components/assistant-ui/elements/document-reference.tsx",

@@ -116,7 +116,7 @@ async function call(url, init, fetchImpl) {
  * than replaced with a number that seemed nice here.
  */
 export async function deviceStart({ clientId, scopes = SCOPES, fetchImpl } = {}) {
-  if (!clientId) return { ok: false, error: "this hub has no GitHub client id configured" };
+  if (!clientId) return { ok: false, error: "GitHub sign-in is not configured" };
 
   const r = await call(
     DEVICE_CODE_URL,
@@ -164,7 +164,7 @@ export async function deviceStart({ clientId, scopes = SCOPES, fetchImpl } = {})
  *   `{ ok: false, error }`                          — stop, and say this
  */
 export async function devicePoll({ clientId, deviceCode, fetchImpl } = {}) {
-  if (!clientId) return { ok: false, error: "this hub has no GitHub client id configured" };
+  if (!clientId) return { ok: false, error: "GitHub sign-in is not configured" };
   if (!deviceCode) return { ok: false, error: "no device code" };
 
   const r = await call(
