@@ -1,5 +1,32 @@
 # Releasing zevet
 
+## Private distribution from 0.2.67
+
+The public repository's build workflow tests builds but no longer uploads
+installer artifacts, including on `v*` tags. Use the private `mshvid1101/masora2` workflow
+`zevet-private-desktop` with this release's exact reviewed 40-character commit.
+It runs the existing macOS/Windows build gates, uploads only to that private
+Actions run, and returns `zevet-private-release` with both installers, generated
+feed, and source commit. No public GitHub Release assets are permitted.
+
+The update credential is separate from local Masora authorization. Manual
+**Sign in for updates** opens the fixed `usemasora.com/access` approval page;
+automatic checks never open a browser. Successful approval grants a product-
+scoped token, encrypted by Electron's OS storage in `userData/update-access.json`.
+Both metadata and installer requests use it without cookies or redirects.
+401/403 requires another explicit sign-in; temporary network errors retain it.
+The renderer receives status only. Plaintext-equivalent Linux storage is refused.
+
+Stage the new clients and verify both native platform gates before enforcing
+the server download guard. Old clients cannot authenticate private downloads.
+After enforcement, remaining old clients must be upgraded from the signed-in
+Access page. The hosted edge permits only the three exact public metadata feeds
+used by the product pages; every installer, alias, script, and unknown download
+path remains protected. Zevet's updater still authenticates both its metadata
+and installer requests and never falls back to anonymous fetching. Detailed rollout contract:
+`Masora2/apps/desktop/shell/PRIVATE_UPDATES.md`.
+
+
 Every machine with zevet installed watches one file:
 `https://usemasora.com/download/zevet-latest.json`. Publishing a release means
 putting two installers and that file on the download host. Until the file
@@ -23,19 +50,17 @@ crashes on launch and a build that succeeded.
 number in the artifact names, and `scripts/make-feed.mjs` refuses to publish if
 the two disagree.
 
-```
-# desktop/package.json  "version": "0.2.0"
-git commit -am "release: 0.2.0"
-git tag v0.2.0
-git push && git push --tags
-```
-
-The tag starts `.github/workflows/build.yml`, which builds on a Windows runner
-and a macOS runner and, on the Mac, actually launches the app before uploading.
+Bump both root and desktop package versions and their lockfile roots, then
+commit and push the reviewed source branch. Run `node scripts/release-check.mjs`
+on that clean commit. In private Masora2, dispatch `zevet-private-desktop` with
+its exact commit SHA; do not use a branch or tag as the workflow input. The
+private workflow checks repository visibility before running the existing
+macOS/Windows test, build, storage, and Mac smoke gates.
 
 ## 2. Collect the artifacts
 
-From the Actions run, download both artifacts into one empty directory:
+From the private Masora2 Actions run, download `zevet-private-release` into
+one empty directory. It contains the generated feed, source commit, and:
 
 ```
 zevet-0.2.0-windows-x64-setup.exe
@@ -46,7 +71,7 @@ zevet-0.2.0-macos-arm64.dmg
 versions in one folder is how a feed ends up advertising one build and serving
 another. `make-feed.mjs` checks for exactly this and exits rather than write it.
 
-### The .dmg from Codemagic
+### Historical Codemagic alternative (not the private distribution route)
 
 The Mac leg can also run on Codemagic (app `6ab33101a3079c5deee322d8`, workflow `macos`
 in `codemagic.yaml`, mac_mini_m2), started from Windows:
@@ -102,12 +127,11 @@ names a file the host does not have yet makes every machine on the team retry a
 shell cannot read that directory and so the pattern never matches. Wrap it:
 `sudo sh -c "chmod 644 /srv/masora/downloads/zevet-*"`.
 
-Then check it from outside:
-
-```
-curl -s https://usemasora.com/download/zevet-latest.json
-curl -sI https://usemasora.com/download/zevet-0.2.0-windows-x64-setup.exe | head -3
-```
+Then verify the exact published filenames, sizes, and checksums through an
+approved browser session and the candidate's product-scoped updater credential.
+After enforcement, anonymous installer requests must be denied. The exact
+`zevet-latest.json` metadata feed remains publicly readable with `no-store`;
+this does not grant access to any installer named by that feed.
 
 ## 5. The landing page points itself
 
@@ -173,16 +197,11 @@ If it says nothing at all, the phases that are deliberately silent are
 
 ## Testing the updater without publishing anything
 
-`ZEVET_APP_FEED` overrides the feed URL. `scripts/` has no fake host in it, but
-one is about twenty lines of `node:http`: serve a manifest naming a file, serve
-the file, point the app at it.
-
-```
-ZEVET_APP_FEED=http://127.0.0.1:8801/download/zevet-latest.json npm start
-```
-
-This is how the feature was verified before it had ever been published — the
-real app, its own timer, a real stream, a real checksum.
+Run `node --test test/app-update.test.mjs test/update-access.test.mjs` for the
+real stream/hash behavior and private authorization failures. Packaged clients
+accept `ZEVET_APP_FEED` only for another `/download/` filename on the fixed
+`https://usemasora.com` origin. Local HTTP and other-origin overrides are refused
+before the credential is read. Tests inject transports instead.
 
 ## What is not automated, and why
 

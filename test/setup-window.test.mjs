@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { startHub, ROOT } from "./helpers.mjs";
 
 const DRIVE = path.join(ROOT, "scripts", "drive", "drive.mjs");
@@ -25,7 +26,11 @@ const SECRET = randomBytes(24).toString("hex");
 const HUB_COPY = /\bhub\b|sslip|https?:\/\//i;
 
 function drive(...args) {
-  const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout: 30000 });
+  return driveWithin(30000, ...args);
+}
+
+function driveWithin(timeout, ...args) {
+  const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout });
   return JSON.parse(out);
 }
 
@@ -184,5 +189,31 @@ describe("a fresh install's setup window", () => {
     drive("eval", `document.getElementById("googleStep").hidden = false`);
     drive("click", "#googleCancel");
     assert.match(drive("snapshot").outline, /div#googleStep[^\n]*hidden/);
+  });
+
+  test("the first automatic update check leaves setup responsive and offers sign-in", { timeout: 65000 }, async () => {
+    // The preceding cases paint synthetic update states. Start with a separate
+    // empty profile so they cannot overwrite this app's real 25-second check.
+    const deadline = performance.now() + 60000;
+    let outline = "";
+    const remaining = (cap = 5000) => {
+      const ms = Math.floor(deadline - performance.now());
+      assert.ok(ms > 0, `automatic update check exceeded 60 seconds; last outline:\n${outline}`);
+      return Math.min(cap, ms);
+    };
+    driveWithin(remaining(15000), "close");
+    driveWithin(remaining(30000), "launch");
+    while (performance.now() < deadline) {
+      try {
+        outline = driveWithin(remaining(), "snapshot").outline;
+      } catch (cause) {
+        throw new Error(`fresh setup stopped responding during its automatic update check; last outline:\n${outline}`, { cause });
+      }
+      if (/button#updateBtn[^\n]*"Sign in for updates"/.test(outline)) break;
+      await sleep(Math.min(150, Math.max(0, deadline - performance.now())));
+    }
+    assert.match(outline, /div#updateNote(?!.*hidden)[^\n]*"Sign in to Masora to enable updates/);
+    assert.match(outline, /button#updateBtn(?!.*hidden)[^\n]*"Sign in for updates"/);
+    assert.deepEqual(driveWithin(remaining(), "opened"), [], "the automatic check must not open a browser");
   });
 });

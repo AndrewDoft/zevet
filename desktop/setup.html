@@ -247,8 +247,8 @@
     $("repoStep").scrollIntoView();
   }
 
-  /* ── Update banner: the updater checks the public feed whether or not a team
-        is configured (see main.js), so this is the window to show it on. ── */
+  /* ── Update authorization is separate from a local team. Show update
+        status here even before a team is configured. ── */
   function paintUpdate(s) {
     var note = $("updateNote"), text = $("updateText"), btn = $("updateBtn");
     if (!s || (s.phase !== "downloading" && s.phase !== "ready" && s.phase !== "error")) {
@@ -269,8 +269,15 @@
         window.zevetLocal.updateInstall();
       };
     } else if (s.phase === "error") {
-      text.textContent = "Update failed";
-      btn.hidden = true;
+      text.textContent = s.error || "Update failed";
+      btn.hidden = false;
+      btn.disabled = false;
+      btn.textContent = s.authRequired ? "Sign in for updates" : "Try again";
+      btn.onclick = async function () {
+        btn.disabled = true;
+        try { paintUpdate(await window.zevetLocal.updateCheck()); }
+        finally { btn.disabled = false; }
+      };
     } else {
       note.hidden = true;
     }

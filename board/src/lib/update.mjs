@@ -34,7 +34,7 @@ export function updateCommand(state, up, { hasCheck, hasInstall }) {
     return {
       kind: "check",
       disabled: busy,
-      label: up.checking || state.phase === "checking" ? "Checking\u2026" : "Check now",
+      label: up.checking || state.phase === "checking" ? "Checking\u2026" : state.authRequired ? "Sign in for updates" : "Check now",
     };
   }
   return null;

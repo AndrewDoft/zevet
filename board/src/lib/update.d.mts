@@ -7,6 +7,7 @@ export interface UpdateStateLike {
   manual?: boolean;
   notes?: string;
   error?: string;
+  authRequired?: boolean;
 }
 
 export interface UpdatesLike {

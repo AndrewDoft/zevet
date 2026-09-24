@@ -289,7 +289,7 @@ class AppUpdater {
     this._busy = true;
     try {
       this._readyEntry = null;
-      this._set({ phase: "checking", error: null, file: null, canInstall: false });
+      this._set({ phase: "checking", error: null, file: null, canInstall: false, authRequired: false });
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), MANIFEST_TIMEOUT_MS);
       let json;
@@ -346,7 +346,7 @@ class AppUpdater {
       return this.status();
     } catch (err) {
       this.log(`update check failed: ${err && err.message}`);
-      this._set({ phase: "error", error: (err && err.message) || "the check failed" });
+      this._set({ phase: "error", error: (err && err.message) || "the check failed", authRequired: err && err.code === "update_access_required" });
       return this.status();
     } finally {
       this._busy = false;
