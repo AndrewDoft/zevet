@@ -185,4 +185,11 @@ describe("a fresh install's setup window", () => {
     drive("click", "#googleCancel");
     assert.match(drive("snapshot").outline, /div#googleStep[^\n]*hidden/);
   });
+
+  test("the first automatic update check leaves setup responsive and offers sign-in", async () => {
+    const outline = await waitFor((o) => /button#updateBtn[^\n]*"Sign in for updates"/.test(o), { tries: 200 });
+    assert.match(outline, /div#updateNote(?!.*hidden)[^\n]*"Sign in to Masora to enable updates/);
+    assert.match(outline, /button#updateBtn(?!.*hidden)[^\n]*"Sign in for updates"/);
+    assert.deepEqual(drive("opened"), [], "the automatic check must not open a browser");
+  });
 });

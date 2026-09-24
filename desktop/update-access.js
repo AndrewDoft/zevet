@@ -51,11 +51,15 @@ class UpdateAccess {
   }
 
   readToken() {
-    if (this.invalidated || !encryptionAvailable(this.storage, this.platform)) return null;
+    if (this.invalidated) return null;
     try {
       const saved = JSON.parse(fs.readFileSync(this.file, "utf8"));
       if (saved.version !== 1 || saved.origin !== CLOUD_ORIGIN || saved.product !== this.product ||
           typeof saved.token_enc !== "string") return null;
+      // A fresh installation has nothing to decrypt. Initializing the macOS
+      // keychain can prompt and block the main thread, even just to check its
+      // availability; an automatic update check must not do that without a file.
+      if (!encryptionAvailable(this.storage, this.platform)) return null;
       const token = this.storage.decryptString(Buffer.from(saved.token_enc, "base64"));
       return validToken(token) ? token : null;
     } catch {

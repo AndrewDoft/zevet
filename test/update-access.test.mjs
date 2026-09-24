@@ -76,6 +76,18 @@ test("missing credentials never fetch a public feed or start browser pairing", a
   await assert.rejects(access.fetch(FEED), { code: "update_access_required" });
 });
 
+test("a fresh automatic check never touches the OS keychain", async (t) => {
+  let keychainCalls = 0, networkCalls = 0;
+  const { access, dir } = fixture(t, async () => { networkCalls++; }, {
+    storage: { isEncryptionAvailable() { keychainCalls++; throw new Error("OS prompt would block here"); } },
+  });
+  const state = await makeUpdater(dir, access).check();
+  assert.equal(state.phase, "error");
+  assert.equal(state.authRequired, true);
+  assert.equal(keychainCalls, 0, "a missing credential must not initialize the OS keychain");
+  assert.equal(networkCalls, 0);
+});
+
 test("one-time browser approval persists only ciphertext and survives relaunch", async (t) => {
   const starts = [];
   const { access, config } = fixture(t, service([json({}, 428), json(grant())], starts));
