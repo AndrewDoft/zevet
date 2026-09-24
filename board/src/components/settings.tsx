@@ -903,15 +903,11 @@ const LINK_SUMMARY: Record<string, string> = {
 function MasoraSection() {
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
   const [cfg, setCfg] = useState<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean } | null>(null);
-  const [urlDraft, setUrlDraft] = useState("");
   const [link, setLink] = useState<MasoraLinkState | null>(null);
 
   function refresh() {
     window.zevet?.masoraConfig?.().then((c) => {
-      if (c) {
-        setCfg(c);
-        setUrlDraft((d) => d || c.url);
-      }
+      if (c) setCfg(c);
     });
   }
   useEffect(() => {
@@ -939,21 +935,6 @@ function MasoraSection() {
 
   return (
     <SSection title="Masora" summary={summary}>
-      {cfg && cfg.paired ? null : <div className="srow">
-        <span className="k">Address</span>
-        <input
-          className="mono"
-          type="text"
-          value={urlDraft}
-          onChange={(ev) => setUrlDraft(ev.target.value)}
-          onBlur={() => {
-            if (cfg && urlDraft.trim() && urlDraft.trim() !== cfg.url) {
-              window.zevet?.masoraSaveUrl?.(urlDraft.trim()).then((c) => c && setCfg(c));
-            }
-          }}
-          spellCheck={false}
-        />
-      </div>}
       {cfg && cfg.paired ? (
         <div className="srow">
           <button

@@ -20,7 +20,9 @@ function token() {
   const file = path.join(process.env.LOCALAPPDATA, "Masora", "ReleaseSigning", "codemagic-token.dpapi");
   const ps = `$s = (Get-Content -Raw '${file}').Trim() | ConvertTo-SecureString; ` +
     "[Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))";
-  return execFileSync("powershell", ["-NoProfile", "-Command", ps], { encoding: "utf8" }).trim();
+  // PSModulePath leaking in from pwsh makes Windows PowerShell load the wrong modules and fail.
+  const { PSModulePath, ...env } = process.env;
+  return execFileSync("powershell", ["-NoProfile", "-Command", ps], { encoding: "utf8", env }).trim();
 }
 
 const headers = { "x-auth-token": token(), "content-type": "application/json" };
