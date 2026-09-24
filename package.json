@@ -1,6 +1,6 @@
 {
   "name": "zevet",
-  "version": "0.2.63",
+  "version": "0.2.64",
   "private": true,
   "type": "module",
   "description": "Watch your team's AI coding agents work, live, in one place.",
