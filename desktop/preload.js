@@ -322,7 +322,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   /* Zevet Chat (desktop/chat.js): repo-independent conversations. */
   chatList: (query) => ipcRenderer.invoke("chat:list", { query }),
   chatGet: (id) => ipcRenderer.invoke("chat:get", id),
-  chatCreate: () => ipcRenderer.invoke("chat:create"),
+  chatCreate: (folder) => ipcRenderer.invoke("chat:create", { folder }),
+  chatSetFolder: (id, folder) => ipcRenderer.invoke("chat:setFolder", { id, folder }),
   chatRename: (id, title) => ipcRenderer.invoke("chat:rename", { id, title }),
   chatRemove: (id) => ipcRenderer.invoke("chat:remove", id),
   chatSend: (id, text, opts) => ipcRenderer.invoke("chat:send", { id, text, opts }),

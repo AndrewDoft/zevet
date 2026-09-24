@@ -41,6 +41,14 @@ import { ChatSurface } from "../lib/surface";
 import { zStorage } from "../lib/bridge";
 import type { UsableAgent } from "../lib/types";
 
+/** Chat + Work groups by provider, not by CLI: opencode fronts many. */
+const PROVIDER_LABEL: Record<string, string> = {
+  claude: "Claude",
+  codex: "OpenAI",
+  gemini: "Gemini",
+  opencode: "Open models",
+};
+
 /** codex is the one CLI here that takes a reasoning-effort flag. Offering the
  *  control for models that ignore it would be inventing a setting. */
 const HAS_EFFORT = new Set(["codex"]);
@@ -63,6 +71,7 @@ export function ModelChoice({
   const setLaunchEffort = useBoard((s) => s.setLaunchEffort);
   const modelSelectorOpen = useBoard((s) => s.modelSelectorOpen);
   const setModelSelectorOpen = useBoard((s) => s.setModelSelectorOpen);
+  const openSettings = useBoard((s) => s.openSettings);
   /* ⚠️ TWO OF THESE ARE MOUNTED — Code's composer and Chat's, one hidden. Both
      bound to the one store signal, a click opened both and the hidden one's
      outside-click closed them again, so the picker never opened (seen live
@@ -117,7 +126,9 @@ export function ModelChoice({
               // Grayed and unselectable until it clears — a model that would
               // only fail the same way again is not a real choice. The reset
               // time is the tooltip (ModelSelectorItem's `title` below).
-              disabled: Boolean(resetAt),
+              // Not installed: nothing here can run, so it is listed (with a
+              // Connect chip on its group) and cannot be picked.
+              disabled: Boolean(resetAt) || !a.ok,
               resetLabel: resetAt ? `Resets ${whenText(resetAt)}` : undefined,
             };
           }),
@@ -142,14 +153,22 @@ export function ModelChoice({
      one. Guarded on there being no match AND a list to pick from, so this
      settles in a single pass and cannot ping-pong. */
   useEffect(() => {
-    // Code only, front only: Chat's picker lists claude alone, so a Chat
-    // instance "correcting" an opencode pick reset every non-claude choice to
-    // Opus (seen live 2026-09-23). Chat reads claude-or-default at send.
+    // Code only, front only: Chat lists providers Code does not (Gemini), so a
+    // Chat instance "correcting" a pick reset it (seen live 2026-09-23).
     if (inChat || !front || match || !selected) return;
     setLaunchModel(aliasOf(selected));
     const cut = selected.indexOf(":");
     if (cut > 0) setLaunchAgent(selected.slice(0, cut));
   }, [inChat, front, match, selected, setLaunchModel, setLaunchAgent]);
+
+  /* The model persists across a relaunch and the agent does not, so a stored
+     Codex pick came back showing GPT-5.6 while claude was still the agent that
+     ran it (seen live 2026-09-24: `claude --model gpt-5.6-luna`). The picker
+     shows the model; the agent follows it. */
+  useEffect(() => {
+    const cut = match ? match.id.indexOf(":") : -1;
+    if (front && cut > 0) setLaunchAgent(match!.id.slice(0, cut));
+  }, [front, match, setLaunchAgent]);
 
   return (
     <ModelSelectorRoot
@@ -190,11 +209,29 @@ export function ModelChoice({
                 <span className="flex items-baseline justify-between gap-3">
                   <span className="flex items-center gap-1.5">
                     <AgentLogo agent={agent.name} className="size-3" />
-                    {agent.name}
+                    {inChat ? PROVIDER_LABEL[agent.name] ?? agent.name : agent.name}
                   </span>
                   {/* Only what you can act on: the sign-in state and turn style on
-                      every group was noise. */}
-                  {!agent.signedIn && <span className={cn(mono, "text-foreground/35")}>Not signed in</span>}
+                      every group was noise. Chat lists every provider, so a
+                      missing one is a Connect chip rather than a missing group. */}
+                  {inChat ? (
+                    !agent.ok || !agent.signedIn ? (
+                      <button
+                        type="button"
+                        data-slot="connect-chip"
+                        className={cn(mono, "rounded-full bg-foreground/[0.06] px-2 py-0.5 text-foreground/70 hover:text-foreground")}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpen(false);
+                          openSettings();
+                        }}
+                      >
+                        Connect
+                      </button>
+                    ) : null
+                  ) : (
+                    !agent.signedIn && <span className={cn(mono, "text-foreground/35")}>Not signed in</span>
+                  )}
                 </span>
               }
             >

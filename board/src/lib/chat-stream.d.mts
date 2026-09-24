@@ -25,6 +25,8 @@ export interface ChatThread {
    *  bookkeeping reads this rather than a live launch preference that may
    *  have moved on by the time an event arrives. Null before the first send. */
   model: string | null;
+  /** The CLI the turn went to: claude, codex or opencode. */
+  agent: string;
 }
 
 export interface StoredMessage {
@@ -35,7 +37,7 @@ export interface StoredMessage {
 
 export function emptyChatThread(): ChatThread;
 export function fromStored(messages: StoredMessage[]): ChatThread;
-export function sendUser(thread: ChatThread, text: string, model?: string | null): ChatThread;
+export function sendUser(thread: ChatThread, text: string, model?: string | null, agent?: string): ChatThread;
 export function chatEvent(thread: ChatThread, evt: unknown): ChatThread;
 export function failTurn(thread: ChatThread, error: string): ChatThread;
 export function visibleMessages(thread: ChatThread): ThreadMessageLike[];

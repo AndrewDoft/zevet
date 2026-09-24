@@ -28,6 +28,10 @@ export function turnTrace(events: EventLike[], actor: string): {
   tools: EventLike[];
   ended: boolean;
 };
+export function teammateTurns(
+  events: EventLike[],
+  actor: string,
+): Array<{ prompt: EventLike | null; tools: EventLike[]; ended: boolean }>;
 export function turnSummary(
   entry: { actor: string } | null | undefined,
   events: EventLike[],

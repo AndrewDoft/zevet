@@ -56,6 +56,7 @@ const masoraPush = require("./masora-push.js");
 const masoraConnect = require("./masora-connect.js");
 const chats = require("./chat.js");
 const { createClaudeCli } = require("./chat-claude.js");
+const { createCli: createChatCli } = require("./chat-cli.js");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -3235,7 +3236,7 @@ app.on("before-quit", () => family.stop());
  * board on `chat:event`, never `local:agentEvent`, so a chat is never drawn as
  * a console in Code's People pane.
  * ======================================================================== */
-let chatRun = null; // { id, console, turn: { user, reply } | null, model, provider }
+let chatRun = null; // { id, console, turn: { user, reply } | null, model, provider, want }
 
 function stopChatRun() {
   if (!chatRun) return;
@@ -3290,34 +3291,42 @@ async function nameChat(id, text) {
   if (renamed) toBoard("chat:event", { id, evt: { type: "saved", chat: renamed } });
 }
 
-/* Model providers (desktop/chat-claude.js documents the contract). One today;
-   a chat records which one answered each message. */
-const chatProviders = { "claude-cli": createClaudeCli({ startConsole: agentConsole.startConsole }) };
-const DEFAULT_CHAT_PROVIDER = "claude-cli";
+/* Model providers (desktop/chat-claude.js documents the contract), keyed by the
+   agent-console.js agent they drive. A chat records which one answered each
+   message. */
+const chatProviders = {
+  claude: createClaudeCli({ startConsole: agentConsole.startConsole }),
+  codex: createChatCli({ agent: "codex", id: "codex-cli", startConsole: agentConsole.startConsole }),
+  opencode: createChatCli({ agent: "opencode", id: "opencode-cli", startConsole: agentConsole.startConsole }),
+};
+const DEFAULT_CHAT_AGENT = "claude";
 
-async function spawnChat(chat, provider, opts = {}) {
+async function spawnChat(chat, provider, opts = {}, folder = "") {
   let mcpConfig = null;
   const cfg = masora.readConfig();
-  if (cfg.paired) {
+  // --mcp-config is claude's flag; the others get Masora as the C2 brief.
+  if (cfg.paired && provider.agent === "claude") {
     mcpConfig = path.join(app.getPath("temp"), `zevet-chat-mcp-${process.pid}.json`);
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: masora.mcpServerEntry(cfg.url) }), "utf8");
   }
-  const run = { id: chat.id, console: null, turn: null, model: chat.model || "", want: `${opts.model || ""}|${opts.mode || ""}`, provider: provider.id };
+  const run = { id: chat.id, console: null, turn: null, model: opts.model || chat.model || "", want: chatWant(provider, opts, folder), provider: provider.id };
   const opened = provider.open({
     chat,
     mcpConfig,
     model: opts.model,
     mode: opts.mode,
+    folder,
+    env: await credentialEnvFor(),
     onEvent: (evt) => {
       const p = evt && evt.type === "agent" ? evt.payload : null;
       if (p && p.type === "system" && p.subtype === "init" && p.model) run.model = String(p.model);
-      if (p && p.type === "assistant" && run.turn && p.message && Array.isArray(p.message.content)) {
-        const text = p.message.content.filter((b) => b && b.type === "text").map((b) => b.text).join("");
-        if (text) run.turn.reply = run.turn.reply ? [run.turn.reply, text].join(String.fromCharCode(10, 10)) : text;
-      }
-      if (p && p.type === "result" && run.turn) finishChatTurn(run, run.turn.reply, p.is_error);
+      const text = p && run.turn ? provider.replyOf(p) : "";
+      if (text) run.turn.reply = run.turn.reply ? [run.turn.reply, text].join(String.fromCharCode(10, 10)) : text;
+      if (p && run.turn && provider.endsTurn(p)) finishChatTurn(run, run.turn.reply, p.is_error);
       if (evt && evt.type === "exit") {
-        if (run.turn) finishChatTurn(run, "", true);
+        // A one-shot CLI ends its turn by exiting: a reply and a clean exit is
+        // an answer; anything else is a failed turn and is not saved.
+        if (run.turn) finishChatTurn(run, run.turn.reply, Boolean(evt.error) || (evt.code !== 0 && !evt.stopped) || !run.turn.reply);
         if (chatRun === run) chatRun = null;
       }
       toBoard("chat:event", { id: run.id, evt });
@@ -3351,7 +3360,28 @@ function chatAuthor() {
   return (cfg && typeof cfg.actor === "string" && cfg.actor) || os.userInfo().username;
 }
 
-ipcMain.handle("chat:create", () => chats.create(chatAuthor()));
+/** A folder a chat may work in: one the person opened (the same guard Code's
+ *  launches use), still on disk. "" detaches. */
+function chatFolder(dir) {
+  const d = String(dir || "");
+  if (!d) return "";
+  const known = knownRoot(d);
+  return known && fs.existsSync(known) ? known : null;
+}
+
+/** What a live process was started for; a different answer respawns it. */
+function chatWant(provider, opts, folder) {
+  return [provider.agent, opts.model || "", opts.mode || "", folder].join("|");
+}
+
+ipcMain.handle("chat:create", (_e, arg) => chats.create(chatAuthor(), chatFolder(arg && arg.folder) || ""));
+ipcMain.handle("chat:setFolder", (_e, arg) => {
+  const folder = chatFolder(arg && arg.folder);
+  if (folder === null) return null;
+  const id = String((arg && arg.id) || "");
+  if (chatRun && chatRun.id === id) stopChatRun(); // a new folder is a new posture
+  return chats.setFolder(id, folder);
+});
 ipcMain.handle("chat:rename", (_e, arg) => chats.rename(arg && arg.id, arg && arg.title));
 ipcMain.handle("chat:remove", (_e, id) => {
   if (chatRun && chatRun.id === id) stopChatRun();
@@ -3371,18 +3401,20 @@ ipcMain.handle("chat:send", async (_e, arg) => {
   if (!text.trim()) return { ok: false, error: "Nothing to send." };
   if (chatRun && chatRun.id === id && chatRun.turn) return { ok: false, error: "Still answering." };
   if (chatRun && chatRun.id !== id) stopChatRun();
-  // A different model or posture needs new flags: respawn (--resume keeps the
-  // conversation). Compared against what was ASKED, not run.model, which init
-  // overwrites with the resolved id.
-  if (chatRun && chatRun.want !== `${opts.model || ""}|${opts.mode || ""}`) stopChatRun();
-
-  const provider = chatProviders[chat.provider] || chatProviders[DEFAULT_CHAT_PROVIDER];
+  const provider = chatProviders[opts.agent] || chatProviders[DEFAULT_CHAT_AGENT];
+  // Set through chatFolder (an opened workspace); here it only has to still exist.
+  const folder = chat.folder && fs.existsSync(chat.folder) ? chat.folder : "";
+  if (chat.folder && !folder) return { ok: false, error: "Folder unavailable." };
+  // A different agent, model, posture or folder needs new flags: respawn
+  // (the session binding keeps the conversation). Compared against what was
+  // ASKED, not run.model, which init overwrites with the resolved id.
+  if (chatRun && chatRun.want !== chatWant(provider, opts, folder)) stopChatRun();
   // A slash command goes to claude bare: no Masora brief, no prior replay
   // (composeTurn drops both too; skipping the fetch here saves the round trip).
   const brief = chats.isSlashPrompt(text) ? null : await chatBrief(provider, text);
 
   if (!chatRun) {
-    const s = await spawnChat(chat, provider, opts);
+    const s = await spawnChat(chat, provider, opts, folder);
     if (!s.ok) return s;
     chatRun = s.run;
   }

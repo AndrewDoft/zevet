@@ -187,6 +187,8 @@ export interface ChatSummary {
   owner?: string;
   created: number;
   updated: number;
+  /** The working folder: present makes the thread a work thread. */
+  folder?: string;
 }
 
 /** desktop/chat.js's record: the whole transcript, and nothing machine-local. */
@@ -232,10 +234,15 @@ export interface LocalBridge {
      and the Code | Chat switch is then not offered. */
   chatList?: (query?: string) => Promise<ChatSummary[]>;
   chatGet?: (id: string) => Promise<StoredChat | null>;
-  chatCreate?: () => Promise<StoredChat>;
+  chatCreate?: (folder?: string) => Promise<StoredChat>;
+  chatSetFolder?: (id: string, folder: string) => Promise<ChatSummary | null>;
   chatRename?: (id: string, title: string) => Promise<ChatSummary | null>;
   chatRemove?: (id: string) => Promise<boolean>;
-  chatSend?: (id: string, text: string) => Promise<{ ok: boolean; error?: string; brief?: boolean }>;
+  chatSend?: (
+    id: string,
+    text: string,
+    opts?: { agent?: string; model?: string; effort?: string; mode?: string },
+  ) => Promise<{ ok: boolean; error?: string; brief?: boolean }>;
   chatStop?: (id: string) => Promise<unknown>;
   onChatEvent?: (cb: (p: { id: string; evt: { type: string; [k: string]: unknown } }) => void) => () => void;
   /** An agent is asking permission and is waiting on the answer. Optional: a

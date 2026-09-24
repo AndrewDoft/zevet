@@ -20,6 +20,8 @@
  * run running.
  */
 import { useContext } from "react";
+import { FolderIcon } from "lucide-react";
+import { bridge } from "../lib/bridge";
 import { ChatSurface } from "../lib/surface";
 import { ContextCardButton, PastPromptsButton } from "./composercards";
 import { PromptLibraryPanel } from "./promptlib";
@@ -32,7 +34,7 @@ import { cn } from "@/lib/utils";
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { CONTEXT_FLOOR, contextShare } from "../lib/meter.mjs";
 import { selectActiveConsole, useBoard } from "../lib/board";
-import { useChat } from "../lib/chat";
+import { CHAT_AGENTS, useChat } from "../lib/chat";
 import { runningModelName } from "../lib/models.mjs";
 import { money, tokens } from "../lib/fmt";
 import type { LaunchMode } from "../lib/types";
@@ -107,9 +109,13 @@ function useComposerSource(): ComposerSource {
     const thread = activeId ? threads[activeId] : null;
     const usage = thread?.usage ?? null;
     const model = usage?.model ? runningModelName(usage.model, usage.model) : "";
-    const runningModel = usage?.model ? { id: `claude:${usage.model}`, name: model || "Default" } : undefined;
-    // Chat only uses claude-cli provider
-    const usable = localAgents.filter((a) => a.ok && a.name === "claude");
+    const runningModel = usage?.model ? { id: `${thread?.agent ?? "claude"}:${usage.model}`, name: model || "Default" } : undefined;
+    // Every provider, installed or not: a missing one is a Connect chip in the
+    // picker. Gemini has no adapter here, so it is always the chip.
+    const usable = [
+      ...localAgents.filter((a) => (CHAT_AGENTS as readonly string[]).includes(a.name)),
+      { name: "gemini", ok: false, signedIn: false, detail: "" },
+    ];
     return {
       usage,
       model,
@@ -141,6 +147,57 @@ function useComposerSource(): ComposerSource {
     setConsoleMode,
     activeKey: active?.key ?? null,
   };
+}
+
+const NO_FOLDER = "::none";
+const PICK_FOLDER = "::pick";
+const base = (dir: string) => dir.split(/[\\/]+/).filter(Boolean).pop() || dir;
+
+/** Chat + Work: the folder this thread works in. None is plain chat; a folder
+ *  gives the agent its tools there. */
+function FolderChip() {
+  const dir = useChat((s) => s.chats.find((c) => c.id === s.activeId)?.folder ?? (s.activeId ? "" : s.draftFolder));
+  const setFolder = useChat((s) => s.setFolder);
+  const workspaces = useBoard((s) => s.localWorkspaces);
+  const refresh = useBoard((s) => s.refreshLocalWorkspaces);
+  const dirs = workspaces.map((w) => w.dir);
+  if (dir && !dirs.includes(dir)) dirs.unshift(dir);
+  return (
+    <Select
+      value={dir || NO_FOLDER}
+      onValueChange={(v: string | null) => {
+        if (!v) return;
+        if (v === NO_FOLDER) void setFolder("");
+        else if (v === PICK_FOLDER)
+          void bridge.local?.addWorkspace().then(async (w) => {
+            if (!w) return;
+            await refresh();
+            await setFolder(w.dir);
+          });
+        else void setFolder(v);
+      }}
+    >
+      <SelectTrigger
+        size="sm"
+        data-slot="folder-chip"
+        className="h-7 max-w-40 shrink-0 gap-1 rounded-full border-transparent bg-foreground/[0.04] px-2 text-xs"
+        aria-label="Folder"
+        title={dir || "Folder"}
+      >
+        <FolderIcon className="size-3.5" aria-hidden="true" />
+        <SelectValue>{(v: string) => (v === NO_FOLDER ? "Folder" : base(v))}</SelectValue>
+      </SelectTrigger>
+      <SelectContent align="start">
+        <SelectItem value={NO_FOLDER}>None</SelectItem>
+        {dirs.map((d) => (
+          <SelectItem key={d} value={d}>
+            {base(d)}
+          </SelectItem>
+        ))}
+        <SelectItem value={PICK_FOLDER}>Choose folder…</SelectItem>
+      </SelectContent>
+    </Select>
+  );
 }
 
 export function ComposerControls() {
@@ -232,6 +289,8 @@ export function ComposerControls() {
           ))}
         </SelectContent      >
       </Select>
+
+      {isChat ? <FolderChip /> : null}
 
       {facts}
     </div>
