@@ -10,7 +10,7 @@
 // installed. The same rule bought the same way twice.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -730,6 +730,28 @@ export function cleanTeamName(raw) {
   return n && n.length <= 48 && !/[\u0000-\u001f\u007f]/.test(n) ? n : null;
 }
 
+/** A team's address is its name: lowercase [a-z0-9-], 1-40 chars; else "". */
+export function slugify(name) {
+  return String(name || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/, "");
+}
+
+/** The slug a name points at, or null. A team made before names were
+ *  addresses has a random slug, so its stored name is matched too. */
+function findTeam(name) {
+  const s = slugify(name);
+  if (!s || s === DEFAULT_TEAM) return null;
+  if (teamAccounts.has(s)) return s;
+  for (const [slug, acc] of teamAccounts) if (slug !== DEFAULT_TEAM && acc.name && slugify(acc.name) === s) return slug;
+  return null;
+}
+
 function createTeam(name) {
   if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
     return { ok: false, status: 503, error: "this hub has no sign-in configured" };
@@ -739,9 +761,20 @@ function createTeam(name) {
     return { ok: false, status: 503, error: "this hub is holding as many teams as it will" };
   }
   let slug;
-  do {
-    slug = randomBytes(5).toString("hex");
-  } while (teamAccounts.has(slug));
+  if (name) {
+    slug = slugify(name);
+    if (!slug) return { ok: false, status: 400, error: "name the team (letters or digits)" };
+    if (slug === DEFAULT_TEAM || findTeam(slug)) {
+      let n = 2;
+      while (findTeam(`${slug}-${n}`)) n++;
+      return { ok: false, status: 409, error: "Taken", suggest: `${slug}-${n}` };
+    }
+  } else {
+    // A build from before names existed: it still gets a random address.
+    do {
+      slug = randomBytes(5).toString("hex");
+    } while (teamAccounts.has(slug));
+  }
   // No `secret` passed — Accounts mints a fresh random master secret exactly
   // the way it does for a hub with no ZEVET_SECRET. That fresh secret is what
   // makes this team's documents unreadable by any other team's members.
@@ -750,6 +783,15 @@ function createTeam(name) {
   teamAccounts.set(slug, acc);
   boards.set(slug, makeBoard(path.join(TEAMS_DIR, `events-${slug}.jsonl`)));
   return { ok: true, team: slug };
+}
+
+// Teams outlive a restart: the name is the address, so a hub that forgot its
+// teams would hand their names to strangers.
+for (const f of existsSync(TEAMS_DIR) ? readdirSync(TEAMS_DIR) : []) {
+  const m = /^accounts-([a-z0-9-]+)\.json$/.exec(f);
+  if (!m || teamAccounts.has(m[1]) || m[1] === DEFAULT_TEAM) continue;
+  teamAccounts.set(m[1], new Accounts({ file: path.join(TEAMS_DIR, f) }));
+  boards.set(m[1], makeBoard(path.join(TEAMS_DIR, `events-${m[1]}.jsonl`)));
 }
 
 /** `tokenFrom`, resolved to which team (and whose Accounts) it belongs to. */
@@ -1356,8 +1398,15 @@ const server = createServer(async (req, res) => {
       if (!name) return json(res, 400, { error: "name the team (1-48 characters)" });
     }
     const r = createTeam(name);
-    if (!r.ok) return json(res, r.status || 503, { error: r.error });
+    if (!r.ok) return json(res, r.status || 503, { error: r.error, ...(r.suggest ? { suggest: r.suggest } : {}) });
     return json(res, 200, { ok: true, team: r.team, name: teamName(r.team, teamAccounts.get(r.team)) });
+  }
+
+  // Does a team by this name exist here? Nothing else is said.
+  if (url.pathname === "/team/resolve" && req.method === "GET") {
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+    const team = findTeam(url.searchParams.get("name"));
+    return json(res, 200, team ? { exists: true, team } : { exists: false });
   }
 
   if (url.pathname === "/healthz") {
