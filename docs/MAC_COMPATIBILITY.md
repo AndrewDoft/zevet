@@ -38,7 +38,7 @@ The disk image opens as **Zevet**, with Masora's paper-and-ink styling, a Retina
 
 Build through `npm run dist:mac`. Its wrapper preserves electron-builder's CLI options and creates a native Finder background bookmark using Swift on the mounted staging image, before compression, signing, or checksums. The older Python-generated bookmark looked valid but did not resolve on current macOS, leaving a blank background. Mac builds therefore require the Xcode command-line tools already provided on the CI runner. The smoke test checks the final image's contents, Finder layout, both background resolutions, and actual bookmark resolution after mounting at a temporary location. Finder was also checked with the finished image.
 
-The beta bundle has an ad hoc integrity seal. Apple Developer ID signing and notarization still require publisher credentials. The existing configured signing path remains available. Mac updates open the installer; replacing the app is still manual.
+Unconfigured development and CI bundles have an ad-hoc integrity seal. The local Developer ID signing setup is described below; it does not configure CI signing. Mac updates open the installer; replacing the app is still manual.
 
 ### Website download, September 19
 
@@ -61,10 +61,27 @@ Michael's Apple Developer membership was confirmed active through July 5, 2027.
 He created the Developer ID Application certificate on September 19. Its public
 key matches the prepared request and local private key. The identity and Apple's
 G2 intermediate are installed; macOS now reports one valid code-signing identity.
-No trust overrides were applied. Notarization still needs separate authentication,
-saved securely in Keychain; never put credentials in this repository or chat.
-The public download has not yet been signed or notarized. For `--prepackaged` builds, sign and notarize the app
+No trust overrides were applied. Notarization authentication is now saved and
+verified in Michael's local Keychain profile `zevet-notary`; never put credentials
+in this repository or chat. The official 0.2.1 app has been Developer ID signed,
+with secure timestamps and hardened runtime on all 20 native files. Its resources,
+plists, native executable content, paths, and permissions match the original
+release; only signature metadata changed. A real isolated launch, ONNX/Transformers
+loading, and strict signature checks passed.
+
+Apple submission `8f97d111-aa1d-48fa-83ce-b563cd2ef442` was uploaded on September 19
+at 19:26 UTC and is still processing. Resume that same submission; a local wait
+timeout does not cancel it. The public download has not yet been replaced with
+the signed app. Six local preflight warnings concern native code stored in
+Electron resource directories; no Error-level findings were returned. Apple's
+actual result, stapled tickets, and final Gatekeeper checks remain required.
+
+For `--prepackaged` builds, sign and notarize the app
 first: the pinned builder skips that work when given an existing app.
+
+This local signing setup does not configure GitHub Actions. Future public Mac
+releases must pass `ZEVET_EXPECT_SIGNED=1 npm run smoke:mac` and staple validation;
+the workflow's ad-hoc development builds are not trusted release installers.
 
 Server rollback files: `/srv/masora/Caddyfile.before-zevet-branded-v2-20260919T185500Z`
 and `/srv/masora/compose.before-zevet-download-page-20260919.yml`.

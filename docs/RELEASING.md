@@ -190,10 +190,14 @@ real app, its own timer, a real stream, a real checksum.
 production box that also serves the Masora app. It stays a command somebody
 runs on purpose.
 
-**Signing.** Neither artifact is signed. macOS therefore cannot be updated in
-place — the app opens the disk image and the person drags it across — and both
-platforms warn on first run. See D-006 in `DECISIONS.md`; the fix is an Apple
-Developer account, which is a purchase rather than a patch.
+**Signing.** Unconfigured Mac builds receive an ad-hoc integrity seal. Michael's
+local Developer ID identity is installed; the official 0.2.1 app is signed and
+its first Apple notarization submission is pending. GitHub Actions signing
+credentials remain unconfigured. See `MAC_COMPATIBILITY.md` for the current
+public download and verification results. Windows signing is still unconfigured.
+
+Mac updates remain manual: the updater opens the verified disk image, then the
+user replaces the app. Signing does not change that installation behavior.
 
 ---
 
@@ -391,11 +395,14 @@ now the single most valuable file on that box.
 
 ## Code signing
 
-Nothing is signed. The pipeline is built and inert: `desktop/electron-builder.config.js`
-computes the build config from the environment, and with no secrets set it produces exactly
-what it always did. `test/signing.test.mjs` pins both halves, including the case where only
-*some* of the Apple credentials are present — which would otherwise produce a signed,
-un-notarised app that Gatekeeper still refuses while the build log reads like a success.
+`desktop/electron-builder.config.js` enables publisher signing only when the
+complete credential set is available. Unconfigured builds use an ad-hoc Mac
+integrity seal; they are not trusted public installers. `test/signing.test.mjs`
+covers complete, missing, and partial credentials.
+
+The local Developer ID identity and Keychain profile `zevet-notary` are ready.
+The first signed app submission is pending with Apple. This local setup does
+not configure GitHub Actions, and private keys must not be committed to Git.
 
 **macOS — Apple Developer Program, $99/yr.** Add as repository *secrets*:
 
@@ -407,10 +414,9 @@ un-notarised app that Gatekeeper still refuses while the build log reads like a 
 | `APPLE_APP_SPECIFIC_PASSWORD` | an app-specific password, **not** the account password |
 | `APPLE_TEAM_ID` | the ten-character team id |
 
-This is also what unblocks **in-place auto-update on macOS**. macOS will not let an unsigned
-app replace itself, so `desktop/app-update.js` currently opens the disk image and asks the
-person to drag it across. Windows has had one-click update since 0.2.0; macOS cannot until
-this is bought.
+Signing and notarization establish publisher trust. Mac updates still open the
+verified DMG for the user to install. In-place installation requires a separate
+updater implementation; adding credentials does not implement it.
 
 **Windows — Azure Trusted Signing, about $10/month.** Secrets `AZURE_TENANT_ID`,
 `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`; repository *variables*
@@ -421,4 +427,13 @@ on a hardware token, which a GitHub Actions runner cannot use.
 ⚠️ `AZURE_PUBLISHER_NAME` must match the certificate subject exactly, or NSIS rejects its
 own signature at install time.
 
-Adding the secrets is the whole act of turning it on. The next tagged build signs.
+All five valid Apple credentials enable signing and notarization attempts in
+ordinary builds. Publication still requires successful notarization, staple
+validation, and Gatekeeper checks on the final deliverable. The pinned builder
+skips app signing and notarization with `--prepackaged`; sign, notarize, and
+staple that app before packaging it.
+
+For a signed wrapper around an already released version, use a new immutable
+server filename and switch only the friendly website download alias. Do not
+overwrite the original versioned artifact or change its existing update feed.
+Release new app code under a new version.
