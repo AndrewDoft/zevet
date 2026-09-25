@@ -679,6 +679,26 @@
      progress can be honest about how far through it is. */
   .updaterow .bar { height: 3px; background: var(--fill); overflow: hidden; }
   .updaterow .bar i { display: block; height: 100%; background: var(--cerulean); transition: width 300ms; }
+  /* The bar that replaced the update MODAL: fixed, corner-placed, and easy to
+     ignore — the opposite of a dialog that grabs focus mid-task. Labels only,
+     Cerulean accent, same as .session-banner-close. */
+  .update-toast {
+    position: fixed; z-index: 55; right: 18px; bottom: 18px; width: 280px;
+    padding: 10px 12px; border-radius: 8px;
+    background: var(--paper); border: 1px solid var(--line);
+    box-shadow: 0 12px 30px -18px var(--ink);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .update-toast-row { display: flex; align-items: center; gap: 8px; }
+  .update-toast-title { flex: 1 1 auto; font-size: 12.5px; color: var(--ink); }
+  .update-toast-error { font-size: 11px; color: var(--alert); }
+  .update-toast-btn {
+    flex: none; font-size: 11px; padding: 3px 7px; border-radius: 2px;
+    color: var(--cerulean); background: none; border: 1px solid var(--line); cursor: pointer;
+  }
+  .update-toast-btn:hover:not(:disabled) { border-color: var(--cerulean); }
+  .update-toast-btn:disabled { opacity: .6; cursor: default; }
+  .update-toast-btn-primary { background: var(--cerulean); color: var(--paper); border-color: var(--cerulean); }
   /* The same theme control and saved preference, in Masora's neutral palette. */
   .themer {
     display: inline-flex; align-items: center; gap: 9px;

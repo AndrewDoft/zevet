@@ -24,7 +24,7 @@
 // that root. See openBoard() for why the board is allowed a bridge at all
 // despite loading a remote origin, and local:write below for why a WRITE over
 // that same bridge is a bigger thing to hand out than a read.
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor } = require("electron");
 const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
 const repoStats = require("./repo-stats.js");
@@ -882,6 +882,10 @@ function buildMenu() {
           label: "Team…",
           click: () => openSetup(readConfig()),
         },
+        { type: "separator" },
+        menuOffersRestart
+          ? { label: "Restart to update", click: () => appUpdater.install() }
+          : { label: "Check for Updates…", click: () => appUpdater.check() },
         { type: "separator" },
         { role: "reload" },
         { role: "toggleDevTools" },
@@ -3458,10 +3462,17 @@ ipcMain.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(a
  *   - That the renderer is TOLD, and never asked. The board shows a row; the
  *     person clicks it or does not.
  * ======================================================================== */
+// Whether the menu item currently reads "Restart to update" — tracked outside
+// appUpdater.state so a download's percent ticks (also delivered through
+// onStatus) don't rebuild the native menu dozens of times for nothing.
+let menuOffersRestart = false;
 const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
   dir: path.join(app.getPath("userData"), "updates"),
+  // Only meaningful on darwin; see canSelfReplaceMac() in app-update.js.
+  // /Applications/zevet.app from .../zevet.app/Contents/MacOS/zevet.
+  bundlePath: process.platform === "darwin" ? path.dirname(path.dirname(path.dirname(app.getPath("exe")))) : undefined,
   // toBoard() only reaches boardWindow, and a person stuck on setup — no hub
   // configured yet, or not signed in — has no board window at all. Sent to
   // setupWindow too, so "0.2.57 is ready" shows up on the screen a first-run
@@ -3469,6 +3480,11 @@ const appUpdater = new AppUpdater({
   onStatus: (s) => {
     toBoard("app:update", s);
     if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send("app:update", s);
+    const canRestart = s.phase === "ready" && Boolean(s.canInstall);
+    if (canRestart !== menuOffersRestart) {
+      menuOffersRestart = canRestart;
+      buildMenu();
+    }
   },
   log: (m) => console.log(`[zevet-app-update] ${m}`),
   openImpl: (f) => shell.openPath(f),
@@ -3479,6 +3495,21 @@ const appUpdater = new AppUpdater({
     app.exit(0);
   },
 });
+
+/** No modal, no click required: if a build is already downloaded and verified
+ *  when the app is closed — window closed, Quit, or the OS logging the
+ *  machine off — put it on silently so the NEXT launch is already current.
+ *  `before-quit` does not fire for the Restart-now path above, which exits
+ *  via app.exit(0); that is deliberate, see quitImpl's own comment. */
+app.on("before-quit", () => {
+  if (appUpdater.state.phase === "ready") appUpdater.installOnQuit();
+});
+
+/** The on-focus recheck and the resume-from-sleep recheck share one gate so
+ *  neither adds a request on top of the ordinary hourly timer if the other
+ *  just ran one. */
+const UPDATE_RECHECK_MIN_GAP_MS = 60 * 1000;
+app.on("browser-window-focus", () => appUpdater.maybeCheck(UPDATE_RECHECK_MIN_GAP_MS));
 
 /* ========================================================================
  * MASORA VOICE
@@ -3531,6 +3562,8 @@ app.whenReady().then(() => {
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();
   family.start();
+  // Only reliable after 'ready'; see the module's own docs.
+  powerMonitor.on("resume", () => appUpdater.maybeCheck(UPDATE_RECHECK_MIN_GAP_MS));
   session.defaultSession.webRequest.onHeadersReceived({ urls: FRAME_URLS, types: ["subFrame"] }, (d, cb) => cb({ responseHeaders: frameable(d.responseHeaders) }));
   const cfg = readConfig();
   if (cfg) openBoard(cfg);

@@ -23,6 +23,8 @@ import { tempDir, ROOT } from "./helpers.mjs";
 const require = createRequire(import.meta.url);
 const {
   AppUpdater,
+  QUIT_INSTALL_ARGS,
+  EVERY_MS,
   compareVersions,
   platformKey,
   safeArtifactName,
@@ -626,5 +628,246 @@ describe("the platform key", () => {
   test("is what the manifest is written with", () => {
     assert.equal(platformKey("win32", "x64"), "win32-x64");
     assert.equal(platformKey("darwin", "arm64"), "darwin-arm64");
+  });
+});
+
+describe("checking on a schedule", () => {
+  test("the periodic check is an hour, not six", () => {
+    // Andrew: "i dont want to have to check for new versions." Mutation check:
+    // flip this back to 6 * 60 * 60 * 1000 in app-update.js and this goes red.
+    assert.equal(EVERY_MS, 60 * 60 * 1000);
+  });
+
+  test("maybeCheck skips a repeat inside the gap and runs one after it", async () => {
+    const t = tempDir("zevet-gap-");
+    const host = await fakeHost({ manifest: null });
+    try {
+      const u = updaterFor(host, t.dir);
+      await u.maybeCheck(10_000);
+      const afterFirst = host.seen.length;
+      assert.ok(afterFirst > 0, "the very first call, with nothing checked yet, must run");
+      await u.maybeCheck(10_000);
+      assert.equal(host.seen.length, afterFirst, "a call inside the gap must not hit the host again");
+      await new Promise((r) => setTimeout(r, 20));
+      await u.maybeCheck(10);
+      assert.ok(host.seen.length > afterFirst, "a call after the gap has passed must run");
+    } finally {
+      await host.close();
+      t.cleanup();
+    }
+  });
+});
+
+describe("installing on quit", () => {
+  test("nothing ready means nothing to do", () => {
+    const t = tempDir("zevet-quit-");
+    try {
+      const u = new AppUpdater({ currentVersion: "0.1.2", dir: t.dir, platformKey: KEY });
+      assert.equal(u.installOnQuit().ok, false);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("on Windows it installs silently, with no relaunch flag and no quit call of its own", () => {
+    const t = tempDir("zevet-quit-");
+    try {
+      const file = path.join(t.dir, "setup.exe");
+      writeFileSync(file, "not really an installer");
+      const calls = [];
+      let quit = 0;
+      const u = new AppUpdater({
+        currentVersion: "0.1.2",
+        platform: "win32",
+        dir: t.dir,
+        platformKey: KEY,
+        spawnImpl: (...a) => {
+          calls.push(a);
+          return { unref() {} };
+        },
+        quitImpl: () => {
+          quit++;
+        },
+      });
+      u.state.phase = "ready";
+      u.state.version = "0.2.0";
+      u.state.file = file;
+      u._readyEntry = { bytes: statSync(file).size, sha256: sha(readFileSync(file)) };
+
+      const r = u.installOnQuit();
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0][0], file);
+      // Mutation check: put --force-run back into QUIT_INSTALL_ARGS (or this
+      // assertion) and this goes red — the whole point of the quit path is
+      // that it must NOT ask the installer to bring the app back.
+      assert.deepEqual(calls[0][1], QUIT_INSTALL_ARGS);
+      assert.ok(!QUIT_INSTALL_ARGS.includes("--force-run"), "the quit path must never force a relaunch");
+      assert.equal(calls[0][2].detached, true);
+      assert.equal(quit, 0, "installOnQuit must not itself quit — the app called it because it was already leaving");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("a failed install-on-quit is attempted once per version, then left for the in-app bar", () => {
+    const t = tempDir("zevet-quit-");
+    try {
+      const file = path.join(t.dir, "setup.exe");
+      writeFileSync(file, "not really an installer");
+      const calls = [];
+      const u = new AppUpdater({
+        currentVersion: "0.1.2",
+        platform: "win32",
+        dir: t.dir,
+        platformKey: KEY,
+        spawnImpl: () => {
+          calls.push(1);
+          throw new Error("blocked by antivirus");
+        },
+      });
+      u.state.phase = "ready";
+      u.state.version = "0.2.0";
+      u.state.file = file;
+      u._readyEntry = { bytes: statSync(file).size, sha256: sha(readFileSync(file)) };
+
+      const first = u.installOnQuit();
+      assert.equal(first.ok, false);
+      assert.match(first.error, /blocked by antivirus/);
+      assert.equal(calls.length, 1);
+
+      const second = u.installOnQuit();
+      assert.equal(second.ok, false);
+      assert.match(second.error, /already attempted/);
+      assert.equal(calls.length, 1, "a second quit for the same version must not spawn the installer again");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("a newer version still gets its own attempt after the last one failed", () => {
+    const t = tempDir("zevet-quit-");
+    try {
+      const file = path.join(t.dir, "setup.exe");
+      writeFileSync(file, "not really an installer");
+      let fail = true;
+      const calls = [];
+      const u = new AppUpdater({
+        currentVersion: "0.1.2",
+        platform: "win32",
+        dir: t.dir,
+        platformKey: KEY,
+        spawnImpl: (...a) => {
+          calls.push(a);
+          if (fail) throw new Error("blocked");
+          return { unref() {} };
+        },
+      });
+      u.state.phase = "ready";
+      u.state.version = "0.2.0";
+      u.state.file = file;
+      u._readyEntry = { bytes: statSync(file).size, sha256: sha(readFileSync(file)) };
+      assert.equal(u.installOnQuit().ok, false);
+
+      fail = false;
+      u.state.version = "0.3.0";
+      assert.equal(u.installOnQuit().ok, true);
+      assert.equal(calls.length, 2);
+    } finally {
+      t.cleanup();
+    }
+  });
+});
+
+describe("self-replacing a Mac bundle", () => {
+  test("without a bundlePath it cannot self-replace", () => {
+    const u = new AppUpdater({ currentVersion: "0.1.2", platform: "darwin", dir: "unused", platformKey: MAC_KEY });
+    assert.equal(u.canSelfReplaceMac(), false);
+  });
+
+  test("with a bundlePath whose parent is writable, it can", () => {
+    const t = tempDir("zevet-mac-bundle-");
+    try {
+      const bundle = path.join(t.dir, "zevet.app");
+      const u = new AppUpdater({
+        currentVersion: "0.1.2",
+        platform: "darwin",
+        dir: t.dir,
+        platformKey: MAC_KEY,
+        bundlePath: bundle,
+      });
+      assert.equal(u.canSelfReplaceMac(), true);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("the replace steps mount, ditto, and unmount, over a path with spaces", () => {
+    const t = tempDir("zevet Mac bundle with spaces ");
+    try {
+      const bundle = path.join(t.dir, "zevet.app");
+      const u = new AppUpdater({
+        currentVersion: "0.1.2",
+        platform: "darwin",
+        dir: t.dir,
+        platformKey: MAC_KEY,
+        bundlePath: bundle,
+      });
+      const steps = u._macReplaceSteps(path.join(t.dir, MAC_FILE), bundle);
+      assert.equal(steps.length, 3);
+      assert.deepEqual([steps[0][0], steps[0][1][0]], ["hdiutil", "attach"]);
+      assert.deepEqual([steps[1][0], steps[1][1][1]], ["ditto", bundle]);
+      assert.deepEqual([steps[2][0], steps[2][1][0]], ["hdiutil", "detach"]);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("Restart now on a self-replacing build runs the shell steps, opens the bundle, then quits", async (t) => {
+    const calls = [];
+    let quit = 0;
+    const { u, dir } = await downloadedMac(t, {
+      spawnImpl: (...a) => {
+        calls.push(a);
+        return { unref() {} };
+      },
+      quitImpl: () => {
+        quit++;
+      },
+    });
+    const bundle = path.join(dir, "zevet.app");
+    u.bundlePath = bundle;
+
+    const r = await u.install();
+    assert.equal(r.ok, true);
+    assert.equal(r.restarting, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], "/bin/sh");
+    assert.equal(calls[0][1][0], "-c");
+    const script = calls[0][1][1];
+    assert.match(script, /hdiutil.*attach/);
+    assert.match(script, /ditto/);
+    assert.match(script, /hdiutil.*detach/);
+    assert.match(script, /open /, "Restart now must relaunch the app");
+
+    await new Promise((r2) => setTimeout(r2, 900));
+    assert.equal(quit, 1);
+  });
+
+  test("install-on-quit on a self-replacing build does not relaunch", async (t) => {
+    const calls = [];
+    const { u, dir } = await downloadedMac(t, {
+      spawnImpl: (...a) => {
+        calls.push(a);
+        return { unref() {} };
+      },
+    });
+    u.bundlePath = path.join(dir, "zevet.app");
+
+    const r = u.installOnQuit();
+    assert.equal(r.ok, true);
+    assert.equal(calls.length, 1);
+    const script = calls[0][1][1];
+    assert.ok(!/open /.test(script), "the quit path must not relaunch");
   });
 });

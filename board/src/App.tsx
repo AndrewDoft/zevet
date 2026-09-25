@@ -11,7 +11,7 @@ import { ConsoleRuntimeProvider } from "./lib/runtime";
 import { FollowControl, TreeFill } from "./components/tree";
 import { DetailPane } from "./components/detail";
 import { SettingsSheet } from "./components/settings";
-import { UpdateDialog } from "./components/updatedialog";
+import { UpdateBanner } from "./components/updatebanner";
 import { VoiceDialog } from "./components/voicedialog";
 import {
   applyPanes,
@@ -278,7 +278,7 @@ function App() {
       </div>
       <SettingsSheet />
       <Palette />
-      <UpdateDialog />
+      <UpdateBanner />
       <VoiceDialog />
     </ConsoleRuntimeProvider>
   );

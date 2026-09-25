@@ -35,29 +35,38 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT IT ACTUALLY DOES, PER PLATFORM
 //
-//   Windows  Downloads the NSIS installer, verifies it, and on the person's
-//            click runs it with /S and quits. The installer replaces the app
-//            in place and relaunches it (runAfterFinish). This works unsigned;
-//            SmartScreen is not consulted for a process the app spawned.
+//   Windows  Downloads the NSIS installer, verifies it, and either on a click
+//            ("Restart now": /S plus --force-run, then quits) or silently as
+//            the app quits on its own (/S, no --force-run, no relaunch — see
+//            installOnQuit()). The installer replaces the app in place. This
+//            works unsigned; SmartScreen is not consulted for a process the
+//            app spawned.
 //
-//   macOS    Downloads the .dmg, verifies it, and OPENS it. It does not swap
-//            the bundle. Replacing a running .app from inside itself is
-//            possible and is how a signed updater does it, but doing it
-//            unsigned means stripping the quarantine attribute off a file
-//            fetched from the internet and then executing it — which is the
-//            exact move malware makes, and not one this app should teach a
-//            machine to accept. The person drags it to Applications, once,
-//            like every other unsigned Mac app they have.
+//   macOS    Downloads the .dmg and verifies it. If `bundlePath` was given and
+//            its parent looks writable (canSelfReplaceMac()), it mounts the
+//            image, `ditto`s the .app over the running bundle's own path, and
+//            unmounts — the same idea as Windows, run as one detached shell
+//            command so it survives this process quitting mid-swap. This is
+//            NOT the quarantine-stripping move the header above warns against:
+//            a file this app downloaded itself carries no quarantine
+//            attribute in the first place. ⚠️ UNVERIFIED ON REAL HARDWARE —
+//            there is no Mac to run it on; see _macReplaceSteps and its tests.
+//            Whenever `bundlePath` is not set — every build before this one —
+//            it falls back to the original behaviour: OPEN the .dmg and let
+//            the person drag it to Applications, once, like every other
+//            unsigned Mac app they have.
 //
 //   Linux    Nothing. The AppImage target exists in the builder config and has
 //            never been produced or run; a code path for it would be fiction.
 //
 // Nothing here is on the path of anything the user is doing: the check is on a
 // timer, the download is a background stream, and the only blocking step is a
-// button.
+// button — except installOnQuit(), which runs with no button at all, on an
+// app that was already leaving.
 "use strict";
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
 const { spawn } = require("node:child_process");
@@ -87,9 +96,11 @@ const MANIFEST_TIMEOUT_MS = 12000;
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** First check after launch, then every interval. The delay keeps the update
- *  check out of the startup path, where it would compete with the window. */
+ *  check out of the startup path, where it would compete with the window.
+ *  Andrew: "i dont want to have to check for new versions" — an hour, not six,
+ *  is how long a machine can go without seeing a build that just shipped. */
 const FIRST_CHECK_MS = 25 * 1000;
-const EVERY_MS = 6 * 60 * 60 * 1000;
+const EVERY_MS = 60 * 60 * 1000;
 
 /**
  * Compare two dotted versions numerically.
@@ -213,6 +224,17 @@ function readManifest(json, key) {
  *  absence is silent. */
 const INSTALL_ARGS = ["--updated", "/S", "--force-run"];
 
+/** Same, for the quit path: silent, but deliberately WITHOUT --force-run.
+ *  The app is already on its way out on its own; relaunching it would fight
+ *  whatever the person or the OS just asked for (close the window, log off). */
+const QUIT_INSTALL_ARGS = ["--updated", "/S"];
+
+/** POSIX single-quote a path for `/bin/sh -c`, so a space in the download
+ *  directory or "Andrew's Mac" does not split the command in two. */
+function shQuote(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
 class AppUpdater {
   constructor(opts) {
     const o = opts || {};
@@ -228,6 +250,11 @@ class AppUpdater {
     this.spawnImpl = o.spawnImpl || spawn;
     this.openImpl = o.openImpl || null; // set by main.js to shell.openPath
     this.quitImpl = typeof o.quitImpl === "function" ? o.quitImpl : () => {};
+    /** The running .app's own path, e.g. /Applications/zevet.app. Only meant
+     *  for darwin; see canSelfReplaceMac(). Unset means "keep the manual
+     *  drag-to-Applications flow", which is also what every existing caller
+     *  that never heard of this option still gets. */
+    this.bundlePath = o.bundlePath || null;
 
     /** Everything the renderer is told, and the only state that leaves here. */
     this.state = {
@@ -243,6 +270,7 @@ class AppUpdater {
     this._timer = null;
     this._busy = false;
     this._readyEntry = null;
+    this._lastCheckAt = 0;
   }
 
   status() {
@@ -276,6 +304,14 @@ class AppUpdater {
     this._timer = null;
   }
 
+  /** A check gated by how recently one last ran. Used for the on-focus
+   *  recheck and waking from sleep, neither of which should turn into a
+   *  request storm on top of the ordinary timer. */
+  async maybeCheck(minGapMs) {
+    if (Date.now() - this._lastCheckAt < minGapMs) return this.status();
+    return this.check();
+  }
+
   /**
    * Look for a newer build and, if there is one, fetch it.
    *
@@ -287,6 +323,7 @@ class AppUpdater {
   async check() {
     if (this._busy) return this.status();
     this._busy = true;
+    this._lastCheckAt = Date.now();
     try {
       this._readyEntry = null;
       this._set({ phase: "checking", error: null, file: null, canInstall: false });
@@ -462,21 +499,8 @@ class AppUpdater {
    * doStartApp the lock is long released.
    */
   async install() {
-    if (this.state.phase !== "ready" || !this.state.file) {
-      return { ok: false, error: "there is nothing downloaded to install" };
-    }
-    if (!this._exists(this.state.file)) {
-      this._set({ phase: "idle", canInstall: false, file: null });
-      return { ok: false, error: "the downloaded file is gone; it will be fetched again" };
-    }
-    // A verified download may sit here for hours before the person clicks.
-    // Recheck it at that boundary, including same-length corruption.
-    if (!this._readyEntry || !this._verified(this.state.file, this._readyEntry)) {
-      this._readyEntry = null;
-      const error = "the downloaded file changed; check for updates to fetch it again";
-      this._set({ phase: "error", canInstall: false, file: null, error });
-      return { ok: false, error };
-    }
+    const v = this._verifyReady();
+    if (!v.ok) return v;
 
     if (this.platform === "win32") {
       let child;
@@ -517,6 +541,21 @@ class AppUpdater {
     }
 
     if (this.platform === "darwin") {
+      // Self-replace when the bundle looks writable (see canSelfReplaceMac);
+      // otherwise fall back to the manual drag-to-Applications flow this
+      // always did, and still does on every build that never set bundlePath.
+      if (this.canSelfReplaceMac()) {
+        try {
+          this._spawnMacReplace(this.state.file, { relaunch: true });
+        } catch (err) {
+          return { ok: false, error: `could not start the update: ${err.message}` };
+        }
+        // Mirrors the Windows beat above: let the detached script get going
+        // before the bundle it is about to overwrite stops running.
+        setTimeout(() => this.quitImpl(), 600);
+        return { ok: true, restarting: true };
+      }
+
       // See the header: the image is opened, not applied. Saying `ok: true`
       // with `manual: true` rather than pretending the update is done.
       if (!this.openImpl) return { ok: false, error: "no disk image opener is available" };
@@ -534,6 +573,131 @@ class AppUpdater {
     return { ok: false, error: `${this.platform} builds are not published` };
   }
 
+  /**
+   * Apply a verified, downloaded build with NO relaunch, meant to be called
+   * once as the app is quitting (main.js's `before-quit`) so the next launch
+   * is already the new version. Never on a timer, and never twice for the
+   * same build: a marker is written to disk BEFORE the attempt, not after,
+   * because a quitting process cannot reliably observe whether an installer
+   * it just spawned went on to fail — writing the marker first still counts
+   * that as the one try, so a failed silent install falls back to the in-app
+   * bar instead of being retried at every future quit forever.
+   */
+  installOnQuit() {
+    const v = this._verifyReady();
+    if (!v.ok) return v;
+
+    const canWin = this.platform === "win32";
+    const canMac = this.platform === "darwin" && this.canSelfReplaceMac();
+    if (!canWin && !canMac) {
+      return { ok: false, error: `${this.platform} builds cannot install silently on quit` };
+    }
+
+    const marker = path.join(this.dir, "install-on-quit.json");
+    let already = null;
+    try {
+      already = JSON.parse(fs.readFileSync(marker, "utf8"));
+    } catch {
+      // No marker yet, or it is not readable — either way, nothing tried.
+    }
+    if (already && already.version === this.state.version) {
+      return { ok: false, error: "already attempted this version once; leaving it for the in-app bar" };
+    }
+    try {
+      fs.mkdirSync(this.dir, { recursive: true });
+      fs.writeFileSync(marker, JSON.stringify({ version: this.state.version }));
+    } catch {
+      // Best-effort: proceed even if the marker itself could not be written.
+    }
+
+    try {
+      if (canWin) {
+        const child = this.spawnImpl(this.state.file, QUIT_INSTALL_ARGS, {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        });
+        if (child && typeof child.unref === "function") child.unref();
+      } else {
+        this._spawnMacReplace(this.state.file, { relaunch: false });
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: `could not start the install: ${err.message}` };
+    }
+  }
+
+  /** Shared by install() and installOnQuit(): is there a downloaded file,
+   *  does it still exist, and does it still match the manifest entry that
+   *  made it "ready"? A verified download may sit here for hours before
+   *  anything acts on it, so this is re-checked at that boundary rather than
+   *  trusted from when the download finished. */
+  _verifyReady() {
+    if (this.state.phase !== "ready" || !this.state.file) {
+      return { ok: false, error: "there is nothing downloaded to install" };
+    }
+    if (!this._exists(this.state.file)) {
+      this._set({ phase: "idle", canInstall: false, file: null });
+      return { ok: false, error: "the downloaded file is gone; it will be fetched again" };
+    }
+    if (!this._readyEntry || !this._verified(this.state.file, this._readyEntry)) {
+      this._readyEntry = null;
+      const error = "the downloaded file changed; check for updates to fetch it again";
+      this._set({ phase: "error", canInstall: false, file: null, error });
+      return { ok: false, error };
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Whether this build believes it can replace its own bundle in place:
+   * darwin, a bundle path configured, and its parent directory writable.
+   * False just means "keep the manual drag-to-Applications flow" — which is
+   * also what happens whenever nothing ever set bundlePath, i.e. everywhere
+   * this shipped before today.
+   *
+   * ⚠️ UNVERIFIED ON REAL HARDWARE. There is no Mac available to this change;
+   * see _macReplaceSteps and its tests for what is actually pinned down.
+   */
+  canSelfReplaceMac() {
+    if (this.platform !== "darwin" || !this.bundlePath) return false;
+    try {
+      fs.accessSync(path.dirname(this.bundlePath), fs.constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The three shell steps that swap a running .app for the one inside a
+   *  downloaded .dmg: mount it, copy the bundle over the live path, unmount.
+   *  Returned as data rather than run here, so the exact commands can be
+   *  pinned by a test without a disk image or a Mac. */
+  _macReplaceSteps(dmgFile, bundlePath) {
+    const appName = path.basename(bundlePath);
+    const mount = path.join(os.tmpdir(), `zevet-update-${process.pid}-${Date.now()}`);
+    return [
+      ["hdiutil", ["attach", dmgFile, "-nobrowse", "-mountpoint", mount]],
+      ["ditto", [path.join(mount, appName), bundlePath]],
+      ["hdiutil", ["detach", mount]],
+    ];
+  }
+
+  /** Runs _macReplaceSteps as one detached shell command, the same reason the
+   *  Windows installer above is spawned detached before this process exits:
+   *  the swap has to survive this app quitting partway through it. */
+  _spawnMacReplace(dmgFile, { relaunch }) {
+    const steps = this._macReplaceSteps(dmgFile, this.bundlePath);
+    const parts = steps.map(([cmd, args]) => [cmd, ...args].map(shQuote).join(" "));
+    if (relaunch) parts.push(["open", shQuote(this.bundlePath)].join(" "));
+    const child = this.spawnImpl("/bin/sh", ["-c", parts.join(" && ")], {
+      detached: true,
+      stdio: "ignore",
+    });
+    if (child && typeof child.unref === "function") child.unref();
+    return child;
+  }
+
   _exists(f) {
     try {
       return fs.statSync(f).isFile();
@@ -546,6 +710,8 @@ class AppUpdater {
 module.exports = {
   AppUpdater,
   INSTALL_ARGS,
+  QUIT_INSTALL_ARGS,
+  EVERY_MS,
   compareVersions,
   platformKey,
   safeArtifactName,
