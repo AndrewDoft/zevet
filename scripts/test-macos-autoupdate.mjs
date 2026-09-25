@@ -41,8 +41,21 @@ console.log(`X = ${X}, X+1 = ${X1}`);
 const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: "utf8", timeout: 60_000, ...opts });
 const BUNDLE = path.join(os.homedir(), "Applications", "zevet.app");
 const BIN = path.join(BUNDLE, "Contents/MacOS/zevet");
-const plistVersion = () =>
-  run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", path.join(BUNDLE, "Contents/Info.plist")]).trim();
+// Null while the updater has the bundle moved aside mid-swap.
+const plistVersion = () => {
+  try {
+    return run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", path.join(BUNDLE, "Contents/Info.plist")]).trim();
+  } catch {
+    return null;
+  }
+};
+// A file only the OLD install has: the swap must not carry it into the new one.
+const SENTINEL = path.join(BUNDLE, "Contents", "Resources", "stale-from-old-version");
+function assertCleanSwap(label) {
+  assert.ok(!fs.existsSync(SENTINEL), `${label}: a file from the old bundle survived the update`);
+  run("codesign", ["--verify", "--deep", BUNDLE]);
+  assert.ok(!fs.existsSync(`${BUNDLE}.update`), `${label}: the staging bundle was left behind`);
+}
 
 /** Mount `dmg`, ditto the .app it contains over `dest`, unmount. Same shape
  *  as _macReplaceSteps in app-update.js, run here to set up/reset the test
@@ -174,6 +187,7 @@ async function main() {
   console.log("--- (a) install X, download X+1, quit, expect a silent self-replace ---");
   installDmg(xDmg, BUNDLE);
   assert.equal(plistVersion(), X, "freshly installed bundle is not X");
+  fs.writeFileSync(SENTINEL, "x");
 
   let port = 9500 + Math.floor(Math.random() * 500);
   let app = launch(port, { ZEVET_APP_FEED: feedUrl });
@@ -209,6 +223,7 @@ async function main() {
   const replaceDeadline = Date.now() + 30_000;
   while (plistVersion() !== X1 && Date.now() < replaceDeadline) await delay(1000);
   assert.equal(plistVersion(), X1, "installOnQuit did not replace the bundle with X+1");
+  assertCleanSwap("(a)");
   await delay(3000); // a relaunch, if it wrongly happened, would show up by now
   assert.equal(pgrepBin().length, 0, "the app relaunched after a silent install-on-quit -- it must not");
   started.splice(started.indexOf(app.pid), 1);
@@ -218,6 +233,7 @@ async function main() {
   console.log("--- (b) reinstall X, drive Restart now via IPC, expect it to relaunch as X+1 ---");
   installDmg(xDmg, BUNDLE);
   assert.equal(plistVersion(), X, "reinstalled bundle is not X");
+  fs.writeFileSync(SENTINEL, "x");
 
   port = 9500 + Math.floor(Math.random() * 500) + 1000;
   app = launch(port, { ZEVET_APP_FEED: feedUrl, ZEVET_HOME: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "zevet-home-")), "h") });
@@ -242,6 +258,7 @@ async function main() {
   }
   assert.ok(relaunched && relaunched.length, "no new zevet process appeared after Restart now");
   assert.equal(plistVersion(), X1, "the relaunched bundle is not X+1");
+  assertCleanSwap("(b)");
   started.push(...relaunched);
   console.log(`(b) OK: relaunched as pid(s) ${relaunched.join(",")}, bundle is ${plistVersion()}`);
 }

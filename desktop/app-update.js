@@ -669,26 +669,33 @@ class AppUpdater {
     }
   }
 
-  /** The three shell steps that swap a running .app for the one inside a
-   *  downloaded .dmg: mount it, copy the bundle over the live path, unmount.
-   *  Returned as data rather than run here, so the exact commands can be
-   *  pinned by a test without a disk image or a Mac. */
-  _macReplaceSteps(dmgFile, bundlePath) {
+  /** The shell steps that swap the .app for the one inside a downloaded
+   *  .dmg. They first wait for this process to exit, so nothing is copied
+   *  under a live app and `open` can't just re-activate the old one. They
+   *  stage the new bundle beside the old one and then swap it in, so no file
+   *  from the old version survives and a failed copy leaves the old app
+   *  intact. Returned as data so a test can pin them without a Mac. */
+  _macReplaceSteps(dmgFile, bundlePath, pid = process.pid) {
     const appName = path.basename(bundlePath);
-    const mount = path.join(os.tmpdir(), `zevet-update-${process.pid}-${Date.now()}`);
+    const mount = path.join(os.tmpdir(), `zevet-update-${pid}-${Date.now()}`);
+    const staged = `${bundlePath}.update`;
     return [
+      `while kill -0 ${Number(pid)} 2>/dev/null; do sleep 0.2; done`,
+      `rm -rf ${shQuote(staged)}`,
       ["hdiutil", ["attach", dmgFile, "-nobrowse", "-mountpoint", mount]],
-      ["ditto", [path.join(mount, appName), bundlePath]],
+      ["ditto", [path.join(mount, appName), staged]],
       ["hdiutil", ["detach", mount]],
+      `rm -rf ${shQuote(bundlePath)}`,
+      ["mv", [staged, bundlePath]],
     ];
   }
 
   /** Runs _macReplaceSteps as one detached shell command, the same reason the
    *  Windows installer above is spawned detached before this process exits:
-   *  the swap has to survive this app quitting partway through it. */
+   *  the swap has to survive this app quitting. */
   _spawnMacReplace(dmgFile, { relaunch }) {
     const steps = this._macReplaceSteps(dmgFile, this.bundlePath);
-    const parts = steps.map(([cmd, args]) => [cmd, ...args].map(shQuote).join(" "));
+    const parts = steps.map((s) => (typeof s === "string" ? s : [s[0], ...s[1]].map(shQuote).join(" ")));
     if (relaunch) parts.push(["open", shQuote(this.bundlePath)].join(" "));
     const child = this.spawnImpl("/bin/sh", ["-c", parts.join(" && ")], {
       detached: true,
