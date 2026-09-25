@@ -53,3 +53,6 @@ zevet-*.tar.gz
 # and release-check.mjs refuses to publish from a tree that is not clean.
 gate-out.txt
 sprite-test.md
+
+# node scripts/codemagic.mjs --out writes build artifacts here.
+codemagic-out*/
