@@ -38,3 +38,49 @@ workflows:
     artifacts:
       - desktop/out/*.dmg
       - desktop/out/*.dmg.sha256
+
+  # Proves the macOS self-update path (desktop/app-update.js) end to end on
+  # real Apple Silicon: builds X and X+0.0.1, installs X, serves X+1 through
+  # the real feed/check/download/verify code, then exercises both the silent
+  # install-on-quit path and the "Restart now" IPC hook. Manual only, and only
+  # ever meant for a throwaway VM: it installs into ~/Applications and
+  # launches the app for real. See scripts/test-macos-autoupdate.mjs.
+  macos-autoupdate:
+    name: macOS self-update proof
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      node: 22
+    scripts:
+      - name: Generate icon
+        script: cd desktop && node make-icon.mjs
+      - name: Install root deps
+        script: npm ci
+      - name: Install desktop deps
+        script: cd desktop && npm ci
+      - name: Install editor deps
+        script: cd editor && npm ci
+      - name: Test
+        script: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
+      - name: Build X (.dmg)
+        script: cd desktop && CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac
+      - name: Bump to X+0.0.1 and build again
+        script: |
+          set -euo pipefail
+          cd desktop
+          npm version patch --no-git-tag-version
+          CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac
+      - name: Build the local update feed for X+1
+        script: |
+          set -euo pipefail
+          mkdir -p /tmp/zevet-feed
+          X1_DMG="$(ls desktop/out/zevet-*-macos-arm64.dmg | sort -V | tail -1)"
+          cp "$X1_DMG" /tmp/zevet-feed/
+          node scripts/make-feed.mjs /tmp/zevet-feed
+      - name: Prove the macOS self-update on real hardware
+        script: |
+          set -euo pipefail
+          X_DMG="$(ls desktop/out/zevet-*-macos-arm64.dmg | sort -V | head -1)"
+          node scripts/test-macos-autoupdate.mjs "$X_DMG" /tmp/zevet-feed
+    artifacts:
+      - desktop/out/*.dmg
