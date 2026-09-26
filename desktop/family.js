@@ -128,6 +128,13 @@ class Family {
     runUpdate, // async () => void : the normal self-update
     fetchImpl,
     detect = osDetect,
+    // D-603: this machine's Zevet TEAM name, e.g. main.js's `fetchTeamName`
+    // cache -- never the hub URL behind it (Andrew's standing rule: the name
+    // is the identity, the hub is never shown). async () => string, "" when
+    // this machine has no team yet or the hub could not be reached; never
+    // throws by contract, but a throw is still swallowed below since this is
+    // a label, not something pairing may depend on.
+    readTeam = async () => "",
     version,
     installPath,
     host = os.hostname(),
@@ -137,13 +144,25 @@ class Family {
     tickMs = TICK_MS,
     pollMs = REQUEST_POLL_MS,
   } = {}) {
-    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, detect, version, installPath, host, platform, pid, now, tickMs, pollMs });
+    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, detect, readTeam, version, installPath, host, platform, pid, now, tickMs, pollMs });
     this.fetch = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
     this.pairing = "idle"; // idle | pairing | no_owner | unreachable | error
+    this.team = ""; // last-known team name; refreshed each tick, best-effort
     this.feeds = new Map(); // app -> {at, version, file}
     this.found = new Map(); // app -> {at, version}  (OS detection cache)
     this.timers = [];
     this.busy = false;
+  }
+
+  /** Best-effort refresh of `this.team`. Never throws: a team name is a
+   *  label, and a stale or empty one must not block a heartbeat or a pair. */
+  async refreshTeam() {
+    try {
+      this.team = String((await this.readTeam()) || "");
+    } catch {
+      /* keep the last-known value */
+    }
+    return this.team;
   }
   async detectAny(names) {
     for (const n of names) {
@@ -170,6 +189,7 @@ class Family {
           updated_at: new Date(this.now()).toISOString(),
           install_path: this.installPath,
           running,
+          team_name: this.team || null,
           masora: { connected: !!m.paired, member_email: m.member || null },
         }),
       );
@@ -205,12 +225,16 @@ class Family {
       }
       if (!secret) return (this.pairing = "unreachable");
       this.pairing = "pairing";
+      await this.refreshTeam();
       let res;
       try {
         res = await this.fetch(`${web}/api/family/pair`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ app: "zevet", secret, device_name: this.host, platform: this.platform }),
+          body: JSON.stringify({
+            app: "zevet", secret, device_name: this.host, platform: this.platform,
+            ...(this.team ? { team_name: this.team } : {}),
+          }),
           signal: AbortSignal.timeout(15000),
         });
       } catch {
@@ -265,11 +289,12 @@ class Family {
   }
 
   start() {
-    const tick = () => {
+    const tick = async () => {
+      await this.refreshTeam();
       this.heartbeat();
       if (!this.readMasora().paired) void this.connect();
     };
-    tick();
+    void tick();
     const add = (fn, ms) => {
       const t = setInterval(fn, ms);
       if (typeof t.unref === "function") t.unref();

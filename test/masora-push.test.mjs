@@ -86,6 +86,13 @@ describe("toRecord: the C1 shape", () => {
     const record = await push.toRecord(summary, [], "o/n");
     assert.equal(record.agent, "codex");
   });
+
+  test("D-603: the hub login is the sole participant when known; [] when not", async () => {
+    const summary = { source: "claude", slug: "s", id: "1", title: "t", started: 1, updated: 2 };
+    assert.deepEqual((await push.toRecord(summary, [], "o/n", "andrew")).participants, ["andrew"]);
+    assert.deepEqual((await push.toRecord(summary, [], "o/n")).participants, []);
+    assert.deepEqual((await push.toRecord(summary, [], "o/n", "")).participants, []);
+  });
 });
 
 describe("the outbox: durable retry", () => {
@@ -173,6 +180,20 @@ describe("runOnce: only changed sessions are ever queued", () => {
       ...fakeSessions(moved),
     });
     assert.equal(r.queued, 1);
+  });
+
+  test("D-603: `actor` is threaded through to the pushed record's participants", async () => {
+    const own = { source: "claude", slug: "s", id: "sess-actor", cwd: "/repo", title: "t2", started: 1, updated: 1 };
+    let body = null;
+    const capture = async (_url, opts) => {
+      body = JSON.parse(zlib.gunzipSync(opts.body).toString("utf8").split("\n")[0]);
+      return acceptAll();
+    };
+    await push.runOnce({
+      repos: { "/repo": true }, baseUrl: "https://m", token: "tok", fetchImpl: capture, actor: "andrew",
+      ...fakeSessions(own),
+    });
+    assert.deepEqual(body.participants, ["andrew"]);
   });
 
   test("a repo not in the opt-in map is never read at all", async () => {

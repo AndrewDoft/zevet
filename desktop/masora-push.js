@@ -117,8 +117,14 @@ function summarize(records) {
   return { contentText, filesTouched: [...files] };
 }
 
-/** One C1 record for one session summary (agent-sessions.js `list()` shape). */
-async function toRecord(summary, records, repository) {
+/** One C1 record for one session summary (agent-sessions.js `list()` shape).
+ *  `actor` (the hub login this machine signs in as, chat.js's own
+ *  `chatAuthor()`) is the sole participant when known -- the same "who does
+ *  this belong to" identity chat records already carry as `owner`, so a
+ *  team's Admin ▸ Access view can tell whose sessions these are without a
+ *  repo-scoped connector to infer it from. "" when this machine has no team
+ *  yet: an empty list, never a guessed name. */
+async function toRecord(summary, records, repository, actor) {
   const { contentText, filesTouched } = summarize(records);
   return {
     surface: "zevet",
@@ -130,7 +136,7 @@ async function toRecord(summary, records, repository) {
     content_text: contentText,
     files_touched: filesTouched,
     agent: summary.source === "codex" ? "codex" : "claude",
-    participants: [],
+    participants: actor ? [actor] : [],
   };
 }
 
@@ -224,7 +230,7 @@ async function flushOutbox({ baseUrl, token, fetchImpl, file = OUTBOX_PATH }) {
  * are `agent-sessions.js`'s `list`/`read` (injected so this is testable with
  * fixtures instead of a real `~/.claude`).
  */
-async function runOnce({ repos, baseUrl, token, listSessions, readSession, fetchImpl }) {
+async function runOnce({ repos, baseUrl, token, listSessions, readSession, fetchImpl, actor }) {
   const dirs = Object.keys(repos || {});
   if (!dirs.length || !token) return { queued: 0, sent: 0 };
   const cursor = readCursor();
@@ -236,7 +242,7 @@ async function runOnce({ repos, baseUrl, token, listSessions, readSession, fetch
       const key = sessionKey(summary);
       if (cursor[key] && cursor[key] >= (summary.updated || 0)) continue;
       const { records } = readSession(summary.source, summary.slug, summary.id);
-      toQueue.push({ summary, key, record: await toRecord(summary, records, repository) });
+      toQueue.push({ summary, key, record: await toRecord(summary, records, repository, actor) });
     }
   }
   if (toQueue.length) {
