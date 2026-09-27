@@ -15,7 +15,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { tempDir, ROOT } from "./helpers.mjs";
@@ -873,5 +873,77 @@ describe("self-replacing a Mac bundle", () => {
     assert.equal(calls.length, 1);
     const script = calls[0][1][1];
     assert.ok(!/open /.test(script), "the quit path must not relaunch");
+  });
+});
+
+// %APPDATA%/zevet-desktop/updates was found holding one installer per
+// version since 0.2.1, plus a hand-dropped "zevet-9.9.9-windows-x64-setup.exe"
+// test fixture — this.dir only ever grew. These are the pruning behaviour
+// added to stop that: keep the file a check still needs, and nothing else.
+describe("old installers are pruned", () => {
+  test("a fresh download keeps only the file just downloaded", async () => {
+    const t = tempDir("zevet-prune-");
+    const junk = ["zevet-0.2.1-windows-x64-setup.exe", "zevet-9.9.9-windows-x64-setup.exe", "stray.part"];
+    for (const name of junk) writeFileSync(path.join(t.dir, name), "junk");
+    const body = randomBytes(4096);
+    const host = await fakeHost({
+      manifest: { version: "0.2.2", platforms: { [KEY]: { file: "zevet-0.2.2-windows-x64-setup.exe", sha256: sha(body), bytes: body.length } } },
+      files: { "zevet-0.2.2-windows-x64-setup.exe": body },
+    });
+    try {
+      const u = updaterFor(host, t.dir);
+      const s = await u.check();
+      assert.equal(s.phase, "ready");
+      const left = readdirSync(t.dir).sort();
+      assert.deepEqual(left, ["zevet-0.2.2-windows-x64-setup.exe"]);
+    } finally {
+      await host.close();
+      t.cleanup();
+    }
+  });
+
+  test("once current again, the directory is left holding nothing", async () => {
+    const t = tempDir("zevet-prune-");
+    const junk = ["zevet-0.1.0-windows-x64-setup.exe", "zevet-0.1.2-windows-x64-setup.exe"];
+    for (const name of junk) writeFileSync(path.join(t.dir, name), "junk");
+    const host = await fakeHost({
+      manifest: { version: "0.1.2", platforms: { [KEY]: { file: "zevet-0.1.2-windows-x64-setup.exe", sha256: sha(Buffer.from("x")), bytes: 1 } } },
+      files: {},
+    });
+    try {
+      // currentVersion (0.1.2) already matches the feed, so check() takes the
+      // "phase: current" branch — no download happens at all.
+      const u = updaterFor(host, t.dir, { currentVersion: "0.1.2" });
+      const s = await u.check();
+      assert.equal(s.phase, "current");
+      assert.deepEqual(readdirSync(t.dir), []);
+    } finally {
+      await host.close();
+      t.cleanup();
+    }
+  });
+
+  test("the install-on-quit marker survives a prune that runs before the app quits", async () => {
+    const t = tempDir("zevet-prune-");
+    const body = randomBytes(2048);
+    const host = await fakeHost({
+      manifest: { version: "0.2.0", platforms: { [KEY]: { file: "zevet-0.2.0-windows-x64-setup.exe", sha256: sha(body), bytes: body.length } } },
+      files: { "zevet-0.2.0-windows-x64-setup.exe": body },
+    });
+    try {
+      const u = updaterFor(host, t.dir, { spawnImpl: () => ({ unref() {} }) });
+      assert.equal((await u.check()).phase, "ready");
+      const r = u.installOnQuit();
+      assert.equal(r.ok, true);
+      assert.ok(existsSync(path.join(t.dir, "install-on-quit.json")));
+      // A background check landing between the marker being written and the
+      // process actually quitting must not sweep the marker away — that would
+      // let the very next launch silently re-attempt the same install.
+      await u.check();
+      assert.ok(existsSync(path.join(t.dir, "install-on-quit.json")));
+    } finally {
+      await host.close();
+      t.cleanup();
+    }
   });
 });

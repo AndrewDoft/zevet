@@ -852,3 +852,47 @@ from those. Tool activity is not stored in a chat file, so a reopened thread
 shows text.
 
 **Reversibility.** High: additive, one store field (`folder`) and one file.
+
+## D-020 — Invites complete: email identities, a per-team Workspace toggle, installer pruning
+
+Email invite is the existing "google"-tagged allowlist record (`accounts.mjs`'s
+`allow()` already decided this by the "@"), extended two ways: a GitHub sign-in
+whose GitHub-verified public email (the one `/user` gives on `read:user`, no
+extra scope) matches an invited address is admitted and CLAIMS that row —
+rewriting its provider/login to whoever actually signed in — same as a Google
+sign-in already did. Without a public email GitHub still matches by login only;
+that is the existing behaviour, now written down in github-auth.mjs.
+
+Workspace-domain-per-team: `Accounts` gained `domain` (the active rule) and
+`ownerHd` (captured off the owner's own sign-in). `setDomain` accepts only the
+owner's own `hd`, or `""` — never an arbitrary string, because the whole point
+is delegating to a domain Google has already vouched the owner administers, not
+letting an owner grant entry to one they merely typed. `ZEVET_GOOGLE_DOMAIN`
+stays exactly what it was — a hub-wide fallback for the default team — and a
+team's own `domain` wins over it (`server.mjs`'s `domainFor`). New route
+`/auth/domain`, owner-gated like `/auth/allow`; new relay action `team.domain`
+in `family.js`, mirroring `team.invite`/`team.revoke`.
+
+Delivery for an email invite: "Copy invite" (clipboard) and a `mailto:` link —
+no mailer was added; the hub still has none. Board-only UI, so it works
+identically whether opened from the app or a browser tab.
+
+Installer pruning: `%APPDATA%/zevet-desktop/updates` accumulates one file per
+version checked, forever. `AppUpdater#check()` now prunes to the file it still
+needs — the freshly-verified download, or nothing once the running app is
+confirmed current — after every check, keeping the `install-on-quit.json`
+marker alive regardless (deleting it out from under `installOnQuit()` would let
+a background check re-arm an install already attempted once).
+
+**Investigated, not fixed:** the specific stray `zevet-9.9.9-windows-x64-setup.exe`
+reported in the real `%APPDATA%/zevet-desktop/updates`. Every Electron-driving
+test in this suite runs through `scripts/drive/drive.mjs`, which has isolated
+`--user-data-dir`, `APPDATA` and `LOCALAPPDATA` since the commit that introduced
+it (`e920159`) — no test file bypasses it. The pruning above cleans up whatever
+is there regardless of how it arrived; the likelier source is a manual
+`npm start` against a hub serving a placeholder "9.9.9" feed during dev, not the
+automated suite.
+
+**Reversibility.** High. Everything is additive: a new `Accounts` field with a
+narrow setter, one new route, one new relay action, one new prune method called
+from existing call sites.

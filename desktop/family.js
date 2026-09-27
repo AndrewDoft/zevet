@@ -325,6 +325,7 @@ class Family {
     if (req.action === "connect") await this.connect();
     else if (req.action === "update") await Promise.resolve(this.runUpdate()).catch(() => {});
     else if (req.action === "team.invite" || req.action === "team.revoke") await this.#relayTeamAction(req.action, req.login);
+    else if (req.action === "team.domain") await this.#relayTeamDomain(req.value);
   }
 
   /**
@@ -353,6 +354,35 @@ class Family {
     }
     // Whatever happened, show Masora the truth on its very next read rather
     // than waiting for the next 60s heartbeat tick.
+    await this.#refreshRoster();
+    this.heartbeat();
+  }
+
+  /**
+   * Masora asks an owner to turn the Workspace domain door on (a domain) or
+   * off ("" or absent) by dropping {action: "team.domain", value}. Same
+   * shape as #relayTeamAction above and for the same reason: only Zevet
+   * holds a hub credential, so it makes the call with its own session and
+   * the hub itself is what actually refuses this to anyone but the owner
+   * (hub/server.mjs's `/auth/domain`, and accounts.mjs's `setDomain` refuses
+   * anything but the owner's own Workspace domain regardless of who asks).
+   * Fire-and-forget, same as an invite or a revoke.
+   */
+  async #relayTeamDomain(value) {
+    const auth = typeof this.readHubAuth === "function" ? this.readHubAuth() : null;
+    if (auth && auth.hub && auth.token) {
+      try {
+        const res = await this.fetch(`${auth.hub}/auth/domain`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-zevet-token": auth.token },
+          body: JSON.stringify({ domain: value || "" }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) console.error(`zevet: hub refused team.domain (${res.status})`);
+      } catch (err) {
+        console.error(`zevet: could not reach the hub for team.domain (${err.message})`);
+      }
+    }
     await this.#refreshRoster();
     this.heartbeat();
   }

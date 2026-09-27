@@ -288,6 +288,22 @@ function GoogleDisconnectRow({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** The hub has no mailer (docs/RELEASING.md's whole reason not to add one):
+ *  an invite is delivered by hand, so this is the one line to hand over. */
+function inviteLine(team: string): string {
+  return `Join ${team || "the team"} on Zevet — https://usemasora.com/zevet`;
+}
+
+function copyInvite(team: string) {
+  navigator.clipboard?.writeText(inviteLine(team)).catch(() => {});
+}
+
+function mailtoInvite(email: string, team: string): string {
+  const subject = `Join ${team || "the team"} on Zevet`;
+  const body = `${team ? `${team}\n` : ""}https://usemasora.com/zevet`;
+  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 function AccountSection() {
   const whoState = useBoard((s) => s.who.state) as unknown as Record<string, unknown> | null;
   const who = useBoard((s) => s.who);
@@ -328,6 +344,32 @@ function AccountSection() {
       );
   }
 
+  /** The owner's "Anyone at <domain>" toggle — /auth/domain, not /auth/allow:
+   *  its response is {domain}, not {people}, so this refetches whoami rather
+   *  than patching state by hand the way changePeople does. */
+  function changeDomain(domain: string) {
+    setBusy(true);
+    setWhoErr("");
+    fetch("/auth/domain", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain }),
+    })
+      .then((r) => r.json().then((b) => ({ status: r.status, body: b as { error?: string } })))
+      .then(
+        (r) => {
+          setBusy(false);
+          if (r.status === 200) refreshWhoami();
+          else setWhoErr(r.body.error || "Could not change this.");
+        },
+        () => {
+          setBusy(false);
+          setWhoErr("Could not connect.");
+        },
+      );
+  }
+
   if (!whoState) {
     return (
       <SSection title="Account" summary="loading…">{null}</SSection>
@@ -347,7 +389,12 @@ function AccountSection() {
   const login = typeof whoState.login === "string" ? whoState.login : "";
   const shared = Boolean(whoState.shared);
   const owner = Boolean(whoState.owner);
-  const people = Array.isArray(whoState.people) ? (whoState.people as Array<{ login: string; owner?: boolean; pending?: boolean }>) : [];
+  const people = Array.isArray(whoState.people)
+    ? (whoState.people as Array<{ login: string; provider?: string; owner?: boolean; pending?: boolean }>)
+    : [];
+  const teamLabel = typeof whoState.teamName === "string" ? whoState.teamName : "";
+  const googleDomain = typeof whoState.googleDomain === "string" ? whoState.googleDomain : "";
+  const availableDomain = typeof whoState.availableDomain === "string" ? whoState.availableDomain : "";
   const githubSignIn = Boolean(whoState.githubSignIn);
   const googleSignIn = Boolean(whoState.googleSignIn);
   const local = Boolean(bridge.local);
@@ -382,12 +429,28 @@ function AccountSection() {
   const list: ReactNode[] = [];
   if (people.length) {
     people.forEach((p) => {
+      // Delivery is a copy/paste and a mailto: the hub has no mailer. Only an
+      // email invite (provider "google" — see accounts.mjs's `allow`) still
+      // pending has anywhere to send: a pending GitHub invite is a login, not
+      // an address, and once someone has signed in there is nothing left to
+      // invite.
+      const emailInvite = p.pending && p.provider === "google" ? p.login : "";
       list.push(
         <div className="srow" key={p.login}>
           <span className="k">
             {handle(p.login) + (p.owner ? "  \u00b7 owner" : p.pending ? "  \u00b7 invited" : "")}
           </span>
           <span className="v">
+            {emailInvite ? (
+              <>
+                <button className={MAKE_BTN} type="button" onClick={() => copyInvite(teamLabel)}>
+                  Copy invite
+                </button>
+                <a className={MAKE_BTN} href={mailtoInvite(emailInvite, teamLabel)}>
+                  Email
+                </a>
+              </>
+            ) : null}
             {owner && !p.owner ? (
               <button className={MAKE_BTN} type="button" disabled={busy} onClick={() => changePeople("/auth/revoke", p.login)}>
                 Remove
@@ -402,6 +465,24 @@ function AccountSection() {
     out.push(
       <div key="people" style={{ marginTop: "8px" }}>
         {list}
+      </div>,
+    );
+  }
+
+  if (owner && availableDomain) {
+    out.push(
+      <div className="srow" key="domain">
+        <span className="k">Anyone at {availableDomain}</span>
+        <span className="v">
+          <label>
+            <input
+              type="checkbox"
+              checked={googleDomain === availableDomain}
+              disabled={busy}
+              onChange={(ev) => changeDomain(ev.target.checked ? availableDomain : "")}
+            />
+          </label>
+        </span>
       </div>,
     );
   }
@@ -786,7 +867,7 @@ function IndexSection() {
         bridge.local && typeof bridge.local.indexEnable === "function" &&
           bridge.local.indexEnable(localRoot).then((r) => {
             setIndex({
-              progressText: r && r.ok ? "done \u2014 " + r.indexed + " indexed, " + r.skipped + " skipped" : "failed: " + ((r && r.error) || "unknown"),
+              progressText: r && r.ok ? "done — " + r.indexed + " indexed, " + r.skipped + " skipped" : "failed: " + ((r && r.error) || "unknown"),
             });
             refreshIndexStatus();
           }).catch((err: unknown) => {

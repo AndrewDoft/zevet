@@ -745,6 +745,20 @@ function loadTeams() {
 }
 loadTeams();
 
+/**
+ * Which Workspace domain, if any, admits by rule on this team.
+ *
+ * A created team's own `Accounts#domain` always wins when set — it is what
+ * `/auth/domain` lets that team's owner turn on, off their OWN `hd` (see
+ * accounts.mjs's `setDomain`). `ZEVET_GOOGLE_DOMAIN` is a hub-wide fallback
+ * that applies ONLY to the default team, and only when that team has not set
+ * its own — the env var is an operator setting from before per-team domains
+ * existed, never a second way to grant one to a team that never asked.
+ */
+function domainFor(team, acc) {
+  return acc.domain || (team === DEFAULT_TEAM ? GOOGLE_DOMAIN : "");
+}
+
 /** A team's display name: the one it was given, else something readable for a
  *  team made before names existed (or by a client that predates them). */
 function teamName(slug, acc) {
@@ -1104,10 +1118,10 @@ const server = createServer(async (req, res) => {
     }
     const team = body && body.team ? findTeam(body.team) : DEFAULT_TEAM;
     if (!team) return json(res, 404, { error: "no such team — create one first" });
-    // Only the DEFAULT team's Workspace domain auto-admits by rule; a team
-    // created at runtime is invite-only beyond its owner, so no `hd` hint is
-    // sent and readIdToken below is not asked to enforce one.
-    const domain = team === DEFAULT_TEAM ? GOOGLE_DOMAIN : "";
+    // Any team's own domain door (see domainFor), or the default team's
+    // env-wide fallback. A created team with no domain set is invite-only
+    // beyond its owner, so no `hd` hint is sent below.
+    const domain = domainFor(team, teamAccounts.get(team));
 
     sweepGooglePairs();
     if (googlePairs.size >= GOOGLE_PAIRS_MAX) return json(res, 429, { error: "too many sign-ins in flight — try again in a minute" });
@@ -1183,7 +1197,7 @@ const server = createServer(async (req, res) => {
       pair.error = "that team no longer exists";
       return googlePage(res, 404, pair.error);
     }
-    const domain = pair.team === DEFAULT_TEAM || !pair.team ? GOOGLE_DOMAIN : "";
+    const domain = domainFor(pair.team || DEFAULT_TEAM, acc);
 
     /* ⚠️ THE IDENTITY COMES FROM HERE AND NOWHERE ELSE. Not from the query
      * string, not from anything the browser carried — from an id token this
@@ -1272,7 +1286,13 @@ const server = createServer(async (req, res) => {
       // field to decide whether to show its connect button, and it is served by
       // this same hub on a slower refresh cycle than the hub itself.
       googleSignIn: GOOGLE_ON,
-      googleDomain: auth.team === DEFAULT_TEAM ? GOOGLE_DOMAIN : "",
+      googleDomain: domainFor(auth.team, acc),
+      // The owner's own Workspace domain, if they have one — the one value
+      // `/auth/domain` will accept, whether or not the toggle is currently
+      // on (`googleDomain` above says that). Shown only to the owner: it is
+      // their sign-in identity, not a fact about the team worth handing
+      // every member.
+      availableDomain: sess && acc.owner === sess.login ? acc.ownerHd : "",
       people: acc.list().map(person),
     });
   }
@@ -1325,6 +1345,32 @@ const server = createServer(async (req, res) => {
     const r = url.pathname === "/auth/allow" ? acc.allow(body && body.login) : acc.revoke(body && body.login);
     if (!r.ok) return json(res, 400, { error: r.error });
     return json(res, 200, { ok: true, people: acc.list().map(person) });
+  }
+
+  /* Turning the Workspace door on or off for THIS team. Same owner-only gate
+   * as allow/revoke above, and the same reason: it changes who gets in
+   * without an invite, which is exactly the kind of change a shared token
+   * must not be able to make for itself. `acc.setDomain` is what actually
+   * refuses anything but the owner's own `hd` — see its comment. */
+  if (url.pathname === "/auth/domain" && req.method === "POST") {
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    if (!sess || acc.owner !== sess.login) {
+      return json(res, 403, {
+        error: acc.owner ? `only @${acc.owner} can change this` : "nobody has claimed this team yet — the first sign-in becomes its owner",
+      });
+    }
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const r = acc.setDomain(body && body.domain);
+    if (!r.ok) return json(res, 400, { error: r.error });
+    return json(res, 200, { ok: true, domain: acc.domain });
   }
 
   /* Team-held model credentials: listed and added by any signed-in member

@@ -83,7 +83,7 @@ const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
  */
 const DEFAULT_PROVIDER = "github";
 
-const EMPTY = () => ({ version: 1, secret: "", name: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null, credentials: [] });
+const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null, credentials: [] });
 
 /** A stored credential record, minus its `key` — what everything except
  *  /team/credentials/:id/secret itself is allowed to see. */
@@ -181,6 +181,48 @@ export class Accounts {
     return this.state.owner ? this.state.owner.login : null;
   }
 
+  /** The Google Workspace domain this team's owner signed in with, or "" if
+   *  they never have (a GitHub owner, or a Google owner on a personal
+   *  account). This is the ONE value `setDomain` will ever accept — see its
+   *  own comment for why it is not an arbitrary string. */
+  get ownerHd() {
+    return this.state.owner && this.state.owner.hd ? String(this.state.owner.hd) : "";
+  }
+
+  /** This team's own "Anyone at `<domain>`" rule — "" when off. Distinct from
+   *  the hub-wide `ZEVET_GOOGLE_DOMAIN` fallback env var (server.mjs's
+   *  `domainFor` is what falls back to that, and only for the default team):
+   *  this is per-team, stored right here, so a created team's owner can turn
+   *  it on for their own Workspace without an operator touching the hub's
+   *  environment at all. */
+  get domain() {
+    return this.state.domain || "";
+  }
+
+  /**
+   * Turn the domain door on or off for this team.
+   *
+   * ⚠️ NOT AN ARBITRARY DOMAIN. The only value this will ever set is the
+   * owner's OWN `hd` (or "" to turn it off) — never a domain typed in by
+   * hand. Accepting any string here would let an owner grant entry to a
+   * domain they do not administer and have never proven anything about;
+   * `hd` is the one domain Google has already vouched this owner belongs to.
+   */
+  setDomain(value) {
+    const v = String(value || "").trim().toLowerCase();
+    if (!v) {
+      this.state.domain = "";
+      this.#save();
+      return { ok: true };
+    }
+    const hd = this.ownerHd;
+    if (!hd) return { ok: false, error: "the owner did not sign in with a Google Workspace account" };
+    if (v !== hd.toLowerCase()) return { ok: false, error: `only ${hd} can be set — that is the owner's own Workspace domain` };
+    this.state.domain = hd;
+    this.#save();
+    return { ok: true };
+  }
+
   /** Every team-held model credential, metadata only — never the secret.
    *  Stored like `secret` — plaintext in the 0600 accounts file — because
    *  wrapping one field under `secret` in the SAME file protects it against
@@ -269,7 +311,12 @@ export class Accounts {
    * hub, no matter who reaches it first.
    */
   mayEnter(user, { requiredOwner = "", domain = "" } = {}) {
-    const me = { provider: provider(user), login: String(user.login || "").toLowerCase(), id: String(user.id || "") };
+    const me = {
+      provider: provider(user),
+      login: String(user.login || "").toLowerCase(),
+      id: String(user.id || ""),
+      email: user.email ? String(user.email).toLowerCase() : "",
+    };
     if (!me.login || !me.id) return { ok: false, error: `${me.provider === "google" ? "Google" : "GitHub"} did not say who you are` };
 
     // ⚠️ CHECKED BEFORE EVERYTHING, INCLUDING TRUST-ON-FIRST-USE. A revoked
@@ -295,6 +342,21 @@ export class Accounts {
       // "andrew" on GitHub and "andrew@…" on Google are different people and a
       // cross-provider login match would be a way to inherit someone's seat.
       if (!a.id && provider(a) === me.provider && a.login === me.login) return { ok: true, first: false };
+    }
+
+    /**
+     * ⚠️ THE ONE CROSS-PROVIDER MATCH, AND IT IS EMAIL ONLY. An invite typed
+     * as an email address is stored as a "google" record (see `allow`) purely
+     * because that is the identity type an "@"-containing login means — it
+     * is not a claim that the invited person will sign in with Google. So a
+     * GitHub sign-in whose GitHub-verified primary email matches that
+     * invited address is admitted too, exactly as a Google sign-in with that
+     * email already is by the loop above. `me.email` only ever arrives here
+     * already lower-cased (github-auth.mjs), same as every stored login.
+     */
+    if (me.provider === "github" && me.email) {
+      const invited = this.state.allowed.find((a) => !a.id && provider(a) === "google" && a.login === me.email);
+      if (invited) return { ok: true, first: false };
     }
 
     /**
@@ -335,6 +397,11 @@ export class Accounts {
       display: String(user.display || user.login),
       id: String(user.id),
       added: new Date(this.now()).toISOString(),
+      // "" for GitHub, and for a personal Google account — only a Google
+      // Workspace sign-in ever carries one. Kept on every record (not only
+      // the owner's) because it costs nothing and `ownerHd` is what actually
+      // reads it back.
+      hd: user.hd ? String(user.hd) : "",
     };
 
     if (!this.state.owner) {
@@ -345,10 +412,23 @@ export class Accounts {
       // in People twice, once for ever as "pending", which is what this did
       // before Google arrived and `allow`'s own comment already promised it did
       // not.
-      const invited = this.state.allowed.find((a) => !a.id && provider(a) === rec.provider && a.login === rec.login);
+      //
+      // The second lookup is the cross-provider case `mayEnter` above admits
+      // on: an invite typed as an email (stored as a "google" record) claimed
+      // by a GitHub sign-in whose verified email matched it. Claiming it
+      // rewrites `provider`/`login` to what actually signed in — the row
+      // becomes "the person who is now here", not "the address that was
+      // typed" — which is also why `person()` (server.mjs) and every session
+      // lookup that follows sees the right provider from this point on.
+      const invited =
+        this.state.allowed.find((a) => !a.id && provider(a) === rec.provider && a.login === rec.login) ||
+        (user.email ? this.state.allowed.find((a) => !a.id && provider(a) === "google" && a.login === String(user.email).toLowerCase()) : undefined);
       if (invited) {
         invited.id = rec.id;
+        invited.provider = rec.provider;
+        invited.login = rec.login;
         invited.display = rec.display;
+        invited.hd = rec.hd;
       } else if (!this.list().some((a) => samePerson(a, rec))) {
         // Somebody the DOMAIN rule admitted lands here, and is recorded exactly
         // like anyone else. That is deliberate: `session()` re-checks the list
@@ -508,6 +588,7 @@ export class Accounts {
         version: 1,
         secret: typeof raw.secret === "string" ? raw.secret : "",
         name: typeof raw.name === "string" ? raw.name : "",
+        domain: typeof raw.domain === "string" ? raw.domain : "",
         owner: raw.owner && raw.owner.login ? tag(raw.owner) : null,
         allowed: Array.isArray(raw.allowed) ? raw.allowed.filter((a) => a && a.login).map(tag) : [],
         // A block with no id blocks nobody — `samePerson` needs one — so a

@@ -218,7 +218,22 @@ export async function githubUser({ accessToken, fetchImpl } = {}) {
 
   const b = r.body || {};
   if (!b.login || !b.id) return { ok: false, error: "GitHub returned a user with no login" };
-  return { ok: true, login: String(b.login), id: String(b.id), name: b.name ? String(b.name) : null, avatar: b.avatar_url ? String(b.avatar_url) : null };
+  // ⚠️ THE PUBLIC PROFILE EMAIL, AND ONLY WHEN ONE IS SET. `read:user` does
+  // not grant `/user/emails` (that needs the separate `user:email` scope,
+  // not requested — see SCOPES above), so this is the one email address
+  // GitHub will hand back on this scope. GitHub only lets a person set a
+  // VERIFIED address as their public one (docs.github.com/rest/users/users
+  // — "email: the publicly visible email address"), so it is safe to treat
+  // as verified; it is simply absent whenever nobody made one public, and
+  // accounts.mjs's matching by login is what still works for everyone else.
+  return {
+    ok: true,
+    login: String(b.login),
+    id: String(b.id),
+    name: b.name ? String(b.name) : null,
+    avatar: b.avatar_url ? String(b.avatar_url) : null,
+    email: b.email ? String(b.email).toLowerCase() : null,
+  };
 }
 
 /** GitHub's errors carry a human sentence in `error_description` often enough

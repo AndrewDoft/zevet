@@ -356,6 +356,12 @@ class AppUpdater {
         return this.status();
       }
       if (compareVersions(m.version, this.currentVersion) <= 0) {
+        // Nothing newer than what is already running — which is exactly the
+        // state right after a successful install and relaunch. Nothing in
+        // `this.dir` is still needed, so this is also where the previous
+        // versions' installers (and any other junk that landed there) get
+        // swept out.
+        this._pruneOldInstallers([]);
         this._set({ phase: "current", version: null, error: null, canInstall: false });
         return this.status();
       }
@@ -371,6 +377,7 @@ class AppUpdater {
       const dest = path.join(this.dir, m.entry.file);
       if (this._verified(dest, m.entry)) {
         this._readyEntry = m.entry;
+        this._pruneOldInstallers([m.entry.file]);
         this._set({ phase: "ready", version: m.version, notes: m.notes, file: dest, percent: 100, canInstall: true, error: null });
         return this.status();
       }
@@ -378,6 +385,7 @@ class AppUpdater {
       this._set({ phase: "downloading", version: m.version, notes: m.notes, percent: 0, canInstall: false });
       await this._download(url, dest, m.entry);
       this._readyEntry = m.entry;
+      this._pruneOldInstallers([m.entry.file]);
       this._set({ phase: "ready", file: dest, percent: 100, canInstall: true });
       this.log(`${this.currentVersion} -> ${m.version} downloaded and verified`);
       return this.status();
@@ -387,6 +395,40 @@ class AppUpdater {
       return this.status();
     } finally {
       this._busy = false;
+    }
+  }
+
+  /**
+   * `this.dir` otherwise only ever grows: every version this app has checked
+   * for leaves its installer behind, forgotten the moment the check moves on.
+   * Called after a download lands (keeping that one file) and once the app is
+   * confirmed current (keeping nothing) — so the directory never holds more
+   * than the one installer still worth having, if any.
+   *
+   * `keep` is filenames, not paths — `this.dir` is the only directory this
+   * ever touches. Deletion is best-effort: a file mid-install on Windows is
+   * locked by the OS, and this just leaves it for next time rather than
+   * throwing the check that got it here.
+   */
+  _pruneOldInstallers(keep) {
+    let names;
+    try {
+      names = fs.readdirSync(this.dir);
+    } catch {
+      return; // no directory yet — nothing to prune
+    }
+    // The install-on-quit marker is never a stale installer, and deleting it
+    // out from under installOnQuit() (a check can run between the marker
+    // being written and the app actually quitting) would let the SAME
+    // version silently re-attempt an install it already tried once.
+    const keeping = new Set(["install-on-quit.json", ...keep]);
+    for (const name of names) {
+      if (keeping.has(name)) continue;
+      try {
+        fs.rmSync(path.join(this.dir, name), { force: true });
+      } catch {
+        // locked or already gone — leave it for the next prune
+      }
     }
   }
 

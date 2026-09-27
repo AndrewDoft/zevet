@@ -370,6 +370,43 @@ describe("team roster (Masora relay)", () => {
     assert.deepEqual(calls, [{ login: "bob@example.com" }]);
   });
 
+  test("team.domain POSTs the value to the hub's domain endpoint", async () => {
+    const calls = [];
+    const r = rig({
+      readHubAuth: () => ({ hub: "https://hub.example", token: "tok" }),
+      fetchImpl: hubFetch({
+        "https://hub.example/auth/domain": async (o) => {
+          calls.push({ method: o.method, body: JSON.parse(o.body), token: o.headers["x-zevet-token"] });
+          return { ok: true, json: async () => ({ ok: true }) };
+        },
+        "https://hub.example/auth/whoami": whoami("Acme", []),
+      }),
+    });
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.domain", value: "acme.com" }));
+    await r.f.pollRequest();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, "POST");
+    assert.deepEqual(calls[0].body, { domain: "acme.com" });
+    assert.equal(calls[0].token, "tok");
+  });
+
+  test("team.domain with no value clears the domain", async () => {
+    const calls = [];
+    const r = rig({
+      readHubAuth: () => ({ hub: "https://hub.example", token: "tok" }),
+      fetchImpl: hubFetch({
+        "https://hub.example/auth/domain": async (o) => {
+          calls.push(JSON.parse(o.body));
+          return { ok: true, json: async () => ({ ok: true }) };
+        },
+        "https://hub.example/auth/whoami": whoami("Acme", []),
+      }),
+    });
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.domain" }));
+    await r.f.pollRequest();
+    assert.deepEqual(calls, [{ domain: "" }]);
+  });
+
   test("a rejected hub call during invite/revoke does not throw out of pollRequest", async () => {
     const r = rig({
       readHubAuth: () => ({ hub: "https://hub.example", token: "tok" }),

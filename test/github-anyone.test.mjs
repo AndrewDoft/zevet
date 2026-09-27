@@ -92,6 +92,79 @@ describe("GitHub sign-in for anyone", () => {
     }
   });
 
+  test("the owner allows a login by name, and that login signs in and joins by team name", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "zevet-gh-anyone-"));
+    const h = await startHub(hubEnv(dir, "alice,bob"));
+    hubs.push(h);
+
+    const c = await (await postJson(h.base, "/team/create", { name: "Invite Flow" })).json();
+    const a = await signIn(h.base, c.team); // alice: first sign-in, becomes owner
+    assert.equal(a.body.owner, true);
+
+    const allowed = await fetch(`${h.base}/auth/allow`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zevet-token": a.body.token },
+      body: JSON.stringify({ login: "bob" }),
+    });
+    assert.equal(allowed.status, 200);
+
+    // bob joins by TEAM NAME (any case) — never a hub address, never a slug
+    // he was told out of band.
+    const b = await signIn(h.base, "invite flow");
+    assert.equal(b.status, 200);
+    assert.equal(b.body.owner, false);
+    assert.equal(b.body.team, c.team);
+
+    const who = await fetch(`${h.base}/auth/whoami?token=${b.body.token}`).then((r) => r.json());
+    const bobRow = who.people.find((p) => p.login === "bob");
+    assert.ok(bobRow, "bob must appear in the roster");
+    assert.equal(bobRow.pending, false, "having signed in, bob is no longer merely invited");
+  });
+
+  test("/auth/domain: owner-gated, and refuses anything a GitHub owner cannot back with an hd", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "zevet-gh-anyone-"));
+    const h = await startHub(hubEnv(dir, "alice,bob"));
+    hubs.push(h);
+
+    const c = await (await postJson(h.base, "/team/create", { name: "Domain Test" })).json();
+    const a = await signIn(h.base, c.team); // alice: owner
+    assert.equal(a.body.owner, true);
+
+    // No token presented at all.
+    const anon = await fetch(`${h.base}/auth/domain`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: "acme.com" }),
+    });
+    assert.equal(anon.status, 401);
+
+    // Signed in as the OWNER, but GitHub carries no `hd` to offer.
+    const ownerReq = await fetch(`${h.base}/auth/domain`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zevet-token": a.body.token },
+      body: JSON.stringify({ domain: "acme.com" }),
+    });
+    assert.equal(ownerReq.status, 400);
+    assert.match((await ownerReq.json()).error, /did not sign in with a Google Workspace account/);
+
+    // Clearing an already-off domain is not an error — there is nothing to
+    // refuse about turning something off that was never on.
+    const clear = await fetch(`${h.base}/auth/domain`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zevet-token": a.body.token },
+      body: JSON.stringify({ domain: "" }),
+    });
+    assert.equal(clear.status, 200);
+
+    // A second GitHub member — never invited — cannot even get a token.
+    const b = await signIn(h.base, c.team);
+    assert.equal(b.status, 403);
+
+    const who = await fetch(`${h.base}/auth/whoami?token=${a.body.token}`).then((r) => r.json());
+    assert.equal(who.availableDomain, "", "a GitHub owner has no hd to offer the toggle");
+    assert.equal(who.googleDomain, "");
+  });
+
   test("a created team, its owner and its name survive a hub restart", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "zevet-gh-anyone-"));
     const env = hubEnv(dir, "alice");

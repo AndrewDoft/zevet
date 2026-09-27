@@ -58,6 +58,44 @@ describe("Disconnect GitHub/Google appears for an actually signed-in person (P1)
   });
 });
 
+describe("email invitations: Copy invite and a prefilled mailto (the hub has no mailer)", () => {
+  const settings = src("board/src/components/settings.tsx");
+  const account = settings.slice(settings.indexOf("function AccountSection"));
+
+  test("only a PENDING email identity (provider google, not yet signed in) gets delivery controls", () => {
+    assert.match(account, /const emailInvite = p\.pending && p\.provider === "google" \? p\.login : "";/);
+  });
+
+  test("Copy invite writes to the clipboard, and Email is a mailto: link — no fetch, no mailer", () => {
+    assert.match(account, /onClick=\{\(\) => copyInvite\(teamLabel\)\}/);
+    assert.match(account, /href=\{mailtoInvite\(emailInvite, teamLabel\)\}/);
+  });
+
+  test("the mailto and the copied line both carry the download link, no SHA or size", () => {
+    assert.match(settings, /https:\/\/usemasora\.com\/zevet/);
+    const helpers = settings.slice(settings.indexOf("function inviteLine"), settings.indexOf("function AccountSection"));
+    assert.doesNotMatch(helpers, /sha256|\bsize\b/i);
+  });
+});
+
+describe("creating a team via Google Workspace: the owner's domain toggle", () => {
+  const settings = src("board/src/components/settings.tsx");
+  const account = settings.slice(settings.indexOf("function AccountSection"));
+
+  test("the toggle only ever appears for the owner, and only once Google has offered a domain", () => {
+    assert.match(account, /if \(owner && availableDomain\) \{/);
+  });
+
+  test("checked reflects the ACTIVE rule (googleDomain), not merely that one is available", () => {
+    assert.match(account, /checked=\{googleDomain === availableDomain\}/);
+  });
+
+  test("toggling posts to /auth/domain with the owner's own domain, or \"\" to clear it — never a typed value", () => {
+    assert.match(account, /onChange=\{\(ev\) => changeDomain\(ev\.target\.checked \? availableDomain : ""\)\}/);
+    assert.match(account, /fetch\("\/auth\/domain"/);
+  });
+});
+
 describe("the update download's Cancel button is not a decoration (P1)", () => {
   const jobProgress = src("board/src/components/assistant-ui/elements/job-progress.tsx");
 
