@@ -1416,6 +1416,16 @@ const family = new Family({
   },
   clearToken: () => masora.unpair(),
   openExternal: (url) => shell.openExternal(url),
+  // Zevet's OWN hub session — same readConfig()/authFor() the main process
+  // already uses for its own hub calls (see resolveCredential, above). Masora
+  // never receives this: the roster it reads is only the heartbeat's output.
+  readHubAuth: () => {
+    const cfg = readConfig();
+    if (!cfg) return null;
+    const auth = authFor(cfg);
+    if (auth.error || !auth.token) return null;
+    return { hub: cfg.hub.replace(/\/+$/, ""), token: auth.token };
+  },
   // The normal self-update: look, and if a build is ready, install it.
   runUpdate: async () => {
     const s = await appUpdater.check();
