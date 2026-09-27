@@ -815,13 +815,20 @@ describe("self-replacing a Mac bundle", () => {
       });
       const steps = u._macReplaceSteps(path.join(t.dir, MAC_FILE), bundle, 4242);
       const staged = `${bundle}.update`;
-      assert.equal(steps.length, 7);
+      assert.equal(steps.length, 8);
       assert.match(steps[0], /kill -0 4242/, "waits for the running app to exit first");
       assert.deepEqual([steps[2][0], steps[2][1][0]], ["hdiutil", "attach"]);
       assert.deepEqual([steps[3][0], steps[3][1][1]], ["ditto", staged], "copies to a staging bundle, never over the live one");
       assert.deepEqual([steps[4][0], steps[4][1][0]], ["hdiutil", "detach"]);
       assert.match(steps[5], /^rm -rf '.*zevet\.app'$/);
       assert.deepEqual(steps[6], ["mv", [staged, bundle]]);
+      // Leave exactly one app bundle (P1 — "on mac when you download a new
+      // version it keeps the old"): the final step sweeps sibling
+      // zevet*.app / zevet*.app.update in the bundle's own folder plus both
+      // Applications directories, but never the bundle just installed.
+      assert.match(steps[7], /for d in .*Applications.* \/Applications; do/);
+      assert.match(steps[7], /zevet\*\.app.*zevet\*\.app\.update/);
+      assert.match(steps[7], new RegExp(`!= '${bundle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`), "must never delete the bundle it just installed");
     } finally {
       t.cleanup();
     }

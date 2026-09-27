@@ -290,6 +290,39 @@ describe("/team/join — redeeming an invite key", () => {
     assert.equal(res.status, 404);
     assert.match((await res.json()).error, /no such team/);
   });
+
+  // P0-B: the hub log showed "rejected token from ... on /team/join", read by
+  // an outside observer as "the key was rejected because of a stale token" —
+  // but /team/join never calls teamFrom/tokenFrom at all (only rateLimited +
+  // acc.redeem), so a leftover x-zevet-token from a PREVIOUS account or team
+  // must not matter. This pins that down with a header a real stale client
+  // would send.
+  test("a stale x-zevet-token header from a previous session never blocks a valid key", async () => {
+    const { hub, key } = await seededHub();
+    const res = await fetch(`${hub.base}/team/join`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zevet-token": "not-a-real-token-at-all" },
+      body: JSON.stringify({ team: SLUG, key }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).login, "kai");
+  });
+
+  // P0-B: "when a member redeems, the roster flips pending -> active
+  // immediately (whoami people.pending false)."
+  test("redeeming flips the roster row from pending to active immediately", async () => {
+    const { hub, key } = await seededHub();
+    const before = await fetch(`${hub.base}/auth/whoami`, { headers: { "x-zevet-token": tokenFor(hub, SLUG) } }).then((r) => r.json());
+    const kaiBefore = before.people.find((p) => p.login === "kai");
+    assert.equal(kaiBefore.pending, true);
+
+    const joined = await join(hub.base, SLUG, key);
+    assert.equal(joined.status, 200);
+
+    const after = await fetch(`${hub.base}/auth/whoami`, { headers: { "x-zevet-token": tokenFor(hub, SLUG) } }).then((r) => r.json());
+    const kaiAfter = after.people.find((p) => p.login === "kai");
+    assert.equal(kaiAfter.pending, false);
+  });
 });
 
 /**

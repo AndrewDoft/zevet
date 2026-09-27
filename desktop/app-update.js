@@ -729,6 +729,18 @@ class AppUpdater {
       ["hdiutil", ["detach", mount]],
       `rm -rf ${shQuote(bundlePath)}`,
       ["mv", [staged, bundlePath]],
+      // Andrew: "on mac when you download a new version it keeps the old. we
+      // need it to only have the newest version." This swap only ever touches
+      // `bundlePath` itself, so a bundle left somewhere ELSE survives it —
+      // a Finder "keep both" from the old manual drag-to-Applications flow
+      // ("zevet 2.app"), or a `.update` staging dir orphaned by a previous
+      // run that never reached the `mv` above. Checked in both the app's own
+      // folder and BOTH ~/Applications and /Applications, since the running
+      // bundle can be in either. Never touches `bundlePath` itself — that is
+      // the one just installed.
+      `for d in ${shQuote(path.dirname(bundlePath))} ${shQuote(path.join(os.homedir(), "Applications"))} /Applications; do ` +
+        `for f in "$d"/zevet*.app "$d"/zevet*.app.update; do ` +
+        `[ -e "$f" ] && [ "$f" != ${shQuote(bundlePath)} ] && rm -rf "$f"; done; done`,
     ];
   }
 
