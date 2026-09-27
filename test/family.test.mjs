@@ -51,6 +51,7 @@ function rig(over = {}) {
     runUpdate: async () => void s.updates++,
     fetchImpl: (u, o) => (feeds[u] ? Promise.resolve({ ok: true, json: async () => feeds[u] }) : fetch(u, o)),
     detect: async () => null,
+    readHubAuth: () => null,
     version: "0.2.63",
     installPath: "C:/zevet",
     host: "box",
@@ -270,15 +271,6 @@ describe("team name (D-603)", () => {
     assert.equal("team_name" in fake.pairs[0], false);
   });
 
-  test("heartbeat carries the last-refreshed team name, or null", () => {
-    const r = rig();
-    r.f.heartbeat();
-    assert.equal(JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).team_name, null);
-    r.f.team = "Masoretes";
-    r.f.heartbeat();
-    assert.equal(JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).team_name, "Masoretes");
-  });
-
   test("refreshTeam swallows a throw and keeps the last-known value", async () => {
     const r = rig({
       readTeam: async () => {
@@ -302,8 +294,126 @@ describe("team name (D-603)", () => {
     r.f.start();
     await new Promise((res) => setImmediate(res));
     assert.equal(calls, 1);
-    assert.equal(JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).team_name, "Masoretes");
+    assert.equal(r.f.team, "Masoretes");
     r.f.stop();
+  });
+});
+
+describe("team roster (Masora relay)", () => {
+  const whoami = (team_name, people) => async () => ({ ok: true, json: async () => ({ ok: true, team: "t1", teamName: team_name, people }) });
+
+  /** Dispatches by exact URL; anything unlisted is a test bug, not a network call. */
+  function hubFetch(routes) {
+    return async (u, o) => {
+      const handler = routes[u];
+      if (!handler) throw new Error(`unexpected fetch to ${u}`);
+      return handler(o);
+    };
+  }
+
+  test("heartbeat carries team_name/people once a roster is cached; omits both with no session", async () => {
+    const r = rig(); // readHubAuth defaults to null: no session at all
+    r.f.heartbeat();
+    let hb = JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8"));
+    assert.equal("team_name" in hb, false);
+    assert.equal("people" in hb, false);
+
+    const people = [{ login: "alice", provider: "github", owner: true, pending: false }];
+    const r2 = rig({
+      readHubAuth: () => ({ hub: "https://hub.example", token: "tok" }),
+      fetchImpl: hubFetch({
+        "https://hub.example/auth/allow": async () => ({ ok: true, json: async () => ({ ok: true }) }),
+        "https://hub.example/auth/whoami": whoami("Acme", people),
+      }),
+    });
+    writeFileSync(path.join(r2.dir, "zevet.request.json"), JSON.stringify({ action: "team.invite", login: "alice" }));
+    await r2.f.pollRequest();
+    hb = JSON.parse(readFileSync(path.join(r2.dir, "zevet.json"), "utf8"));
+    assert.equal(hb.team_name, "Acme");
+    assert.deepEqual(hb.people, people);
+  });
+
+  test("team.invite POSTs the login to the hub's allow endpoint with its own session token", async () => {
+    const calls = [];
+    const r = rig({
+      readHubAuth: () => ({ hub: "https://hub.example", token: "tok" }),
+      fetchImpl: hubFetch({
+        "https://hub.example/auth/allow": async (o) => {
+          calls.push({ method: o.method, body: JSON.parse(o.body), token: o.headers["x-zevet-token"] });
+          return { ok: true, json: async () => ({ ok: true }) };
+        },
+        "https://hub.example/auth/whoami": whoami("Acme", []),
+      }),
+    });
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.invite", login: "bob@example.com" }));
+    await r.f.pollRequest();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, "POST");
+    assert.deepEqual(calls[0].body, { login: "bob@example.com" });
+    assert.equal(calls[0].token, "tok");
+  });
+
+  test("team.revoke POSTs the login to the hub's revoke endpoint", async () => {
+    const calls = [];
+    const r = rig({
+      readHubAuth: () => ({ hub: "https://hub.example", token: "tok" }),
+      fetchImpl: hubFetch({
+        "https://hub.example/auth/revoke": async (o) => {
+          calls.push(JSON.parse(o.body));
+          return { ok: true, json: async () => ({ ok: true }) };
+        },
+        "https://hub.example/auth/whoami": whoami("Acme", []),
+      }),
+    });
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.revoke", login: "bob@example.com" }));
+    await r.f.pollRequest();
+    assert.deepEqual(calls, [{ login: "bob@example.com" }]);
+  });
+
+  test("a rejected hub call during invite/revoke does not throw out of pollRequest", async () => {
+    const r = rig({
+      readHubAuth: () => ({ hub: "https://hub.example", token: "tok" }),
+      fetchImpl: hubFetch({
+        "https://hub.example/auth/allow": async () => {
+          throw new Error("network down");
+        },
+        "https://hub.example/auth/whoami": whoami("Acme", []),
+      }),
+    });
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.invite", login: "alice" }));
+    await assert.doesNotReject(() => r.f.pollRequest());
+    // the roster refresh still ran despite the allow call failing
+    const hb = JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8"));
+    assert.equal(hb.team_name, "Acme");
+  });
+
+  test("after handling a request, the heartbeat is rewritten with a freshly re-fetched roster", async () => {
+    let call = 0;
+    const responses = [
+      whoami("Acme", [{ login: "alice", provider: "github", owner: true, pending: false }]),
+      whoami("Acme", [
+        { login: "alice", provider: "github", owner: true, pending: false },
+        { login: "bob", provider: "github", owner: false, pending: true },
+      ]),
+    ];
+    const r = rig({
+      readHubAuth: () => ({ hub: "https://hub.example", token: "tok" }),
+      fetchImpl: hubFetch({
+        "https://hub.example/auth/allow": async () => ({ ok: true, json: async () => ({ ok: true }) }),
+        "https://hub.example/auth/whoami": async () => responses[call++](),
+      }),
+    });
+    const req = path.join(r.dir, "zevet.request.json");
+    writeFileSync(req, JSON.stringify({ action: "team.invite", login: "alice" }));
+    await r.f.pollRequest();
+    let hb = JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8"));
+    assert.equal(hb.people.length, 1);
+
+    writeFileSync(req, JSON.stringify({ action: "team.invite", login: "bob" }));
+    await r.f.pollRequest();
+    hb = JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8"));
+    assert.equal(hb.people.length, 2);
+    assert.equal(hb.people[1].login, "bob");
   });
 });
 

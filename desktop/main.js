@@ -1214,9 +1214,11 @@ async function fetchTeamName(hub, token) {
   }
 }
 
-/** D-603: the team name family.js sends to Masora at pairing and in every
- *  heartbeat -- same `fetchTeamName` the setup window uses, cached for a few
- *  minutes so a 60s heartbeat is not a whoami round trip every tick.
+/** D-603: the team name family.js sends to Masora at pairing time -- same
+ *  `fetchTeamName` the setup window uses, cached for a few minutes so a 60s
+ *  connect attempt is not a whoami round trip every tick. The heartbeat's own
+ *  team_name/people come from a separate, roster-verified path (readHubAuth,
+ *  below).
  *  ponytail: a module-level cache, not an LRU -- one machine has one team. */
 let teamNameCache = { at: 0, name: "" };
 async function currentTeamName() {
@@ -1431,6 +1433,16 @@ const family = new Family({
   },
   clearToken: () => masora.unpair(),
   openExternal: (url) => shell.openExternal(url),
+  // Zevet's OWN hub session — same readConfig()/authFor() the main process
+  // already uses for its own hub calls (see resolveCredential, above). Masora
+  // never receives this: the roster it reads is only the heartbeat's output.
+  readHubAuth: () => {
+    const cfg = readConfig();
+    if (!cfg) return null;
+    const auth = authFor(cfg);
+    if (auth.error || !auth.token) return null;
+    return { hub: cfg.hub.replace(/\/+$/, ""), token: auth.token };
+  },
   // The normal self-update: look, and if a build is ready, install it.
   runUpdate: async () => {
     const s = await appUpdater.check();

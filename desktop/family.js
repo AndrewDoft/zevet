@@ -135,6 +135,7 @@ class Family {
     // throws by contract, but a throw is still swallowed below since this is
     // a label, not something pairing may depend on.
     readTeam = async () => "",
+    readHubAuth, // () => {hub, token} | null : this machine's OWN hub session (main.js's authFor)
     version,
     installPath,
     host = os.hostname(),
@@ -144,12 +145,13 @@ class Family {
     tickMs = TICK_MS,
     pollMs = REQUEST_POLL_MS,
   } = {}) {
-    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, detect, readTeam, version, installPath, host, platform, pid, now, tickMs, pollMs });
+    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, detect, readTeam, readHubAuth, version, installPath, host, platform, pid, now, tickMs, pollMs });
     this.fetch = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
     this.pairing = "idle"; // idle | pairing | no_owner | unreachable | error
     this.team = ""; // last-known team name; refreshed each tick, best-effort
     this.feeds = new Map(); // app -> {at, version, file}
     this.found = new Map(); // app -> {at, version}  (OS detection cache)
+    this.roster = null; // cached {team_name, people} from /auth/whoami; see #refreshRoster
     this.timers = [];
     this.busy = false;
   }
@@ -180,22 +182,58 @@ class Family {
     try {
       fs.mkdirSync(this.dir, { recursive: true });
       const file = path.join(this.dir, "zevet.json");
-      fs.writeFileSync(
-        `${file}.tmp`,
-        JSON.stringify({
-          app: "zevet",
-          version: this.version,
-          pid: this.pid,
-          updated_at: new Date(this.now()).toISOString(),
-          install_path: this.installPath,
-          running,
-          team_name: this.team || null,
-          masora: { connected: !!m.paired, member_email: m.member || null },
-        }),
-      );
+      const body = {
+        app: "zevet",
+        version: this.version,
+        pid: this.pid,
+        updated_at: new Date(this.now()).toISOString(),
+        install_path: this.installPath,
+        running,
+        masora: { connected: !!m.paired, member_email: m.member || null },
+      };
+      // `this.roster` is only ever set from a whoami that actually resolved a
+      // team (see #refreshRoster) — never guessed, so signed-out and
+      // not-yet-fetched both leave both keys off the wire entirely. This is
+      // separate from `this.team` (readTeam/refreshTeam), which only labels
+      // the D-603 pairing POST below, never the heartbeat.
+      if (this.roster) {
+        body.team_name = this.roster.team_name;
+        body.people = this.roster.people;
+      }
+      fs.writeFileSync(`${file}.tmp`, JSON.stringify(body));
       fs.renameSync(`${file}.tmp`, file);
     } catch {
       /* an unwritable family dir must not hurt Zevet */
+    }
+  }
+
+  /**
+   * The hub team roster, cached for the heartbeat. `readHubAuth()` returns the
+   * same `{hub, token}` the main process's own hub calls already use
+   * (desktop/main.js's `authFor(readConfig())`) — Zevet's own session, never a
+   * new credential. null (no session, or no team yet) clears the cache so
+   * `heartbeat()` never fabricates a team. A failed or unreachable hub leaves
+   * whatever roster was last cached (same "fail quiet" rule as #latest());
+   * this never throws.
+   */
+  async #refreshRoster() {
+    const auth = typeof this.readHubAuth === "function" ? this.readHubAuth() : null;
+    if (!auth || !auth.hub || !auth.token) {
+      this.roster = null;
+      return;
+    }
+    try {
+      const res = await this.fetch(`${auth.hub}/auth/whoami`, {
+        headers: { "x-zevet-token": auth.token },
+        signal: AbortSignal.timeout(8000),
+      });
+      const body = res.ok ? await res.json() : null;
+      this.roster =
+        body && body.ok && body.team
+          ? { team_name: typeof body.teamName === "string" ? body.teamName : "", people: Array.isArray(body.people) ? body.people : [] }
+          : null;
+    } catch {
+      /* hub down or unreachable: keep the roster we already had */
     }
   }
 
@@ -286,6 +324,37 @@ class Family {
     }
     if (req.action === "connect") await this.connect();
     else if (req.action === "update") await Promise.resolve(this.runUpdate()).catch(() => {});
+    else if (req.action === "team.invite" || req.action === "team.revoke") await this.#relayTeamAction(req.action, req.login);
+  }
+
+  /**
+   * Masora asks for an invite or a revoke by dropping {action, login}; Zevet
+   * is the only side that ever holds a hub credential or knows the hub's URL,
+   * so it makes the call with its OWN session (readHubAuth, above) and neither
+   * ever reaches Masora. Fire-and-forget: there is no reply channel, so a
+   * failure (network down, or 403 because this session is not the team owner)
+   * is only ever logged, never retried or queued.
+   */
+  async #relayTeamAction(action, login) {
+    const auth = typeof this.readHubAuth === "function" ? this.readHubAuth() : null;
+    if (auth && auth.hub && auth.token) {
+      const route = action === "team.invite" ? "auth/allow" : "auth/revoke";
+      try {
+        const res = await this.fetch(`${auth.hub}/${route}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-zevet-token": auth.token },
+          body: JSON.stringify({ login }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) console.error(`zevet: hub refused ${action} for ${login} (${res.status})`);
+      } catch (err) {
+        console.error(`zevet: could not reach the hub for ${action} (${err.message})`);
+      }
+    }
+    // Whatever happened, show Masora the truth on its very next read rather
+    // than waiting for the next 60s heartbeat tick.
+    await this.#refreshRoster();
+    this.heartbeat();
   }
 
   start() {
@@ -293,6 +362,7 @@ class Family {
       await this.refreshTeam();
       this.heartbeat();
       if (!this.readMasora().paired) void this.connect();
+      void this.#refreshRoster().then(() => this.heartbeat());
     };
     void tick();
     const add = (fn, ms) => {
