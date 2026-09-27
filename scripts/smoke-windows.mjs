@@ -31,10 +31,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 assert.equal(process.platform, "win32", "the Windows artifact must be tested on Windows");
 
 const outDir = path.resolve(process.argv[2] || path.join(root, "desktop/out"));
-function findSetup(dir) {
-  const hit = fs.readdirSync(dir).find((f) => /^zevet-.*-windows-x64-setup\.exe$/.test(f));
-  assert.ok(hit, `no setup.exe in ${dir}`);
-  return path.join(dir, hit);
+// desktop/out is never cleaned between builds (RELEASING.md says so), so
+// after step 2's second build this directory holds BOTH setup.exes -- naming
+// the version explicitly is the only way to pick the one just built rather
+// than whichever sorts first.
+function findSetup(dir, version) {
+  const name = `zevet-${version}-windows-x64-setup.exe`;
+  const file = path.join(dir, name);
+  assert.ok(fs.existsSync(file), `${name} not in ${dir}`);
+  return file;
 }
 
 const guid = "3e51149f-9c15-5e34-ad48-d31d2859aef2"; // com.andrewdoft.zevet, UUID.v5 — stable across builds
@@ -59,22 +64,26 @@ function runInstaller(exe, extraArgs = []) {
   const r = spawnSync(exe, ["/S", "/currentuser", ...extraArgs], { encoding: "utf8", timeout: 120_000 });
   assert.equal(r.status, 0, `installer exited ${r.status}: ${r.stderr || r.stdout}`);
 }
-function launchAndCheckVersion(expected) {
+// Not "launch": app.asar is a single-file archive Electron's patched fs
+// virtualizes as a directory -- readable through the packaged zevet.exe
+// itself, NOT through plain `node`, which is what runs this script. The
+// installer's own registry write (registryAddInstallInfo's DisplayVersion)
+// is the version source that needs no Electron runtime to read.
+function checkInstalledVersion(expected) {
   const exe = path.join(installRoot, "zevet.exe");
   assert.ok(fs.existsSync(exe), `zevet.exe missing at ${exe} after install`);
-  // The packaged app.asar is the only reliable version source -- Electron's
-  // own --version prints the ELECTRON version, not the app's.
-  const asarPkg = path.join(installRoot, "resources", "app.asar", "package.json");
-  const appVersion = JSON.parse(fs.readFileSync(asarPkg, "utf8")).version;
-  assert.equal(appVersion, expected, `packaged app.asar reports ${appVersion}, expected ${expected}`);
+  const r = reg("query", `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${guid}`, "/v", "DisplayVersion");
+  const m = /DisplayVersion\s+REG_SZ\s+(.*)/.exec(r.stdout || "");
+  const installedVersion = m ? m[1].trim() : null;
+  assert.equal(installedVersion, expected, `registry DisplayVersion is ${installedVersion}, expected ${expected}`);
 }
 
 try {
   // ── Step 1: fresh per-user install of the OLD build ──────────────────────
-  const oldSetup = findSetup(outDir);
   const oldPkg = JSON.parse(fs.readFileSync(path.join(root, "desktop/package.json"), "utf8"));
+  const oldSetup = findSetup(outDir, oldPkg.version);
   runInstaller(oldSetup);
-  launchAndCheckVersion(oldPkg.version);
+  checkInstalledVersion(oldPkg.version);
   const freshLocation = readInstallLocation();
   assert.ok(freshLocation && freshLocation.toLowerCase().endsWith("\\zevet"), `fresh install wrote InstallLocation=${freshLocation}, expected it to end in \\zevet`);
   console.log(`Fresh install: ${oldPkg.version} at ${freshLocation}`);
@@ -87,9 +96,9 @@ try {
     path.join(root, "desktop/build.cjs"), "-c", "electron-builder.config.js", "--win", "--publish", "never",
     `--config.extraMetadata.version=${bumped}`,
   ], { cwd: path.join(root, "desktop"), stdio: "inherit" });
-  const newSetup = findSetup(outDir);
+  const newSetup = findSetup(outDir, bumped);
   runInstaller(newSetup, ["--updated"]);
-  launchAndCheckVersion(bumped);
+  checkInstalledVersion(bumped);
   const updatedLocation = readInstallLocation();
   assert.equal(updatedLocation, freshLocation, `update wrote InstallLocation=${updatedLocation}, expected unchanged ${freshLocation}`);
   console.log(`Update in place: ${oldPkg.version} -> ${bumped}, still at ${updatedLocation}`);
@@ -104,7 +113,7 @@ try {
   reg("add", INSTALL_KEY, "/v", "InstallLocation", "/t", "REG_SZ", "/d", corrupted, "/f");
   assert.equal(readInstallLocation(), corrupted, "test setup: corrupted value did not write");
   runInstaller(newSetup, ["--updated"]);
-  launchAndCheckVersion(bumped);
+  checkInstalledVersion(bumped);
   const recoveredLocation = readInstallLocation();
   assert.equal(recoveredLocation, installRoot, `recovered InstallLocation=${recoveredLocation}, expected the sanitizer to land back on ${installRoot}`);
   assert.ok(fs.readdirSync(installRoot).includes("zevet.exe"), "install root must contain zevet.exe after recovering from a corrupted InstallLocation");
