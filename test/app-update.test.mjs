@@ -931,7 +931,11 @@ describe("old installers are pruned", () => {
       files: { "zevet-0.2.0-windows-x64-setup.exe": body },
     });
     try {
-      const u = updaterFor(host, t.dir, { spawnImpl: () => ({ unref() {} }) });
+      // Forced to win32: this is exactly the "on Windows" install-on-quit
+      // path (line ~477's test), and must behave the same whichever OS runs
+      // the suite — `updaterFor` otherwise defaults to `process.platform`,
+      // which made this pass locally on Windows and fail on the macOS runner.
+      const u = updaterFor(host, t.dir, { platform: "win32", spawnImpl: () => ({ unref() {} }) });
       assert.equal((await u.check()).phase, "ready");
       const r = u.installOnQuit();
       assert.equal(r.ok, true);
