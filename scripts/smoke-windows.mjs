@@ -9,11 +9,17 @@
 // unquestioned, out of the registry on every later install -- see
 // desktop/build/installer.nsh's customInit sanitizer, which this proves.
 //
-// `/currentuser`, not `/allusers`: GitHub Actions' windows-latest runner is
-// not guaranteed to have an interactive session for NSIS's UAC self-elevation
-// dance, and setInstallModePerUser in multiUser.nsh runs the exact same
-// registry-reuse-and-sanitize code path as setInstallModePerAllUsers. This
-// proves the fix without depending on CI elevation behaviour.
+// `/currentuser`, never `/D=` or `/allusers`: NSIS's own `/D=` directive
+// requires the path to be UNQUOTED and the LAST argument, and every Node
+// child_process spawn on Windows quotes an argv element that contains a
+// space -- so passing a spaced path through `/D=` from a test script hits
+// the exact hazard this file is proving against, rather than testing it
+// (MEASURED: this crashed the installer outright, 0xC0000005, on the first
+// CI run). `/allusers` needs elevation GitHub's runner may not grant
+// non-interactively. Neither is needed: the sanitizer's job is "does
+// $INSTDIR end in \zevet", not "does it contain a space", so a corrupted
+// registry value that is merely missing the \zevet suffix proves the same
+// mechanism without going near either hazard.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -24,8 +30,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 assert.equal(process.platform, "win32", "the Windows artifact must be tested on Windows");
 
-const setupPath = path.resolve(process.argv[2] || path.join(root, "desktop/out"));
-const outDir = fs.statSync(setupPath).isDirectory() ? setupPath : path.dirname(setupPath);
+const outDir = path.resolve(process.argv[2] || path.join(root, "desktop/out"));
 function findSetup(dir) {
   const hit = fs.readdirSync(dir).find((f) => /^zevet-.*-windows-x64-setup\.exe$/.test(f));
   assert.ok(hit, `no setup.exe in ${dir}`);
@@ -35,7 +40,11 @@ function findSetup(dir) {
 const guid = "3e51149f-9c15-5e34-ad48-d31d2859aef2"; // com.andrewdoft.zevet, UUID.v5 — stable across builds
 const INSTALL_KEY = `HKCU\\Software\\${guid}`;
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-win-smoke-"));
-const installRoot = path.join(home, "install root with a space", "zevet"); // deliberately spaced, like "Program Files"
+// multiUser.nsh's per-user default with no /D and no prior InstallLocation:
+// $LocalAppData\Programs\zevet. Real, not a fixture path — this only ever
+// runs in CI (see build.yml), a throwaway machine with no real zevet install
+// to collide with, same as smoke-macos.mjs installing into ~/Applications.
+const installRoot = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "Programs", "zevet");
 let launched;
 
 function reg(...args) {
@@ -53,32 +62,26 @@ function runInstaller(exe, extraArgs = []) {
 function launchAndCheckVersion(expected) {
   const exe = path.join(installRoot, "zevet.exe");
   assert.ok(fs.existsSync(exe), `zevet.exe missing at ${exe} after install`);
-  const env = { ...process.env, ZEVET_ALLOW_MULTI: "1", ZEVET_HOME: path.join(home, `.zevet-${expected}`) };
-  const p = spawnSync(exe, [`--user-data-dir=${path.join(home, `user-data-${expected}`)}`, "--version"], {
-    encoding: "utf8", env, timeout: 20_000,
-  });
-  // Electron's --version prints the ELECTRON version, not the app's — the app
-  // itself is the only reliable source, so read it from the packaged asar.
-  const req_asar = path.join(installRoot, "resources", "app.asar", "package.json");
-  const appVersion = JSON.parse(fs.readFileSync(req_asar, "utf8")).version;
+  // The packaged app.asar is the only reliable version source -- Electron's
+  // own --version prints the ELECTRON version, not the app's.
+  const asarPkg = path.join(installRoot, "resources", "app.asar", "package.json");
+  const appVersion = JSON.parse(fs.readFileSync(asarPkg, "utf8")).version;
   assert.equal(appVersion, expected, `packaged app.asar reports ${appVersion}, expected ${expected}`);
-  void p;
 }
 
 try {
   // ── Step 1: fresh per-user install of the OLD build ──────────────────────
   const oldSetup = findSetup(outDir);
   const oldPkg = JSON.parse(fs.readFileSync(path.join(root, "desktop/package.json"), "utf8"));
-  runInstaller(oldSetup, [`/D=${installRoot}`]);
+  runInstaller(oldSetup);
   launchAndCheckVersion(oldPkg.version);
   const freshLocation = readInstallLocation();
-  assert.equal(freshLocation, installRoot, `fresh install wrote InstallLocation=${freshLocation}, expected ${installRoot}`);
+  assert.ok(freshLocation && freshLocation.toLowerCase().endsWith("\\zevet"), `fresh install wrote InstallLocation=${freshLocation}, expected it to end in \\zevet`);
   console.log(`Fresh install: ${oldPkg.version} at ${freshLocation}`);
 
   // ── Step 2: build a NEW version and reinstall over it, --updated /S — the
   // exact args app-update.js's install()/installOnQuit() use for a real
-  // silent update. No /D here: this is the part that used to corrupt
-  // $INSTDIR by reusing whatever the registry said. ──────────────────────
+  // silent update. ──────────────────────────────────────────────────────
   const bumped = oldPkg.version.replace(/(\d+)$/, (n) => String(Number(n) + 1));
   execFileSync(process.execPath, [
     path.join(root, "desktop/build.cjs"), "-c", "electron-builder.config.js", "--win", "--publish", "never",
@@ -88,21 +91,24 @@ try {
   runInstaller(newSetup, ["--updated"]);
   launchAndCheckVersion(bumped);
   const updatedLocation = readInstallLocation();
-  assert.equal(updatedLocation, installRoot, `update wrote InstallLocation=${updatedLocation}, expected unchanged ${installRoot}`);
+  assert.equal(updatedLocation, freshLocation, `update wrote InstallLocation=${updatedLocation}, expected unchanged ${freshLocation}`);
   console.log(`Update in place: ${oldPkg.version} -> ${bumped}, still at ${updatedLocation}`);
 
-  // ── Step 3: the actual incident — a CORRUPTED InstallLocation (truncated
-  // at the space, exactly as found on the machine this was diagnosed from),
-  // then another silent update over it. Before build/installer.nsh's
-  // customInit sanitizer this landed the new build in the wrong place and
-  // left the app folder empty; this asserts it no longer can. ────────────
-  reg("add", INSTALL_KEY, "/v", "InstallLocation", "/t", "REG_SZ", "/d", installRoot.split(" ")[0], "/f");
-  assert.equal(readInstallLocation(), installRoot.split(" ")[0], "test setup: corrupted value did not write");
+  // ── Step 3: the actual incident — a CORRUPTED InstallLocation (missing the
+  // app's own \zevet suffix, the shape a truncated-at-the-space value takes:
+  // "C:\Program" rather than "C:\Program Files\zevet"), then another silent
+  // update over it. Before build/installer.nsh's customInit sanitizer this
+  // landed the new build in the wrong place and left the app folder empty;
+  // this asserts it no longer can. ─────────────────────────────────────────
+  const corrupted = path.dirname(installRoot); // same root, missing \zevet
+  reg("add", INSTALL_KEY, "/v", "InstallLocation", "/t", "REG_SZ", "/d", corrupted, "/f");
+  assert.equal(readInstallLocation(), corrupted, "test setup: corrupted value did not write");
   runInstaller(newSetup, ["--updated"]);
   launchAndCheckVersion(bumped);
-  const filesAfterRecovery = fs.readdirSync(installRoot);
-  assert.ok(filesAfterRecovery.includes("zevet.exe"), "install root must contain zevet.exe after recovering from a corrupted InstallLocation");
-  console.log(`Recovered from a corrupted InstallLocation (${installRoot.split(" ")[0]}) and is still at an app-owned folder`);
+  const recoveredLocation = readInstallLocation();
+  assert.equal(recoveredLocation, installRoot, `recovered InstallLocation=${recoveredLocation}, expected the sanitizer to land back on ${installRoot}`);
+  assert.ok(fs.readdirSync(installRoot).includes("zevet.exe"), "install root must contain zevet.exe after recovering from a corrupted InstallLocation");
+  console.log(`Recovered from a corrupted InstallLocation (${corrupted}) -> ${recoveredLocation}, app-owned folder intact`);
   launched = true;
 } finally {
   reg("delete", INSTALL_KEY, "/f");
