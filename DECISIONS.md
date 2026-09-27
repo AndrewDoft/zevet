@@ -949,3 +949,47 @@ automated suite.
 **Reversibility.** High. Everything is additive: a new `Accounts` field with a
 narrow setter, one new route, one new relay action, one new prune method called
 from existing call sites.
+
+## D-022 — A dead board load retries once, then names the host and the likely cause, instead of a bare "Offline"
+
+Real incident (2026-09-27): Tommaso, a brand-new external user with no team
+and no invite, reported "the hub couldn't be reached, none of it worked" on
+Windows. `main.js`'s `did-fail-load` handler was firing `unreachablePage`,
+which showed only "Offline" and a raw Chromium error code — no host, no
+reason a non-technical person could act on.
+
+Traced every OTHER path that can leave a fresh install stuck first, to avoid
+fixing a symptom instead of the cause: `hub-target.js#resolveHub` always
+falls back to the baked-in `HOSTED_HUB` for a truly fresh profile (no env, no
+existing config), and its history (`a402531`) shows only one value it has
+ever held, so a stale address is ruled out. A missing/invalid credential
+already gets its own distinct page (`credentialPage`), and setup's own
+create/join errors are already surfaced inline in `setup.html` — neither of
+those routes through `unreachablePage`. That leaves exactly one path landing
+here: a real network-level failure on the board's OWN load, after a working
+credential was already established. Two changes for that path:
+
+1. **One retry, 1.5s later, before saying anything.** A fresh network
+   interface (Wi-Fi still associating, a VPN adapter still coming up) can
+   lose the very first request without the hub being down at all — the same
+   race a browser's own retry papers over. `code === -3` (a normal
+   navigation abort) is still ignored, as before.
+2. **`unreachablePage` now names the host** (parsed from `cfg.hub`, falling
+   back to the raw string if unparseable) **and gives an actionable hint**
+   (VPN/firewall/strict DNS) instead of only a Chromium error code — satisfies
+   the brief's "never a generic message when the real cause is actionable."
+
+**Not changed:** `credentialPage` and setup's own error surfacing — both
+already name their specific cause and were never part of this bug.
+
+**Reversibility.** High: the retry is a local `setTimeout`, no new state
+persisted; the message change touches only rendered text.
+
+**Verification:** `test/hub-unreachable.test.mjs` drives a real dead port
+(`127.0.0.1:1`, refused everywhere) through `drive.mjs` and asserts the host
+and an actionable hint appear — red against the pre-fix page (no host, no
+hint), green after. `test/onboard-live.test.mjs` (workflow_dispatch,
+`.github/workflows/onboard-live.yml`, windows-latest + macos-latest) drives
+the exact fresh-install "Create a team" move against the real hosted hub,
+since only that address can catch "stale" or "genuinely unreachable" — every
+other test here talks to a disposable hub this suite spawns itself.

@@ -660,8 +660,22 @@ function openBoard(cfg) {
     boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}`);
   }
 
+  // A fresh network interface (Wi-Fi still associating, a VPN adapter still
+  // coming up) can lose the very first request without meaning the hub is
+  // actually unreachable — the same race a browser papers over with its own
+  // retry. One retry before reporting anything to the person; a second
+  // failure is treated as real.
+  let boardLoadAttempts = 0;
   boardWindow.webContents.on("did-fail-load", (_e, code, desc) => {
     if (code === -3) return; // aborted by a normal navigation
+    if (!auth.error && boardLoadAttempts < 1) {
+      boardLoadAttempts += 1;
+      setTimeout(() => {
+        if (!boardWindow || boardWindow.isDestroyed()) return;
+        boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}`);
+      }, 1500);
+      return;
+    }
     boardWindow.loadURL(
       "data:text/html;charset=utf-8," +
         encodeURIComponent(unreachablePage(cfg.hub, `${desc} (${code})`)),
@@ -726,10 +740,18 @@ function statusPageStyle() {
 
 const STATUS_BRAND = `<div class="brand"><svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true" fill="currentColor"><circle cx="16" cy="8.2" r="3.5"/><circle cx="7" cy="23.8" r="3.5"/><circle cx="25" cy="23.8" r="3.5"/></svg>Zevet</div>`;
 
-function unreachablePage(_hub, why) {
+function unreachablePage(hub, why) {
+  let host = String(hub || "");
+  try {
+    host = new URL(hub).host || host;
+  } catch {
+    // Not a parseable URL: show whatever was configured, verbatim.
+  }
   return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Offline</title>${statusPageStyle()}
   <main>${STATUS_BRAND}<h1>Offline</h1>
-  <p>${String(why).replace(/[<&]/g, "")}</p></main></html>`;
+  <p>Could not reach <code>${host.replace(/[<&]/g, "")}</code>: ${String(why).replace(/[<&]/g, "")}</p>
+  <p>A VPN, firewall, or a network with strict DNS filtering can block this address without
+  saying so. Try another network, or a quick reload once you're off it.</p></main></html>`;
 }
 
 /**

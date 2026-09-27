@@ -60,8 +60,13 @@ async function cmdLaunch() {
 
   // A fresh, empty profile: no ~/.zevet config (ZEVET_HOME), no Electron
   // userData (--user-data-dir), so the app looks exactly like a first install.
+  //
+  // A caller that has ALREADY set ZEVET_HOME (and put a config.json in it
+  // before calling "launch") is asking for a machine that looks already set
+  // up, not a fresh one — e.g. a test of the board window itself rather than
+  // setup. Respected here rather than always overwritten with a new empty one.
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-drive-"));
-  const home = path.join(base, "zevet-home");
+  const home = process.env.ZEVET_HOME ? path.resolve(process.env.ZEVET_HOME) : path.join(base, "zevet-home");
   const userData = path.join(base, "user-data");
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(userData, { recursive: true });
