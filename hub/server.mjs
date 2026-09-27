@@ -2413,16 +2413,17 @@ server.on("upgrade", (req, socket, head) => {
   // tokenFrom() already ran every candidate through tokenOk() (== resolveTeam()
   // !== null), so this cannot come back null for a token that just passed.
   //
-  // ⚠️ A SHARED TOKEN NO LONGER GETS A SOCKET AT ALL — same reasoning as
-  // teamFromSession on the HTTP side: this is board data (room snapshots and
-  // replay), and "authenticated but anonymous" was how it leaked to a
-  // teammate who had never actually signed in or redeemed a key.
+  // ⚠️ DELIBERATELY NOT LOCKED TO A SESSION, unlike /api/state, /events and
+  // whoami's people list. /ws has exactly one production consumer —
+  // desktop/doc-sync.js, the EDITOR's document sync — and its content is
+  // ciphertext the hub never has the key for; the document key derives from
+  // the SAME team secret that authenticates the shared token, so a
+  // shared-token holder gains no plaintext access here they did not already
+  // have. Locking it would silence the editor for exactly the machines
+  // hook.mjs already depends on being shared-token-only for — a hook-only
+  // teammate who has never personally signed in.
   const auth = resolveTeam(token);
-  if (!auth || !auth.session) {
-    authFailed(req, url);
-    return denyUpgrade(socket, rateLimited(req) ? 429 : 401, "sign in to open the board");
-  }
-  const team = auth.team;
+  const team = auth ? auth.team : DEFAULT_TEAM;
 
   const key = req.headers["sec-websocket-key"];
   if (
