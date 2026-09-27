@@ -103,18 +103,12 @@ workflows:
           hdiutil detach "$MNT" >/dev/null
           if [ -n "${CERTIFICATE_P12:-}" ]; then
             xcrun stapler validate "$DMG"
-            # `-t install` is the policy for a .pkg processed by /usr/sbin/installer,
-            # signed with a separate "Developer ID Installer" identity we don't have
-            # (only "Developer ID Application") -- informational only, not enforced.
-            echo "spctl -t install (informational; a plain dmg has no installer signature):"
-            spctl -a -vvv -t install "$DMG" || true
-            # `-t open` on a file with no quarantine attribute reports "rejected,
-            # source=Insufficient Context" regardless of signature -- observed on a
-            # real Codemagic build this session. A real download always carries the
-            # quarantine xattr, so fake one ("as it would arrive from Chrome").
-            xattr -w com.apple.quarantine "0083;00000000;Chrome;" "$DMG"
-            spctl -a -vvv -t open "$DMG"
-            xattr -d com.apple.quarantine "$DMG"
+            # spctl assesses CODE SIGNATURES; a .dmg has none of its own to find,
+            # under any -t policy -- confirmed empirically on a real Codemagic
+            # build this session (every type rejected the SAME dmg that
+            # `stapler validate` had just accepted, on zevet-voice's identical
+            # check). A stapled ticket is not a code signature; stapler validate
+            # is the correct tool for a dmg. spctl's job is the .app, above.
           fi
     artifacts:
       - desktop/out/*.dmg
