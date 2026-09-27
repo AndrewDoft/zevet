@@ -105,6 +105,10 @@ contextBridge.exposeInMainWorld("zevet", {
    *  remember which provider minted it, so this is the same call as
    *  `githubLogout` under the name the Google button expects. */
   googleLogout: () => ipcRenderer.invoke("zevet:googleLogout"),
+  /** Leave the team entirely: ends the hub session, then drops session,
+   *  secret AND hub from config.json (backed up first) so this machine
+   *  falls back to first-run setup. See main.js's `signOutTeam`. */
+  signOutTeam: () => ipcRenderer.invoke("zevet:signOutTeam"),
   /**
    * Linking with Masora (T5, docs/contracts/cross_app_context.md). The link
    * runs in the main process in the background; the renderer reads its status

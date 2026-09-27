@@ -1429,6 +1429,48 @@ const signOut = async () => {
 // Signing out ends a SESSION, and a session does not remember which provider
 // minted it — so this is one function, under the name each button expects.
 ipcMain.handle("zevet:githubLogout", signOut);
+
+/* ── Sign out of the TEAM, from Settings (or the setup screen) ────────────
+ *
+ * `signOut` above ends one identity's session and keeps the team key
+ * working. This is the bigger button: it ends the hub session too, then
+ * drops `session`, `secret` AND `hub` — so `readConfig()` sees no hub and
+ * this machine falls straight back to first-run (Team + Key). The config is
+ * copied aside first, unconditionally, so "I signed into the wrong team" is
+ * recoverable by reading a file rather than by re-inviting the person.
+ */
+const signOutTeam = async () => {
+  const cfg = readConfig() || {};
+  const session = typeof cfg.session === "string" ? cfg.session : "";
+  const hub = String(cfg.hub || "").replace(/\/+$/, "");
+  if (session && hub) {
+    try {
+      await fetch(`${hub}/auth/logout`, {
+        method: "POST",
+        headers: { "x-zevet-token": session },
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch {
+      // Hub unreachable, or an older build without the route — the local
+      // config is cleared below regardless.
+    }
+  }
+  try {
+    fs.mkdirSync(HOME, { recursive: true });
+    fs.copyFileSync(CONFIG, path.join(HOME, `config.json.bak-${Date.now()}`));
+  } catch {
+    // No existing config file to back up.
+  }
+  const rest = { ...cfg };
+  delete rest.session;
+  delete rest.secret;
+  delete rest.hub;
+  writeConfig(rest);
+  if (boardWindow && !boardWindow.isDestroyed()) boardWindow.close();
+  openSetup(null);
+  return { ok: true };
+};
+ipcMain.handle("zevet:signOutTeam", signOutTeam);
 ipcMain.handle("zevet:googleLogout", signOut);
 
 ipcMain.handle("zevet:pickRepo", async () => {

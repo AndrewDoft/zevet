@@ -356,6 +356,9 @@ export interface ZevetBridge {
   googleWait?: () => Promise<{ ok?: boolean; cancelled?: boolean; error?: string; login?: string; owner?: boolean }>;
   googleCancel?: () => void;
   googleLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
+  /** Leave the team on this machine — drops session, secret and hub from
+   *  config.json (backed up first) and returns to first-run setup. */
+  signOutTeam?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
   /* Linking with Masora (T5, docs/contracts/cross_app_context.md). The link
      runs in the background in the main process; this reads its status. No call
      returns a token -- it is written straight to the OS keychain there. */

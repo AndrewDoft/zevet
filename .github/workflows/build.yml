@@ -106,6 +106,15 @@ jobs:
           ZEVET_EXPECT_SIGNED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && '1' || '0' }}
         run: npm run smoke:mac
 
+      # Install -> update -> install-on-quit's own args -> launch, on a real
+      # NSIS installer. Exists because of a real incident: an update silently
+      # left Program Files\zevet empty, exit code 0 the whole way. See
+      # scripts/smoke-windows.mjs and desktop/build/installer.nsh.
+      - name: Smoke the Windows install/update cycle
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: npm run smoke:win
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

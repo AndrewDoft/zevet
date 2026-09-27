@@ -195,6 +195,27 @@ function GithubDisconnectRow({ onDone }: { onDone: () => void }) {
   );
 }
 
+function TeamSignOutRow() {
+  const [state, setState] = useState<"idle" | "busy" | "fail">("idle");
+
+  function click() {
+    setState("busy");
+    window.zevet?.signOutTeam?.().then(
+      (r) => { if (!r || !r.ok) setState("fail"); },
+      () => setState("fail"),
+    );
+  }
+
+  return (
+    <div className="srow">
+      <button className={MAKE_BTN} type="button" disabled={state === "busy"} onClick={click}>
+        {state === "busy" ? "Signing out…" : state === "fail" ? "Retry" : "Sign out"}
+      </button>
+      <span className="v">{state === "fail" ? "Could not sign out." : "Leave this team on this machine."}</span>
+    </div>
+  );
+}
+
 function GoogleConnectBox({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState<
     | { phase: "idle" }
@@ -440,6 +461,9 @@ function AccountSection() {
     }
     if (local && window.zevet && typeof window.zevet.googleLogout === "function") {
       out.push(<GoogleDisconnectRow key="disc-google" onDone={() => refreshWhoami()} />);
+    }
+    if (local && window.zevet && typeof window.zevet.signOutTeam === "function") {
+      out.push(<TeamSignOutRow key="team-signout" />);
     }
   } else if (shared) {
     if (canConnect) out.push(<GithubConnectBox key="connect-github" onDone={() => refreshWhoami()} />);

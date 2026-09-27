@@ -11,7 +11,8 @@
     "dist": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --publish never",
     "dist:win": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --win --publish never",
     "dist:mac": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --mac --publish never",
-    "smoke:mac": "node ../scripts/smoke-macos.mjs"
+    "smoke:mac": "node ../scripts/smoke-macos.mjs",
+    "smoke:win": "node ../scripts/smoke-windows.mjs"
   },
   "devDependencies": {
     "@electron/osx-sign": "1.3.1",

@@ -106,6 +106,11 @@
     <div class="row"><button id="updateBtn" class="primary" hidden></button></div>
   </div>
 
+  <div id="staleNotice" class="note" hidden>
+    <span>Already set up on this machine.</span>
+    <div class="row"><button id="staleSignOut" type="button">Sign out</button></div>
+  </div>
+
   <div class="modes" role="group" aria-label="Mode">
     <button id="modeCreate" type="button" aria-pressed="true">Create</button>
     <button id="modeJoin" type="button" aria-pressed="false">Join</button>
@@ -222,7 +227,22 @@
   window.zevet.config().then(function (c) {
     if (!c) return;
     if (!$("actor").value) $("actor").value = c.actor || "";
+    // A machine that already has a hub configured is not a fresh setup: show
+    // the way out instead of silently offering to configure a second team on
+    // top of it (P0-C — Kai's stale sign-in from a previous account).
+    if (c.hub && typeof window.zevet.signOutTeam === "function") {
+      $("staleNotice").hidden = false;
+    }
   });
+  var staleSignOutBtn = document.getElementById("staleSignOut");
+  if (staleSignOutBtn) {
+    staleSignOutBtn.addEventListener("click", function () {
+      staleSignOutBtn.disabled = true;
+      window.zevet.signOutTeam().then(function () { location.reload(); }, function () {
+        staleSignOutBtn.disabled = false;
+      });
+    });
+  }
 
   /* Which team a sign-in should land in. Create makes it (once per name);
      Join looks it up. Resolves a slug, or null after saying why. */
