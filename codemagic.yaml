@@ -1,6 +1,7 @@
 # macOS build on Codemagic's Apple Silicon machines -- the same steps as the macOS leg of
 # .github/workflows/build.yml. Manual only: start it with `node scripts/codemagic.mjs`.
-# Ad-hoc sealed, not notarized (no Apple Developer identity); see docs/RELEASING.md.
+# Developer ID signed and notarized when the `apple_signing` secure group is present (see
+# docs/RELEASING.md); ad-hoc sealed and loudly unsigned otherwise (forks/PRs have no group).
 workflows:
   macos:
     name: macOS build and smoke
@@ -8,6 +9,12 @@ workflows:
     max_build_duration: 60
     environment:
       node: 22
+      # apple_signing: CERTIFICATE_P12 (base64 .p12), CERTIFICATE_PASSWORD, APPLE_ID,
+      # APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID. Mapped to electron-builder's own
+      # CSC_LINK / CSC_KEY_PASSWORD env var names below; desktop/signing.js gates on
+      # all five being present (ALL OR NONE) before signing or notarizing anything.
+      groups:
+        - apple_signing
     scripts:
       - name: Generate icon
         script: cd desktop && node make-icon.mjs
@@ -20,9 +27,21 @@ workflows:
       - name: Test
         script: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
       - name: Build the .dmg
-        script: cd desktop && CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac
+        script: |
+          set -euo pipefail
+          cd desktop
+          if [ -n "${CERTIFICATE_P12:-}" ]; then
+            export CSC_LINK="$CERTIFICATE_P12"
+            export CSC_KEY_PASSWORD="$CERTIFICATE_PASSWORD"
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          npm run dist:mac
       - name: Smoke the app on Apple Silicon
-        script: cd desktop && ZEVET_EXPECT_SIGNED=0 npm run smoke:mac
+        script: |
+          cd desktop
+          [ -n "${CERTIFICATE_P12:-}" ] && export ZEVET_EXPECT_SIGNED=1 || export ZEVET_EXPECT_SIGNED=0
+          npm run smoke:mac
       - name: Arch and checksum
         script: |
           set -euo pipefail
@@ -35,6 +54,24 @@ workflows:
           hdiutil detach "$MNT" >/dev/null
           shasum -a 256 "$DMG" | tee "$DMG.sha256"
           stat -f "%z bytes" "$DMG"
+      - name: Gatekeeper and notarization verify
+        script: |
+          set -euo pipefail
+          cd desktop/out
+          DMG="$(ls zevet-*-macos-arm64.dmg)"
+          MNT="$(mktemp -d)"
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" >/dev/null
+          APP="$MNT/zevet.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          if [ -n "${CERTIFICATE_P12:-}" ]; then
+            spctl -a -vvv "$APP"
+            xcrun stapler validate "$APP"
+          fi
+          hdiutil detach "$MNT" >/dev/null
+          if [ -n "${CERTIFICATE_P12:-}" ]; then
+            spctl -a -vvv -t install "$DMG"
+            xcrun stapler validate "$DMG"
+          fi
     artifacts:
       - desktop/out/*.dmg
       - desktop/out/*.dmg.sha256
@@ -51,6 +88,8 @@ workflows:
     max_build_duration: 90
     environment:
       node: 22
+      groups:
+        - apple_signing
     scripts:
       - name: Generate icon
         script: cd desktop && node make-icon.mjs
@@ -63,13 +102,28 @@ workflows:
       - name: Test
         script: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
       - name: Build X (.dmg)
-        script: cd desktop && CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac
+        script: |
+          set -euo pipefail
+          cd desktop
+          if [ -n "${CERTIFICATE_P12:-}" ]; then
+            export CSC_LINK="$CERTIFICATE_P12"
+            export CSC_KEY_PASSWORD="$CERTIFICATE_PASSWORD"
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          npm run dist:mac
       - name: Bump to X+0.0.1 and build again
         script: |
           set -euo pipefail
           cd desktop
           npm version patch --no-git-tag-version
-          CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac
+          if [ -n "${CERTIFICATE_P12:-}" ]; then
+            export CSC_LINK="$CERTIFICATE_P12"
+            export CSC_KEY_PASSWORD="$CERTIFICATE_PASSWORD"
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          npm run dist:mac
       - name: Build the local update feed for X+1
         script: |
           set -euo pipefail

@@ -391,21 +391,38 @@ now the single most valuable file on that box.
 
 ## Code signing
 
-Nothing is signed. The pipeline is built and inert: `desktop/electron-builder.config.js`
-computes the build config from the environment, and with no secrets set it produces exactly
-what it always did. `test/signing.test.mjs` pins both halves, including the case where only
-*some* of the Apple credentials are present — which would otherwise produce a signed,
-un-notarised app that Gatekeeper still refuses while the build log reads like a success.
+macOS is wired and live as of the `macsign` branch. `desktop/electron-builder.config.js`
+computes the build config from the environment; `test/signing.test.mjs` pins both halves,
+including the case where only *some* of the Apple credentials are present (refused —
+`desktop/signing.js`'s `macSigning()` is all-five-or-none, never a partial signature that
+Gatekeeper still refuses while the build log reads like a success).
 
-**macOS — Apple Developer Program, $99/yr.** Add as repository *secrets*:
+**macOS — Apple Developer Program, $99/yr.** Codemagic secure variable group
+`apple_signing`, on both the `zevet` and `zevet-voice` Codemagic apps (see
+`docs/contracts/codemagic.md` for the REST calls that create it):
 
-| Secret | What it is |
-| --- | --- |
-| `CSC_LINK` | the Developer ID Application `.p12`, base64-encoded |
-| `CSC_KEY_PASSWORD` | its export password |
-| `APPLE_ID` | the Apple ID email |
-| `APPLE_APP_SPECIFIC_PASSWORD` | an app-specific password, **not** the account password |
-| `APPLE_TEAM_ID` | the ten-character team id |
+| Variable | What it is | Mapped to (electron-builder) |
+| --- | --- | --- |
+| `CERTIFICATE_P12` | the Developer ID Application `.p12`, base64-encoded | `CSC_LINK` |
+| `CERTIFICATE_PASSWORD` | its export password | `CSC_KEY_PASSWORD` |
+| `APPLE_ID` | the Apple ID email | `APPLE_ID` |
+| `APPLE_APP_SPECIFIC_PASSWORD` | an app-specific password, **not** the account password | `APPLE_APP_SPECIFIC_PASSWORD` |
+| `APPLE_TEAM_ID` | the ten-character team id | `APPLE_TEAM_ID` |
+
+`codemagic.yaml`'s `macos` and `macos-autoupdate` workflows pull the group in and map the
+first two to electron-builder's own env var names before `npm run dist:mac`. With them set:
+`electron-builder.config.js` turns on `hardenedRuntime` + `notarize`; `@electron/osx-sign`
+(bundled into electron-builder 25.1.8) walks the whole `.app` and signs every Mach-O it finds
+bottom-up, so no separate pass is needed for nested native modules; `desktop/staple-macos.cjs`
+(`afterSign`) staples the notarization ticket onto the `.app` (electron-builder's own
+`notarize()` submits and waits but never staples — checked against the installed
+`app-builder-lib`/`@electron/notarize` source this session); `desktop/notarize-dmg.cjs`
+(`afterAllArtifactBuild`) separately submits the built `.dmg` to `notarytool` and staples that
+too, since the app being notarized does not give the `.dmg` — a different file, a different
+hash — a ticket of its own. The `macos` workflow's "Gatekeeper and notarization verify" step
+runs `codesign --verify --deep --strict`, `spctl -a -vvv` / `spctl -a -vvv -t install`, and
+`xcrun stapler validate` on both the app and the dmg, in the build log, whenever the group is
+present; it is a no-op (loud, not silent) on a fork or PR with no secrets.
 
 This is also what unblocks **in-place auto-update on macOS**. macOS will not let an unsigned
 app replace itself, so `desktop/app-update.js` currently opens the disk image and asks the

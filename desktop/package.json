@@ -23,6 +23,8 @@
   },
   "build": {
     "afterPack": "./sign-macos.cjs",
+    "afterSign": "./staple-macos.cjs",
+    "afterAllArtifactBuild": "./notarize-dmg.cjs",
     "appId": "com.andrewdoft.zevet",
     "productName": "zevet",
     "copyright": "Copyright © 2026 Andrew Doft",
