@@ -156,6 +156,42 @@ describe("a fresh install's setup window", () => {
     assert.doesNotMatch(outline, /No team/);
   });
 
+  test("Join mode leads with the invite key; Create mode does not show it", () => {
+    // modeJoin is still the active mode from the previous test.
+    assert.match(drive("snapshot").outline, /div#joinKeyRow(?!.*hidden)/);
+    assert.match(drive("snapshot").outline, /input#inviteKey/);
+    assert.match(drive("snapshot").outline, /button#joinKey[^\n]*"Join"/);
+    // GitHub/Google are still present in Join mode, just demoted.
+    const joinClasses = drive("eval", `["google","gh"].map(function (id) { return document.getElementById(id).classList.contains("primary"); })`);
+    assert.deepEqual(joinClasses.result ?? joinClasses.value ?? joinClasses, [false, false]);
+
+    drive("click", "#modeCreate");
+    assert.match(drive("snapshot").outline, /div#joinKeyRow[^\n]*hidden/);
+    const createClasses = drive("eval", `["google","gh"].map(function (id) { return document.getElementById(id).classList.contains("primary"); })`);
+    assert.deepEqual(createClasses.result ?? createClasses.value ?? createClasses, [true, true]);
+
+    drive("click", "#modeJoin"); // leave it in Join mode for the tests that follow
+  });
+
+  test("Join: an empty or malformed key says Key? without reaching the hub", () => {
+    drive("type", "#teamName", "Acme Platform");
+    drive("type", "#inviteKey", "");
+    drive("click", "#joinKey");
+    assert.match(drive("snapshot").outline, /div#msg(?!.*hidden)[^\n]*"Key\?"/);
+  });
+
+  test("Join: a wrong key against a real team is refused with the hub's own terse error", async () => {
+    drive("type", "#teamName", "Acme Platform");
+    drive("type", "#actor", "trevor");
+    drive("type", "#inviteKey", "ZZZZ-ZZZZ");
+    drive("click", "#joinKey");
+    // "bad key" is short enough that setup.html's own `short()` shows it
+    // verbatim rather than falling back to a generic "Failed".
+    const outline = await waitFor((o) => !/#joinKey[^\n]*disabled/.test(o) && /div#msg(?!.*hidden)[^\n]*"bad key"/.test(o));
+    assert.match(outline, /"bad key"/);
+    assert.match(outline, /button#finish[^\n]*disabled[^\n]*"Open"/); // Open stays disabled
+  });
+
   test("there is nothing to type a hub into, and no hub text is rendered", () => {
     const html = drive("eval", `(function () {
       var c = document.body.cloneNode(true);
@@ -164,6 +200,11 @@ describe("a fresh install's setup window", () => {
     })()`);
     assert.doesNotMatch(String(html.result ?? html.value ?? html), HUB_COPY);
     assert.doesNotMatch(drive("snapshot").outline, /input#hub|details#other/);
+  });
+
+  test("the shared-secret fallback is tucked behind a small 'Other' link, not 'Key'", () => {
+    assert.match(drive("snapshot").outline, /summary[^\n]*"Other"/);
+    assert.doesNotMatch(drive("snapshot").outline, /summary[^\n]*"Key"/);
   });
 
   test("the team-key path connects, enables Open, and reveals Folder", async () => {

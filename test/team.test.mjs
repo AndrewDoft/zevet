@@ -14,7 +14,7 @@ import { readFileSync, mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { startHub, post, state } from "./helpers.mjs";
-import { deriveAuthToken } from "../hub/accounts.mjs";
+import { Accounts, deriveAuthToken } from "../hub/accounts.mjs";
 
 const hubs = [];
 after(async () => {
@@ -219,4 +219,151 @@ describe("unclaimed teams expire (INSUF: the orphan a test POST left on the host
   // hub/accounts.mjs instead, in test/accounts.test.mjs's "createdAt" describe:
   // "signing in sets owner — the fact the sweep uses to never touch a claimed
   // team".
+});
+
+/**
+ * /team/join — the invite-key redeem route. Minting the key needs an OWNER
+ * SESSION on /auth/allow, which needs a real GitHub/Google OAuth round trip —
+ * ruled out for this file for the same reason the sweep test above gives.
+ * So a team is CLAIMED and given a pending invite by writing its accounts
+ * file directly with hub/accounts.mjs, before the hub subprocess starts
+ * (loadTeams() picks up any accounts-<slug>.json already on disk at boot,
+ * per its own comment in server.mjs) — the redeem ROUTE itself (team
+ * resolution, the response shape, rate limiting) is what this exercises.
+ */
+describe("/team/join — redeeming an invite key", () => {
+  const SLUG = "acme-platform"; // slugify("Acme Platform")
+
+  async function seededHub() {
+    const dir = mkdtempSync(path.join(tmpdir(), "zevet-team-join-"));
+    const seed = new Accounts({ file: path.join(dir, `accounts-${SLUG}.json`) });
+    seed.signIn({ login: "AndrewDoft", id: "1001" }); // claims the team — owner
+    const key = seed.allow("kai").key;
+    const h = await startHub({ ZEVET_ACCOUNTS: path.join(dir, "accounts.json") });
+    hubs.push(h);
+    h.accountsDir = dir;
+    return { hub: h, key };
+  }
+
+  const join = (base, team, key) =>
+    fetch(`${base}/team/join`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ team, key }),
+    });
+
+  test("redeems a valid key: mints a session and hands back the master secret, exactly like a sign-in", async () => {
+    const { hub, key } = await seededHub();
+    const res = await join(hub.base, "Acme Platform", key);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.login, "kai");
+    assert.equal(body.owner, false);
+    assert.equal(body.secret, secretFor(hub, SLUG));
+    // The minted session actually authenticates against this hub.
+    const who = await fetch(`${hub.base}/auth/whoami`, { headers: { "x-zevet-token": body.token } }).then((r) => r.json());
+    assert.equal(who.login, "kai");
+  });
+
+  test("the same key cannot be redeemed twice", async () => {
+    const { hub, key } = await seededHub();
+    assert.equal((await join(hub.base, SLUG, key)).status, 200);
+    const second = await join(hub.base, SLUG, key);
+    assert.equal(second.status, 400);
+    assert.equal((await second.json()).error, "bad key");
+  });
+
+  test("a wrong key is refused with one terse error, and repeated wrong keys are rate limited", async () => {
+    const { hub } = await seededHub();
+    const first = await join(hub.base, SLUG, "ZZZZ-ZZZZ");
+    assert.equal(first.status, 400);
+    assert.equal((await first.json()).error, "bad key");
+    let last;
+    for (let i = 0; i < 25; i++) last = await join(hub.base, SLUG, "ZZZZ-ZZZZ");
+    assert.equal(last.status, 429, "the shared failure limiter kicks in on repeated bad keys");
+  });
+
+  test("an unknown team is refused, not silently treated as the default team", async () => {
+    const { hub } = await seededHub();
+    const res = await join(hub.base, "no-such-team", "ZZZZ-ZZZZ");
+    assert.equal(res.status, 404);
+    assert.match((await res.json()).error, /no such team/);
+  });
+});
+
+/**
+ * /auth/allow — the invite-key mint and its email response shape. Owner
+ * authentication here is a SESSION TOKEN, not the shared token (hub/server.mjs
+ * refuses the shared token for allow/revoke on purpose), so the owner is
+ * signed in the same file-seeding way /team/join's tests above are: the
+ * session `signIn` mints is persisted to the accounts file and survives the
+ * subprocess boot exactly like test/accounts.test.mjs's "sessions survive a
+ * restart" proves.
+ *
+ * RESEND_API_KEY is set to "" throughout, so no real Resend call ever
+ * happens — see test/mailer.test.mjs for the mailer's own contract with a
+ * stubbed fetch, and the SHIP step for the one deliberate live send.
+ */
+describe("/auth/allow — invite keys and the email response shape", () => {
+  const SLUG = "acme-platform";
+
+  async function seededHub() {
+    const dir = mkdtempSync(path.join(tmpdir(), "zevet-invite-email-"));
+    const seed = new Accounts({ file: path.join(dir, `accounts-${SLUG}.json`) });
+    const owner = seed.signIn({ login: "AndrewDoft", id: "1001" });
+    const h = await startHub({ ZEVET_ACCOUNTS: path.join(dir, "accounts.json"), RESEND_API_KEY: "" });
+    hubs.push(h);
+    h.accountsDir = dir;
+    return { hub: h, ownerToken: owner.token };
+  }
+
+  const allow = (base, token, login) =>
+    fetch(`${base}/auth/allow`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zevet-token": token },
+      body: JSON.stringify({ login }),
+    });
+
+  test("a bare email invite mints a key and, with no RESEND_API_KEY, hands it back unemailed", async () => {
+    const { hub, ownerToken } = await seededHub();
+    const res = await allow(hub.base, ownerToken, "kai@example.com");
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.email_sent, false, "no RESEND_API_KEY configured");
+    assert.match(body.key, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+
+    // The handed-back key actually redeems, against the SAME team.
+    const joined = await fetch(`${hub.base}/team/join`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ team: SLUG, key: body.key }),
+    });
+    assert.equal(joined.status, 200);
+    assert.equal((await joined.json()).login, "kai@example.com");
+  });
+
+  test('a two-token invite ("login email") allows the LOGIN and would mail the email, not the combined string', async () => {
+    const { hub, ownerToken } = await seededHub();
+    const res = await allow(hub.base, ownerToken, "octocat kai@example.com");
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    const person = body.people.find((p) => p.pending);
+    assert.equal(person.login, "octocat", "the LOGIN, not \"octocat kai@example.com\"");
+  });
+
+  test("re-inviting the same still-pending person rotates the key rather than crashing", async () => {
+    const { hub, ownerToken } = await seededHub();
+    const a = await (await allow(hub.base, ownerToken, "kai@example.com")).json();
+    const b = await (await allow(hub.base, ownerToken, "kai@example.com")).json();
+    assert.notEqual(a.key, b.key);
+    const oldKeyStillWorks = await fetch(`${hub.base}/team/join`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ team: SLUG, key: a.key }),
+    });
+    assert.equal(oldKeyStillWorks.status, 400, "the rotated-out key must be dead");
+  });
 });

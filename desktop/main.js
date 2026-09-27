@@ -1339,6 +1339,49 @@ ipcMain.handle("zevet:teamResolve", async (_e, { name } = {}) => {
   }
 });
 
+/**
+ * Redeem an invite key — hub/server.mjs's `/team/join`. Mints a session and
+ * hands back the team's master secret exactly like a completed GitHub/Google
+ * sign-in (`awaitSignIn`, above), so this writes the config the same way and
+ * returns the same shape the renderer already knows how to handle: a login
+ * and a yes, never the secret or the session (same bridge rule as
+ * `githubWait`/`googleWait`, and for the same reason — see preload.js).
+ */
+ipcMain.handle("zevet:teamJoin", async (_e, { team, key } = {}) => {
+  const base = targetHub();
+  const t = String(team || "").trim();
+  const k = String(key || "").trim();
+  if (!t) return { ok: false, error: "Team?" };
+  if (!k) return { ok: false, error: "Key?" };
+  try {
+    const res = await fetch(`${base}/team/join`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ team: t, key: k }),
+      signal: AbortSignal.timeout(15000),
+    });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      return { ok: false, error: `Server error ${res.status}` };
+    }
+    if (!res.ok || !body || !body.ok) return { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
+
+    const existing = readConfig() || {};
+    writeConfig({
+      hub: base,
+      secret: body.secret || existing.secret || "",
+      session: body.token,
+      actor: existing.actor || String(body.login || "").split("@")[0],
+      login: body.login,
+    });
+    return { ok: true, login: body.login, owner: Boolean(body.owner), teamName: await fetchTeamName(base, body.token) };
+  } catch {
+    return { ok: false, error: "Offline" };
+  }
+});
+
 /* ── Sign out of GitHub, from Settings ─────────────────────────────────────
  *
  * The counterpart to the three calls above, for a machine that signed in

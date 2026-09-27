@@ -246,6 +246,110 @@ describe("sessions", () => {
   });
 });
 
+describe("invite keys", () => {
+  test("allow() mints a key for a fresh invite, and only the hash is stored", (t) => {
+    const dir = tmp(t);
+    const file = path.join(dir, "a.json");
+    const a = new Accounts({ file });
+    a.signIn(alice); // an owner is required before anyone else can be invited
+    const r = a.allow("kai");
+    assert.equal(r.ok, true);
+    assert.match(r.key, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+    const raw = JSON.parse(readFileSync(file, "utf8"));
+    const entry = raw.allowed.find((e) => e.login === "kai");
+    assert.ok(entry.inviteKeyHash, "the hash is stored");
+    assert.equal(String(entry.inviteKeyHash).includes(r.key.replace("-", "")), false);
+    assert.equal(JSON.stringify(raw).includes(r.key), false, "the plaintext key must never touch disk");
+  });
+
+  test("redeeming a valid key mints a session exactly like a sign-in, and marks the invitee active", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    const r = a.redeem(key);
+    assert.equal(r.ok, true);
+    assert.ok(a.session(r.token), "a live session came back");
+    const entry = a.list().find((p) => p.login === "kai");
+    assert.ok(entry.id, "the invitee is no longer pending — it has an id, like any claimed member");
+    assert.equal(a.mayEnter({ login: "someone-else", id: "5555" }).ok, false, "nobody else can enter using kai's row");
+  });
+
+  test("a key works with or without its dash, and case-insensitively", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    // A fresh Accounts instance over the same file, so this is provably
+    // reading persisted state rather than some in-memory convenience.
+    const a2 = new Accounts({ file: a.file });
+    const r = a2.redeem(key.replace("-", "").toLowerCase());
+    assert.equal(r.ok, true);
+  });
+
+  test("a key is one-time use", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    assert.equal(a.redeem(key).ok, true);
+    const second = a.redeem(key);
+    assert.equal(second.ok, false);
+    assert.equal(second.error, "bad key");
+  });
+
+  test("a wrong key is refused with one terse error, and does not affect the real one", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    const wrong = a.redeem("ZZZZ-ZZZZ");
+    assert.equal(wrong.ok, false);
+    assert.equal(wrong.error, "bad key");
+    assert.equal(a.redeem(key).ok, true, "the real key still works");
+  });
+
+  test("an expired key is refused, and cannot be redeemed later either", (t) => {
+    let now = 1_000_000_000_000;
+    const dir = tmp(t);
+    const a = new Accounts({ file: path.join(dir, "a.json"), now: () => now });
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    now += 15 * 24 * 60 * 60 * 1000; // past the 14-day TTL
+    const r = a.redeem(key);
+    assert.equal(r.ok, false);
+    assert.equal(r.error, "bad key");
+    now += 1000;
+    assert.equal(a.redeem(key).ok, false, "an expired key does not come back to life either");
+  });
+
+  test("re-inviting a still-pending login rotates the key — the old one stops working", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const first = a.allow("kai").key;
+    const second = a.allow("kai").key;
+    assert.notEqual(first, second);
+    assert.equal(a.redeem(first).ok, false, "the rotated-out key is dead");
+    assert.equal(a.redeem(second).ok, true, "the new key works");
+  });
+
+  test("inviting somebody already active mints no key — there is nothing pending to key", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    a.signIn(bob); // kai/bob is now an active member, not a pending invite
+    const r = a.allow("kai");
+    assert.equal(r.ok, true);
+    assert.equal(r.already, true);
+    assert.equal(r.key, undefined);
+  });
+
+  test("revoking the invitee kills the key", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    a.revoke("kai");
+    const r = a.redeem(key);
+    assert.equal(r.ok, false);
+    assert.equal(r.error, "bad key");
+  });
+});
+
 describe("the file", () => {
   // The 0600 mode is requested in #save and is honoured on the deployed
   // Linux box; Windows largely ignores it, so it is not asserted here rather

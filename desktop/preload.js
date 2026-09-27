@@ -80,6 +80,11 @@ contextBridge.exposeInMainWorld("zevet", {
    *  Resolves `{ ok, team }` or `{ ok: false, error }`. */
   teamCreate: (hub, name) => ipcRenderer.invoke("zevet:teamCreate", { hub, name }),
   teamResolve: (hub, name) => ipcRenderer.invoke("zevet:teamResolve", { hub, name }),
+  /** Redeem a per-invitee key — hub/server.mjs's `/team/join`. Resolves
+   *  `{ ok, login, owner, teamName }` or `{ ok: false, error }`; the secret
+   *  and session are written to config by the main process and never handed
+   *  to this window, same rule as githubWait/googleWait above. */
+  teamJoin: (team, key) => ipcRenderer.invoke("zevet:teamJoin", { team, key }),
   /**
    * Sign in with Google.
    *

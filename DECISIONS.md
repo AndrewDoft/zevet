@@ -877,6 +877,59 @@ Delivery for an email invite: "Copy invite" (clipboard) and a `mailto:` link —
 no mailer was added; the hub still has none. Board-only UI, so it works
 identically whether opened from the app or a browser tab.
 
+## D-021 — Per-invitee keys replace the shared secret as the default onboarding path, and the hub gets a mailer
+
+Andrew (2026-09-27): the shared-secret "Key" field is "more complexity for
+nothing"; every invite should mint its own key and Resend should email it,
+with download links, alongside the existing GitHub/Google sign-in.
+
+**The key is a second, parallel credential, not a replacement for
+GitHub/Google.** `Accounts#allow()` now mints (or, on re-invite, rotates) an
+8-character key (`XXXX-XXXX`, an unambiguous alphabet — no 0/O/1/I/L/2/Z) for
+every still-pending invite, GitHub-login or email alike. Only its SHA-256 is
+stored, on the SAME allowlist entry the invite already was — no new store, no
+new file. `Accounts#redeem(key)` looks it up, checks the 14-day expiry,
+deletes the hash (one-time use, even on the expired path), and calls
+`signIn()` with a SYNTHETIC id (`key-<hex>`), which is exactly the code path a
+real GitHub/Google claim already goes through. The consequence, stated once
+rather than buried: a person who redeems a key and LATER also completes a
+real GitHub/Google sign-in under the same login does not merge into the same
+row — two different `id`s, two rows. Accepted rather than fixed, because it
+is the same shape `signIn`'s own comment already flags for the cross-provider
+email-claim case, and merging identities after the fact is a bigger feature
+than this one asked for.
+
+**New route `POST /team/join {team, key}`** mints a session and returns the
+team's master secret exactly like `/auth/github|google/finish` — a key
+redemption IS a sign-in, so the joiner's editor needs the same secret. Rate
+limited through the existing `rateLimited`/`authFailed` counter, same as
+every other credential-guessing surface in this file.
+
+**Email via `hub/mailer.mjs`, plain `fetch`, no SDK** (contract in
+`docs/resend.md`, fetched and dated this session). Never throws — a missing
+`RESEND_API_KEY`, a 403 (sending domain not yet verified in Resend), or a
+network failure all degrade to `{ok:false}`, and `/auth/allow` falls back to
+handing the key to the INVITER instead of the invitee, never both. The invite
+field stays ONE input: "login email" (two tokens) mails that address; a bare
+email invites and mails itself; a bare GitHub login with neither looks up the
+account's public profile email (`githubUser`'s own field, now also reachable
+unauthenticated via `githubPublicEmail`) and falls back to no email at all —
+the key is then only ever shown to the inviter.
+
+**Onboarding (`desktop/setup.html`):** Join mode leads with Team + Key;
+GitHub/Google are demoted to small (non-`.primary`) buttons in that mode only
+— an allowlisted identity can still skip the key entirely. Create mode is
+unchanged: there is no key yet to lead with, and first-sign-in-claims-the-team
+still needs GitHub/Google. The old shared-secret `<details>` survives, relabelled
+"Other" instead of "Key" and still collapsed by default, for installs that
+still hold one — nothing about how it authenticates changed.
+
+**Reversibility.** Medium: the key path is additive (a new hash+expiry pair on
+an existing row, a new route), so turning it off is deleting the UI entry
+points; but any invite emailed before a rollback holds a key that stops
+redeeming, with no message to the invitee explaining why — a rollback should
+ship alongside a re-invite of anyone with a key outstanding.
+
 Installer pruning: `%APPDATA%/zevet-desktop/updates` accumulates one file per
 version checked, forever. `AppUpdater#check()` now prunes to the file it still
 needs — the freshly-verified download, or nothing once the running app is

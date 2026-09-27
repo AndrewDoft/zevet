@@ -288,14 +288,21 @@ function GoogleDisconnectRow({ onDone }: { onDone: () => void }) {
   );
 }
 
-/** The hub has no mailer (docs/RELEASING.md's whole reason not to add one):
- *  an invite is delivered by hand, so this is the one line to hand over. */
+/** /auth/allow now mints and emails a per-invitee key itself (hub/mailer.mjs),
+ *  so this generic line is a fallback for re-sharing the invite by hand — it
+ *  carries no key, because the one that was minted is one-time and either
+ *  already emailed or already shown once at invite time (see `inviteResult`
+ *  below). */
 function inviteLine(team: string): string {
   return `Join ${team || "the team"} on Zevet — https://usemasora.com/zevet`;
 }
 
 function copyInvite(team: string) {
   navigator.clipboard?.writeText(inviteLine(team)).catch(() => {});
+}
+
+function copyText(t: string) {
+  navigator.clipboard?.writeText(t).catch(() => {});
 }
 
 function mailtoInvite(email: string, team: string): string {
@@ -311,6 +318,7 @@ function AccountSection() {
   const invite = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [whoErr, setWhoErr] = useState("");
+  const [inviteResult, setInviteResult] = useState<{ login: string; emailSent: boolean; key?: string } | null>(null);
 
   useEffect(() => {
     if (!who.state) refreshWhoami();
@@ -319,6 +327,7 @@ function AccountSection() {
   function changePeople(route: string, login: string) {
     setBusy(true);
     setWhoErr("");
+    if (route === "/auth/allow") setInviteResult(null);
     fetch(route, {
       method: "POST",
       credentials: "same-origin",
@@ -326,13 +335,24 @@ function AccountSection() {
       body: JSON.stringify({ login }),
     })
       .then((r) =>
-        r.json().then((b) => ({ status: r.status, body: b as { people?: Array<Record<string, unknown>>; error?: string } })),
+        r.json().then((b) => ({
+          status: r.status,
+          body: b as { people?: Array<Record<string, unknown>>; error?: string; email_sent?: boolean; key?: string },
+        })),
       )
       .then(
         (r) => {
           setBusy(false);
           if (r.status === 200 && r.body.people) {
             useBoard.setState({ who: { state: { ...(whoState || {}), people: r.body.people } as never, busy: false } });
+            // The invited login is whatever was typed, including a paired
+            // email ("octocat andrew@x.com") — the roster's own row is keyed
+            // on the GitHub login or the email alone, not this compound
+            // string, so this result is shown standalone rather than matched
+            // back to a row.
+            if (route === "/auth/allow") {
+              setInviteResult({ login, emailSent: Boolean(r.body.email_sent), key: r.body.key });
+            }
           } else {
             setWhoErr(r.body.error || ("Could not sign in."));
           }
@@ -504,6 +524,27 @@ function AccountSection() {
         </button>
       </form>,
     );
+    if (inviteResult) {
+      out.push(
+        <div className="srow" key="invite-result">
+          <span className="k">{handle(inviteResult.login.split(/\s+/)[0])}</span>
+          <span className="v">
+            {inviteResult.emailSent ? (
+              "Emailed"
+            ) : inviteResult.key ? (
+              <>
+                <code className="mono">{inviteResult.key}</code>
+                <button className={MAKE_BTN} type="button" onClick={() => copyText(inviteResult.key as string)}>
+                  Copy
+                </button>
+              </>
+            ) : (
+              "Invited"
+            )}
+          </span>
+        </div>,
+      );
+    }
   }
 
   if (whoErr) out.push(<SNote key="err">{whoErr}</SNote>);

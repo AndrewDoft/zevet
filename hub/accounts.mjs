@@ -69,6 +69,31 @@ const SESSION_BYTES = 32;
  *  company stops working within one. */
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
+/** How long a minted invite key is redeemable. Fourteen days: long enough that
+ *  an invite emailed on a Friday still works the following week, short enough
+ *  that a key nobody used stops being a standing way in. */
+const INVITE_KEY_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** No 0/O, 1/I/L, or 2/Z — the pairs a person misreads off a phone screen or a
+ *  screenshot. 8 characters from this alphabet is ~38 bits, plenty for a
+ *  one-time, 14-day, rate-limited code. */
+const KEY_ALPHABET = "3456789ABCDEFGHJKMNPQRSTUVWXY";
+
+/** XXXX-XXXX, crypto-random. */
+function randomInviteKey() {
+  const raw = randomBytes(8);
+  let s = "";
+  for (let i = 0; i < 8; i++) s += KEY_ALPHABET[raw[i] % KEY_ALPHABET.length];
+  return `${s.slice(0, 4)}-${s.slice(4)}`;
+}
+
+/** Only the hash is ever stored — see `inviteKey`/`redeem`. Normalised first so
+ *  a key typed lowercase, or without its dash, still hashes to what was minted. */
+function hashInviteKey(key) {
+  const norm = String(key || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return createHash("sha256").update(norm).digest("hex");
+}
+
 /**
  * Every identity carries the provider that vouched for it.
  *
@@ -504,14 +529,82 @@ export class Accounts {
       return { ok: false, error: "that is not a GitHub username or an email address" };
     }
 
-    if (this.list().some((a) => provider(a) === p && a.login === l)) return { ok: true, already: true };
+    const existing = this.list().find((a) => provider(a) === p && a.login === l);
+    if (existing) {
+      // Already an active member (owner, or claimed by a real sign-in): there
+      // is nothing pending to key, and re-typing their name is a no-op.
+      if (existing.id) return { ok: true, already: true };
+      // Still pending: re-inviting ROTATES the key rather than handing back
+      // the one already emailed, in case that email never arrived.
+      return { ok: true, already: true, key: this.inviteKey(l) };
+    }
     // Inviting somebody UN-BLOCKS them. The owner typing a name is the owner
     // saying yes, and a block left behind would make this button silently do
     // nothing — the worst shape a permission bug can take.
     this.state.blocked = this.state.blocked.filter((b) => !(provider(b) === p && b.login === l));
     this.state.allowed.push({ provider: p, login: l, display: typed, id: "", added: new Date(this.now()).toISOString() });
     this.#save();
-    return { ok: true, already: false };
+    return { ok: true, already: false, key: this.inviteKey(l) };
+  }
+
+  /**
+   * Mint (or rotate) a one-time invite key for a still-pending allowlist
+   * entry. Returns the plaintext key — the ONLY moment it ever exists outside
+   * the inviter's clipboard/inbox — or null if `login` names no pending
+   * invite (unknown, already claimed, or the owner).
+   *
+   * Only the hash and an expiry are persisted; see `redeem` for the other
+   * half of that contract.
+   */
+  inviteKey(login) {
+    const l = String(login || "").trim().replace(/^@/, "").toLowerCase();
+    const entry = this.state.allowed.find((a) => a.login === l && !a.id);
+    if (!entry) return null;
+    const key = randomInviteKey();
+    entry.inviteKeyHash = hashInviteKey(key);
+    entry.inviteKeyExpires = this.now() + INVITE_KEY_TTL_MS;
+    this.#save();
+    return key;
+  }
+
+  /**
+   * Redeem an invite key: mints a session exactly as a successful sign-in
+   * does (via `signIn`, below), marks the invitee active, and consumes the
+   * key — one-time use, whether or not it was expired.
+   *
+   * The key is deleted from the entry BEFORE `signIn` is called, so a key can
+   * be redeemed at most once even if something below it ever throws.
+   */
+  redeem(key) {
+    const norm = String(key || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (norm.length !== 8) return { ok: false, error: "bad key" };
+    const hash = hashInviteKey(norm);
+    const entry = this.state.allowed.find((a) => a.inviteKeyHash === hash);
+    if (!entry) return { ok: false, error: "bad key" };
+
+    const expired = !entry.inviteKeyExpires || entry.inviteKeyExpires < this.now();
+    delete entry.inviteKeyHash;
+    delete entry.inviteKeyExpires;
+    if (expired) {
+      this.#save();
+      return { ok: false, error: "bad key" };
+    }
+
+    // `entry.id` is "" (still pending) — signIn claims this exact row, exactly
+    // as a GitHub/Google sign-in claiming a typed invite would, except the
+    // identity it claims it under is synthetic: nobody proved who they are to
+    // a provider, only that they held the key.
+    // ponytail: a real OAuth sign-in later, under the SAME login, will not
+    // re-claim this row (its id no longer matches) and lands as a second
+    // entry instead of merging — same edge case `signIn`'s own comment
+    // already flags for the cross-provider email case; upgrade if it bites.
+    const rec = this.signIn({
+      provider: provider(entry),
+      login: entry.login,
+      id: `key-${randomBytes(6).toString("hex")}`,
+      display: entry.display,
+    });
+    return { ok: true, token: rec.token, login: rec.login, owner: rec.owner };
   }
 
   /** Remove somebody. The owner cannot be removed — a hub with no owner has

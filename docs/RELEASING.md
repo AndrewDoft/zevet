@@ -109,6 +109,68 @@ curl -s https://usemasora.com/download/zevet-latest.json
 curl -sI https://usemasora.com/download/zevet-0.2.0-windows-x64-setup.exe | head -3
 ```
 
+## 4a. Repointing the stable download links
+
+`https://usemasora.com/download/Zevet.dmg` and `.../Zevet-Setup.exe` are the
+links that never change — the invite email (`hub/mailer.mjs`) and anything
+else that should survive a release both use these, not a versioned filename.
+Caddy rewrites them to the versioned file:
+
+```
+handle /download/Zevet.dmg {
+	root * /srv/downloads
+	rewrite * /zevet-0.2.0-macos-arm64.dmg
+	...
+}
+handle /download/Zevet-Setup.exe {
+	root * /srv/downloads
+	rewrite * /zevet-0.2.0-windows-x64-setup.exe
+	...
+}
+```
+
+⚠️ **Edit `/srv/masora/Caddyfile` in place — never `sed -i`.** `sed -i` writes a
+new inode and renames it over the old one; `/srv/masora/Caddyfile` is bind-mounted
+into the caddy container, which is still holding the OLD inode open, so the
+container goes on serving the pre-edit file until it is recreated — the exact
+trap `docs/RELEASING.md`'s hub section and `masora-landing/next.config.ts`
+both document for the same reason. A python `open(..., "r+")` that writes and
+truncates keeps the original inode:
+
+```
+gcloud compute ssh masora-app --tunnel-through-iap --zone us-east1-b --command '
+  sudo cp /srv/masora/Caddyfile /srv/masora/Caddyfile.bak-$(date +%Y%m%d-%H%M%S)
+  sudo python3 - <<PYEOF
+import re
+p = "/srv/masora/Caddyfile"
+with open(p, "r+") as f:
+    text = f.read()
+    text = re.sub(r"zevet-[0-9.]+-macos-arm64\.dmg", "zevet-0.2.0-macos-arm64.dmg", text)
+    text = re.sub(r"zevet-[0-9.]+-windows-x64-setup\.exe", "zevet-0.2.0-windows-x64-setup.exe", text)
+    f.seek(0)
+    f.write(text)
+    f.truncate()
+PYEOF
+  '
+```
+
+Confirm the running container actually sees the new text (not just the file on
+the host) before reloading:
+
+```
+gcloud compute ssh masora-app --tunnel-through-iap --zone us-east1-b --command \
+  'docker exec $(docker ps -qf name=caddy) grep -n "zevet-0.2.0" /srv/masora/Caddyfile'
+gcloud compute ssh masora-app --tunnel-through-iap --zone us-east1-b --command \
+  'sudo docker exec $(docker ps -qf name=caddy) caddy reload --config /etc/caddy/Caddyfile'
+```
+
+Then from outside, confirm the stable links now 302/serve the new files:
+
+```
+curl -sI https://usemasora.com/download/Zevet.dmg | head -3
+curl -sI https://usemasora.com/download/Zevet-Setup.exe | head -3
+```
+
 ## 5. The landing page points itself
 
 ⚠️ **THIS STEP IS GONE, and the paragraph below is kept because it was the

@@ -15,8 +15,9 @@ import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypt
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Accounts, defaultAccountsFile, deriveAuthToken } from "./accounts.mjs";
-import { deviceStart, devicePoll, githubUser } from "./github-auth.mjs";
+import { deviceStart, devicePoll, githubUser, githubPublicEmail } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
+import { sendInviteEmail } from "./mailer.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -79,6 +80,18 @@ const GOOGLE_ON = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_RED
 const ACCOUNTS_FILE = process.env.ZEVET_ACCOUNTS || (GITHUB_CLIENT_ID || GOOGLE_CLIENT_ID ? defaultAccountsFile(HERE) : null);
 
 const accounts = new Accounts({ file: ACCOUNTS_FILE, secret: process.env.ZEVET_SECRET || "" });
+
+/* ── Invite email (Resend, plain fetch — docs/resend.md) ────────────────────
+ *
+ * `RESEND_API_KEY` unset means email_sent is always false and /auth/allow
+ * hands the inviter the key instead — never a crash, see mailer.mjs's own
+ * header. `RESEND_FROM` must be an address on a domain verified in Resend, or
+ * every send 403s the same way (also handled: same fallback). */
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const RESEND_FROM = process.env.RESEND_FROM || "Masora <invites@usemasora.com>";
+const DOWNLOADS = "https://usemasora.com/download/"; // same constant as desktop/family.js
+const DOWNLOAD_MAC = `${DOWNLOADS}Zevet.dmg`;
+const DOWNLOAD_WIN = `${DOWNLOADS}Zevet-Setup.exe`;
 
 /**
  * The shared token — the credential that is NOT a GitHub session.
@@ -978,6 +991,25 @@ function googlePage(res, status, message) {
   res.end(body);
 }
 
+/**
+ * The invite field is ONE text input (Andrew: "keep the invite field
+ * single"), so it carries either a bare login/email, or a GitHub login
+ * followed by an email to mail the invite to. Whitespace-separated, the
+ * email — if any — is always the LAST token, so "octocat andrew@x.com" and a
+ * lone "andrew@x.com" both parse without a second field.
+ *
+ * Returns `{ login, email }`: `login` is what `acc.allow()` is called with;
+ * `email` is "" unless the input named one explicitly (a bare email invite
+ * IS its own recipient, but that is decided by the caller, not here).
+ */
+function parseInvite(raw) {
+  const parts = String(raw || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return { login: parts.slice(0, -1).join(" ").replace(/^@/, ""), email: parts[parts.length - 1] };
+  }
+  return { login: (parts[0] || "").replace(/^@/, ""), email: "" };
+}
+
 /** One row of the People list. Shared by `/auth/whoami` and `/auth/allow` so
  *  the two cannot drift into describing the same person differently. */
 function person(a) {
@@ -1342,9 +1374,50 @@ const server = createServer(async (req, res) => {
     } catch {
       return json(res, 400, { error: "expected JSON" });
     }
-    const r = url.pathname === "/auth/allow" ? acc.allow(body && body.login) : acc.revoke(body && body.login);
+
+    if (url.pathname === "/auth/revoke") {
+      const r = acc.revoke(body && body.login);
+      if (!r.ok) return json(res, 400, { error: r.error });
+      return json(res, 200, { ok: true, people: acc.list().map(person) });
+    }
+
+    // /auth/allow: mint (or rotate) the invite key, then try to email it.
+    // Never a crash either way — see mailer.mjs's own header — so this always
+    // answers 200 once the allowlist change itself is valid.
+    const { login: typedLogin, email: typedEmail } = parseInvite(body && body.login);
+    const r = acc.allow(typedLogin);
     if (!r.ok) return json(res, 400, { error: r.error });
-    return json(res, 200, { ok: true, people: acc.list().map(person) });
+
+    let emailSent = false;
+    if (r.key) {
+      let recipient = typedEmail || (typedLogin.includes("@") ? typedLogin : "");
+      if (!recipient) {
+        const pub = await githubPublicEmail(typedLogin);
+        if (pub.ok && pub.email) recipient = pub.email;
+      }
+      if (recipient) {
+        const sent = await sendInviteEmail({
+          apiKey: RESEND_API_KEY,
+          from: RESEND_FROM,
+          to: recipient,
+          teamName: teamName(auth.team, acc),
+          key: r.key,
+          macUrl: DOWNLOAD_MAC,
+          winUrl: DOWNLOAD_WIN,
+        });
+        emailSent = sent.ok;
+      }
+    }
+
+    return json(res, 200, {
+      ok: true,
+      people: acc.list().map(person),
+      email_sent: emailSent,
+      // The key is handed back to the INVITER only when nobody else got it —
+      // otherwise it is now live in an inbox and printing it again here is
+      // one more place it could leak from.
+      ...(r.key && !emailSent ? { key: r.key } : {}),
+    });
   }
 
   /* Turning the Workspace door on or off for THIS team. Same owner-only gate
@@ -1476,6 +1549,39 @@ const server = createServer(async (req, res) => {
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
     const team = findTeam(url.searchParams.get("name"));
     return json(res, 200, team ? { exists: true, team } : { exists: false });
+  }
+
+  /**
+   * Redeem an invite key. Unauthenticated, same reasoning as the sign-in
+   * "finish" routes above: what is presented is a per-invitee secret, not a
+   * claim to be believed, and `acc.redeem` is what actually decides.
+   *
+   * ⚠️ THIS RESPONSE ALSO CARRIES THE MASTER SECRET, same as
+   * /auth/github/finish and /auth/google/finish — a key redemption mints a
+   * session exactly like a successful sign-in, and the joiner's editor needs
+   * the same secret either way. Do not add it to any other response.
+   */
+  if (url.pathname === "/team/join" && req.method === "POST") {
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const team = body && body.team ? findTeam(body.team) : null;
+    if (!team) {
+      authFailed(req, url);
+      return json(res, 404, { error: "no such team" });
+    }
+    const acc = teamAccounts.get(team);
+    const r = acc.redeem(body && body.key);
+    if (!r.ok) {
+      authFailed(req, url);
+      return json(res, 400, { error: "bad key" });
+    }
+    console.log(`zevet: key redeemed by @${r.login}${team === DEFAULT_TEAM ? "" : ` (team ${team})`}`);
+    return json(res, 200, { ok: true, token: r.token, secret: acc.secret, login: r.login, owner: r.owner, team });
   }
 
   if (url.pathname === "/healthz") {

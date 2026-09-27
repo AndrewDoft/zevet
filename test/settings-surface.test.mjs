@@ -58,7 +58,7 @@ describe("Disconnect GitHub/Google appears for an actually signed-in person (P1)
   });
 });
 
-describe("email invitations: Copy invite and a prefilled mailto (the hub has no mailer)", () => {
+describe("email invitations: a standing per-row fallback (Copy invite / mailto) beside the mailer", () => {
   const settings = src("board/src/components/settings.tsx");
   const account = settings.slice(settings.indexOf("function AccountSection"));
 
@@ -66,7 +66,7 @@ describe("email invitations: Copy invite and a prefilled mailto (the hub has no 
     assert.match(account, /const emailInvite = p\.pending && p\.provider === "google" \? p\.login : "";/);
   });
 
-  test("Copy invite writes to the clipboard, and Email is a mailto: link — no fetch, no mailer", () => {
+  test("Copy invite writes to the clipboard, and Email is a mailto: link — a client-side fallback, not the mailer's own send", () => {
     assert.match(account, /onClick=\{\(\) => copyInvite\(teamLabel\)\}/);
     assert.match(account, /href=\{mailtoInvite\(emailInvite, teamLabel\)\}/);
   });

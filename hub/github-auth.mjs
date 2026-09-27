@@ -236,6 +236,35 @@ export async function githubUser({ accessToken, fetchImpl } = {}) {
   };
 }
 
+/**
+ * The public profile email for a GitHub LOGIN, unauthenticated — GitHub's
+ * `/users/:login` is a public endpoint and needs no access token.
+ *
+ * Used only to fill in a recipient address for an invite email when the
+ * inviter typed a bare GitHub username and no email of their own: same public
+ * field `githubUser` reads off a token above (`docs.github.com/rest/users/users`
+ * — a person may only make a VERIFIED address public), just fetched by name
+ * instead of by an access token nobody has yet, because the invitee has not
+ * signed in.
+ *
+ * Unauthenticated calls to this endpoint are rate limited by GitHub to 60/hr
+ * per IP — fine for invite volume on a team hub; not fine for a bulk import,
+ * which is not what this is for.
+ */
+export async function githubPublicEmail(login, { fetchImpl } = {}) {
+  const l = String(login || "").trim();
+  if (!l) return { ok: false, error: "no login" };
+  const r = await call(
+    `https://api.github.com/users/${encodeURIComponent(l)}`,
+    { method: "GET", headers: { Accept: "application/vnd.github+json", "User-Agent": UA } },
+    fetchImpl,
+  );
+  if (!r.ok) return r;
+  if (r.status !== 200) return { ok: false, error: `GitHub returned ${r.status} for @${l}` };
+  const b = r.body || {};
+  return { ok: true, email: b.email ? String(b.email).toLowerCase() : null };
+}
+
 /** GitHub's errors carry a human sentence in `error_description` often enough
  *  that it is worth preferring, and a code worth keeping when it does not. */
 function githubError(b) {

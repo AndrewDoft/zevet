@@ -116,6 +116,11 @@
     <input id="teamName" placeholder="metrodora" maxlength="48" autocomplete="off" spellcheck="false" />
   </label>
 
+  <div id="joinKeyRow" class="row" style="margin-top:0" hidden>
+    <input id="inviteKey" class="mono" placeholder="XXXX-XXXX" maxlength="9" autocomplete="off" spellcheck="false" style="flex:1 1 160px; text-transform:uppercase" />
+    <button id="joinKey" class="primary" type="button">Join</button>
+  </div>
+
   <div class="row" style="margin-top:0">
     <button id="google" class="primary" type="button" aria-label="Sign in with Google">
       <svg viewBox="0 0 48 48" width="16" height="16" aria-hidden="true" focusable="false" data-brand="google">
@@ -148,7 +153,7 @@
   </div>
 
   <details id="manual">
-    <summary>Key</summary>
+    <summary>Other</summary>
     <label>
       <span class="lbl">Key</span>
       <input id="token" class="mono" type="password" autocomplete="off" spellcheck="false" />
@@ -200,9 +205,16 @@
     $("modeCreate").setAttribute("aria-pressed", String(m === "create"));
     $("modeJoin").setAttribute("aria-pressed", String(m === "join"));
     $("msg").hidden = true;
+    // Join: the key is the way in, front and centre. GitHub/Google still work
+    // (an allowlisted identity can sign in instead), demoted to small buttons.
+    // Create: there is no key yet — GitHub/Google are how ownership is claimed.
+    $("joinKeyRow").hidden = m !== "join";
+    $("google").classList.toggle("primary", m !== "join");
+    $("gh").classList.toggle("primary", m !== "join");
   }
   $("modeCreate").addEventListener("click", function () { setMode("create"); });
   $("modeJoin").addEventListener("click", function () { setMode("join"); });
+  setMode("create");
 
   // Re-opened from the menu: prefill what is already configured.
   var q = new URLSearchParams(location.search);
@@ -352,6 +364,21 @@
     window.zevet.googleCancel();
     busy(false);
     $("msg").hidden = true;
+  });
+
+  /* ── Redeem an invite key: Join mode's default path. ── */
+  $("joinKey").addEventListener("click", async function () {
+    var key = $("inviteKey").value.trim();
+    if (!key) { say("bad", "Key?"); $("inviteKey").focus(); return; }
+    if (!$("actor").value.trim()) { say("bad", "Name?"); $("actor").focus(); return; }
+    $("joinKey").disabled = true;
+    say("", "…");
+    var team = await teamFor();
+    if (team === null) { $("joinKey").disabled = false; return; }
+    var done = await window.zevet.teamJoin(team, key);
+    $("joinKey").disabled = false;
+    if (!done.ok) { say("bad", esc(short(done.error, "Failed"))); return; }
+    signedIn(done);
   });
 
   /* ── The team key: for a server with no OAuth app, and installs already out there. ── */
