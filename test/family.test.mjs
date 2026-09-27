@@ -249,6 +249,64 @@ describe("panel states", () => {
   });
 });
 
+describe("team name (D-603)", () => {
+  test("connect() sends team_name once refreshTeam has a value", async () => {
+    const r = rig({ readTeam: async () => "Masoretes" });
+    r.masora();
+    r.key();
+    fake.pair = { status: 200, body: { token: "t-team", member_email: "" } };
+    fake.pairs.length = 0;
+    assert.equal(await r.f.connect(), "connected");
+    assert.equal(fake.pairs[0].team_name, "Masoretes");
+  });
+
+  test("no team yet: team_name is simply absent, never a blank string", async () => {
+    const r = rig(); // default readTeam resolves ""
+    r.masora();
+    r.key();
+    fake.pair = { status: 200, body: { token: "t-noteam", member_email: "" } };
+    fake.pairs.length = 0;
+    assert.equal(await r.f.connect(), "connected");
+    assert.equal("team_name" in fake.pairs[0], false);
+  });
+
+  test("heartbeat carries the last-refreshed team name, or null", () => {
+    const r = rig();
+    r.f.heartbeat();
+    assert.equal(JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).team_name, null);
+    r.f.team = "Masoretes";
+    r.f.heartbeat();
+    assert.equal(JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).team_name, "Masoretes");
+  });
+
+  test("refreshTeam swallows a throw and keeps the last-known value", async () => {
+    const r = rig({
+      readTeam: async () => {
+        throw new Error("hub down");
+      },
+    });
+    r.f.team = "Masoretes";
+    assert.equal(await r.f.refreshTeam(), "Masoretes");
+  });
+
+  test("start()'s tick refreshes the team before writing the heartbeat", async () => {
+    let calls = 0;
+    const r = rig({
+      readTeam: async () => {
+        calls++;
+        return "Masoretes";
+      },
+      tickMs: 10_000_000,
+      pollMs: 10_000_000,
+    });
+    r.f.start();
+    await new Promise((res) => setImmediate(res));
+    assert.equal(calls, 1);
+    assert.equal(JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).team_name, "Masoretes");
+    r.f.stop();
+  });
+});
+
 describe("framing usemasora.com pages", () => {
   test("drops X-Frame-Options and frame-ancestors, keeps everything else", () => {
     const out = frameable({

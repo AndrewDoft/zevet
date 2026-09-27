@@ -1214,6 +1214,21 @@ async function fetchTeamName(hub, token) {
   }
 }
 
+/** D-603: the team name family.js sends to Masora at pairing and in every
+ *  heartbeat -- same `fetchTeamName` the setup window uses, cached for a few
+ *  minutes so a 60s heartbeat is not a whoami round trip every tick.
+ *  ponytail: a module-level cache, not an LRU -- one machine has one team. */
+let teamNameCache = { at: 0, name: "" };
+async function currentTeamName() {
+  if (Date.now() - teamNameCache.at < 5 * 60 * 1000) return teamNameCache.name;
+  const cfg = readConfig();
+  const auth = authFor(cfg);
+  if (auth.error || !auth.token || !cfg.hub) return teamNameCache.name;
+  const name = await fetchTeamName(cfg.hub, auth.token);
+  teamNameCache = { at: Date.now(), name };
+  return name;
+}
+
 /**
  * What happens once a sign-in succeeds — ONE implementation, both providers.
  *
@@ -1421,6 +1436,7 @@ const family = new Family({
     const s = await appUpdater.check();
     if (s && s.phase === "ready" && s.canInstall) await appUpdater.install();
   },
+  readTeam: () => currentTeamName(),
   version: app.getVersion(),
   installPath: path.dirname(app.getPath("exe")),
 });
@@ -2311,6 +2327,7 @@ async function runMasoraPushOnce() {
     await masoraPush.runOnce({
       repos, baseUrl: cfg.url, token,
       listSessions: agentSessions.list, readSession: agentSessions.read,
+      actor: chatAuthor(),
     });
   } catch (err) {
     console.error(`zevet: masora push failed: ${err.message}`);
