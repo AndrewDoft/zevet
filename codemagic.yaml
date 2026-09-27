@@ -83,8 +83,15 @@ workflows:
           fi
           hdiutil detach "$MNT" >/dev/null
           if [ -n "${CERTIFICATE_P12:-}" ]; then
-            spctl -a -vvv -t install "$DMG"
             xcrun stapler validate "$DMG"
+            # `-t install` is the policy for a .pkg processed by /usr/sbin/installer,
+            # signed with a separate "Developer ID Installer" identity we don't have
+            # (only "Developer ID Application") -- informational only, not enforced.
+            echo "spctl -t install (informational; a plain dmg has no installer signature):"
+            spctl -a -vvv -t install "$DMG" || true
+            # `-t open` is what Finder/LaunchServices actually checks when a person
+            # double-clicks a downloaded disk image -- this is the one that has to pass.
+            spctl -a -vvv -t open "$DMG"
           fi
     artifacts:
       - desktop/out/*.dmg
