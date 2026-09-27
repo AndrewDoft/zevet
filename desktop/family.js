@@ -136,6 +136,11 @@ class Family {
     // a label, not something pairing may depend on.
     readTeam = async () => "",
     readHubAuth, // () => {hub, token} | null : this machine's OWN hub session (main.js's authFor)
+    // What Zevet genuinely knows about the person, e.g. the GitHub login or
+    // email their own hub sign-in used -- never guessed. () => {email?,
+    // github_login?, google_email?} | null; null/empty means Zevet knows
+    // nothing, and no `identity` is sent (see #identity below).
+    readIdentity = () => null,
     version,
     installPath,
     host = os.hostname(),
@@ -145,7 +150,7 @@ class Family {
     tickMs = TICK_MS,
     pollMs = REQUEST_POLL_MS,
   } = {}) {
-    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, detect, readTeam, readHubAuth, version, installPath, host, platform, pid, now, tickMs, pollMs });
+    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, detect, readTeam, readHubAuth, readIdentity, version, installPath, host, platform, pid, now, tickMs, pollMs });
     this.fetch = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
     this.pairing = "idle"; // idle | pairing | no_owner | unreachable | error
     this.team = ""; // last-known team name; refreshed each tick, best-effort
@@ -172,6 +177,25 @@ class Family {
       if (hit) return hit;
     }
     return null;
+  }
+
+  /** `identity` for the pair POST: only string, non-empty fields, and never
+   *  fabricated -- `readIdentity()` returning null/`{}` means Zevet knows
+   *  nothing, and this returns null so the field is left off the wire
+   *  entirely rather than sent as `{}` or with blank values. */
+  #identity() {
+    let raw;
+    try {
+      raw = this.readIdentity();
+    } catch {
+      return null;
+    }
+    if (!raw || typeof raw !== "object") return null;
+    const out = {};
+    for (const k of ["email", "github_login", "google_email"]) {
+      if (typeof raw[k] === "string" && raw[k]) out[k] = raw[k];
+    }
+    return Object.keys(out).length ? out : null;
   }
 
 
@@ -264,6 +288,7 @@ class Family {
       if (!secret) return (this.pairing = "unreachable");
       this.pairing = "pairing";
       await this.refreshTeam();
+      const identity = this.#identity();
       let res;
       try {
         res = await this.fetch(`${web}/api/family/pair`, {
@@ -272,6 +297,7 @@ class Family {
           body: JSON.stringify({
             app: "zevet", secret, device_name: this.host, platform: this.platform,
             ...(this.team ? { team_name: this.team } : {}),
+            ...(identity ? { identity } : {}),
           }),
           signal: AbortSignal.timeout(15000),
         });
@@ -289,7 +315,15 @@ class Family {
       if (!body || typeof body.token !== "string" || !body.token) return (this.pairing = "error");
       try {
         this.saveUrl(web);
-        this.saveToken(body.token, typeof body.member_email === "string" ? body.member_email : "");
+        this.saveToken(
+          body.token,
+          typeof body.member_email === "string" ? body.member_email : "",
+          // `canonical`: the real identity of the paired owner, replacing
+          // `member_email` for display -- see masora.js's readConfig(). An
+          // older Masora that hasn't shipped it omits the field, and null
+          // here is what keeps that fallback working.
+          body.canonical && typeof body.canonical === "object" ? body.canonical : null,
+        );
       } catch {
         return (this.pairing = "error");
       }

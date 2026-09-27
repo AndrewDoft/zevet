@@ -1469,9 +1469,9 @@ const family = new Family({
   dir: familyDir(),
   readMasora: () => masora.readConfig(),
   saveUrl: (url) => masora.saveUrl(url),
-  saveToken: (token, member) => {
+  saveToken: (token, member, canonical) => {
     if (!safeStorage.isEncryptionAvailable()) throw new Error("This machine's OS keychain is unavailable.");
-    masora.saveToken(token, (s) => safeStorage.encryptString(s), member);
+    masora.saveToken(token, (s) => safeStorage.encryptString(s), member, canonical);
     masoraLink.cancel(); // paired: the code flow has nothing left to wait for
   },
   clearToken: () => masora.unpair(),
@@ -1485,6 +1485,16 @@ const family = new Family({
     const auth = authFor(cfg);
     if (auth.error || !auth.token) return null;
     return { hub: cfg.hub.replace(/\/+$/, ""), token: auth.token };
+  },
+  // The one identity Zevet genuinely knows: whoever `cfg.login` says signed
+  // in to ITS OWN hub (awaitSignIn, above) -- a GitHub username, or a Google
+  // account's email (google-auth.mjs's `login: email`). Nothing else here
+  // is known reliably enough to send, and an empty login sends nothing.
+  readIdentity: () => {
+    const cfg = readConfig();
+    const login = cfg && typeof cfg.login === "string" ? cfg.login.trim() : "";
+    if (!login) return null;
+    return login.includes("@") ? { email: login } : { github_login: login };
   },
   // The normal self-update: look, and if a build is ready, install it.
   runUpdate: async () => {

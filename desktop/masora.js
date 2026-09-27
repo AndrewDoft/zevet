@@ -70,6 +70,15 @@ function writeRaw(cfg) {
  */
 function readConfig() {
   const raw = readRaw();
+  // `canonical` (added alongside the pair response's `token`) is the real
+  // identity of the paired owner and, when Masora sends one, replaces the
+  // older `member` (member_email) for display. An older Masora that has not
+  // shipped `canonical` yet never sends it, so this falls back to `member`
+  // unchanged -- that's what keeps pairing against one of those working.
+  const canonical = raw.canonical && typeof raw.canonical === "object" && !Array.isArray(raw.canonical) ? raw.canonical : null;
+  const canonicalName = canonical && typeof canonical.name === "string" && canonical.name ? canonical.name : "";
+  const canonicalEmail = canonical && typeof canonical.email === "string" && canonical.email ? canonical.email : "";
+  const legacyMember = typeof raw.member === "string" ? raw.member : "";
   return {
     url: typeof raw.url === "string" && raw.url ? raw.url : DEFAULT_URL,
     paired: typeof raw.tokenEnc === "string" && raw.tokenEnc.length > 0,
@@ -77,7 +86,7 @@ function readConfig() {
     // Zevet Chat push (C1 `zevet_chat`). Off unless the person turned it on:
     // the per-repo opt-in above says nothing about chats, which have no repo.
     chat: raw.chat === true,
-    member: typeof raw.member === "string" ? raw.member : "",
+    member: canonicalName || canonicalEmail || legacyMember,
   };
 }
 
@@ -93,10 +102,17 @@ function saveUrl(url) {
 }
 
 /** `encrypt`/`decrypt` are `Buffer -> Buffer` / `Buffer -> string`, i.e.
- *  `electron.safeStorage.encryptString`/`decryptString` bound by the caller. */
-function saveToken(token, encrypt, member) {
+ *  `electron.safeStorage.encryptString`/`decryptString` bound by the caller.
+ *  `canonical`, when the pair response carried one, is `{name, email}` and
+ *  takes over the display in `readConfig()`'s `member` -- see there. */
+function saveToken(token, encrypt, member, canonical) {
   const raw = readRaw();
-  writeRaw({ ...raw, tokenEnc: encrypt(String(token)).toString("base64"), member: member || "" });
+  writeRaw({
+    ...raw,
+    tokenEnc: encrypt(String(token)).toString("base64"),
+    member: member || "",
+    canonical: canonical && typeof canonical === "object" && !Array.isArray(canonical) ? canonical : null,
+  });
 }
 
 function loadToken(decrypt) {
@@ -116,6 +132,7 @@ function unpair() {
   const raw = readRaw();
   delete raw.tokenEnc;
   delete raw.member;
+  delete raw.canonical;
   writeRaw(raw);
 }
 

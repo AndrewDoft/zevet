@@ -40,12 +40,12 @@ const feeds = {
 
 function rig(over = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "zevet-family-"));
-  const s = { paired: false, member: "", token: null, url: "", opened: [], updates: 0 };
+  const s = { paired: false, member: "", canonical: null, token: null, url: "", opened: [], updates: 0 };
   const f = new Family({
     dir,
     readMasora: () => ({ url: s.url, paired: s.paired, member: s.member }),
     saveUrl: (u) => (s.url = u),
-    saveToken: (t, m) => Object.assign(s, { paired: true, token: t, member: m }),
+    saveToken: (t, m, c) => Object.assign(s, { paired: true, token: t, member: m, canonical: c || null }),
     clearToken: () => Object.assign(s, { paired: false, token: null, member: "" }),
     openExternal: async (u) => void s.opened.push(u),
     runUpdate: async () => void s.updates++,
@@ -87,6 +87,42 @@ describe("auto-connect", () => {
     assert.equal(r.s.token, "tok-1");
     assert.equal(r.s.member, "a@b.co");
     assert.equal(r.s.url, web);
+  });
+
+  test("a known identity (e.g. a GitHub login) rides along in the pair request", async () => {
+    const r = rig({ readIdentity: () => ({ github_login: "octocat" }) });
+    r.masora();
+    r.key();
+    fake.pairs.length = 0;
+    assert.equal(await r.f.connect(), "connected");
+    assert.deepEqual(fake.pairs[0].identity, { github_login: "octocat" });
+  });
+
+  test("no known identity: the field is left off entirely, never sent blank", async () => {
+    const r = rig({ readIdentity: () => null });
+    r.masora();
+    r.key();
+    fake.pairs.length = 0;
+    assert.equal(await r.f.connect(), "connected");
+    assert.equal("identity" in fake.pairs[0], false);
+  });
+
+  test("an identity with only blank/empty values is treated the same as none", async () => {
+    const r = rig({ readIdentity: () => ({ email: "", github_login: undefined }) });
+    r.masora();
+    r.key();
+    fake.pairs.length = 0;
+    assert.equal(await r.f.connect(), "connected");
+    assert.equal("identity" in fake.pairs[0], false);
+  });
+
+  test("a canonical identity in the pair response replaces member_email for display", async () => {
+    const r = rig();
+    r.masora();
+    r.key();
+    fake.pair = { status: 200, body: { token: "t-canon", member_email: "old@b.co", canonical: { name: "Andrew", email: "andrew@real.co", aliases: [] } } };
+    assert.equal(await r.f.connect(), "connected");
+    assert.deepEqual(r.s.canonical, { name: "Andrew", email: "andrew@real.co", aliases: [] });
   });
 
   test("not a masora-desktop runtime: no pairing attempted", async () => {
