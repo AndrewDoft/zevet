@@ -1,0 +1,28 @@
+# Diagnostic only, manual trigger: reproduces the real per-machine
+# InstallLocation incident (scripts/repro-permachine-update.mjs) in
+# isolation, without running the full suite or the mac leg. Not part of the
+# release pipeline -- delete once the fix is proven and folded into
+# build.yml's own smoke step.
+name: repro-permachine
+on:
+  workflow_dispatch:
+jobs:
+  repro:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate icon
+        working-directory: desktop
+        run: node make-icon.mjs
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+      - name: Build the OLD version
+        working-directory: desktop
+        run: npm run dist:win
+      - name: Reproduce the per-machine update
+        working-directory: desktop
+        run: node ../scripts/repro-permachine-update.mjs
