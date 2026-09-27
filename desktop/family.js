@@ -135,6 +135,11 @@ class Family {
     // throws by contract, but a throw is still swallowed below since this is
     // a label, not something pairing may depend on.
     readTeam = async () => "",
+    // D-615: joins a hub team by name+key on THIS machine's behalf, using no
+    // session at all (there may be none yet) -- main.js's own zevet:teamJoin
+    // handler, factored out so a relayed join and a typed one run identical
+    // code. async (team, key) => {ok, error?, login?, owner?, teamName?}.
+    joinTeam = async () => ({ ok: false, error: "not configured" }),
     readHubAuth, // () => {hub, token} | null : this machine's OWN hub session (main.js's authFor)
     // What Zevet genuinely knows about the person, e.g. the GitHub login or
     // email their own hub sign-in used -- never guessed. () => {email?,
@@ -150,7 +155,7 @@ class Family {
     tickMs = TICK_MS,
     pollMs = REQUEST_POLL_MS,
   } = {}) {
-    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, detect, readTeam, readHubAuth, readIdentity, version, installPath, host, platform, pid, now, tickMs, pollMs });
+    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, detect, readTeam, joinTeam, readHubAuth, readIdentity, version, installPath, host, platform, pid, now, tickMs, pollMs });
     this.fetch = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
     this.pairing = "idle"; // idle | pairing | no_owner | unreachable | error
     this.team = ""; // last-known team name; refreshed each tick, best-effort
@@ -360,6 +365,28 @@ class Family {
     else if (req.action === "update") await Promise.resolve(this.runUpdate()).catch(() => {});
     else if (req.action === "team.invite" || req.action === "team.revoke") await this.#relayTeamAction(req.action, req.login);
     else if (req.action === "team.domain") await this.#relayTeamDomain(req.value);
+    else if (req.action === "team.join") await this.#relayTeamJoin(req.team, req.key);
+  }
+
+  /**
+   * Masora's onboarding relays an invite it was given for a hub team --
+   * {team, key} -- so a fresh machine can join with no separate Zevet setup.
+   * Unlike team.invite/team.revoke this needs no existing hub session (there
+   * may be none: Zevet has not joined ANY team yet), so it goes through
+   * `joinTeam` (main.js), the exact function `zevet:teamJoin` already calls
+   * for desktop/setup.html's own Join button -- a relayed join is
+   * indistinguishable from a typed one. Fire-and-forget, same as every other
+   * relayed action here: no reply channel, so a failure is only ever logged.
+   */
+  async #relayTeamJoin(team, key) {
+    try {
+      const r = await this.joinTeam(team, key);
+      if (!r || !r.ok) console.error(`zevet: team.join relay failed (${(r && r.error) || "unknown"})`);
+    } catch (err) {
+      console.error(`zevet: team.join relay threw (${err.message})`);
+    }
+    await this.#refreshRoster();
+    this.heartbeat();
   }
 
   /**

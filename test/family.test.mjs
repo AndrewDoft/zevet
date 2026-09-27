@@ -488,6 +488,43 @@ describe("team roster (Masora relay)", () => {
     assert.equal(hb.people.length, 2);
     assert.equal(hb.people[1].login, "bob");
   });
+
+  test("team.join calls joinTeam(team, key) — Masora's onboarding relay, D-615", async () => {
+    const calls = [];
+    const r = rig({
+      joinTeam: async (team, key) => {
+        calls.push({ team, key });
+        return { ok: true, login: "alice", owner: true, teamName: team };
+      },
+      readHubAuth: () => ({ hub: "https://hub.example", token: "tok" }),
+      fetchImpl: hubFetch({ "https://hub.example/auth/whoami": whoami("Masoretes", []) }),
+    });
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.join", team: "Masoretes", key: "k3y" }));
+    await r.f.pollRequest();
+    assert.deepEqual(calls, [{ team: "Masoretes", key: "k3y" }]);
+    // the roster refresh still ran afterward, same as team.invite/team.revoke
+    const hb = JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8"));
+    assert.equal(hb.team_name, "Masoretes");
+  });
+
+  test("team.join never throws out of pollRequest when joinTeam rejects or reports failure", async () => {
+    const r = rig({
+      joinTeam: async () => {
+        throw new Error("hub unreachable");
+      },
+      readHubAuth: () => null, // no session yet — this machine has not joined anything
+    });
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.join", team: "Masoretes", key: "bad" }));
+    await assert.doesNotReject(() => r.f.pollRequest());
+    // it still wrote a heartbeat (no session -> no roster, but the tick itself must not be lost)
+    assert.ok(existsSync(path.join(r.dir, "zevet.json")));
+  });
+
+  test("no joinTeam configured (the constructor default) is a no-op, not a throw", async () => {
+    const r = rig({ readHubAuth: () => null }); // rig() does not set joinTeam -> Family's own default applies
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.join", team: "x", key: "y" }));
+    await assert.doesNotReject(() => r.f.pollRequest());
+  });
 });
 
 describe("framing usemasora.com pages", () => {

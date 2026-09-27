@@ -1343,11 +1343,16 @@ ipcMain.handle("zevet:teamResolve", async (_e, { name } = {}) => {
  * Redeem an invite key — hub/server.mjs's `/team/join`. Mints a session and
  * hands back the team's master secret exactly like a completed GitHub/Google
  * sign-in (`awaitSignIn`, above), so this writes the config the same way and
- * returns the same shape the renderer already knows how to handle: a login
- * and a yes, never the secret or the session (same bridge rule as
+ * returns the same shape a caller already knows how to handle: a login and a
+ * yes, never the secret or the session (same bridge rule as
  * `githubWait`/`googleWait`, and for the same reason — see preload.js).
+ *
+ * Factored out of the IPC handler (D-615) so `desktop/setup.html`'s own Join
+ * button and a relayed `team.join` from Masora's onboarding (family.js's
+ * `joinTeam`, below) run the identical call and config write — a machine
+ * cannot tell the two apart afterwards.
  */
-ipcMain.handle("zevet:teamJoin", async (_e, { team, key } = {}) => {
+async function teamJoin(team, key) {
   const base = targetHub();
   const t = String(team || "").trim();
   const k = String(key || "").trim();
@@ -1380,7 +1385,9 @@ ipcMain.handle("zevet:teamJoin", async (_e, { team, key } = {}) => {
   } catch {
     return { ok: false, error: "Offline" };
   }
-});
+}
+
+ipcMain.handle("zevet:teamJoin", (_e, { team, key } = {}) => teamJoin(team, key));
 
 /* ── Sign out of GitHub, from Settings ─────────────────────────────────────
  *
@@ -1502,6 +1509,11 @@ const family = new Family({
     if (s && s.phase === "ready" && s.canInstall) await appUpdater.install();
   },
   readTeam: () => currentTeamName(),
+  // D-615: Masora's onboarding relays a {team, key} invite via team.join;
+  // this runs the identical call/config-write desktop/setup.html's own Join
+  // button makes (teamJoin, above) — no separate hub credential of any kind
+  // is ever held by or sent to Masora.
+  joinTeam: (team, key) => teamJoin(team, key),
   version: app.getVersion(),
   installPath: path.dirname(app.getPath("exe")),
 });
