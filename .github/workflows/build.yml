@@ -26,6 +26,13 @@ jobs:
             script: dist:mac
             artifact: zevet-macos
     runs-on: ${{ matrix.os }}
+    # Only the Windows leg's federated credential is scoped to this environment
+    # (repo:AndrewDoft/zevet:environment:signing); the macOS leg never reaches
+    # azure/login so this costs it nothing.
+    environment: signing
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -71,7 +78,8 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
         working-directory: desktop
         # Signing is enabled when all publisher credentials are configured.
         # Otherwise the Mac bundle gets an ad-hoc integrity seal.
@@ -93,6 +101,90 @@ jobs:
         # background bookmark before the DMG is finalized. Calling
         # electron-builder directly bypasses both steps.
         run: npm run ${{ matrix.script }}
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Windows: two stages instead of one `npm run dist:win`.
+      #
+      # electron-builder 25.1.8's own Azure Trusted Signing path (win.azureSignOptions)
+      # gates on AZURE_CLIENT_SECRET / AZURE_CLIENT_CERTIFICATE_PATH / username+password
+      # (packages/app-builder-lib/out/codeSign/windowsSignAzureManager.js, verified by
+      # reading the installed package) — no federated-token branch, so a GitHub OIDC
+      # token satisfies none of the three and it throws before ever signing. Signing
+      # instead runs as azure/artifact-signing-action steps, which do support OIDC
+      # directly. The app exe has to be signed BEFORE the NSIS installer is packed, or
+      # only the installer wrapper carries a signature and Program Files does not —
+      # hence dir build, sign, then --prepackaged pack, then sign the installer too.
+      - name: Build (Windows, unsigned unpacked app)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node build.cjs -c electron-builder.config.js --win dir --publish never
+
+      - name: Azure login (OIDC, Windows signing only)
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign the app executable(s)
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_CODE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_CODE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERT_PROFILE }}
+          files-folder: desktop/out/win-unpacked
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the app executable signature
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = Get-ChildItem desktop/out/win-unpacked/*.exe
+          if ($files.Count -eq 0) { throw "no exe found in desktop/out/win-unpacked" }
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            Write-Host "$($f.Name): $($sig.Status) — $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne "Valid") { throw "$($f.Name) is not validly signed: $($sig.Status)" }
+            if ($sig.SignerCertificate.Subject -notmatch "CN=Andrew Doft") { throw "$($f.Name) signer is not Andrew Doft: $($sig.SignerCertificate.Subject)" }
+          }
+
+      - name: Pack the NSIS installer from the signed app
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node build.cjs -c electron-builder.config.js --win nsis --prepackaged out/win-unpacked --publish never
+
+      - name: Sign the NSIS installer
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_CODE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_CODE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERT_PROFILE }}
+          files-folder: desktop/out
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the installer signature
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = Get-ChildItem desktop/out/*.exe
+          if ($files.Count -eq 0) { throw "no installer exe found in desktop/out" }
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            Write-Host "$($f.Name): $($sig.Status) — $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne "Valid") { throw "$($f.Name) is not validly signed: $($sig.Status)" }
+            if ($sig.SignerCertificate.Subject -notmatch "CN=Andrew Doft") { throw "$($f.Name) signer is not Andrew Doft: $($sig.SignerCertificate.Subject)" }
+          }
 
       # Exercise the final DMG, not just electron-builder's exit status. The
       # script checks the complete signature, every Mach-O architecture, the
