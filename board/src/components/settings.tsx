@@ -345,6 +345,17 @@ function AccountSection() {
     if (!who.state) refreshWhoami();
   }, [who.state, refreshWhoami]);
 
+  // The roster changes on someone else's machine (a join, a sign-in), so it
+  // is polled while Settings is open and on focus, not read once.
+  useEffect(() => {
+    const t = setInterval(() => refreshWhoami(), 5000);
+    window.addEventListener("focus", refreshWhoami);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("focus", refreshWhoami);
+    };
+  }, [refreshWhoami]);
+
   function changePeople(route: string, login: string) {
     setBusy(true);
     setWhoErr("");
