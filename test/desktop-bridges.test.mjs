@@ -343,6 +343,24 @@ describe("the auth migration: one resolver, no raw credentials", () => {
     );
   });
 
+  test("a Finish click that types nothing new can never drop an existing session", () => {
+    // Real incident: Kai signed in with GitHub, main.js wrote a working
+    // `session` — then a stale value already sitting in the "Other" manual
+    // key field (autocomplete="off" does not stop a browser's own
+    // password-manager autofill reaching a type="password" input) made
+    // Finish's save() call fall into a branch that wrote a bare
+    // {hub, token, actor} literal, dropping `session` and `secret` both.
+    // The fix spreads `existing` instead of naming fields, so nothing already
+    // on disk can be dropped by a save that typed nothing NEW and valid.
+    const body = stripComments(handlerBody("zevet:save"));
+    assert.match(body, /writeConfig\(\{\s*\.\.\.existing,\s*hub,\s*actor:/, "the keep-what-you-have path no longer spreads `existing`");
+    assert.doesNotMatch(
+      body,
+      /writeConfig\(\{\s*hub,\s*token:\s*typed/,
+      "a legacy-token branch still writes a bare {hub, token, actor} literal that drops session/secret",
+    );
+  });
+
   test("the credential resolver never loads secret.mjs from the hub's update directory", () => {
     // ~/.zevet/client is where the HUB pushes client files. A secret.mjs from
     // there could make deriveAuthToken return the master secret itself.

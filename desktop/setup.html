@@ -273,6 +273,13 @@
   function signedIn(done) {
     var team = $("teamName").value.trim();
     say("good", "<b>" + esc(done.teamName || team || "") + "</b> · " + esc(String(done.login).split("@")[0]) + (done.owner ? " · Owner" : ""));
+    // A GitHub/Google sign-in or a redeemed key already wrote a working
+    // session — clear the manual "Other" key field so Finish's own save()
+    // call never sends whatever happens to be sitting in it (a leftover
+    // paste, or the OS's own password-manager autofill reaching a
+    // type="password" field even with autocomplete="off"). MEASURED: a
+    // stale value there silently overwrote a just-completed sign-in.
+    $("token").value = "";
     verified = true;
     $("finish").disabled = false;
     $("repoStep").hidden = false;
@@ -429,8 +436,17 @@
 
   $("finish").addEventListener("click", async function () {
     if (!verified) return;
-    // An empty credential is understood by `zevet:save` as "keep what you have".
-    await window.zevet.save(null, $("token").value, $("actor").value.trim());
+    $("finish").disabled = true;
+    // An empty (or now-invalid) credential is understood by `zevet:save` as
+    // "keep what you have" — see main.js. Its return value is checked here
+    // because silently proceeding to `done()` on a `false` is exactly how a
+    // failed save looked identical to a successful one.
+    var ok = await window.zevet.save(null, $("token").value, $("actor").value.trim());
+    if (!ok) {
+      $("finish").disabled = false;
+      say("bad", "Could not save — try signing in again");
+      return;
+    }
     window.zevet.done();
   });
 

@@ -1100,19 +1100,7 @@ ipcMain.handle("zevet:save", (_e, cfg) => {
 
   const existing = readConfig();
 
-  /* ⚠️ AN EMPTY CREDENTIAL MEANS "KEEP THE ONE I HAVE", NOT "CLEAR IT".
-   *
-   * Since GitHub sign-in, the credential is established BEFORE the name is
-   * typed rather than at the same time, so setup calls this a second time with
-   * the secret field untouched purely to save an edited display name. Treating
-   * that as a request to write an empty config would sign the machine out at
-   * the last click of setting it up. */
-  if (!typed && existing && (existing.session || existing.secret || existing.token)) {
-    writeConfig({ ...existing, hub, actor: actor || existing.actor || "" });
-    return true;
-  }
-
-  const auth = authFor({ secret: typed });
+  const auth = typed ? authFor({ secret: typed }) : { error: "empty" };
   if (!auth.error && auth.secret) {
     // A pasted secret REPLACES a GitHub session deliberately: somebody typing a
     // master secret into the fallback field is telling us the session is not
@@ -1122,16 +1110,34 @@ ipcMain.handle("zevet:save", (_e, cfg) => {
     return true;
   }
 
-  if (existing && typeof existing.token === "string" && existing.token) {
-    writeConfig({ hub, token: typed || existing.token, actor });
+  /* ⚠️ WHATEVER WAS TYPED DID NOT PRODUCE A NEW, USABLE SECRET — empty, or
+   * garbage — KEEP THE ONE ALREADY THERE, WHICHEVER SHAPE IT IS.
+   *
+   * Since GitHub sign-in, the credential is established BEFORE the name is
+   * typed rather than at the same time, so setup calls this a second time with
+   * the manual key field untouched purely to save an edited display name.
+   * Treating a merely-empty field as "clear it" would sign the machine out at
+   * the last click of setting it up — and treating a NON-empty-but-invalid
+   * field the same as a deliberate new credential is worse: MEASURED, a stale
+   * value already sitting in that field (Chromium's own password-manager
+   * autofill reaches `type="password"` inputs even with autocomplete="off" —
+   * see setup.html's `signedIn()`, which now clears it) survived a GitHub
+   * sign-in that had just written a working `session`, and the old separate
+   * branch here (`existing.token ? writeConfig({hub, token, actor}) : ...`)
+   * threw that session away in favour of a legacy token field the OAuth path
+   * never even writes — a signed-in Finish click that quietly signed nobody
+   * in. Spreading `existing` wholesale is the fix: nothing already on disk is
+   * ever dropped by a Finish click that typed nothing new. */
+  if (existing && (existing.session || existing.secret || existing.token)) {
+    writeConfig({ ...existing, hub, actor: actor || existing.actor || "" });
     return true;
   }
 
-  // Neither a usable secret nor a machine with a legacy token to keep. Writing
-  // it anyway would produce a config that cannot authenticate and an editor
-  // that cannot start, and `readConfig` would call it valid — the worst of the
-  // available outcomes. Refused instead; `zevet:test` has already told the user
-  // why in the same words.
+  // Neither a usable secret nor a machine with anything to keep. Writing it
+  // anyway would produce a config that cannot authenticate and an editor
+  // that cannot start, and `readConfig` would call it valid — the worst of
+  // the available outcomes. Refused instead; `zevet:test` has already told
+  // the user why in the same words.
   return false;
 });
 
