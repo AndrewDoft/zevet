@@ -36,8 +36,11 @@ group with a name that already exists).
 
 ## What's in `apple_signing` today (zevet + zevet-voice apps)
 
-`CERTIFICATE_P12` (base64 `.p12`), `CERTIFICATE_PASSWORD`, `APPLE_ID`,
-`APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. `codemagic.yaml`'s `macos` and
+`CERTIFICATE_P12` (base64 `.p12`), `CERTIFICATE_PASSWORD`, `APPLE_API_KEY` (base64
+App Store Connect `.p8` key — **not** an Apple ID + app-specific password, which
+locked the Apple ID twice on a bad credential; an API key structurally cannot),
+`APPLE_API_KEY_ID`, `APPLE_API_ISSUER`. `codemagic.yaml`'s `macos` and
 `macos-autoupdate` workflows pull the group in via `environment.groups`, then map
 `CERTIFICATE_P12` / `CERTIFICATE_PASSWORD` to electron-builder's own `CSC_LINK` /
-`CSC_KEY_PASSWORD` env var names before `npm run dist:mac`.
+`CSC_KEY_PASSWORD` env var names, and decode `APPLE_API_KEY`'s base64 to a file
+(electron-builder needs a filesystem path, not the text) before `npm run dist:mac`.

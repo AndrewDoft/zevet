@@ -9,10 +9,14 @@ workflows:
     max_build_duration: 60
     environment:
       node: 22
-      # apple_signing: CERTIFICATE_P12 (base64 .p12), CERTIFICATE_PASSWORD, APPLE_ID,
-      # APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID. Mapped to electron-builder's own
-      # CSC_LINK / CSC_KEY_PASSWORD env var names below; desktop/signing.js gates on
-      # all five being present (ALL OR NONE) before signing or notarizing anything.
+      # apple_signing: CERTIFICATE_P12 (base64 .p12), CERTIFICATE_PASSWORD, APPLE_API_KEY
+      # (base64 .p8 App Store Connect API key), APPLE_API_KEY_ID, APPLE_API_ISSUER.
+      # CERTIFICATE_P12/PASSWORD map to electron-builder's CSC_LINK/CSC_KEY_PASSWORD;
+      # APPLE_API_KEY is decoded to a file at build time (electron-builder needs a
+      # path, not the base64 text). desktop/signing.js gates on all five being
+      # present (ALL OR NONE) before signing or notarizing anything. Not an Apple
+      # ID + app-specific password: that path locked the Apple ID twice on a bad
+      # credential in one afternoon, and an API key structurally cannot.
       groups:
         - apple_signing
     scripts:
@@ -49,6 +53,21 @@ workflows:
             export CSC_KEY_PASSWORD="$CERTIFICATE_PASSWORD"
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          if [ -n "${APPLE_API_KEY:-}" ]; then
+            # Confirms --key/--key-id/--issuer are this notarytool's real flags,
+            # in this build's own log, rather than trusting @electron/notarize's
+            # source alone.
+            xcrun notarytool submit --help
+            # electron-builder's notarize path needs APPLE_API_KEY to be a
+            # FILESYSTEM PATH to the .p8 (that's what @electron/notarize's
+            # `appleApiKey` is and passes straight through as `--key`), not the
+            # secure variable's base64 text -- decode it to a file and repoint
+            # the env var at that path. App Store Connect API key, not an Apple
+            # ID + app-specific password: that path locked the Apple ID twice on
+            # a bad credential; an API key cannot.
+            echo "$APPLE_API_KEY" | base64 --decode > /tmp/AuthKey.p8
+            export APPLE_API_KEY=/tmp/AuthKey.p8
           fi
           npm run dist:mac
       - name: Smoke the app on Apple Silicon
@@ -143,6 +162,10 @@ workflows:
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
           fi
+          if [ -n "${APPLE_API_KEY:-}" ]; then
+            echo "$APPLE_API_KEY" | base64 --decode > /tmp/AuthKey.p8
+            export APPLE_API_KEY=/tmp/AuthKey.p8
+          fi
           npm run dist:mac
       - name: Bump to X+0.0.1 and build again
         script: |
@@ -154,6 +177,10 @@ workflows:
             export CSC_KEY_PASSWORD="$CERTIFICATE_PASSWORD"
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          if [ -n "${APPLE_API_KEY:-}" ]; then
+            echo "$APPLE_API_KEY" | base64 --decode > /tmp/AuthKey.p8
+            export APPLE_API_KEY=/tmp/AuthKey.p8
           fi
           npm run dist:mac
       - name: Build the local update feed for X+1

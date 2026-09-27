@@ -405,9 +405,22 @@ Gatekeeper still refuses while the build log reads like a success).
 | --- | --- | --- |
 | `CERTIFICATE_P12` | the Developer ID Application `.p12`, base64-encoded | `CSC_LINK` |
 | `CERTIFICATE_PASSWORD` | its export password | `CSC_KEY_PASSWORD` |
-| `APPLE_ID` | the Apple ID email | `APPLE_ID` |
-| `APPLE_APP_SPECIFIC_PASSWORD` | an app-specific password, **not** the account password | `APPLE_APP_SPECIFIC_PASSWORD` |
-| `APPLE_TEAM_ID` | the ten-character team id | `APPLE_TEAM_ID` |
+| `APPLE_API_KEY` | an App Store Connect API key's `.p8`, base64-encoded | `APPLE_API_KEY` (decoded to a file first — see below) |
+| `APPLE_API_KEY_ID` | that key's id | `APPLE_API_KEY_ID` |
+| `APPLE_API_ISSUER` | the App Store Connect issuer uuid | `APPLE_API_ISSUER` |
+
+Notarization is an **App Store Connect API key**, not an Apple ID + app-specific
+password — the password path locked the Apple ID twice in one afternoon on a bad
+credential (see `DECISIONS.md`), and an API key structurally cannot do that.
+`app-builder-lib`'s `getNotarizeOptions()` (`macPackager.js`) reads `APPLE_API_KEY`,
+`APPLE_API_KEY_ID` and `APPLE_API_ISSUER` for this ("option 2: API key"); no team id
+is needed on this path. `APPLE_API_KEY` must be a **filesystem path** to the `.p8`
+by the time electron-builder runs — that's what `@electron/notarize`'s `appleApiKey`
+is documented as, and what it passes straight through as `notarytool submit`'s
+`--key` (confirmed against the installed `@electron/notarize` source and against
+`xcrun notarytool submit --help`'s own output, captured in the build log) — so the
+secure variable holds base64 and `codemagic.yaml` decodes it to a file and repoints
+the env var at that path before `npm run dist:mac`.
 
 `codemagic.yaml`'s `macos` and `macos-autoupdate` workflows pull the group in and map the
 first two to electron-builder's own env var names before `npm run dist:mac`. With them set:

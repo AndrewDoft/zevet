@@ -32,9 +32,14 @@ const PKG = require(path.join(ROOT, "desktop", "package.json"));
 const MAC_ENV = {
   CSC_LINK: "base64-p12",
   CSC_KEY_PASSWORD: "hunter2",
-  APPLE_ID: "andrew@example.com",
-  APPLE_APP_SPECIFIC_PASSWORD: "abcd-efgh-ijkl-mnop",
-  APPLE_TEAM_ID: "TEAM123456",
+  // App Store Connect API key, not an Apple ID + app-specific password: that
+  // path locked the Apple ID twice on a bad credential; an API key cannot.
+  // APPLE_API_KEY is a filesystem path by the time electron-builder reads it
+  // (build.yml decodes the secret's base64 to a file first); a plain string
+  // is fine here since this test never actually runs notarization.
+  APPLE_API_KEY: "/tmp/AuthKey.p8",
+  APPLE_API_KEY_ID: "FLH388X6BK",
+  APPLE_API_ISSUER: "8cdf8ada-3a7b-4135-a6a2-1719fd86a6c0",
 };
 
 const WIN_ENV = {
@@ -140,7 +145,7 @@ describe("with every mac secret set", () => {
     assert.equal(signing.mac, true);
     assert.equal(c.mac.hardenedRuntime, true, "notarisation is refused without it");
     assert.equal(c.mac.forceCodeSigning, true, "missing publisher identity must fail the release build");
-    assert.deepEqual(c.mac.notarize, { teamId: "TEAM123456" });
+    assert.equal(c.mac.notarize, true, "the API-key path reads env vars directly; notarize.teamId is unused by it");
     assert.equal(c.mac.gatekeeperAssess, true);
   });
 
@@ -167,12 +172,12 @@ describe("with mac secrets only PARTLY set", () => {
   test("an empty secret counts as absent, not as present", () => {
     // A GitHub secret that does not exist expands to "". Every one of these
     // variables is passed on every build, so "" is the NORMAL value.
-    const { signing } = load({ ...MAC_ENV, APPLE_TEAM_ID: "" });
+    const { signing } = load({ ...MAC_ENV, APPLE_API_ISSUER: "" });
     assert.equal(signing.mac, false);
   });
 
   test("whitespace is not a credential either", () => {
-    const { signing } = load({ ...MAC_ENV, APPLE_ID: "   " });
+    const { signing } = load({ ...MAC_ENV, APPLE_API_KEY: "   " });
     assert.equal(signing.mac, false);
   });
 });

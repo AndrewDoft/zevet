@@ -38,9 +38,20 @@ const has = (...names) => names.every((n) => typeof process.env[n] === "string" 
  * is signed and STILL refused by Gatekeeper on any machine that downloaded it —
  * the worst outcome available, because it looks like the signing did not work
  * and the build log gives no clue why.
+ *
+ * Notarization is an App Store Connect API key (APPLE_API_KEY/_KEY_ID/_ISSUER),
+ * not an Apple ID + app-specific password: the password path locked the Apple
+ * ID twice in one afternoon on a bad credential, and an API key structurally
+ * cannot do that. See app-builder-lib's own getNotarizeOptions() (macPackager.js)
+ * "option 2: API key" — it needs exactly these three env vars and no team ID.
+ * APPLE_API_KEY must be a FILESYSTEM PATH to the .p8 file by the time
+ * electron-builder runs (that's what @electron/notarize's `appleApiKey` is
+ * documented as, and what it passes straight through as `--key`), so the
+ * secret (its base64) is decoded to a file and this env var repointed at that
+ * path before `npm run dist:mac` — see codemagic.yaml / context-desktop.yml.
  */
 const macSigning = () =>
-  has("CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID");
+  has("CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER");
 
 /**
  * Windows: Azure Trusted Signing. Three credentials for the service principal,
