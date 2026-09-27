@@ -51,6 +51,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-win-smoke-"));
 // to collide with, same as smoke-macos.mjs installing into ~/Applications.
 const installRoot = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "Programs", "zevet");
 let launched;
+let newSetup;
 
 function reg(...args) {
   return spawnSync("reg", args, { encoding: "utf8" });
@@ -96,7 +97,7 @@ try {
     path.join(root, "desktop/build.cjs"), "-c", "electron-builder.config.js", "--win", "--publish", "never",
     `--config.extraMetadata.version=${bumped}`,
   ], { cwd: path.join(root, "desktop"), stdio: "inherit" });
-  const newSetup = findSetup(outDir, bumped);
+  newSetup = findSetup(outDir, bumped);
   runInstaller(newSetup, ["--updated"]);
   checkInstalledVersion(bumped);
   const updatedLocation = readInstallLocation();
@@ -124,5 +125,14 @@ try {
   const uninstallExe = path.join(installRoot, "Uninstall zevet.exe");
   if (fs.existsSync(uninstallExe)) spawnSync(uninstallExe, ["/S", "/currentuser"], { timeout: 60_000 });
   fs.rmSync(home, { recursive: true, force: true });
+  // This throwaway bumped-version build has no reason to survive the test:
+  // desktop/out is never cleaned between builds (RELEASING.md says so), and
+  // build.yml uploads everything left in it as the release artifact -- a
+  // real 0.2.72 leaked into a 0.2.71 CI run's artifacts the first time this
+  // ran, exactly the "two versions in one folder" trap that doc warns about.
+  if (newSetup) {
+    fs.rmSync(newSetup, { force: true });
+    fs.rmSync(`${newSetup}.blockmap`, { force: true });
+  }
   if (!launched) process.exitCode = 1;
 }
