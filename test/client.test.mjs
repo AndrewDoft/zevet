@@ -683,7 +683,7 @@ describe("what the client actually presents to the hub", () => {
     const fresh = await startHub({ ZEVET_TOKEN: DERIVED });
     try {
       await hookWithConfig({ hub: fresh.base, secret: MASTER, actor: "derived-actor" }, fresh.base);
-      const { body } = await state(fresh.base, DERIVED);
+      const { body } = await state(fresh.base);
       assert.equal(body.events.at(-1)?.actor, "derived-actor", "the event never arrived");
     } finally {
       await fresh.stop();
@@ -697,9 +697,9 @@ describe("what the client actually presents to the hub", () => {
     // silence here is the evidence.
     const fresh = await startHub({ ZEVET_TOKEN: MASTER });
     try {
-      const before = (await state(fresh.base, MASTER)).body.events.length;
+      const before = (await state(fresh.base)).body.events.length;
       await hookWithConfig({ hub: fresh.base, secret: MASTER, actor: "leaky" }, fresh.base);
-      const { body } = await state(fresh.base, MASTER);
+      const { body } = await state(fresh.base);
       assert.equal(body.events.length, before, "the hub accepted something; the master secret went on the wire");
     } finally {
       await fresh.stop();
@@ -738,7 +738,7 @@ describe("what the client actually presents to the hub", () => {
     const fresh = await startHub();
     try {
       await hookWithConfig({ hub: fresh.base, token: TOKEN, actor: "legacy-actor" }, fresh.base);
-      const { body } = await state(fresh.base, TOKEN);
+      const { body } = await state(fresh.base);
       assert.equal(body.events.at(-1)?.actor, "legacy-actor");
     } finally {
       await fresh.stop();
@@ -751,12 +751,12 @@ describe("what the client actually presents to the hub", () => {
     // credential at all -- and the hook's two rules survive that untouched.
     const fresh = await startHub();
     try {
-      const before = (await state(fresh.base, TOKEN)).body.events.length;
+      const before = (await state(fresh.base)).body.events.length;
       const r = await hookWithConfig({ hub: fresh.base, secret: "not hex at all", token: TOKEN }, fresh.base);
       assert.equal(r.stdout, "", "rule 1: nothing on stdout");
       assert.equal(r.code, 0, "rule 2: exit 0");
       assert.match(r.stderr, /master secret is unusable/i, "and it says so on stderr, where it is harmless");
-      const { body } = await state(fresh.base, TOKEN);
+      const { body } = await state(fresh.base);
       assert.equal(
         body.events.length,
         before,

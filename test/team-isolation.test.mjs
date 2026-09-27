@@ -63,8 +63,19 @@ describe("two teams, one hub", () => {
     describe(`with an alpha ${kind} token`, () => {
       const tok = () => T.alpha[kind];
 
-      test("/api/state and /events show alpha's events only", async () => {
+      // /api/state, /events and the ws upgrade are board data, and a shared
+      // token is no longer enough to read the board at all (teamFromSession —
+      // see hub/server.mjs and the incident it documents: a teammate holding
+      // only a shared token could read a team's whole board without ever
+      // signing in). What used to be "alpha's shared token sees only alpha's
+      // events" is now "alpha's shared token is refused outright" — still an
+      // isolation guarantee, just a stricter one.
+      test(`/api/state and /events ${kind === "session" ? "show alpha's events only" : "refuse a shared token outright"}`, async () => {
         const s = await state(hub.base, tok());
+        if (kind !== "session") {
+          assert.equal(s.status, 401);
+          return;
+        }
         const body = JSON.stringify(s.body);
         assert.equal(s.status, 200);
         assert.ok(body.includes(A_MARK));
@@ -79,10 +90,13 @@ describe("two teams, one hub", () => {
       });
 
       test("/ingest lands in alpha's board, never bravo's", async () => {
+        // /ingest is deliberately still open to a shared token (client/hook.mjs
+        // has no session to send — see hub/server.mjs's own comment on the
+        // route), so the WRITE is under tok() either way; only the read-back
+        // verification needs a real session now.
         const mark = `INGEST-${kind}-${Date.now()}`;
         assert.equal((await post(hub.base, { actor: "a", detail: mark }, tok())).status, 200);
-        assert.ok(JSON.stringify((await state(hub.base, T.alpha.shared)).body).includes(mark));
-        assert.ok(!JSON.stringify((await state(hub.base, T.bravo.shared)).body).includes(mark));
+        assert.ok(JSON.stringify((await state(hub.base, T.alpha.session)).body).includes(mark));
         assert.ok(!JSON.stringify((await state(hub.base, T.bravo.session)).body).includes(mark));
       });
 
@@ -92,7 +106,7 @@ describe("two teams, one hub", () => {
         assert.equal(who.teamName, "Alpha");
       });
 
-      test("credentials: bravo's are invisible, unreadable and undeletable", async () => {
+      test(`credentials: bravo's are invisible${kind === "session" ? ", unreadable and undeletable" : " (a shared token cannot read the list at all)"}`, async () => {
         // bravo adds one credential; alpha's token then goes after it.
         const add = await call(T.bravo.session, "/team/credentials", {
           method: "POST",
@@ -101,14 +115,21 @@ describe("two teams, one hub", () => {
         assert.equal(add.status, 200);
         const id = (await add.json()).id;
 
-        const list = JSON.stringify(await (await call(tok(), "/team/credentials")).json());
-        assert.ok(!list.includes(id));
-        assert.equal((await call(tok(), `/team/credentials/${id}/secret`)).status, 404);
-        if (kind === "session") {
+        // GET /team/credentials and its /secret route are also session-only
+        // now (see hub/server.mjs's teamFromSession) — a shared token gets
+        // refused outright rather than an empty, alpha-scoped list.
+        const list = await call(tok(), "/team/credentials");
+        const secret = await call(tok(), `/team/credentials/${id}/secret`);
+        if (kind !== "session") {
+          assert.equal(list.status, 401);
+          assert.equal(secret.status, 401);
+        } else {
+          assert.ok(!JSON.stringify(await list.json()).includes(id));
+          assert.equal(secret.status, 404);
           assert.equal((await call(tok(), `/team/credentials/${id}`, { method: "DELETE" })).status, 404);
         }
         // and it is still there for bravo
-        const key = await (await call(T.bravo.shared, `/team/credentials/${id}/secret`)).json();
+        const key = await (await call(T.bravo.session, `/team/credentials/${id}/secret`)).json();
         assert.equal(key.key, `sk-${B_MARK}`);
       });
 
@@ -123,6 +144,9 @@ describe("two teams, one hub", () => {
       });
 
       test("the websocket relay: same room name, no crossing", async () => {
+        // /ws is DELIBERATELY not locked to a session (see hub/server.mjs):
+        // its one production consumer, the editor's doc-sync, only ever
+        // holds the derived shared token. Both kinds must still open here.
         const wsUrl = (t) => `${hub.base.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(t)}`;
         const open = (t) =>
           new Promise((resolve, reject) => {

@@ -1,11 +1,18 @@
 // P0 security fix: a shared team token ("authenticated but anonymous") used
-// to be enough to read the board -- /api/state, /events, the ws upgrade,
-// /ingest, whoami's people list. A teammate holding only that (an old
-// install's config, or the anonymous default) could read everyone's name,
-// prompts and tool calls without ever signing in or redeeming a key. Every
-// team-scoped route now requires an actual personal session; teamFromSession
-// in hub/server.mjs is the single choke point. This pins the two shapes that
-// matter: shared-token-only is refused, a real session is served.
+// to be enough to read the board -- /api/state, /events, whoami's people
+// list. A teammate holding only that (an old install's config, or the
+// anonymous default) could read everyone's name, prompts and tool calls
+// without ever signing in or redeeming a key. Those routes now require an
+// actual personal session; teamFromSession in hub/server.mjs is the single
+// choke point. This pins the shapes that matter: shared-token-only is
+// refused on the board, a real session is served.
+//
+// /ingest and the /ws upgrade are DELIBERATELY EXCLUDED (see their own tests
+// below): both have production consumers that only ever hold the derived
+// shared token — client/hook.mjs, and desktop/doc-sync.js's editor sync,
+// whose content is ciphertext the hub cannot read either way. Locking those
+// would have silenced every hook-only machine and the editor together,
+// which is not the leak this incident was about.
 import { test, describe, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -76,26 +83,19 @@ describe("team-scoped routes require a personal session, not just the shared tok
     assert.ok(session.people.length >= 1, "a real session still sees the roster");
   });
 
-  test("the websocket upgrade refuses a shared-token-only connection", async () => {
+  test("the websocket upgrade still accepts a shared token (the editor has no session to send)", async () => {
     const { hub, sessionToken, sharedToken } = await seededHub();
     const wsBase = hub.base.replace(/^http/, "ws");
-
-    const denied = await new Promise((resolve, reject) => {
-      const ws = new WebSocket(`${wsBase}/ws?token=${encodeURIComponent(sharedToken)}`);
-      ws.onopen = () => reject(new Error("a shared-token-only socket must not open"));
-      ws.onerror = () => resolve(true); // the upgrade denial closes the raw socket
-      ws.onclose = () => resolve(true);
-    });
-    assert.equal(denied, true);
-
-    const allowed = await new Promise((resolve, reject) => {
-      const ws = new WebSocket(`${wsBase}/ws?token=${encodeURIComponent(sessionToken)}`);
-      ws.onopen = () => {
-        ws.close();
-        resolve(true);
-      };
-      ws.onerror = (e) => reject(e instanceof Error ? e : new Error("session socket failed to open"));
-    });
-    assert.equal(allowed, true);
+    const open = (token) =>
+      new Promise((resolve, reject) => {
+        const ws = new WebSocket(`${wsBase}/ws?token=${encodeURIComponent(token)}`);
+        ws.onopen = () => {
+          ws.close();
+          resolve(true);
+        };
+        ws.onerror = (e) => reject(e instanceof Error ? e : new Error("socket failed to open"));
+      });
+    assert.equal(await open(sharedToken), true, "the editor's shared-token connection must still open");
+    assert.equal(await open(sessionToken), true);
   });
 });

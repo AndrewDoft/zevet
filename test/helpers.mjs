@@ -2,13 +2,29 @@
 // real HTTP. Nothing here mocks the thing under test — a hub that only works
 // against a fake socket is not evidence about the hub teammates will run.
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Accounts } from "../hub/accounts.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const TOKEN = "test-token-0123456789abcdef";
+
+/**
+ * The contract change, in one place: a shared team token used to be enough
+ * to read the board (see hub/server.mjs's teamFromSession and the incident
+ * it documents). `state()` below now needs a real session by default, and
+ * this is where every `startHub()` gets one, keyed by the hub's own base URL
+ * so `state(base)` can find it without every call site naming a token.
+ *
+ * Not used when the caller already manages ZEVET_ACCOUNTS itself (team.test.mjs's
+ * own seededHub(), team-credentials.test.mjs's hand-written file, etc.) —
+ * those already seed the sessions they need, and a second, unrelated owner
+ * dropped into the SAME file would just be a stray row nothing reads.
+ */
+const sessionByBase = new Map();
+const DEFAULT_TEST_OWNER = { login: "zevet-test-owner", id: "test-owner-1" };
 
 /**
  * Ports are assigned by the OS, not guessed.
@@ -34,12 +50,29 @@ export async function startHub(env = {}) {
   const eventsDir = "ZEVET_EVENTS" in env
     ? null
     : mkdtempSync(path.join(tmpdir(), "zevet-hub-events-"));
+
+  // Same idea for accounts: a caller that did not bring its own gets a
+  // throwaway file seeded with one signed-in owner, so `state()` (below) has
+  // a real session to authenticate the DEFAULT team's board reads with. An
+  // Accounts instance reads its file once, at construction, so this has to
+  // exist before the child process starts — there is no way to hand a
+  // running hub a session after the fact.
+  let accountsDir = null;
+  let ownerSession = null;
+  if (!("ZEVET_ACCOUNTS" in env)) {
+    accountsDir = mkdtempSync(path.join(tmpdir(), "zevet-hub-accounts-"));
+    const accountsFile = path.join(accountsDir, "accounts.json");
+    const seed = new Accounts({ file: accountsFile });
+    ownerSession = seed.signIn(DEFAULT_TEST_OWNER).token;
+  }
+
   const child = spawn(process.execPath, [path.join(ROOT, "hub", "server.mjs")], {
     env: {
       ...process.env,
       ZEVET_TOKEN: TOKEN,
       PORT: "0",
       ...(eventsDir ? { ZEVET_EVENTS: path.join(eventsDir, "events.jsonl") } : {}),
+      ...(accountsDir ? { ZEVET_ACCOUNTS: path.join(accountsDir, "accounts.json") } : {}),
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -79,14 +112,19 @@ export async function startHub(env = {}) {
     await new Promise((r) => setTimeout(r, 20));
   }
 
+  if (ownerSession) sessionByBase.set(base, ownerSession);
+
   return {
     base,
     port,
+    sessionToken: ownerSession,
     stderr: () => stderr.join(""),
     async stop() {
       child.kill();
       await new Promise((r) => child.once("exit", r));
       if (eventsDir) rmSync(eventsDir, { recursive: true, force: true });
+      if (accountsDir) rmSync(accountsDir, { recursive: true, force: true });
+      sessionByBase.delete(base);
     },
   };
 }
@@ -136,7 +174,22 @@ export function post(base, body, token = TOKEN) {
   });
 }
 
-export async function state(base, token = TOKEN) {
-  const res = await fetch(`${base}/api/state?token=${encodeURIComponent(token)}`);
+/**
+ * `token` defaults to the session `startHub()` auto-seeded for this exact
+ * base URL (see sessionByBase above) — /api/state now requires a real
+ * session, not just the shared TOKEN. Falls back to TOKEN only for a hub
+ * that manages its own accounts file (no auto-seed happened), so a caller
+ * testing "no session at all" can still get that by passing one explicitly.
+ */
+/** The session `startHub()` auto-seeded for this base, if any — for test
+ *  files that build their own ws/HTTP calls instead of going through
+ *  `state()`/`post()` (hub-ws.test.mjs, hub-events.test.mjs's SSE clients). */
+export function sessionFor(base) {
+  return sessionByBase.get(base);
+}
+
+export async function state(base, token) {
+  const t = token !== undefined ? token : (sessionByBase.get(base) ?? TOKEN);
+  const res = await fetch(`${base}/api/state?token=${encodeURIComponent(t)}`);
   return { status: res.status, body: res.ok ? await res.json() : await res.json().catch(() => null) };
 }

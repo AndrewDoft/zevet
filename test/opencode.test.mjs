@@ -178,7 +178,7 @@ describe("the global opencode plugin", () => {
     writeFileSync(path.join(neverInstalled, "src", "x.ts"), "x\n");
     assert.ok(!existsSync(opencodePluginPathFor(neverInstalled)), "test setup: this repo must have no per-repo plugin");
 
-    const before = (await state(hub.base, TOKEN)).body.events.length;
+    const before = (await state(hub.base)).body.events.length;
     await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
       // The repo still has to be on the opt-in list — a fresh worktree gets
       // coverage without its OWN per-repo install, not without ANY install
@@ -189,7 +189,7 @@ describe("the global opencode plugin", () => {
       const hooks = await mod.Zevet({ directory: neverInstalled });
       await hooks["tool.execute.before"]({ tool: "write" }, { args: { file_path: "src/x.ts" } });
     });
-    const [e] = (await state(hub.base, TOKEN)).body.events.slice(before);
+    const [e] = (await state(hub.base)).body.events.slice(before);
     assert.equal(e.repo, "never-installed");
     assert.equal(e.target, "src/x.ts");
   });
@@ -234,7 +234,7 @@ describe("the plugin at runtime", () => {
     mkdirSync(path.join(repo, "src"), { recursive: true });
     writeFileSync(path.join(repo, "src", "db.ts"), "x\n");
 
-    const before = (await state(hub.base, TOKEN)).body.events.length;
+    const before = (await state(hub.base)).body.events.length;
     await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
       addOpencodeRepo(repo);
       // Fresh import per test: the plugin module itself holds no settings, but
@@ -248,7 +248,7 @@ describe("the plugin at runtime", () => {
       await hooks.event({ event: { type: "session.idle" } });
     });
 
-    const afterState = await state(hub.base, TOKEN);
+    const afterState = await state(hub.base);
     const fresh = afterState.body.events.slice(before);
     assert.equal(fresh.length, 3, `expected 3 events, got ${fresh.length}: ${JSON.stringify(fresh)}`);
     for (const e of fresh) assert.equal(e.agent, "opencode", `wrong agent: ${JSON.stringify(e)}`);
@@ -275,7 +275,7 @@ describe("the plugin at runtime", () => {
     const wt = await wts.create(repo);
     t.after(() => wts.release(wt));
 
-    const before = (await state(hub.base, TOKEN)).body.events.length;
+    const before = (await state(hub.base)).body.events.length;
     await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
       // Opt in the ORIGINAL repo, not the worktree — the worktree has no
       // .git of its own to be opted in by path; it resolves back to this one
@@ -286,7 +286,7 @@ describe("the plugin at runtime", () => {
       const hooks = await mod.Zevet({ directory: wt.dir });
       await hooks["tool.execute.before"]({ tool: "write" }, { args: { file_path: "a.ts" } });
     });
-    const [e] = (await state(hub.base, TOKEN)).body.events.slice(before);
+    const [e] = (await state(hub.base)).body.events.slice(before);
     assert.equal(e.repo, "orig");
     assert.equal(e.target, "a.ts");
     const root = repo.replaceAll("\\", "/");
@@ -324,7 +324,7 @@ describe("the plugin at runtime", () => {
     mkdirSync(path.join(repo, "src"), { recursive: true });
     writeFileSync(path.join(repo, "src", "y.ts"), "x\n");
 
-    const before = (await state(hub.base, TOKEN)).body.events.length;
+    const before = (await state(hub.base)).body.events.length;
     await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
       // Deliberately NOT calling addOpencodeRepo — this is the machine-wide
       // plugin seeing a repo nobody ever pointed zevet at.
@@ -334,7 +334,7 @@ describe("the plugin at runtime", () => {
       await hooks.event({ event: { type: "session.idle" } });
     });
     assert.equal(
-      (await state(hub.base, TOKEN)).body.events.length,
+      (await state(hub.base)).body.events.length,
       before,
       "a repo nobody opted in published to the hub",
     );
@@ -347,14 +347,14 @@ describe("the plugin at runtime", () => {
     t.after(() => home.cleanup());
     writeFileSync(path.join(home.dir, "config.json"), JSON.stringify({ hub: hub.base, token: TOKEN, actor: "nolist-test" }));
     const repo = makeRepo(t, "nolist");
-    const before = (await state(hub.base, TOKEN)).body.events.length;
+    const before = (await state(hub.base)).body.events.length;
     await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
       assert.ok(!existsSync(opencodeReposPath()), "test setup: no list must exist yet");
       const mod = await import(`../client/opencode-plugin.mjs?nolist=${Date.now()}`);
       const hooks = await mod.Zevet({ directory: repo });
       await hooks.event({ event: { type: "session.idle" } });
     });
-    assert.equal((await state(hub.base, TOKEN)).body.events.length, before, "a missing opt-in list fell open");
+    assert.equal((await state(hub.base)).body.events.length, before, "a missing opt-in list fell open");
   });
 
   test("a corrupt opt-in list means silence too", async (t) => {
@@ -362,7 +362,7 @@ describe("the plugin at runtime", () => {
     t.after(() => home.cleanup());
     writeFileSync(path.join(home.dir, "config.json"), JSON.stringify({ hub: hub.base, token: TOKEN, actor: "badlist-test" }));
     const repo = makeRepo(t, "badlist");
-    const before = (await state(hub.base, TOKEN)).body.events.length;
+    const before = (await state(hub.base)).body.events.length;
     await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
       mkdirSync(home.dir, { recursive: true });
       writeFileSync(opencodeReposPath(), "{ this is not json", "utf8");
@@ -370,7 +370,7 @@ describe("the plugin at runtime", () => {
       const hooks = await mod.Zevet({ directory: repo });
       await hooks.event({ event: { type: "session.idle" } });
     });
-    assert.equal((await state(hub.base, TOKEN)).body.events.length, before, "a corrupt opt-in list fell open");
+    assert.equal((await state(hub.base)).body.events.length, before, "a corrupt opt-in list fell open");
   });
 });
 

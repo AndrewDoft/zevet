@@ -84,18 +84,28 @@ describe("creating a team", () => {
 
 describe("a created team is isolated", () => {
   test("events posted to one team never appear in another's snapshot or the default's", async () => {
-    const hub = await teamHub();
-    const a = await create(hub.base);
-    const b = await create(hub.base);
-    const tokenA = tokenFor(hub, a.team);
-    const tokenB = tokenFor(hub, b.team);
+    // /api/state now needs a real session (teamFromSession), which an
+    // UNCLAIMED /team/create team cannot have without a real GitHub/Google
+    // round trip — this file's own header rules that out. Seeding each
+    // team's file with a signed-in owner BEFORE the hub starts gets the same
+    // claimed state loadTeams() would find on disk either way (same
+    // mechanism test/team.test.mjs's /team/join tests already use for the
+    // default team, just for two named teams here too).
+    const dir = mkdtempSync(path.join(tmpdir(), "zevet-team-snap-"));
+    const ownerA = new Accounts({ file: path.join(dir, "accounts-team-a.json") }).signIn({ login: "owner-a", id: "owner-a-1" });
+    const ownerB = new Accounts({ file: path.join(dir, "accounts-team-b.json") }).signIn({ login: "owner-b", id: "owner-b-1" });
+    const ownerDefault = new Accounts({ file: path.join(dir, "accounts.json") }).signIn({ login: "owner-default", id: "owner-default-1" });
+    const hub = await startHub({ ZEVET_ACCOUNTS: path.join(dir, "accounts.json") });
+    hubs.push(hub);
+    hub.accountsDir = dir;
 
+    const tokenA = deriveAuthToken(secretFor(hub, "team-a"));
     const posted = await post(hub.base, { actor: "trevor" }, tokenA);
     assert.equal(posted.status, 200);
 
-    const snapA = await state(hub.base, tokenA);
-    const snapB = await state(hub.base, tokenB);
-    const snapDefault = await state(hub.base);
+    const snapA = await state(hub.base, ownerA.token);
+    const snapB = await state(hub.base, ownerB.token);
+    const snapDefault = await state(hub.base, ownerDefault.token);
 
     assert.equal(snapA.body.roster.length, 1, "team A sees its own event");
     assert.equal(snapA.body.roster[0].actor, "trevor");
@@ -175,10 +185,14 @@ describe("unclaimed teams expire (INSUF: the orphan a test POST left on the host
     assert.ok(existsSync(accountsFile), "the orphan's own file must exist before the sweep");
 
     // Confirm it is reachable before the sweep, so the assertion below is a
-    // real transition and not a token that never worked.
-    const before = await fetch(`${hub.base}/api/state?token=${tokenOrphan}`);
+    // real transition and not a token that never worked. /ingest, not
+    // /api/state: an unclaimed team has no owner and so can never have a
+    // session, and /api/state now requires one (teamFromSession) — /ingest
+    // is the one team-scoped route still open to a shared token (see its
+    // own comment in hub/server.mjs), and resolving to a team at all is
+    // exactly what this test is asking.
+    const before = await post(hub.base, { actor: "probe" }, tokenOrphan);
     assert.equal(before.status, 200);
-    await before.text();
 
     await new Promise((r) => setTimeout(r, 200)); // past the 50ms window
 
@@ -188,9 +202,8 @@ describe("unclaimed teams expire (INSUF: the orphan a test POST left on the host
     const second = await create(hub.base);
     assert.equal(second.ok, true);
 
-    const after = await fetch(`${hub.base}/api/state?token=${tokenOrphan}`);
+    const after = await post(hub.base, { actor: "probe" }, tokenOrphan);
     assert.equal(after.status, 401, "the orphan's token must no longer resolve to a team");
-    await after.text();
 
     assert.equal(existsSync(accountsFile), false, "the orphan's accounts file must be deleted");
     assert.equal(existsSync(eventsFile), false, "the orphan's events file must be deleted");
@@ -205,7 +218,7 @@ describe("unclaimed teams expire (INSUF: the orphan a test POST left on the host
     await create(hub.base);
     await create(hub.base);
 
-    const res = await fetch(`${hub.base}/api/state?token=${tokenFresh}`);
+    const res = await post(hub.base, { actor: "probe" }, tokenFresh);
     assert.equal(res.status, 200, "a team well inside the expiry window must not be swept");
     await res.text();
     assert.ok(existsSync(path.join(hub.accountsDir, `accounts-${fresh.team}.json`)), "its file must still be there");
@@ -237,12 +250,12 @@ describe("/team/join — redeeming an invite key", () => {
   async function seededHub() {
     const dir = mkdtempSync(path.join(tmpdir(), "zevet-team-join-"));
     const seed = new Accounts({ file: path.join(dir, `accounts-${SLUG}.json`) });
-    seed.signIn({ login: "AndrewDoft", id: "1001" }); // claims the team — owner
+    const owner = seed.signIn({ login: "AndrewDoft", id: "1001" }); // claims the team — owner
     const key = seed.allow("kai").key;
     const h = await startHub({ ZEVET_ACCOUNTS: path.join(dir, "accounts.json") });
     hubs.push(h);
     h.accountsDir = dir;
-    return { hub: h, key };
+    return { hub: h, key, ownerToken: owner.token };
   }
 
   const join = (base, team, key) =>
@@ -311,15 +324,19 @@ describe("/team/join — redeeming an invite key", () => {
   // P0-B: "when a member redeems, the roster flips pending -> active
   // immediately (whoami people.pending false)."
   test("redeeming flips the roster row from pending to active immediately", async () => {
-    const { hub, key } = await seededHub();
-    const before = await fetch(`${hub.base}/auth/whoami`, { headers: { "x-zevet-token": tokenFor(hub, SLUG) } }).then((r) => r.json());
+    // whoami's people list needs a real session now (a shared token is
+    // answered but sees an empty list — see hub/server.mjs's
+    // teamFromSession), so this reads the roster as the owner, not the
+    // team's shared token.
+    const { hub, key, ownerToken } = await seededHub();
+    const before = await fetch(`${hub.base}/auth/whoami`, { headers: { "x-zevet-token": ownerToken } }).then((r) => r.json());
     const kaiBefore = before.people.find((p) => p.login === "kai");
     assert.equal(kaiBefore.pending, true);
 
     const joined = await join(hub.base, SLUG, key);
     assert.equal(joined.status, 200);
 
-    const after = await fetch(`${hub.base}/auth/whoami`, { headers: { "x-zevet-token": tokenFor(hub, SLUG) } }).then((r) => r.json());
+    const after = await fetch(`${hub.base}/auth/whoami`, { headers: { "x-zevet-token": ownerToken } }).then((r) => r.json());
     const kaiAfter = after.people.find((p) => p.login === "kai");
     assert.equal(kaiAfter.pending, false);
   });

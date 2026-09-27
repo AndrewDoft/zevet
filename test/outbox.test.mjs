@@ -63,11 +63,11 @@ describe("the hook outbox", () => {
 
     const hub = await startHub();
     try {
-      const before = (await state(hub.base, TOKEN)).body.events.length;
+      const before = (await state(hub.base)).body.events.length;
       const r = await hookRun(home, hub.base);
       assert.equal(r.stdout, "");
       assert.equal(r.code, 0);
-      const events = (await state(hub.base, TOKEN)).body.events.slice(before);
+      const events = (await state(hub.base)).body.events.slice(before);
       assert.equal(events.length, 3, `expected 2 queued + 1 live, got ${events.length}`);
       assert.equal(readFileSync(outboxOf(home), "utf8"), "", "outbox did not drain");
     } finally {
@@ -134,12 +134,12 @@ describe("the plugin outbox", () => {
 
     const hub = await startHub();
     try {
-      const before = (await state(hub.base, TOKEN)).body.events.length;
+      const before = (await state(hub.base)).body.events.length;
       await withEnv({ ...env, ZEVET_HUB: hub.base, ZEVET_TOKEN: TOKEN }, async () => {
         const hooks = await mod.Zevet({ directory: home.dir });
         await hooks.event({ event: { type: "session.idle" } });
       });
-      const events = (await state(hub.base, TOKEN)).body.events.slice(before);
+      const events = (await state(hub.base)).body.events.slice(before);
       assert.deepEqual(events.map((e) => e.kind), ["tool", "turn_end"]);
       assert.equal(readFileSync(file, "utf8"), "", "outbox did not drain");
     } finally {
