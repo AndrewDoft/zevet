@@ -851,6 +851,25 @@ function teamFrom(req, url) {
 }
 
 /**
+ * The same, but refuses a shared-token caller outright.
+ *
+ * A shared token is "authenticated but anonymous" (see resolveTeam) and that
+ * used to be enough for every team-scoped route, including the board itself
+ * (/api/state, /events, the ws upgrade) and /ingest. MEASURED as a real leak:
+ * a teammate who had never signed in or redeemed a key — holding only an old
+ * install's shared token, or the anonymous one a fresh config starts with —
+ * could still read the whole board: every person's name, every prompt and
+ * tool call. Every team-scoped route now requires an actual person behind
+ * the token. The one deliberate exception is /auth/whoami, which a
+ * shared-token caller still needs to learn "sign in with GitHub/Google" —
+ * it answers, but strips the people list before it does.
+ */
+function teamFromSession(req, url) {
+  const auth = teamFrom(req, url);
+  return auth && auth.session ? auth : null;
+}
+
+/**
  * decodeURIComponent, without the landmine.
  *
  * MEASURED: `curl http://hub/dist/%` took the whole hub down for everyone.
@@ -1325,7 +1344,10 @@ const server = createServer(async (req, res) => {
       // their sign-in identity, not a fact about the team worth handing
       // every member.
       availableDomain: sess && acc.owner === sess.login ? acc.ownerHd : "",
-      people: acc.list().map(person),
+      // The one field a shared-token caller (no personal session) does not
+      // get: every OTHER person's name and status is exactly the leak this
+      // route otherwise would not have — see teamFromSession's comment.
+      people: sess ? acc.list().map(person) : [],
     });
   }
 
@@ -1452,7 +1474,7 @@ const server = createServer(async (req, res) => {
    * list/whoami/settings, so a board that only shows metadata cannot leak
    * one by accident. */
   if (url.pathname === "/team/credentials" && req.method === "GET") {
-    const auth = teamFrom(req, url);
+    const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
     return json(res, 200, { credentials: auth.accounts.listCredentials() });
   }
@@ -1495,7 +1517,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname.startsWith("/team/credentials/") && url.pathname.endsWith("/secret") && req.method === "GET") {
-    const auth = teamFrom(req, url);
+    const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
     const id = safeDecode(url.pathname.slice("/team/credentials/".length, -"/secret".length));
     const key = id ? auth.accounts.credentialKey(id) : null;
@@ -1602,6 +1624,16 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/ingest" && req.method === "POST") {
+    // ⚠️ NOT teamFromSession, on purpose, unlike every other route this
+    // touched: client/hook.mjs derives its token straight from the team
+    // SECRET (secret.mjs's resolveAuth), never a personal session — that is
+    // how a hook-only machine (never signed into GitHub/Google) reports at
+    // all, and it is Andrew's OWN real config, confirmed on this machine.
+    // Locking this to teamFromSession would silence every hook on the team,
+    // including his. The leak this incident is about is READING the board
+    // anonymously (whoami's people list, /api/state, /events, the ws
+    // upgrade) — writing your OWN activity under a token only your own team
+    // holds is not that. Revisit if hooks ever carry a real session instead.
     const auth = teamFrom(req, url);
     if (!auth) return refuse(req, res, url);
     let parsed;
@@ -1636,13 +1668,13 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/api/state") {
-    const auth = teamFrom(req, url);
+    const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
     return json(res, 200, boards.get(auth.team).snapshot());
   }
 
   if (url.pathname === "/events") {
-    const auth = teamFrom(req, url);
+    const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
     const board = boards.get(auth.team);
     res.writeHead(200, {
@@ -2380,8 +2412,17 @@ server.on("upgrade", (req, socket, head) => {
   // Which team this socket belongs to, for the rest of its life — see roomKey().
   // tokenFrom() already ran every candidate through tokenOk() (== resolveTeam()
   // !== null), so this cannot come back null for a token that just passed.
+  //
+  // ⚠️ A SHARED TOKEN NO LONGER GETS A SOCKET AT ALL — same reasoning as
+  // teamFromSession on the HTTP side: this is board data (room snapshots and
+  // replay), and "authenticated but anonymous" was how it leaked to a
+  // teammate who had never actually signed in or redeemed a key.
   const auth = resolveTeam(token);
-  const team = auth ? auth.team : DEFAULT_TEAM;
+  if (!auth || !auth.session) {
+    authFailed(req, url);
+    return denyUpgrade(socket, rateLimited(req) ? 429 : 401, "sign in to open the board");
+  }
+  const team = auth.team;
 
   const key = req.headers["sec-websocket-key"];
   if (
