@@ -17,11 +17,6 @@ name: onboard-live
 
 on:
   workflow_dispatch:
-  # TEMPORARY, reverted before merge: a new workflow_dispatch-only file can't
-  # be dispatched until it exists on the default branch. This lets it run
-  # once on this branch to prove the fix; removed again once it has.
-  push:
-    branches: [onboard-fresh-fix]
 
 jobs:
   onboard:
