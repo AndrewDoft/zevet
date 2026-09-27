@@ -13,13 +13,18 @@ const { macSigning } = require("./signing.js");
 
 module.exports = async function notarizeDmg(buildResult) {
   if (!macSigning()) return [];
-  const { APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID } = process.env;
+  // App Store Connect API key, not an Apple ID + app-specific password: that
+  // path locked the Apple ID twice on a bad credential; an API key cannot.
+  // APPLE_API_KEY is already a filesystem path here (whatever the workflow
+  // decoded it to before `npm run dist:mac` — see signing.js), same as what
+  // electron-builder's own notarize() reads for the .app.
+  const { APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER } = process.env;
   for (const p of buildResult.artifactPaths) {
     if (!p.endsWith(".dmg")) continue;
     console.log(`  • notarizing ${p}`);
     execFileSync(
       "xcrun",
-      ["notarytool", "submit", p, "--apple-id", APPLE_ID, "--password", APPLE_APP_SPECIFIC_PASSWORD, "--team-id", APPLE_TEAM_ID, "--wait"],
+      ["notarytool", "submit", p, "--key", APPLE_API_KEY, "--key-id", APPLE_API_KEY_ID, "--issuer", APPLE_API_ISSUER, "--wait"],
       { stdio: "inherit" },
     );
     console.log(`  • stapling ${p}`);

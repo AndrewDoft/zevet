@@ -281,9 +281,9 @@ describe("the unsigned Mac integrity seal", () => {
 
 describe("the CI workflow passes what the config reads", () => {
   test("every variable the config checks is in build.yml", async () => {
-    // A config that reads APPLE_TEAM_ID and a workflow that does not pass it is
-    // a pipeline that silently never signs. They are in two files that nothing
-    // else connects.
+    // A config that reads APPLE_API_ISSUER and a workflow that does not pass it
+    // is a pipeline that silently never signs. They are in two files that
+    // nothing else connects.
     const { readFileSync } = await import("node:fs");
     const yml = readFileSync(path.join(ROOT, ".github", "workflows", "build.yml"), "utf8");
     for (const name of [...Object.keys(MAC_ENV), ...Object.keys(WIN_ENV)]) {
