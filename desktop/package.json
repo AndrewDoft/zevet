@@ -7,6 +7,7 @@
   "author": "Andrew Doft",
   "scripts": {
     "start": "electron .",
+    "postinstall": "node patch-electron-builder-keychain.cjs",
     "icon": "node make-icon.mjs",
     "dist": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --publish never",
     "dist:win": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --win --publish never",

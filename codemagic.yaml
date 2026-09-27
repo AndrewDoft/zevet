@@ -26,6 +26,20 @@ workflows:
         script: cd editor && npm ci
       - name: Test
         script: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
+      - name: Import Apple's Developer ID intermediate CA
+        script: |
+          set -euo pipefail
+          if [ -n "${CERTIFICATE_P12:-}" ]; then
+            # A fresh CI keychain has no path to Apple's Developer ID intermediate,
+            # so `security find-identity` reports the imported cert as
+            # CSSMERR_TP_NOT_TRUSTED even though it is perfectly valid -- verified
+            # once on a real Codemagic build this session (electron-builder found
+            # "1 identities found ... 0 valid identities found"). The root (Apple
+            # Root CA) is already a trusted system anchor; only this intermediate
+            # was missing from electron-builder's own bundled root cert keychain.
+            curl -fsSL -o /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+            security import /tmp/DeveloperIDG2CA.cer -k ~/Library/Keychains/login.keychain-db
+          fi
       - name: Build the .dmg
         script: |
           set -euo pipefail
@@ -101,6 +115,13 @@ workflows:
         script: cd editor && npm ci
       - name: Test
         script: node --test "test/**/*.test.mjs" "editor/test/**/*.test.mjs"
+      - name: Import Apple's Developer ID intermediate CA
+        script: |
+          set -euo pipefail
+          if [ -n "${CERTIFICATE_P12:-}" ]; then
+            curl -fsSL -o /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+            security import /tmp/DeveloperIDG2CA.cer -k ~/Library/Keychains/login.keychain-db
+          fi
       - name: Build X (.dmg)
         script: |
           set -euo pipefail
