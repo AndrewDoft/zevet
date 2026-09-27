@@ -115,6 +115,15 @@ jobs:
         working-directory: desktop
         run: npm run smoke:win
 
+      # DIAGNOSTIC, branch-only: reproduces the real per-machine incident
+      # (InstallLocation="C:\Program", update run with installOnQuit()'s own
+      # args, no /allusers/currentuser) that smoke:win's per-user test never
+      # exercised. Remove before this branch merges.
+      - name: Reproduce the per-machine InstallLocation incident
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node ../scripts/repro-permachine-update.mjs
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
