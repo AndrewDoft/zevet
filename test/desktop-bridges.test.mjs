@@ -534,3 +534,54 @@ describe("the file watcher is wired to the window, not to the app", () => {
     assert.match(body, /dir \|\|/, "there is no fallback for a root that left the allowlist");
   });
 });
+
+describe("the hub domain migration never blocks or overreaches", () => {
+  function fnBody(signature) {
+    const start = main.indexOf(signature);
+    assert.ok(start >= 0, `${signature} not found in main.js`);
+    // Balance braces from the first `{` after the signature, rather than a
+    // fixed-line slice: this file's functions are not a stable length, and a
+    // slice that stopped short (or ran long, into the NEXT function) would
+    // pass or fail these assertions for a reason that has nothing to do with
+    // migrateHubDomain itself.
+    const open = main.indexOf("{", start);
+    let depth = 0;
+    for (let i = open; i < main.length; i++) {
+      if (main[i] === "{") depth++;
+      else if (main[i] === "}") {
+        depth--;
+        if (depth === 0) return main.slice(start, i + 1);
+      }
+    }
+    throw new Error(`${signature}: unbalanced braces`);
+  }
+
+  test("only a config still on the legacy default is ever touched", () => {
+    const body = stripComments(fnBody("async function migrateHubDomain"));
+    assert.match(body, /!==\s*LEGACY_HUB\)\s*return cfg/, "a hub the user or an admin set on purpose must be an immediate no-op");
+  });
+
+  test("the probe is short and bounded, and a failure of any kind keeps the old hub", () => {
+    const body = stripComments(fnBody("async function migrateHubDomain"));
+    assert.match(body, /setTimeout\(\(\) => ac\.abort\(\), 2000\)/, "the probe must not be allowed to hang");
+    assert.match(body, /catch\s*\{\s*return cfg;\s*\}/, "any probe failure (no DNS yet, no route, non-200) must keep cfg untouched");
+    assert.match(body, /if \(!res\.ok\) return cfg/, "a non-200 from the new host must not be treated as success");
+  });
+
+  test("success rewrites cfg.hub to HOSTED_HUB and persists it", () => {
+    const body = stripComments(fnBody("async function migrateHubDomain"));
+    assert.match(body, /writeConfig\(migrated\)/);
+    assert.match(body, /hub:\s*HOSTED_HUB/);
+  });
+
+  test("openBoard runs before the migration check, never after it", () => {
+    // The same reasoning as the updater a few lines above it in main.js: a
+    // network check — even a bounded, 2-second one — has no business
+    // delaying a window that could have opened already. migrateHubDomain
+    // only ever changes what the NEXT launch reads.
+    const openIdx = main.indexOf("if (cfg) openBoard(cfg);");
+    const migrateIdx = main.indexOf("void migrateHubDomain(cfg)");
+    assert.ok(openIdx >= 0 && migrateIdx >= 0, "both call sites must exist in app.whenReady");
+    assert.ok(openIdx < migrateIdx, "migrateHubDomain must be fired after openBoard, not before it");
+  });
+});

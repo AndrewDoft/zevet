@@ -284,7 +284,7 @@ leaves the container on the old inode. The same trap as the Caddyfile, which
 Confirm with `/healthz`, which names the fields it gained:
 
 ```
-curl -s https://34-74-69-129.sslip.io/healthz
+curl -s https://hub.usemasora.com/healthz
 {"ok":true,"events":0,"listeners":0,"rooms":0,"wsListeners":0}
 ```
 
@@ -321,8 +321,8 @@ Always prove both halves afterwards, from outside — the first attempt returned
 check showed it:
 
 ```
-curl -so /dev/null -w "%{http_code}\n" -H "x-zevet-token: <old>"     https://34-74-69-129.sslip.io/api/state   # want 401
-curl -so /dev/null -w "%{http_code}\n" -H "x-zevet-token: <derived>" https://34-74-69-129.sslip.io/api/state   # want 200
+curl -so /dev/null -w "%{http_code}\n" -H "x-zevet-token: <old>"     https://hub.usemasora.com/api/state   # want 401
+curl -so /dev/null -w "%{http_code}\n" -H "x-zevet-token: <derived>" https://hub.usemasora.com/api/state   # want 200
 ```
 
 ⚠️ And one about this document. The block above ends with `ZEOF`, not `EOF`,
@@ -384,8 +384,20 @@ only in `/srv/zevet/.env`, mode 600, and never reaches the app or the browser.
 1. Google Cloud Console → **APIs & Services → Credentials → Create credentials → OAuth
    client ID**, type **Web application**.
 2. Under **Authorized redirect URIs** add exactly, byte for byte:
-   `https://<hub-host>/auth/google/callback` — today that is
-   `https://34-74-69-129.sslip.io/auth/google/callback`.
+   `https://<hub-host>/auth/google/callback` — the canonical hub host is
+   `hub.usemasora.com`, so a fresh setup adds
+   `https://hub.usemasora.com/auth/google/callback`.
+   ⚠️ **What is actually configured right now is still the sslip address**
+   (`https://34-74-69-129.sslip.io/auth/google/callback`) — the hub domain
+   moved on 2026-09-27 but `ZEVET_GOOGLE_REDIRECT` deliberately was not
+   flipped in the same pass (see the git history around that date): sign-in
+   works unaffected either way, since Caddy answers on both names, and the
+   env only changes once someone has added `hub.usemasora.com`'s callback as
+   an ADDITIONAL authorized redirect URI in Google Cloud Console (the sslip
+   one stays registered too — removing it would be its own outage). Check
+   which one is live with
+   `ssh masora-app 'grep ZEVET_GOOGLE_REDIRECT /srv/zevet/.env'` before
+   assuming this doc's example matches reality.
    ⚠️ A mismatch here does not fail until the very last step of a sign-in, as Google's
    `redirect_uri_mismatch`. A trailing slash is a mismatch.
 3. Copy the **Client ID** and the **Client secret**.
@@ -396,7 +408,7 @@ Then on the hub (see **Deploying the hub** above for how to reach the box):
 sudo tee -a /srv/zevet/.env >/dev/null <<'ZEOF'
 ZEVET_GOOGLE_CLIENT_ID=<the client id>
 ZEVET_GOOGLE_CLIENT_SECRET=<the client secret>
-ZEVET_GOOGLE_REDIRECT=https://34-74-69-129.sslip.io/auth/google/callback
+ZEVET_GOOGLE_REDIRECT=<the redirect URI you just registered in step 2 — must match byte for byte>
 ZEVET_GOOGLE_DOMAIN=<your Workspace domain, or leave the line out>
 ZEOF
 sudo chmod 600 /srv/zevet/.env

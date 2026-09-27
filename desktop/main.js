@@ -39,7 +39,7 @@ const { AppUpdater } = require("./app-update.js");
 const runtime = require("./runtime.js");
 const askServer = require("./ask-server.js");
 const { GithubSignIn } = require("./github-signin.js");
-const { resolveHub } = require("./hub-target.js");
+const { resolveHub, HOSTED_HUB, LEGACY_HUB } = require("./hub-target.js");
 const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
@@ -551,6 +551,43 @@ function writeConfig(cfg) {
   } catch {
     // Windows uses ACLs; there is nothing to do here and nothing to report.
   }
+}
+
+/**
+ * D-0NN: hub.usemasora.com replaces the sslip.io address as HOSTED_HUB, so a
+ * network that blocks bare sslip.io domains (some corporate/school DNS
+ * filters do, on principle) is not the only way to reach the hub. The sslip
+ * address (LEGACY_HUB) is never decommissioned — Caddy serves the same hub
+ * on both names permanently — so this is a courtesy rewrite, never a cutover
+ * an install is forced through.
+ *
+ * Only fires when `cfg.hub` is EXACTLY the old default: a hub the user or an
+ * admin configured on purpose (self-hosting, `ZEVET_HUB`, a typed address) is
+ * never touched. And only rewrites once the new host actually answers — a
+ * quick, short-timeout probe, because DNS for a domain this fresh may not
+ * have reached this machine's resolver yet, and a slow or hanging network
+ * check has no business delaying the board opening. A probe that fails for
+ * any reason (no DNS yet, no route, a redirect, a non-200) leaves `cfg`
+ * untouched; the sslip address keeps working exactly as it always has.
+ */
+async function migrateHubDomain(cfg) {
+  if (!cfg || String(cfg.hub || "").replace(/\/+$/, "") !== LEGACY_HUB) return cfg;
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 2000);
+    let res;
+    try {
+      res = await fetch(`${HOSTED_HUB}/healthz`, { signal: ac.signal, redirect: "error" });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return cfg;
+  } catch {
+    return cfg;
+  }
+  const migrated = { ...cfg, hub: HOSTED_HUB };
+  writeConfig(migrated);
+  return migrated;
 }
 
 /** Bootstrap the bundled client on the first install; keep its hook path stable. */
@@ -3732,6 +3769,11 @@ app.whenReady().then(() => {
   const cfg = readConfig();
   if (cfg) openBoard(cfg);
   else openSetup(null);
+  // Same reasoning as the updater above: never delay the board for this.
+  // The probe is quick (2s, bounded), but "quick" is still slower than a
+  // window that could have opened already — this runs alongside it and only
+  // ever changes what NEXT launch reads, never this one.
+  if (cfg) void migrateHubDomain(cfg);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
