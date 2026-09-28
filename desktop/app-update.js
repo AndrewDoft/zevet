@@ -725,11 +725,10 @@ class AppUpdater {
 
     try {
       if (canWin) {
-        const child = this.spawnImpl(this.state.file, winInstallArgs(QUIT_INSTALL_ARGS, this.execPath), {
+        const child = this.spawnImpl(this.state.file, QUIT_INSTALL_ARGS, {
           detached: true,
           stdio: "ignore",
           windowsHide: true,
-          windowsVerbatimArguments: true,
         });
         if (child && typeof child.unref === "function") child.unref();
       } else {
