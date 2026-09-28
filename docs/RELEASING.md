@@ -252,10 +252,16 @@ real app, its own timer, a real stream, a real checksum.
 production box that also serves the Masora app. It stays a command somebody
 runs on purpose.
 
-**Signing.** Neither artifact is signed. macOS therefore cannot be updated in
-place — the app opens the disk image and the person drags it across — and both
-platforms warn on first run. See D-006 in `DECISIONS.md`; the fix is an Apple
-Developer account, which is a purchase rather than a patch.
+**Signing.** Windows is signed as "Andrew Doft" via Azure Trusted Signing/OIDC
+(see §Windows below) and verified in-job with `Get-AuthenticodeSignature`.
+macOS is NOT signed or notarized: `electron-builder.config.js` has the
+`notarize` block wired up, but the `CSC_LINK` / `CSC_KEY_PASSWORD` /
+`APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` secrets are not
+set on the repo (`gh secret list` shows only the `AZURE_*` ones), so the disk
+image ships ad-hoc sealed only, the app cannot update itself in place — it
+opens the disk image and the person drags it across — and it warns on first
+run. See D-006 in `DECISIONS.md`. Adding those five secrets is the whole act
+of turning macOS signing + notarization on; no code change is needed.
 
 ---
 
@@ -486,11 +492,14 @@ app replace itself, so `desktop/app-update.js` currently opens the disk image an
 person to drag it across. Windows has had one-click update since 0.2.0; macOS cannot until
 this is bought.
 
-**Windows — Azure Trusted Signing, about $10/month.** Secrets `AZURE_TENANT_ID`,
-`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`; repository *variables*
-`AZURE_CODE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`,
-`AZURE_PUBLISHER_NAME`. Chosen over an OV/EV certificate because those now require the key
-on a hardware token, which a GitHub Actions runner cannot use.
+**Windows — Azure Trusted Signing, about $10/month. Already on.** Secrets
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_SUBSCRIPTION_ID` (OIDC federated
+credential via `azure/login`, scoped to the `signing` environment — no client
+secret; `id-token: write` is what lets the runner mint the token); repository
+*variables* `AZURE_CODE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`,
+`AZURE_CERT_PROFILE`, `AZURE_PUBLISHER_NAME`. Chosen over an OV/EV certificate
+because those now require the key on a hardware token, which a GitHub Actions
+runner cannot use.
 
 ⚠️ `AZURE_PUBLISHER_NAME` must match the certificate subject exactly, or NSIS rejects its
 own signature at install time.

@@ -207,6 +207,33 @@ jobs:
         working-directory: desktop
         run: npm run smoke:win
 
+      # A second, real-world incident (Andrew's own machine, 2026-09-27):
+      # zevet 0.2.71 is what is ACTUALLY still installed on stranded
+      # machines, so this checks it out and builds the true old installer
+      # rather than a fixture, corrupts InstallLocation to the exact
+      # observed shape, then proves this build's own installer self-heals
+      # it with installOnQuit()'s real args -- no /allusers, no
+      # /currentuser, no /D. See scripts/repro-andrew-incident.mjs.
+      - name: Check out zevet 0.2.71 (the version stranded on real machines)
+        if: runner.os == 'Windows'
+        uses: actions/checkout@v4
+        with:
+          ref: v0.2.71
+          path: old-v0.2.71
+
+      - name: Build zevet 0.2.71 (unsigned -- matches the real stranded install)
+        if: runner.os == 'Windows'
+        working-directory: old-v0.2.71/desktop
+        run: |
+          npm ci
+          node make-icon.mjs
+          node build.cjs -c electron-builder.config.js --win --publish never
+
+      - name: Reproduce and prove the self-heal (Andrew's exact incident)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node ../scripts/repro-andrew-incident.mjs "../old-v0.2.71/desktop/out"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -217,14 +244,20 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 # ---------------------------------------------------------------------------
-# UNSIGNED, AND WHAT THAT COSTS
+# SIGNING STATUS, AS OF THIS BUILD
 #
-# Windows has no publisher signature. The macOS bundle is sealed ad-hoc to
-# keep its final resources and native code internally consistent, but it has
-# no Developer ID signature or notarization. Gatekeeper still rejects it as
-# untrusted; recipients must use macOS's explicit per-app approval flow.
-# The build and smoke test never remove quarantine or change Gatekeeper.
+# Windows: signed as "Andrew Doft" via Azure Trusted Signing/OIDC (see the
+# steps above) whenever AZURE_CODE_SIGNING_ACCOUNT is set as a repo variable
+# -- it is, so every Windows build from here on carries a real publisher
+# signature, verified in-job by Get-AuthenticodeSignature.
 #
-# Trusted distribution requires the publisher's Apple Developer identity and
-# notarization, plus a Windows code-signing certificate. Those credentials are
-# intentionally not created or purchased by this build.
+# macOS: the electron-builder.config.js `notarize` block is wired up, but
+# CSC_LINK / CSC_KEY_PASSWORD / APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
+# APPLE_TEAM_ID are NOT currently set as secrets on this repo (checked via
+# `gh secret list` -- only the AZURE_* ones exist). Until they are, this leg
+# builds and smokes an AD-HOC sealed bundle: internally consistent, but no
+# Developer ID signature or notarization, and Gatekeeper still rejects it as
+# untrusted. `ZEVET_EXPECT_SIGNED` in the smoke step reflects this
+# automatically -- it only demands a real signature once those secrets
+# exist -- so a green run here is not itself proof macOS is notarized;
+# check the job log's own signing step for what it actually did.
