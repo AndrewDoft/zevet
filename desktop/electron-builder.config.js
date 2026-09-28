@@ -74,7 +74,12 @@ module.exports = {
           // The default entitlements electron-builder ships are correct for an
           // Electron app; a custom plist is only needed for camera, microphone
           // or the like, and zevet asks for none of them.
-          notarize: { teamId: process.env.APPLE_TEAM_ID },
+          //
+          // `true`, not `{ teamId }`: with an API-key notarization credential
+          // (APPLE_API_KEY/_KEY_ID/_ISSUER — see signing.js), getNotarizeOptions()
+          // never reads notarize.teamId at all; that field exists only for the
+          // Apple-ID + app-specific-password path this project no longer uses.
+          notarize: true,
           // The final artifact smoke check also requires Gatekeeper acceptance
           // when this build is configured for publisher signing.
           gatekeeperAssess: true,

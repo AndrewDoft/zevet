@@ -253,15 +253,13 @@ production box that also serves the Masora app. It stays a command somebody
 runs on purpose.
 
 **Signing.** Windows is signed as "Andrew Doft" via Azure Trusted Signing/OIDC
-(see §Windows below) and verified in-job with `Get-AuthenticodeSignature`.
-macOS is NOT signed or notarized: `electron-builder.config.js` has the
-`notarize` block wired up, but the `CSC_LINK` / `CSC_KEY_PASSWORD` /
-`APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` secrets are not
-set on the repo (`gh secret list` shows only the `AZURE_*` ones), so the disk
-image ships ad-hoc sealed only, the app cannot update itself in place — it
-opens the disk image and the person drags it across — and it warns on first
-run. See D-006 in `DECISIONS.md`. Adding those five secrets is the whole act
-of turning macOS signing + notarization on; no code change is needed.
+(see §Windows below) and verified in-job with `Get-AuthenticodeSignature`. macOS
+signs with the "Developer ID Application" identity and notarizes with an App
+Store Connect API key once `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_API_KEY` /
+`APPLE_API_KEY_ID` / `APPLE_API_ISSUER` are all set (see §Code signing above);
+without any one of the five the disk image ships ad-hoc sealed only, the app
+cannot update itself in place — it opens the disk image and the person drags
+it across — and it warns on first run. See D-006 in `DECISIONS.md`.
 
 ---
 
@@ -471,11 +469,12 @@ now the single most valuable file on that box.
 
 ## Code signing
 
-Nothing is signed. The pipeline is built and inert: `desktop/electron-builder.config.js`
-computes the build config from the environment, and with no secrets set it produces exactly
-what it always did. `test/signing.test.mjs` pins both halves, including the case where only
-*some* of the Apple credentials are present — which would otherwise produce a signed,
-un-notarised app that Gatekeeper still refuses while the build log reads like a success.
+macOS is wired and live as of the `macnotary` work (ported from the `macsign` branch).
+`desktop/electron-builder.config.js` computes the build config from the environment;
+`test/signing.test.mjs` pins both halves, including the case where only *some* of the
+Apple credentials are present (refused — `desktop/signing.js`'s `macSigning()` is
+all-five-or-none, never a partial signature that Gatekeeper still refuses while the
+build log reads like a success).
 
 **macOS — Apple Developer Program, $99/yr.** Add as repository *secrets*:
 
@@ -483,9 +482,37 @@ un-notarised app that Gatekeeper still refuses while the build log reads like a 
 | --- | --- |
 | `CSC_LINK` | the Developer ID Application `.p12`, base64-encoded |
 | `CSC_KEY_PASSWORD` | its export password |
-| `APPLE_ID` | the Apple ID email |
-| `APPLE_APP_SPECIFIC_PASSWORD` | an app-specific password, **not** the account password |
-| `APPLE_TEAM_ID` | the ten-character team id |
+| `APPLE_API_KEY` | an App Store Connect API key's `.p8`, base64-encoded |
+| `APPLE_API_KEY_ID` | that key's id |
+| `APPLE_API_ISSUER` | the App Store Connect issuer uuid |
+
+Notarization is an **App Store Connect API key**, not an Apple ID + app-specific
+password — the password path locked the Apple ID twice in one afternoon on a bad
+credential (see `DECISIONS.md`), and an API key structurally cannot do that.
+`app-builder-lib`'s `getNotarizeOptions()` (`macPackager.js`) reads `APPLE_API_KEY`,
+`APPLE_API_KEY_ID` and `APPLE_API_ISSUER` for this ("option 2: API key"); no team id
+is needed on this path. `APPLE_API_KEY` must be a **filesystem path** to the `.p8` by
+the time electron-builder runs — that's what `@electron/notarize`'s `appleApiKey` is
+documented as, and what it passes straight through as `notarytool submit`'s `--key` —
+so the secret holds base64 and `build.yml`'s "Decode the App Store Connect API key"
+step decodes it to a file and repoints the env var at that path before `npm run
+dist:mac`.
+
+With them set: `electron-builder.config.js` turns on `hardenedRuntime` + `notarize`;
+`@electron/osx-sign` (bundled into electron-builder 25.1.8) walks the whole `.app` and
+signs every Mach-O it finds bottom-up; `desktop/staple-macos.cjs` (`afterSign`) staples
+the notarization ticket onto the `.app` (electron-builder's own `notarize()` submits and
+waits but never staples); `desktop/notarize-dmg.cjs` (`afterAllArtifactBuild`) separately
+submits the built `.dmg` to `notarytool` and staples that too, since the app being
+notarized does not give the `.dmg` — a different file, a different hash — a ticket of
+its own. `build.yml`'s "Smoke the macOS app on Apple Silicon" step runs `codesign
+--verify --deep --strict`, `spctl -a -vv -t exec` (asserting the verdict includes
+`source=Notarized Developer ID`), and `xcrun stapler validate` on the `.app` whenever
+`ZEVET_EXPECT_SIGNED` is set; it is a no-op (loud, not silent) on a fork or PR with no
+secrets. A fresh CI keychain also lacks Apple's Developer ID intermediate CA, which
+`build.yml`'s "Import Apple's Developer ID intermediate CA" step imports before the
+build whenever `CSC_LINK` is set — without it electron-builder reports a perfectly
+valid imported cert as `CSSMERR_TP_NOT_TRUSTED`.
 
 This is also what unblocks **in-place auto-update on macOS**. macOS will not let an unsigned
 app replace itself, so `desktop/app-update.js` currently opens the disk image and asks the

@@ -78,6 +78,43 @@ jobs:
       - name: Test
         run: npm test
 
+      # A fresh CI keychain has no path to Apple's Developer ID intermediate, so
+      # `security find-identity` reports an imported cert as CSSMERR_TP_NOT_TRUSTED
+      # even though it is perfectly valid -- verified once on a real Codemagic mac
+      # build this session (electron-builder found "1 identities found ... 0 valid
+      # identities found"). The root (Apple Root CA) is already a trusted system
+      # anchor; only this intermediate was missing from electron-builder's own
+      # bundled root cert keychain.
+      - name: Import Apple's Developer ID intermediate CA
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MAC_SIGNED: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ "$MAC_SIGNED" = "true" ]; then
+            curl -fsSL -o /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+            security import /tmp/DeveloperIDG2CA.cer -k ~/Library/Keychains/login.keychain-db
+          fi
+
+      # electron-builder's notarize path needs APPLE_API_KEY to be a FILESYSTEM
+      # PATH to the .p8 (that's what @electron/notarize's `appleApiKey` is and
+      # passes straight through as `--key`), not the secret's base64 text, so
+      # the secret is decoded to a file here and the env var repointed at it.
+      # App Store Connect API key, not an Apple ID + app-specific password: that
+      # path locked the Apple ID twice on a bad credential; an API key cannot.
+      - name: Decode the App Store Connect API key
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${APPLE_API_KEY_B64:-}" ]; then
+            echo "$APPLE_API_KEY_B64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          fi
+        env:
+          APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY }}
+
       - name: Build (macOS)
         if: runner.os == 'macOS'
         working-directory: desktop
@@ -87,9 +124,9 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ env.APPLE_API_KEY_PATH }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -195,7 +232,7 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: desktop
         env:
-          ZEVET_EXPECT_SIGNED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && '1' || '0' }}
+          ZEVET_EXPECT_SIGNED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' && '1' || '0' }}
         run: npm run smoke:mac
 
       # Install -> update -> install-on-quit's own args -> launch, on a real
@@ -255,13 +292,13 @@ jobs:
 # -- it is, so every Windows build from here on carries a real publisher
 # signature, verified in-job by Get-AuthenticodeSignature.
 #
-# macOS: the electron-builder.config.js `notarize` block is wired up, but
-# CSC_LINK / CSC_KEY_PASSWORD / APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
-# APPLE_TEAM_ID are NOT currently set as secrets on this repo (checked via
-# `gh secret list` -- only the AZURE_* ones exist). Until they are, this leg
-# builds and smokes an AD-HOC sealed bundle: internally consistent, but no
-# Developer ID signature or notarization, and Gatekeeper still rejects it as
-# untrusted. `ZEVET_EXPECT_SIGNED` in the smoke step reflects this
-# automatically -- it only demands a real signature once those secrets
-# exist -- so a green run here is not itself proof macOS is notarized;
-# check the job log's own signing step for what it actually did.
+# macOS: signs with the Developer ID Application identity (CSC_LINK / CSC_KEY_PASSWORD)
+# and notarizes with an App Store Connect API key (APPLE_API_KEY / APPLE_API_KEY_ID /
+# APPLE_API_ISSUER) -- never an Apple ID + password, which locked the account once.
+# desktop/staple-macos.cjs staples the ticket onto the .app (afterSign) and
+# desktop/notarize-dmg.cjs separately notarizes + staples the .dmg (afterAllArtifactBuild),
+# since electron-builder's own notarize() only ever submits the .app and never staples
+# anything. `ZEVET_EXPECT_SIGNED` in the smoke step reflects whether all five secrets are
+# set -- it only demands a real signature once they exist -- so a green run here is not
+# itself proof macOS is notarized; check the job log's own signing step for what it
+# actually did.

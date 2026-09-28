@@ -2,7 +2,7 @@
 // This is an integrity/runtime gate, not a claim of Apple notarization or a
 // substitute for trying onboarding with a real teammate.
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -55,8 +55,21 @@ try {
   run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
   console.log("Final bundle signature: valid (trust/notarization is separate)");
   if (process.env.ZEVET_EXPECT_SIGNED === "1") {
-    run("spctl", ["--assess", "--type", "execute", "--verbose", app]);
-    console.log("Publisher-signed build: Gatekeeper accepted");
+    // `-a -vv -t exec`: assess as something about to be executed, same policy
+    // Gatekeeper itself applies on first launch. spctl writes its verdict (the
+    // "source=" line) to STDERR even on a successful (exit 0) assessment, so
+    // this uses spawnSync directly rather than the execFileSync-based `run`,
+    // which only returns stdout. A merely-signed (not notarized) app is
+    // accepted too, so the source= line is the only thing that actually
+    // distinguishes notarized from "just has a Developer ID signature".
+    const spctl = spawnSync("spctl", ["-a", "-vv", "-t", "exec", app], { encoding: "utf8", timeout: 60_000 });
+    const verdict = `${spctl.stdout || ""}${spctl.stderr || ""}`;
+    console.log(verdict.trim());
+    assert.equal(spctl.status, 0, `spctl rejected the app: ${verdict}`);
+    assert.match(verdict, /source=Notarized Developer ID/, `spctl did not report a notarized verdict: ${verdict}`);
+    console.log("Publisher-signed build: Gatekeeper accepted as Notarized Developer ID");
+    run("xcrun", ["stapler", "validate", app]);
+    console.log("Notarization ticket is stapled to the .app");
   }
   const binaries = nativeFiles(app);
   assert.ok(binaries.length > 5, "Electron and its native dependencies must be present");
