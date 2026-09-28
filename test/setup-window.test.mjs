@@ -202,18 +202,28 @@ describe("a fresh install's setup window", () => {
     assert.doesNotMatch(drive("snapshot").outline, /input#hub|details#other/);
   });
 
-  test("the shared-secret fallback is tucked behind a small 'Other' link, not 'Key'", () => {
-    assert.match(drive("snapshot").outline, /summary[^\n]*"Other"/);
-    assert.doesNotMatch(drive("snapshot").outline, /summary[^\n]*"Key"/);
+  // BUG-2026-09-28, Andrew verbatim: "there are two spaces for the key, we
+  // only need the top ones." The master-secret "Other" fallback (id="token",
+  // id="manual", id="check") is removed outright — GitHub/Google sign-in and
+  // the invite key above (input#inviteKey) are the only two ways in now.
+  test("there is no second key field: no 'Other' fallback, no manual secret", () => {
+    const outline = drive("snapshot").outline;
+    assert.doesNotMatch(outline, /input#token|details#manual|button#check/);
+    assert.doesNotMatch(outline, /summary[^\n]*"Other"/);
   });
 
-  test("the team-key path connects, enables Open, and reveals Folder", async () => {
-    drive("click", "#manual summary");
-    drive("type", "#token", SECRET);
-    drive("type", "#actor", "trevor");
-    drive("click", "#check");
-    const outline = await waitFor((o) => !/#check[^\n]*disabled/.test(o) && /div#msg[^\n]*"Connected"/.test(o));
-    assert.match(outline, /div#msg[^\n]*"Connected"/);
+  // signedIn() is what a completed GitHub/Google sign-in OR a redeemed
+  // invite key both call (setup.html's own click handlers) — its DOM effects
+  // are exercised directly here, the same established pattern this file
+  // already uses for paintUpdate above, because every sign-in path in THIS
+  // file's single hub instance either has no real OAuth app (GitHub/Google)
+  // or needs an owner session that only a real sign-in can create (the
+  // invite-key success path is proven at the HTTP layer in
+  // test/team.test.mjs's "/team/join" describe; this proves the UI WIRING
+  // signedIn() drives once any of those paths reports success).
+  test("a completed sign-in enables Open and reveals Folder", () => {
+    drive("eval", `window.signedIn({ teamName: "Acme Platform", login: "trevor", owner: false })`);
+    const outline = drive("snapshot").outline;
     assert.doesNotMatch(outline, /button#finish[^\n]*disabled/);
     assert.match(outline, /button#pick[^\n]*"Folder"/);
   });

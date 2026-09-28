@@ -157,15 +157,6 @@
     <div class="row"><button id="googleCancel" type="button">Cancel</button></div>
   </div>
 
-  <details id="manual">
-    <summary>Other</summary>
-    <label>
-      <span class="lbl">Key</span>
-      <input id="token" class="mono" type="password" autocomplete="off" spellcheck="false" />
-    </label>
-    <div class="row"><button id="check" type="button">Connect</button></div>
-  </details>
-
   <label>
     <span class="lbl">Name</span>
     <input id="actor" placeholder="kai" autocomplete="off" spellcheck="false" />
@@ -274,12 +265,8 @@
     var team = $("teamName").value.trim();
     say("good", "<b>" + esc(done.teamName || team || "") + "</b> · " + esc(String(done.login).split("@")[0]) + (done.owner ? " · Owner" : ""));
     // A GitHub/Google sign-in or a redeemed key already wrote a working
-    // session — clear the manual "Other" key field so Finish's own save()
-    // call never sends whatever happens to be sitting in it (a leftover
-    // paste, or the OS's own password-manager autofill reaching a
-    // type="password" field even with autocomplete="off"). MEASURED: a
-    // stale value there silently overwrote a just-completed sign-in.
-    $("token").value = "";
+    // session — Finish's own save() below is passed "" (below), never a
+    // field value, so there is nothing left here that could stomp on it.
     verified = true;
     $("finish").disabled = false;
     $("repoStep").hidden = false;
@@ -408,22 +395,6 @@
     signedIn(done);
   });
 
-  /* ── The team key: for a server with no OAuth app, and installs already out there. ── */
-  $("check").addEventListener("click", async function () {
-    if (!$("token").value) { say("bad", "Key?"); return; }
-    if (!$("actor").value.trim()) { say("bad", "Name?"); $("actor").focus(); return; }
-    $("check").disabled = true;
-    say("", "…");
-    var res = await window.zevet.test(null, $("token").value);
-    $("check").disabled = false;
-    if (!res.ok) { verified = false; $("finish").disabled = true; say("bad", "Failed"); return; }
-    say("good", "Connected");
-    await window.zevet.save(null, $("token").value, $("actor").value.trim());
-    verified = true;
-    $("finish").disabled = false;
-    $("repoStep").hidden = false;
-  });
-
   $("pick").addEventListener("click", async function () {
     var repo = await window.zevet.pickRepo();
     if (!repo) return;
@@ -437,11 +408,16 @@
   $("finish").addEventListener("click", async function () {
     if (!verified) return;
     $("finish").disabled = true;
-    // An empty (or now-invalid) credential is understood by `zevet:save` as
-    // "keep what you have" — see main.js. Its return value is checked here
-    // because silently proceeding to `done()` on a `false` is exactly how a
-    // failed save looked identical to a successful one.
-    var ok = await window.zevet.save(null, $("token").value, $("actor").value.trim());
+    // "" is understood by `zevet:save` as "keep what you have" — see
+    // main.js. There is no manual credential field any more (BUG-2026-09-28:
+    // "two spaces for the key" — GitHub/Google sign-in and the invite key
+    // above are the only two ways in now), so this call only ever confirms
+    // the actor name; a GitHub/Google sign-in or a redeemed invite key has
+    // already written the session by the time Finish is clickable at all.
+    // Its return value is still checked because silently proceeding to
+    // `done()` on a `false` is exactly how a failed save looked identical to
+    // a successful one.
+    var ok = await window.zevet.save(null, "", $("actor").value.trim());
     if (!ok) {
       $("finish").disabled = false;
       say("bad", "Could not save — try signing in again");
@@ -449,8 +425,6 @@
     }
     window.zevet.done();
   });
-
-  $("token").addEventListener("input", function () { verified = false; $("finish").disabled = true; });
 </script>
 </body>
 </html>

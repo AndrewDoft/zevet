@@ -18,19 +18,20 @@ function escapeHtml(s) {
 }
 
 /**
- * `apiKey`/`from` — RESEND_API_KEY / RESEND_FROM, read by the caller so this
- * module has no env dependency of its own and is trivial to test.
- * `to`         — the invitee's email.
- * `teamName`   — for the subject and body.
- * `key`        — the plaintext invite key (XXXX-XXXX). Never logged.
- * `macUrl`/`winUrl` — the stable download links.
+ * The invite's content, generated in exactly ONE place — hub/server.mjs's
+ * /auth/allow hands the same `text` back to the inviter (as `inviteText`,
+ * for "Copy invite") that `sendInviteEmail` below puts in the email body, so
+ * the two can never say something different (BUG-2026-09-28: they used to).
  *
- * Returns `{ ok: true, id }` or `{ ok: false, error, status? }`.
+ * `teamName` — for the subject and body.
+ * `key`      — the plaintext invite key (XXXX-XXXX). Never logged.
+ * `macUrl`/`winUrl` — the stable direct download links (also emailed, so a
+ *   recipient on their phone or without a browser handy can still go
+ *   straight to the file for their platform).
+ *
+ * Returns `{ subject, text, html }`.
  */
-export async function sendInviteEmail({ apiKey, from, to, teamName, key, macUrl, winUrl, fetchImpl } = {}) {
-  if (!apiKey) return { ok: false, error: "RESEND_API_KEY not set" };
-  if (!to) return { ok: false, error: "no recipient email" };
-
+export function inviteMessage({ teamName, key, macUrl, winUrl } = {}) {
   const team = teamName || "the team";
   const subject = `Join ${team} on Zevet`;
   const text = [
@@ -38,6 +39,7 @@ export async function sendInviteEmail({ apiKey, from, to, teamName, key, macUrl,
     ``,
     `Key: ${key}`,
     ``,
+    `Download: https://usemasora.com/zevet`,
     `macOS: ${macUrl}`,
     `Windows: ${winUrl}`,
     ``,
@@ -46,8 +48,24 @@ export async function sendInviteEmail({ apiKey, from, to, teamName, key, macUrl,
   const html =
     `<p>${escapeHtml(team)} invited you to Zevet.</p>` +
     `<p>Key: <code style="font:16px/1 monospace;letter-spacing:1px">${escapeHtml(key)}</code></p>` +
-    `<p><a href="${macUrl}">macOS</a> &middot; <a href="${winUrl}">Windows</a></p>` +
+    `<p><a href="https://usemasora.com/zevet">Download</a> &middot; <a href="${macUrl}">macOS</a> &middot; <a href="${winUrl}">Windows</a></p>` +
     `<p>Install, open, enter the team and key.</p>`;
+  return { subject, text, html };
+}
+
+/**
+ * `apiKey`/`from` — RESEND_API_KEY / RESEND_FROM, read by the caller so this
+ * module has no env dependency of its own and is trivial to test.
+ * `to`         — the invitee's email.
+ * `teamName`/`key`/`macUrl`/`winUrl` — see `inviteMessage` above.
+ *
+ * Returns `{ ok: true, id }` or `{ ok: false, error, status? }`.
+ */
+export async function sendInviteEmail({ apiKey, from, to, teamName, key, macUrl, winUrl, fetchImpl } = {}) {
+  if (!apiKey) return { ok: false, error: "RESEND_API_KEY not set" };
+  if (!to) return { ok: false, error: "no recipient email" };
+
+  const { subject, text, html } = inviteMessage({ teamName, key, macUrl, winUrl });
 
   const f = typeof fetchImpl === "function" ? fetchImpl : fetch;
   const ac = new AbortController();

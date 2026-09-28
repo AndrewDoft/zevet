@@ -116,7 +116,7 @@ function PermissionSection() {
   );
 }
 
-function GithubConnectBox({ onDone }: { onDone: () => void }) {
+function GithubConnectBox({ team, onDone }: { team: string; onDone: () => void }) {
   const [state, setState] = useState<
     | { phase: "idle" }
     | { phase: "starting" }
@@ -132,7 +132,7 @@ function GithubConnectBox({ onDone }: { onDone: () => void }) {
       return;
     }
     setState({ phase: "starting" });
-    window.zevet?.githubStart?.().then((r) => {
+    window.zevet?.githubStart?.(null, team || undefined).then((r) => {
       if (!r || !r.ok) {
         setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
         return;
@@ -216,7 +216,7 @@ function TeamSignOutRow() {
   );
 }
 
-function GoogleConnectBox({ onDone }: { onDone: () => void }) {
+function GoogleConnectBox({ team, onDone }: { team: string; onDone: () => void }) {
   const [state, setState] = useState<
     | { phase: "idle" }
     | { phase: "starting" }
@@ -232,7 +232,7 @@ function GoogleConnectBox({ onDone }: { onDone: () => void }) {
       return;
     }
     setState({ phase: "starting" });
-    window.zevet?.googleStart?.().then((r) => {
+    window.zevet?.googleStart?.(null, team || undefined).then((r) => {
       if (!r || !r.ok) {
         setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
         return;
@@ -309,27 +309,143 @@ function GoogleDisconnectRow({ onDone }: { onDone: () => void }) {
   );
 }
 
-/** /auth/allow now mints and emails a per-invitee key itself (hub/mailer.mjs),
- *  so this generic line is a fallback for re-sharing the invite by hand — it
- *  carries no key, because the one that was minted is one-time and either
- *  already emailed or already shown once at invite time (see `inviteResult`
- *  below). */
-function inviteLine(team: string): string {
-  return `Join ${team || "the team"} on Zevet — https://usemasora.com/zevet`;
-}
-
-function copyInvite(team: string) {
-  navigator.clipboard?.writeText(inviteLine(team)).catch(() => {});
-}
-
 function copyText(t: string) {
   navigator.clipboard?.writeText(t).catch(() => {});
 }
 
-function mailtoInvite(email: string, team: string): string {
-  const subject = `Join ${team || "the team"} on Zevet`;
-  const body = `${team ? `${team}\n` : ""}https://usemasora.com/zevet`;
-  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+/** One pending invite's row. Resend and Copy are the SAME hub call
+ *  (/auth/allow — see server.mjs's own comment on why: it rotates the key
+ *  every time, so a stale key from an earlier email is never the one
+ *  copied) — Resend also tries to email it, Copy just needs the text back.
+ *  Andrew, verbatim: "the copy invite is different from what is actually
+ *  emailed, since the copy invite doesnt contain the key" — inviteText is
+ *  the hub's own mailer.mjs output, so this can never drift from it again. */
+function PendingRow({
+  login,
+  isOwnerRow,
+  pending,
+  canManage,
+  onRemoved,
+}: {
+  login: string;
+  isOwnerRow: boolean;
+  pending: boolean;
+  canManage: boolean;
+  onRemoved: () => void;
+}) {
+  const [state, setState] = useState<
+    | { phase: "idle" }
+    | { phase: "busy" }
+    | { phase: "sent" }
+    | { phase: "failed"; message: string }
+    | { phase: "needs-email" }
+    | { phase: "have-text"; text: string }
+  >({ phase: "idle" });
+  const [email, setEmail] = useState("");
+
+  function invite(loginOrPair: string) {
+    setState({ phase: "busy" });
+    fetch("/auth/allow", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ login: loginOrPair }),
+    })
+      .then((r) =>
+        r.json().then((b) => ({
+          status: r.status,
+          body: b as {
+            error?: string;
+            email_sent?: boolean;
+            email_error?: string;
+            recipient_needed?: boolean;
+            inviteText?: string;
+          },
+        })),
+      )
+      .then(
+        (r) => {
+          if (r.status !== 200) {
+            setState({ phase: "failed", message: r.body.error || "Could not resend." });
+          } else if (r.body.recipient_needed) {
+            setState({ phase: "needs-email" });
+          } else if (r.body.email_sent) {
+            setState({ phase: "sent" });
+          } else if (r.body.inviteText) {
+            // Sent failed but the text (and key) still minted — never claim
+            // "sent" for this; show the honest reason and let Copy stand in.
+            setState({ phase: "have-text", text: r.body.inviteText });
+          } else {
+            setState({ phase: "failed", message: r.body.email_error || "Could not send." });
+          }
+        },
+        () => setState({ phase: "failed", message: "Could not connect." }),
+      );
+  }
+
+  function remove() {
+    setState({ phase: "busy" });
+    fetch("/auth/revoke", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ login }),
+    }).then(
+      () => onRemoved(),
+      () => setState({ phase: "failed", message: "Could not connect." }),
+    );
+  }
+
+  const busy = state.phase === "busy";
+
+  return (
+    <div className="srow" key={login}>
+      <span className="k">{handle(login) + (isOwnerRow ? "  · owner" : pending ? "  · invited" : "")}</span>
+      <span className="v">
+        {state.phase === "sent" ? <span className="hint">Sent</span> : null}
+        {state.phase === "failed" ? <span style={{ color: "var(--bad)" }}>{state.message}</span> : null}
+        {state.phase === "have-text" ? (
+          <>
+            <span style={{ color: "var(--bad)" }}>Not sent</span>
+            <button className={MAKE_BTN} type="button" onClick={() => copyText(state.text)}>
+              Copy invite
+            </button>
+          </>
+        ) : null}
+        {state.phase === "needs-email" ? (
+          <form
+            className="sinvite"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (email.trim()) invite(`${login} ${email.trim()}`);
+            }}
+          >
+            <input
+              className="mono"
+              type="email"
+              placeholder="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              aria-label={`Email for ${login}`}
+            />
+            <button className={MAKE_BTN} type="submit">
+              Send
+            </button>
+          </form>
+        ) : null}
+        {canManage && pending && (state.phase === "idle" || state.phase === "busy") ? (
+          <button className={MAKE_BTN} type="button" disabled={busy} onClick={() => invite(login)}>
+            Resend
+          </button>
+        ) : null}
+        {canManage ? (
+          <button className={MAKE_BTN} type="button" disabled={busy} onClick={remove}>
+            Remove
+          </button>
+        ) : null}
+      </span>
+    </div>
+  );
 }
 
 function AccountSection() {
@@ -339,16 +455,25 @@ function AccountSection() {
   const invite = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [whoErr, setWhoErr] = useState("");
-  const [inviteResult, setInviteResult] = useState<{ login: string; emailSent: boolean; key?: string } | null>(null);
+  const [inviteResult, setInviteResult] = useState<{
+    login: string;
+    emailSent: boolean;
+    emailError?: string;
+    recipientNeeded?: boolean;
+    inviteText?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!who.state) refreshWhoami();
   }, [who.state, refreshWhoami]);
 
-  // The roster changes on someone else's machine (a join, a sign-in), so it
-  // is polled while Settings is open and on focus, not read once.
+  // The roster changes on someone else's machine (an invite, a resend, a
+  // sign-in, a removal) — board.ts's "people" SSE event (server.mjs's
+  // notifyPeopleChanged) is the primary path now, pushed the moment it
+  // happens rather than waited for. Focus and a slow poll stay as a safety
+  // net for a connection that dropped without Settings noticing.
   useEffect(() => {
-    const t = setInterval(() => refreshWhoami(), 5000);
+    const t = setInterval(() => refreshWhoami(), 30000);
     window.addEventListener("focus", refreshWhoami);
     return () => {
       clearInterval(t);
@@ -369,7 +494,14 @@ function AccountSection() {
       .then((r) =>
         r.json().then((b) => ({
           status: r.status,
-          body: b as { people?: Array<Record<string, unknown>>; error?: string; email_sent?: boolean; key?: string },
+          body: b as {
+            people?: Array<Record<string, unknown>>;
+            error?: string;
+            email_sent?: boolean;
+            email_error?: string;
+            recipient_needed?: boolean;
+            inviteText?: string;
+          },
         })),
       )
       .then(
@@ -383,7 +515,13 @@ function AccountSection() {
             // string, so this result is shown standalone rather than matched
             // back to a row.
             if (route === "/auth/allow") {
-              setInviteResult({ login, emailSent: Boolean(r.body.email_sent), key: r.body.key });
+              setInviteResult({
+                login,
+                emailSent: Boolean(r.body.email_sent),
+                emailError: r.body.email_error,
+                recipientNeeded: r.body.recipient_needed,
+                inviteText: r.body.inviteText,
+              });
             }
           } else {
             setWhoErr(r.body.error || ("Could not sign in."));
@@ -445,6 +583,12 @@ function AccountSection() {
     ? (whoState.people as Array<{ login: string; provider?: string; owner?: boolean; pending?: boolean }>)
     : [];
   const teamLabel = typeof whoState.teamName === "string" ? whoState.teamName : "";
+  // The SLUG (whoami's `team`), not teamLabel: passed through to
+  // githubStart/googleStart below so a reconnect from a NON-default team
+  // claims an identity on THAT team, not the hub's default one. Omitted
+  // (falsy), the desktop IPC layer's own default already lands on the
+  // default team, so an empty string here changes nothing for it.
+  const teamSlug = typeof whoState.team === "string" ? whoState.team : "";
   const googleDomain = typeof whoState.googleDomain === "string" ? whoState.googleDomain : "";
   const availableDomain = typeof whoState.availableDomain === "string" ? whoState.availableDomain : "";
   const githubSignIn = Boolean(whoState.githubSignIn);
@@ -477,42 +621,22 @@ function AccountSection() {
       out.push(<TeamSignOutRow key="team-signout" />);
     }
   } else if (shared) {
-    if (canConnect) out.push(<GithubConnectBox key="connect-github" onDone={() => refreshWhoami()} />);
-    if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" onDone={() => refreshWhoami()} />);
+    if (canConnect) out.push(<GithubConnectBox key="connect-github" team={teamSlug} onDone={() => refreshWhoami()} />);
+    if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" team={teamSlug} onDone={() => refreshWhoami()} />);
   }
 
   const list: ReactNode[] = [];
   if (people.length) {
     people.forEach((p) => {
-      // Delivery is a copy/paste and a mailto: the hub has no mailer. Only an
-      // email invite (provider "google" — see accounts.mjs's `allow`) still
-      // pending has anywhere to send: a pending GitHub invite is a login, not
-      // an address, and once someone has signed in there is nothing left to
-      // invite.
-      const emailInvite = p.pending && p.provider === "google" ? p.login : "";
       list.push(
-        <div className="srow" key={p.login}>
-          <span className="k">
-            {handle(p.login) + (p.owner ? "  \u00b7 owner" : p.pending ? "  \u00b7 invited" : "")}
-          </span>
-          <span className="v">
-            {emailInvite ? (
-              <>
-                <button className={MAKE_BTN} type="button" onClick={() => copyInvite(teamLabel)}>
-                  Copy invite
-                </button>
-                <a className={MAKE_BTN} href={mailtoInvite(emailInvite, teamLabel)}>
-                  Email
-                </a>
-              </>
-            ) : null}
-            {owner && !p.owner ? (
-              <button className={MAKE_BTN} type="button" disabled={busy} onClick={() => changePeople("/auth/revoke", p.login)}>
-                Remove
-              </button>
-            ) : null}
-          </span>
-        </div>,
+        <PendingRow
+          key={p.login}
+          login={p.login}
+          isOwnerRow={Boolean(p.owner)}
+          pending={Boolean(p.pending)}
+          canManage={owner && !p.owner}
+          onRemoved={() => refreshWhoami()}
+        />,
       );
     });
   }
@@ -565,12 +689,14 @@ function AccountSection() {
           <span className="k">{handle(inviteResult.login.split(/\s+/)[0])}</span>
           <span className="v">
             {inviteResult.emailSent ? (
-              "Emailed"
-            ) : inviteResult.key ? (
+              "Sent"
+            ) : inviteResult.recipientNeeded ? (
+              "No email found — type one and Resend from the row below"
+            ) : inviteResult.inviteText ? (
               <>
-                <code className="mono">{inviteResult.key}</code>
-                <button className={MAKE_BTN} type="button" onClick={() => copyText(inviteResult.key as string)}>
-                  Copy
+                {inviteResult.emailError ? <span style={{ color: "var(--bad)" }}>Not sent · </span> : null}
+                <button className={MAKE_BTN} type="button" onClick={() => copyText(inviteResult.inviteText as string)}>
+                  Copy invite
                 </button>
               </>
             ) : (

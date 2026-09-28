@@ -2730,6 +2730,14 @@ export function connect(): void {
   es.addEventListener("activity", (m: Event) => {
     useBoard.getState().pushEvent(JSON.parse((m as MessageEvent).data) as HubEvent);
   });
+  // The roster (settings.tsx's Account & Team section) changes on someone
+  // else's machine — an invite, a resend, a sign-in, a removal — and this is
+  // the push that replaces polling for it. The payload carries nothing
+  // (whoami is per-caller session state, not broadcastable); refetching it
+  // is the whole point of the event.
+  es.addEventListener("people", () => {
+    useBoard.getState().refreshWhoami();
+  });
   es.onopen = () => {
     useBoard.getState().setConn("live");
   };

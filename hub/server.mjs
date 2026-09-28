@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { Accounts, defaultAccountsFile, deriveAuthToken } from "./accounts.mjs";
 import { deviceStart, devicePoll, githubUser, githubPublicEmail } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
-import { sendInviteEmail } from "./mailer.mjs";
+import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -67,6 +67,13 @@ const GOOGLE_CLIENT_SECRET = process.env.ZEVET_GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT = process.env.ZEVET_GOOGLE_REDIRECT || "";
 const GOOGLE_DOMAIN = process.env.ZEVET_GOOGLE_DOMAIN || "";
 const GOOGLE_OWNER = process.env.ZEVET_GOOGLE_OWNER || "";
+
+/** See hub/test-fake-idp.mjs's own header: undefined (real `fetch`, always)
+ *  unless ZEVET_TEST_HOOKS=1, which no real deployment or install ever sets. */
+const TEST_IDP_FETCH =
+  process.env.ZEVET_TEST_HOOKS === "1"
+    ? (await import("./test-fake-idp.mjs")).makeFakeIdpFetch({ googleClientId: GOOGLE_CLIENT_ID })
+    : undefined;
 const GOOGLE_ON = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REDIRECT);
 
 /**
@@ -342,6 +349,25 @@ function makeBoard(file) {
 
   const board = { events, listeners, file, warned: false };
 
+  /** Every SSE push on this board's listeners goes through here — `record`
+   *  below for the activity log, and `notifyPeopleChanged` (module scope)
+   *  for the roster — so the "stalled listener" handling is one copy, not
+   *  two drifting ones. */
+  board.emit = function emit(name, data) {
+    const frame = `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const res of listeners) {
+      if (res.destroyed || res.writableEnded) {
+        listeners.delete(res);
+        continue;
+      }
+      if (!res.write(frame) && res.writableLength > 1_000_000) {
+        console.error("zevet: dropping a listener that stopped draining (>1MB buffered)");
+        listeners.delete(res);
+        res.destroy();
+      }
+    }
+  };
+
   board.record = function record(evt) {
     events.push(evt);
     while (events.length > MAX_EVENTS) events.shift();
@@ -358,18 +384,7 @@ function makeBoard(file) {
         console.error(`zevet: event log unwritable (${err.message}) — board will not survive a restart`);
       }
     }
-    const frame = `event: activity\ndata: ${JSON.stringify(evt)}\n\n`;
-    for (const res of listeners) {
-      if (res.destroyed || res.writableEnded) {
-        listeners.delete(res);
-        continue;
-      }
-      if (!res.write(frame) && res.writableLength > 1_000_000) {
-        console.error("zevet: dropping a listener that stopped draining (>1MB buffered)");
-        listeners.delete(res);
-        res.destroy();
-      }
-    }
+    board.emit("activity", evt);
   };
 
   /** Presence, collisions and recent files, derived fresh — nothing cached to drift. */
@@ -668,6 +683,18 @@ function sessionCookie(req, token) {
 /** One board per team — see `makeBoard` above. */
 const boards = new Map([[DEFAULT_TEAM, makeBoard(EVENTS_FILE)]]);
 
+/** Reactive rosters (P3, "the member/invite list updates live"): pushed on
+ *  the SAME SSE connection board.ts already opens for the activity feed —
+ *  no second channel, no poll to replace it with. The payload carries
+ *  nothing (whoami is session-scoped per caller, a board-wide broadcast is
+ *  not); board.ts's own `people` listener just re-fetches whoami on it. Any
+ *  team not yet booted (nobody has opened its board) has no listeners to
+ *  reach and this is a no-op. */
+function notifyPeopleChanged(team) {
+  const board = boards.get(team);
+  if (board) board.emit("people", {});
+}
+
 /* ── Teams: more than one independent account/board on one hub ──────────────
  *
  * Until now this hub WAS a team: one Accounts, one master secret, one board.
@@ -810,6 +837,20 @@ function findTeam(name) {
   if (teamAccounts.has(s)) return s;
   for (const [slug, acc] of teamAccounts) if (slug !== DEFAULT_TEAM && acc.name && slugify(acc.name) === s) return slug;
   return null;
+}
+
+/** BUG-2026-09-28: "no such team exists" for the DEFAULT team's own configured
+ *  name (e.g. resolving "Masoretes" then trying to join or sign in with it).
+ *  `body.team` at every call site below is a SLUG already handed back by
+ *  /team/resolve, /team/create or a prior sign-in — never a name a person
+ *  typed (that is /team/resolve's own job, at the one call site that still
+ *  calls findTeam directly). findTeam's `s === DEFAULT_TEAM` guard exists so
+ *  a raw TYPED name of literally "default" does not resolve unless it
+ *  matches the team's real configured name — correct for a typed name, and
+ *  wrong for a slug already-resolved TO "default", which /team/resolve
+ *  legitimately returns for the one team whose slug equals DEFAULT_TEAM. */
+function resolveTeamSlug(slug) {
+  return slug === DEFAULT_TEAM ? DEFAULT_TEAM : findTeam(slug);
 }
 
 function createTeam(name) {
@@ -1073,10 +1114,10 @@ const server = createServer(async (req, res) => {
     } catch {
       body = {};
     }
-    const team = body && body.team ? findTeam(body.team) : DEFAULT_TEAM;
+    const team = body && body.team ? resolveTeamSlug(body.team) : DEFAULT_TEAM;
     if (!team) return json(res, 404, { error: "no such team — create one first" });
 
-    const r = await deviceStart({ clientId: GITHUB_CLIENT_ID });
+    const r = await deviceStart({ clientId: GITHUB_CLIENT_ID, fetchImpl: TEST_IDP_FETCH });
     if (!r.ok) return json(res, 502, { error: r.error });
     return json(res, 200, {
       ok: true,
@@ -1101,18 +1142,18 @@ const server = createServer(async (req, res) => {
       return json(res, 400, { error: "expected JSON" });
     }
 
-    const team = body && body.team ? findTeam(body.team) : DEFAULT_TEAM;
+    const team = body && body.team ? resolveTeamSlug(body.team) : DEFAULT_TEAM;
     if (!team) return json(res, 404, { error: "no such team — create one first" });
     const acc = teamAccounts.get(team);
 
-    const polled = await devicePoll({ clientId: GITHUB_CLIENT_ID, deviceCode: body && body.deviceCode });
+    const polled = await devicePoll({ clientId: GITHUB_CLIENT_ID, deviceCode: body && body.deviceCode, fetchImpl: TEST_IDP_FETCH });
     if (!polled.ok) return json(res, 400, { error: polled.error });
     // Still waiting on the browser. A 200 with `pending` rather than a 202 or a
     // 4xx, because the desktop app polls this every few seconds for up to
     // fifteen minutes and a non-2xx would light up every error path it has.
     if (polled.pending) return json(res, 200, { ok: true, pending: true, slowDown: Boolean(polled.slowDown) });
 
-    const who = await githubUser({ accessToken: polled.accessToken });
+    const who = await githubUser({ accessToken: polled.accessToken, fetchImpl: TEST_IDP_FETCH });
     if (!who.ok) return json(res, 502, { error: who.error });
 
     // ZEVET_GITHUB_OWNER reserves the DEFAULT team for a named person; a team
@@ -1130,6 +1171,7 @@ const server = createServer(async (req, res) => {
 
     const sess = acc.signIn(who);
     console.log(`zevet: ${sess.owner ? "OWNER " : ""}sign-in by @${sess.login}${team === DEFAULT_TEAM ? "" : ` (team ${team})`}`);
+    notifyPeopleChanged(team);
 
     /* ⚠️ THIS RESPONSE CARRIES THE MASTER SECRET. It is the only route that
      * does, it is over TLS, and it is the whole of the tradeoff documented at
@@ -1168,7 +1210,7 @@ const server = createServer(async (req, res) => {
     } catch {
       body = {};
     }
-    const team = body && body.team ? findTeam(body.team) : DEFAULT_TEAM;
+    const team = body && body.team ? resolveTeamSlug(body.team) : DEFAULT_TEAM;
     if (!team) return json(res, 404, { error: "no such team — create one first" });
     // Any team's own domain door (see domainFor), or the default team's
     // env-wide fallback. A created team with no domain set is invite-only
@@ -1238,6 +1280,7 @@ const server = createServer(async (req, res) => {
       clientSecret: GOOGLE_CLIENT_SECRET,
       code: url.searchParams.get("code"),
       redirectUri: GOOGLE_REDIRECT,
+      fetchImpl: TEST_IDP_FETCH,
     });
     if (!ex.ok) {
       pair.error = ex.error;
@@ -1273,6 +1316,7 @@ const server = createServer(async (req, res) => {
     console.log(
       `zevet: ${sess.owner ? "OWNER " : ""}sign-in by ${sess.login}${may.byDomain ? ` (${domain} Workspace)` : ""}${pair.team && pair.team !== DEFAULT_TEAM ? ` (team ${pair.team})` : ""}`,
     );
+    notifyPeopleChanged(pair.team || DEFAULT_TEAM);
 
     /* ⚠️ THIS HOLDS THE MASTER SECRET, in memory, until the app claims it or it
      * expires. Same tradeoff as the GitHub finish route documents; the
@@ -1401,23 +1445,33 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/auth/revoke") {
       const r = acc.revoke(body && body.login);
       if (!r.ok) return json(res, 400, { error: r.error });
+      notifyPeopleChanged(auth.team);
       return json(res, 200, { ok: true, people: acc.list().map(person) });
     }
 
     // /auth/allow: mint (or rotate) the invite key, then try to email it.
     // Never a crash either way — see mailer.mjs's own header — so this always
-    // answers 200 once the allowlist change itself is valid.
+    // answers 200 once the allowlist change itself is valid. Also doubles as
+    // "Resend" (settings.tsx): calling it again on a still-pending login is
+    // exactly how a stalled or failed invite is retried — acc.allow rotates
+    // the key each time (accounts.mjs), so a resend and the row's own "Copy"
+    // are the same call, never a stale key reused after the real one shipped.
     const { login: typedLogin, email: typedEmail } = parseInvite(body && body.login);
     const r = acc.allow(typedLogin);
     if (!r.ok) return json(res, 400, { error: r.error });
 
     let emailSent = false;
+    let emailError = "";
+    let recipient = "";
+    let inviteText = "";
     if (r.key) {
-      let recipient = typedEmail || (typedLogin.includes("@") ? typedLogin : "");
+      recipient = typedEmail || (typedLogin.includes("@") ? typedLogin : "");
       if (!recipient) {
-        const pub = await githubPublicEmail(typedLogin);
+        const pub = await githubPublicEmail(typedLogin, { fetchImpl: TEST_IDP_FETCH });
         if (pub.ok && pub.email) recipient = pub.email;
       }
+      const msg = inviteMessage({ teamName: teamName(auth.team, acc), key: r.key, macUrl: DOWNLOAD_MAC, winUrl: DOWNLOAD_WIN });
+      inviteText = msg.text;
       if (recipient) {
         const sent = await sendInviteEmail({
           apiKey: RESEND_API_KEY,
@@ -1429,17 +1483,30 @@ const server = createServer(async (req, res) => {
           winUrl: DOWNLOAD_WIN,
         });
         emailSent = sent.ok;
+        if (!sent.ok) emailError = sent.error;
       }
     }
+    notifyPeopleChanged(auth.team);
 
     return json(res, 200, {
       ok: true,
       people: acc.list().map(person),
       email_sent: emailSent,
-      // The key is handed back to the INVITER only when nobody else got it —
-      // otherwise it is now live in an inbox and printing it again here is
-      // one more place it could leak from.
-      ...(r.key && !emailSent ? { key: r.key } : {}),
+      // Honest failure, never folded into `email_sent`: a Resend outage or an
+      // unverified domain must be VISIBLE to the inviter, not silently eaten —
+      // the one thing settings.tsx must never do with this field is show it
+      // as sent.
+      ...(recipient && !emailSent ? { email_error: emailError || "could not send" } : {}),
+      // No address could be found at all (a GitHub login with no public
+      // profile email, and no email typed) — settings.tsx asks for one inline
+      // rather than silently falling back to a bare key with no way to send.
+      ...(r.key && !recipient ? { recipient_needed: true } : {}),
+      // Owner-only response: the SAME text `sendInviteEmail` just sent (or
+      // tried to), including the key, so "Copy invite" is never out of sync
+      // with what was actually emailed. Handed back regardless of email_sent
+      // — the owner who just clicked Invite/Resend is exactly who is allowed
+      // to see the key they minted.
+      ...(r.key ? { key: r.key, inviteText } : {}),
     });
   }
 
@@ -1592,7 +1659,7 @@ const server = createServer(async (req, res) => {
     } catch {
       return json(res, 400, { error: "expected JSON" });
     }
-    const team = body && body.team ? findTeam(body.team) : null;
+    const team = body && body.team ? resolveTeamSlug(body.team) : null;
     if (!team) {
       authFailed(req, url);
       return json(res, 404, { error: "no such team" });
@@ -1604,6 +1671,7 @@ const server = createServer(async (req, res) => {
       return json(res, 400, { error: "bad key" });
     }
     console.log(`zevet: key redeemed by @${r.login}${team === DEFAULT_TEAM ? "" : ` (team ${team})`}`);
+    notifyPeopleChanged(team);
     return json(res, 200, { ok: true, token: r.token, secret: acc.secret, login: r.login, owner: r.owner, team });
   }
 

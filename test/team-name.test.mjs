@@ -84,4 +84,34 @@ describe("team names", () => {
     assert.equal(dup.status, 409);
   });
 
+  // BUG-2026-09-28: /team/resolve correctly answered {"exists":true,"team":"default"}
+  // for the default team's own configured name, but every route a desktop client
+  // calls NEXT with that resolved slug (team/join, auth/github/start,
+  // auth/google/start) rejected it with "no such team" — findTeam("default")
+  // returns null by design (its own DEFAULT_TEAM guard), and nothing translated
+  // the already-resolved slug back before handing it to findTeam a second time.
+  test("resolving the default team's own name and then joining/signing in with the resolved slug does not say 'no such team'", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "zevet-team-name-"));
+    const hub = await startHub({ ZEVET_GITHUB_CLIENT_ID: "test-client-id", ZEVET_ACCOUNTS: path.join(dir, "accounts.json"), ZEVET_TEAM_NAME: "Masoretes" });
+    hubs.push(hub);
+
+    const resolved = await (await fetch(`${hub.base}/team/resolve?name=Masoretes`)).json();
+    assert.deepEqual(resolved, { exists: true, team: "default" });
+
+    // Same slug /team/resolve just handed back, fed straight into the very
+    // next call a real join or sign-in makes — this is the exact round trip
+    // setup.html's teamFor() does. /team/join is used rather than
+    // auth/github/start because it never leaves this process (acc.redeem is
+    // local), so the assertion is only about resolveTeamSlug, not GitHub.
+    const joined = await (
+      await fetch(`${hub.base}/team/join`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ team: resolved.team, key: "ZZZZ-ZZZZ" }),
+      })
+    ).json();
+    // A deliberately wrong key still reaches "bad key" (acc.redeem), not the
+    // 404 "no such team" this bug produced before the fix could even ask.
+    assert.equal(joined.error, "bad key");
+  });
 });

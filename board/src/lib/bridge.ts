@@ -345,14 +345,14 @@ export interface ZevetConfig {
 
 export interface ZevetBridge {
   config: () => Promise<ZevetConfig | null | undefined>;
-  githubStart: (hub?: string) => Promise<{ ok?: boolean; error?: string; userCode?: string }>;
+  githubStart: (hub?: string | null, team?: string) => Promise<{ ok?: boolean; error?: string; userCode?: string }>;
   githubWait: () => Promise<{ ok?: boolean; cancelled?: boolean; error?: string; login?: string }>;
   githubCancel: () => void;
   githubLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
   /* The same three calls for Google. The flow differs — the hub owns the
      callback, so `googleStart` hands back a URL to open rather than a code to
      type — but the app's side of it is the same start / wait / cancel. */
-  googleStart?: (hub?: string) => Promise<{ ok?: boolean; error?: string; url?: string; expiresIn?: number; domain?: string }>;
+  googleStart?: (hub?: string | null, team?: string) => Promise<{ ok?: boolean; error?: string; url?: string; expiresIn?: number; domain?: string }>;
   googleWait?: () => Promise<{ ok?: boolean; cancelled?: boolean; error?: string; login?: string; owner?: boolean }>;
   googleCancel?: () => void;
   googleLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;

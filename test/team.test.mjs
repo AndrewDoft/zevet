@@ -416,4 +416,46 @@ describe("/auth/allow — invite keys and the email response shape", () => {
     });
     assert.equal(oldKeyStillWorks.status, 400, "the rotated-out key must be dead");
   });
+
+  // Andrew, verbatim: "the copy invite is different from what is actually
+  // emailed, since the copy invite doesnt contain the key." Fixed by
+  // generating both from hub/mailer.mjs's inviteMessage() and handing the
+  // SAME text back as `inviteText` — this pins that contract at the HTTP
+  // layer (mailer.test.mjs pins inviteMessage itself).
+  test("inviteText is the same content Resend would have been sent, key included, and settings.tsx's Copy uses it verbatim", async () => {
+    const { hub, ownerToken } = await seededHub();
+    const body = await (await allow(hub.base, ownerToken, "kai@example.com")).json();
+    assert.equal(typeof body.inviteText, "string");
+    assert.match(body.inviteText, new RegExp(body.key));
+    assert.match(body.inviteText, /https:\/\/usemasora\.com\/zevet/);
+    assert.match(body.inviteText, /Zevet/);
+  });
+
+  // Requirement 3: "show send state honestly ... a failed send must be
+  // visible, never shown as sent." No RESEND_API_KEY means every send in
+  // this describe block fails, and that failure must be a distinct,
+  // honest field — not silently folded into `email_sent: false` with
+  // nothing to say why.
+  test("a failed send is reported as email_error, never merely absent", async () => {
+    const { hub, ownerToken } = await seededHub();
+    const body = await (await allow(hub.base, ownerToken, "kai@example.com")).json();
+    assert.equal(body.email_sent, false);
+    assert.match(body.email_error, /RESEND_API_KEY/);
+  });
+
+  // Requirement 3: "if there is none, the UI asks for an email inline."
+  // A bare GitHub-style login with no public profile email (and none typed)
+  // has nowhere to send — this is the signal settings.tsx needs to offer the
+  // inline field instead of silently doing nothing. One real, deliberate
+  // call to GitHub's public (unauthenticated) users API, same as
+  // github-auth.mjs's own doc comment for githubPublicEmail — a login this
+  // unlikely to exist answers 404, which reads the same as "exists, no
+  // public email" for this purpose (recipient stays undeterminable either way).
+  test("an invite with no derivable recipient is flagged recipient_needed", async () => {
+    const { hub, ownerToken } = await seededHub();
+    const body = await (await allow(hub.base, ownerToken, "zevet-test-no-such-github-login-9f8e7d")).json();
+    assert.equal(body.recipient_needed, true);
+    assert.equal(body.email_sent, false);
+    assert.equal(typeof body.key, "string");
+  });
 });
