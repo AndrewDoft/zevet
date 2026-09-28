@@ -39,6 +39,8 @@ export function Strip() {
   const { live, machine } = useBoard(selectStrip);
   const conn = useBoard((s) => s.conn);
   const localError = useBoard((s) => s.localError);
+  const treeHidden = useBoard((s) => s.treeHidden);
+  const setTreeHidden = useBoard((s) => s.setTreeHidden);
   /* ⚠️ THREE LINES, NOT ONE SEGMENT PER LINE. `.strip` is a column, so every
      segment used to take a row of its own and the rail's corner was four
      stacked words. The grouping is by what a glance is actually asking:
@@ -60,6 +62,19 @@ export function Strip() {
      Desktop only: with no bridge there is no folder to open, and
      WorkspacesPane still renders the browser repo filter in the rail. */
   if (bridge.local) where.push(<Seg key="repo-pick"><WorkspacePicker /></Seg>);
+
+  /* Beside the repo picker, and only while the tree is actually shut:
+     dragging it closed (or Ctrl/Cmd+B) leaves no control on screen that
+     opens it again otherwise. Label only, zevet style — no caption under it. */
+  if (bridge.local && treeHidden) {
+    where.push(
+      <Seg key="open-tree">
+        <button type="button" className="follow" onClick={() => setTreeHidden(false)}>
+          Open tree
+        </button>
+      </Seg>,
+    );
+  }
 
   if (live.model) rest.push(<Seg key="model"><Sp cls="dim" text={live.model} /></Seg>);
 

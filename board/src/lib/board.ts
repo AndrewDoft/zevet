@@ -317,6 +317,7 @@ interface BoardState {
   setFollowMode: (m: "mine" | "all" | "off") => void;
   setView: (v: ViewMode) => void;
   toggleTree: () => void;
+  setTreeHidden: (hidden: boolean) => void;
   setTheme: (t: Theme) => void;
   clearSelectedPath: () => void;
 
@@ -630,10 +631,10 @@ export const useBoard = create<BoardState>((set, get) => ({
   /* Hidden, not unmounted: the tree keeps its open folders and its scroll
      position (it is only `visibility: hidden` at zero width, see masora.css),
      so unfolding it puts it back exactly as it was. */
-  toggleTree: () => {
-    const next = !get().treeHidden;
-    setPref("treeHidden", next ? "1" : "0");
-    set({ treeHidden: next });
+  toggleTree: () => get().setTreeHidden(!get().treeHidden),
+  setTreeHidden: (hidden) => {
+    setPref("treeHidden", hidden ? "1" : "0");
+    set({ treeHidden: hidden });
     requestMeasureEditor();
   },
   setView: (v) => {
@@ -3138,8 +3139,20 @@ export function buildSplits(): Array<HTMLElement> {
       d.dataset.on = "true";
       const move = (me: PointerEvent) => {
         const lim = PANE_LIMITS[pane];
-        const w = clampPaneWidth(paneEdgeWidth(pane, me.clientX), lim[0], lim[1]);
-        useBoard.getState().setPanes({ ...useBoard.getState().panes, [pane]: w });
+        const raw = paneEdgeWidth(pane, me.clientX);
+        /* Only the tree collapses by drag — the rail has nothing that reads
+           "hidden" for it to snap to. Below half its own floor, let go
+           entirely rather than pin it at the floor: `setTreeHidden` is the
+           same flag the keyboard shortcut flips, `--tree: 0` in masora.css
+           already does the visual collapse, and `panes.tree` is left exactly
+           where it was — that's the "last open width" §3 restores to. */
+        if (pane === "tree" && raw < lim[0] / 2) {
+          if (!useBoard.getState().treeHidden) useBoard.getState().setTreeHidden(true);
+        } else {
+          if (pane === "tree" && useBoard.getState().treeHidden) useBoard.getState().setTreeHidden(false);
+          const w = clampPaneWidth(raw, lim[0], lim[1]);
+          useBoard.getState().setPanes({ ...useBoard.getState().panes, [pane]: w });
+        }
         applyPanes();
         positionSplits();
       };

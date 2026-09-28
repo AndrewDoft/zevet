@@ -1,4 +1,4 @@
-import { PanelLeftClose, PanelLeftOpen, SettingsIcon } from "lucide-react";
+import { SettingsIcon } from "lucide-react";
 import { useEffect } from "react";
 import { PeoplePane } from "./components/people";
 import { WorkspacesPane } from "./components/workspaces";
@@ -28,28 +28,6 @@ import {
 import { bridge } from "./lib/bridge";
 import { ChatMain, ChatRail, ModeSwitch } from "./components/chatmode";
 import { useChat, wireChat } from "./lib/chat";
-
-/** Folds the file tree away, leaving the rail. Ctrl/Cmd+B, like an editor's
- *  sidebar. */
-function TreeToggle() {
-  const hidden = useBoard((s) => s.treeHidden);
-  const toggleTree = useBoard((s) => s.toggleTree);
-  const label = hidden ? "Show files" : "Hide files";
-  const Icon = hidden ? PanelLeftOpen : PanelLeftClose;
-  return (
-    <button
-      type="button"
-      className="rail-new tree-toggle"
-      id="treeToggle"
-      aria-label={label}
-      aria-pressed={hidden}
-      title={label + " (" + (navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl+") + "B)"}
-      onClick={toggleTree}
-    >
-      <Icon className="size-3.5" aria-hidden="true" />
-    </button>
-  );
-}
 
 function RailFoot() {
   const theme = useBoard(selectTheme);
@@ -210,7 +188,16 @@ function App() {
               </button>
             ) : null}
             <FollowControl blanked={blanked} />
-            <TreeToggle />
+            {/* ⚠️ NO FOLD BUTTON HERE ANY MORE. It was `#treeToggle`, and at a
+                narrow rail width (180px, see masora.css's max-width: 1100px
+                rule) this row is wider than its column — the button rendered
+                behind the treecol next door, which painted over it in DOM
+                order, so it was there but unclickable. The tree still folds
+                the same way (`treeHidden`, `Ctrl+B`/`Cmd+B` below): now by
+                dragging its edge shut (see buildSplits in lib/board.ts) or the
+                "Open tree" button beside the repo picker in Strip when it is
+                closed. One working way to close it and one to reopen it,
+                instead of a second control drawn on top of the first. */}
           </div>
           <div className="pane-body" id="people">
             <PeoplePane />
