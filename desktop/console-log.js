@@ -57,7 +57,10 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
     record(id, evt) {
       const out = { ...evt, id, seq: ++seq };
       const e = entries.get(id);
-      if (e) {
+      // Partial-message deltas (claude --include-partial-messages) are live-only:
+      // hundreds per answer, and the complete block that follows is what a reload needs.
+      const partial = evt.type === "agent" && evt.payload && evt.payload.type === "stream_event";
+      if (e && !partial) {
         e.events.push(out);
         if (evt.type === "exit") e.running = false;
         if (e.events.length > cap) {

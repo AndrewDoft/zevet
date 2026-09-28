@@ -9,6 +9,7 @@ import {
   plainError,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
+import { draftAfter } from "./chat-stream.mjs";
 import { classifyEnding, noteModelLimit as noteLimitFromStatus } from "./model-limits.mjs";
 import { learnModels } from "./models.mjs";
 import { usageOf, type UsageReading } from "./usage.mjs";
@@ -244,6 +245,10 @@ interface BoardState {
    *  across model switches; the selector only shows it for a model that
    *  declares support, so it is carried even while it does not apply. */
   launchEffort: string;
+  /** Next start only: `claude --continue`, the latest session in this folder. */
+  launchContinue: boolean;
+  /** Next starts: extra folders claude may touch (`--add-dir`), one path per line. */
+  launchAddDirs: string;
   launchMode: LaunchMode;
   /** The posture this user chose as their default, or "" if they never did.
    *  Read from ~/.zevet/config.json at boot; see desktop/main.js storedMode. */
@@ -325,6 +330,8 @@ interface BoardState {
   setDefaultMode: (m: string) => Promise<{ ok: boolean; error?: string }>;
   setLaunchModel: (m: string) => void;
   setLaunchEffort: (e: string) => void;
+  setLaunchContinue: (on: boolean) => void;
+  setLaunchAddDirs: (dirs: string) => void;
   setLaunchAgent: (a: string) => void;
   adoptDefaultAgent: () => void;
   /** Start an agent. `launch` is for a FORK: the session to branch from, the
@@ -512,6 +519,8 @@ export const useBoard = create<BoardState>((set, get) => ({
   // the next agent — restored here so a reload doesn't reset them to nothing.
   launchModel: pref("launchModel", ""),
   launchEffort: "",
+  launchContinue: false,
+  launchAddDirs: pref("launchAddDirs", ""),
   launchMode: (() => {
     const saved = pref("launchMode", "auto");
     return (MODES.some((m) => m.id === saved) ? saved : "auto") as LaunchMode;
@@ -671,6 +680,11 @@ export const useBoard = create<BoardState>((set, get) => ({
     set({ launchModel: m });
   },
   setLaunchEffort: (e) => set({ launchEffort: e }),
+  setLaunchContinue: (on) => set({ launchContinue: on }),
+  setLaunchAddDirs: (dirs) => {
+    setPref("launchAddDirs", dirs);
+    set({ launchAddDirs: dirs });
+  },
   setLaunchAgent: (a) => set({ launchAgent: a }),
 
   startAgent: (name, launch) => {
@@ -713,9 +727,18 @@ export const useBoard = create<BoardState>((set, get) => ({
       launching: false,
       ...showConversation(),
     }));
+    // claude-only flags; desktop/agent-console.js extrasFrom re-validates them.
+    const claude = name === "claude";
+    const st = get();
+    const addDirs = st.launchAddDirs.split(/\r?\n/).map((d) => d.trim()).filter(Boolean);
+    const continueLatest = claude && st.launchContinue && !(launch && launch.forkFrom);
+    if (continueLatest) set({ launchContinue: false });
     br.startAgent(name, root, {
       model,
       mode,
+      ...(claude && st.launchEffort ? { effort: st.launchEffort } : {}),
+      ...(claude && addDirs.length ? { addDirs } : {}),
+      ...(continueLatest ? { continueLatest: true } : {}),
       ...(launch && launch.forkFrom ? { forkFrom: launch.forkFrom } : {}),
       // C2/C4: when a first prompt is already known (a fork's queued
       // question), it goes to the main process too, so it can ask Masora for
@@ -1760,6 +1783,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
     c.exitCode = evt.code ?? null;
     pushConsoleLine(c, "meta", `agent exited (${evt.code === null ? "signal " + evt.signal : "code " + evt.code})`);
     c.transcript = closeTranscript(c.transcript, { code: evt.code ?? null, stopped: Boolean(evt.stopped) });
+    c.draft = "";
   } else if (evt.type === "stderr") {
     /* ⚠️ STDERR IS NOT THE AGENT SPEAKING, and it used to be rendered as if it
        were. This called `appendRaw`, which appends to the OPEN ASSISTANT
@@ -1808,6 +1832,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
       pushConsoleLine(c, k as ConsoleLine["kind"], text);
     }
     c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: c.agent, localRoot, model: c.model });
+    c.draft = draftAfter(c.draft ?? "", evt.payload);
     noteModelLimit(c, evt.payload);
   } else if (evt.type === "stdout-line") {
     // Update banners and notices, not the conversation: the raw view only.
@@ -3020,12 +3045,12 @@ export async function answerAsk(id: string, picked: string[]): Promise<void> {
   }
 }
 
-export async function answerPermit(id: string, allow: boolean, reason?: string): Promise<void> {
+export async function answerPermit(id: string, allow: boolean, reason?: string, always?: boolean): Promise<void> {
   const br = bridge.local;
   useBoard.setState((g) => ({ permits: g.permits.filter((p) => p.id !== id) }));
   if (!br || typeof br.permitAnswer !== "function") return;
   try {
-    await br.permitAnswer(id, allow, reason);
+    await br.permitAnswer(id, allow, reason, always);
   } catch {
     // The agent's own timeout denies it. Failing to deliver a "yes" costs an
     // action; failing to deliver a "no" costs nothing, because no is default.

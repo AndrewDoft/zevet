@@ -116,6 +116,12 @@ export interface PermitRequest {
   args?: Record<string, unknown>;
   /** claude's own description of what it wants, when it sends one. */
   detail?: string;
+  /** "claude" when this is Claude's own tool (Bash, Edit…) asking through
+   *  --permission-prompt-tool; absent for zevet's computer-use tools. */
+  via?: string;
+  /** Whether "always allow this" would be remembered for the request (a
+   *  command too long to match exactly is not). */
+  canAlways?: boolean;
 }
 
 export interface AgentSettings {
@@ -207,7 +213,7 @@ export interface LocalBridge {
   /* C1's per-repo opt-in, keyed by resolved folder path; default none. */
   masoraRepos?: () => Promise<Record<string, boolean>>;
   masoraRepoToggle?: (root: string, on: boolean) => Promise<{ ok: boolean; error?: string; repos?: Record<string, boolean> }>;
-  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string }) => Promise<StartAgentResult>;
+  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean }) => Promise<StartAgentResult>;
   /** A follow-up to a console whose process has exited. All three CLIs can
    *  resume a session by id (measured 2026-09-21); codex and opencode need a
    *  new process to do it, which is what this is. Optional: an older desktop
@@ -248,7 +254,7 @@ export interface LocalBridge {
   /** An agent is asking permission and is waiting on the answer. Optional: a
    *  build without computer use never sends one. */
   onPermitRequest?: (cb: (req: PermitRequest) => void) => () => void;
-  permitAnswer?: (id: string, allow: boolean, reason?: string) => Promise<{ ok: boolean; error?: string }>;
+  permitAnswer?: (id: string, allow: boolean, reason?: string, always?: boolean) => Promise<{ ok: boolean; error?: string }>;
   stats: (root: string, paths: string[]) => Promise<StatsResult>;
   /** The last few commits, newest first. Read only — there is no restore. */
   commits?: (root: string, limit?: number) => Promise<CommitsResult>;

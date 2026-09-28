@@ -41,3 +41,5 @@ export function sendUser(thread: ChatThread, text: string, model?: string | null
 export function chatEvent(thread: ChatThread, evt: unknown): ChatThread;
 export function failTurn(thread: ChatThread, error: string): ChatThread;
 export function visibleMessages(thread: ChatThread): ThreadMessageLike[];
+export function draftAfter(draft: string, payload: unknown): string;
+export function overlayDraft(transcript: TranscriptState, draft: string): ThreadMessageLike[];

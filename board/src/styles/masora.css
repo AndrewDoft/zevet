@@ -1025,6 +1025,13 @@
     border-left: 2px solid transparent;
   }
   .session-row:hover { background: var(--raise-soft); }
+  .session-row-continue {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    padding: 0 12px 6px 30px; font-size: 10.5px; color: var(--cerulean);
+    background: none; border: 0; border-bottom: 1px solid var(--line);
+  }
+  .session-row-continue:hover { text-decoration: underline; }
+  .session-row-line > .session-row:has(+ .session-row-continue) { border-bottom: 0; }
   .session-row[data-active="true"] {
     background: var(--raise); border-left-color: var(--cerulean);
   }

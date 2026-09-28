@@ -102,6 +102,10 @@ export interface ConsoleEntry {
   usage: ConsoleUsage;
   startedAt: number;
   exitCode: number | null;
+  /** Text streamed so far for the block claude is still writing (claude only,
+   *  `--include-partial-messages`). View-only: the complete block replaces it.
+   *  See chat-stream.mjs `draftAfter`. */
+  draft?: string;
   /** The provider's own rate-limit windows, when the agent reports them.
    *  Empty for an agent that does not — see `limitsOf` in lib/board.ts. */
   limits: RateWindow[];

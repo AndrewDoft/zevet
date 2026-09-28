@@ -41,10 +41,12 @@ function announced(env) {
 describe("which tools an agent is given", () => {
   test("every agent may ask; only computer-use runs get the mouse", () => {
     const plain = announced({ ZEVET_MCP_COMPUTER: "" });
-    assert.deepEqual(plain, ["ask_user"], "a plain run must offer asking and nothing else");
+    // permission_prompt is not a capability: it is how a headless claude asks the person
+    // about ITS OWN tools (--permission-prompt-tool) and must exist in every run.
+    assert.deepEqual(plain, ["ask_user", "permission_prompt"], "a plain run offers asking and the permission gate, nothing else");
     const full = announced({ ZEVET_MCP_COMPUTER: "1" });
     assert.ok(full.includes("ask_user"), "asking must survive the capability being on");
-    for (const t of ["screenshot", "click", "type_text", "press_key", "permission_prompt"]) {
+    for (const t of ["screenshot", "click", "type_text", "press_key"]) {
       assert.ok(full.includes(t), `${t} is missing when computer use is on`);
       assert.ok(!plain.includes(t), `${t} leaked into a run without computer use`);
     }
