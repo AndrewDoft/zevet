@@ -81,11 +81,23 @@
 ;
 ; multiUser.nsh (this template's own file, two macros up) already has to
 ; tell an explicit /D= apart from its own registry-derived default for
-; exactly this reason (electron-builder#1551) and does it with
-; ${StdUtils.GetParameter} $R0 "D" "" -- the same plugin, the same call, is
-; used here to ask "was /D= given" BEFORE deciding $INSTDIR needs fixing.
-; This is not ${StrContains} (see below): StdUtils is already loaded and
-; called from customInit's own sibling macro at this same compile stage.
+; exactly this reason (electron-builder#1551), with
+; ${StdUtils.GetParameter} $R0 "D" "". Calling that SAME macro from inside
+; customInit reproduced the 0xC0000005 crash above one line down from the
+; header's own warning -- confirming "something in Call/Push/Pop from
+; inside .onInit at this exact point" is not specific to ${StrContains},
+; it is any plugin Call issued from customInit's own insertion point.
+; multiUser.nsh's call survives because it runs from a DIFFERENT call site
+; (inside initMultiUser, at the same depth electron-builder's own macros
+; already use it from) -- so the fix does the plugin Call from `preInit`
+; instead, which electron-builder's installer.nsi calls before
+; initMultiUser even starts (same top-level depth as multiUser.nsh's own
+; macros), and stashes the result in $R8 for customInit to just READ --
+; a LogicLib string compare, a native instruction, not a Call.
+!macro preInit
+  ${StdUtils.GetParameter} $R8 "D" ""
+!macroend
+
 !macro customInit
   ; ZEVET_CUSTOMINIT_LOG: plain FileWrite (no plugin) appending every
   ; decision this macro makes to %TEMP%\zevet-install-debug.log, so a silent
@@ -93,7 +105,6 @@
   ; $installMode and the /D= override actually were. ponytail: delete once
   ; the fresh-/S and explicit-/D= CI gates below have been green for a few
   ; releases and nobody has needed to read this file.
-  ${StdUtils.GetParameter} $R8 "D" ""
   FileOpen $R9 "$TEMP\zevet-install-debug.log" a
   FileWrite $R9 "customInit: installMode=$installMode /D=$R8 INSTDIR(before)=$INSTDIR$\r$\n"
   FileClose $R9
