@@ -14,7 +14,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSyn
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Accounts, defaultAccountsFile, deriveAuthToken } from "./accounts.mjs";
+import { Accounts, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
 import { deviceStart, devicePoll, githubUser, githubPublicEmail } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
@@ -1075,10 +1075,50 @@ function parseInvite(raw) {
   return { login: (parts[0] || "").replace(/^@/, ""), email: "" };
 }
 
-/** One row of the People list. Shared by `/auth/whoami` and `/auth/allow` so
- *  the two cannot drift into describing the same person differently. */
-function person(a) {
-  return { login: a.display || a.login, provider: a.provider, owner: a.owner, pending: !a.id };
+/**
+ * One row of the People list. Shared by `/auth/whoami`, `/auth/allow` and
+ * `/auth/revoke` so the three cannot drift into describing the same person
+ * differently.
+ *
+ * `state` is the one compact word the row shows (settings.tsx's PendingRow);
+ * every timestamp behind it is exposed too, for its tooltip only — Zevet's
+ * copy style is one word on the row, the "why" in a title attribute, never a
+ * paragraph next to the name. Most-advanced first:
+ *
+ *   installed — accepted, AND the hub has recorded at least one authenticated
+ *               request from their session since (`acc.lastSeen`) — the
+ *               desktop actually phoned home, not merely completed OAuth
+ *   accepted  — signed in / redeemed the key, but no session on record (rare:
+ *               e.g. a 90-day-idle session already swept by `session()`)
+ *   sent      — still pending, the last invite-email attempt succeeded
+ *   failed    — still pending, the last invite-email attempt did not
+ *   invited   — still pending, no send attempted or known yet
+ *
+ * Deliberately not "delivered"/"bounced": that would claim the mail
+ * PROVIDER's word on the message, which this hub only learns if a Resend
+ * webhook is wired up to report it — it is not, today, so "sent"/"failed"
+ * says only what this hub actually knows (its own send attempt succeeded or
+ * didn't), never more.
+ */
+function person(a, acc) {
+  const pending = !a.id;
+  const lastSeen = acc ? acc.lastSeen(a.login) : 0;
+  let state = "invited";
+  if (!pending) state = lastSeen ? "installed" : "accepted";
+  else if (a.emailSent === true) state = "sent";
+  else if (a.emailSent === false) state = "failed";
+  return {
+    login: a.display || a.login,
+    provider: a.provider,
+    owner: a.owner,
+    pending,
+    state,
+    invitedAt: a.added || null,
+    emailSentAt: a.emailSentAt || null,
+    emailError: a.emailError || null,
+    acceptedAt: a.acceptedAt || null,
+    lastSeen: lastSeen || null,
+  };
 }
 
 function escapeHtml(s) {
@@ -1407,7 +1447,7 @@ async function handleRequest(req, res) {
       // The one field a shared-token caller (no personal session) does not
       // get: every OTHER person's name and status is exactly the leak this
       // route otherwise would not have — see teamFromSession's comment.
-      people: sess ? acc.list().map(person) : [],
+      people: sess ? acc.list().map((a) => person(a, acc)) : [],
     });
   }
 
@@ -1461,7 +1501,7 @@ async function handleRequest(req, res) {
       const r = acc.revoke(body && body.login);
       if (!r.ok) return json(res, 400, { error: r.error });
       notifyPeopleChanged(auth.team);
-      return json(res, 200, { ok: true, people: acc.list().map(person) });
+      return json(res, 200, { ok: true, people: acc.list().map((a) => person(a, acc)) });
     }
 
     // /auth/allow: mint (or rotate) the invite key, then try to email it.
@@ -1472,19 +1512,28 @@ async function handleRequest(req, res) {
     // the key each time (accounts.mjs), so a resend and the row's own "Copy"
     // are the same call, never a stale key reused after the real one shipped.
     const { login: typedLogin, email: typedEmail } = parseInvite(body && body.login);
-    const r = acc.allow(typedLogin);
+
+    // Recipient resolution happens BEFORE acc.allow, not after: acc.allow's
+    // own dedupe needs the resolved address to recognise "michael" typed
+    // today and "michael@x.com" typed next week as the one pending invite,
+    // not two (see accounts.mjs's own comment on `allow`). `invitableLogin`
+    // is the same validation `allow` runs, called here only so an invalid
+    // login is never worth a live GitHub lookup — exactly what the old
+    // ordering (validate via `allow`, THEN resolve) already guaranteed.
+    const valid = invitableLogin(typedLogin);
+    let recipient = typedEmail || (typedLogin.includes("@") ? typedLogin : "");
+    if (!recipient && valid.ok && valid.provider === "github") {
+      const pub = await githubPublicEmail(typedLogin, { fetchImpl: TEST_IDP_FETCH });
+      if (pub.ok && pub.email) recipient = pub.email;
+    }
+
+    const r = acc.allow(typedLogin, { email: recipient });
     if (!r.ok) return json(res, 400, { error: r.error });
 
     let emailSent = false;
     let emailError = "";
-    let recipient = "";
     let inviteText = "";
     if (r.key) {
-      recipient = typedEmail || (typedLogin.includes("@") ? typedLogin : "");
-      if (!recipient) {
-        const pub = await githubPublicEmail(typedLogin, { fetchImpl: TEST_IDP_FETCH });
-        if (pub.ok && pub.email) recipient = pub.email;
-      }
       const msg = inviteMessage({ teamName: teamName(auth.team, acc), key: r.key, macUrl: DOWNLOAD_MAC, winUrl: DOWNLOAD_WIN });
       inviteText = msg.text;
       if (recipient) {
@@ -1499,13 +1548,16 @@ async function handleRequest(req, res) {
         });
         emailSent = sent.ok;
         if (!sent.ok) emailError = sent.error;
+        // Persisted on the row so a later /auth/whoami poll still shows it —
+        // person()'s "sent"/"failed" state reads this back.
+        acc.recordInviteEmail(r.login, { sent: emailSent, error: emailError });
       }
     }
     notifyPeopleChanged(auth.team);
 
     return json(res, 200, {
       ok: true,
-      people: acc.list().map(person),
+      people: acc.list().map((a) => person(a, acc)),
       email_sent: emailSent,
       // Honest failure, never folded into `email_sent`: a Resend outage or an
       // unverified domain must be VISIBLE to the inviter, not silently eaten —
@@ -1522,6 +1574,13 @@ async function handleRequest(req, res) {
       // — the owner who just clicked Invite/Resend is exactly who is allowed
       // to see the key they minted.
       ...(r.key ? { key: r.key, inviteText } : {}),
+      // `login` is the CANONICAL identifier this invite lives under, which is
+      // not always `typedLogin` — a dedupe-by-email hit resends an existing
+      // row keyed on whatever was typed the FIRST time. `already` says
+      // whether this call found a pending row rather than creating one, so
+      // settings.tsx can say "resent" instead of implying a new invite.
+      ...(r.login ? { login: r.login } : {}),
+      already: Boolean(r.already),
     });
   }
 

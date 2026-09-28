@@ -454,6 +454,11 @@ export class Accounts {
         invited.login = rec.login;
         invited.display = rec.display;
         invited.hd = rec.hd;
+        // Invite lifecycle: the moment this row stops being pending IS
+        // "accepted" (hub/server.mjs's `person()` shows it). Stamped here,
+        // not derived later, because the row's other fields (login/provider)
+        // are about to be overwritten with whoever actually signed in.
+        invited.acceptedAt = new Date(this.now()).toISOString();
       } else if (!this.list().some((a) => samePerson(a, rec))) {
         // Somebody the DOMAIN rule admitted lands here, and is recorded exactly
         // like anyone else. That is deliberate: `session()` re-checks the list
@@ -517,34 +522,90 @@ export class Accounts {
    * string rather than from a second argument or a dropdown, because the two
    * namespaces cannot overlap — GitHub usernames may not contain "@" — and one
    * text box is a better invite form than two.
+   *
+   * `email` is the recipient hub/server.mjs has resolved (or is about to try)
+   * for this invite — passed in so a second invite that resolves to the SAME
+   * address as an already-pending one is recognised as the one invitation,
+   * not a second. Andrew: "i invited michael twice" — typing a bare GitHub
+   * login one day and that person's email the next are two different
+   * (provider, login) pairs and, without this, two separate pending rows for
+   * one person. Matching on the resolved email is the one cross-identifier
+   * check this file makes for a still-pending invite; it does not attempt to
+   * merge an already-CLAIMED member with a new identifier — that is the
+   * multi-identity/persons work elsewhere on this file, not this.
    */
-  allow(login) {
-    const typed = String(login || "").trim().replace(/^@/, "");
-    const l = typed.toLowerCase();
-    const p = l.includes("@") ? "google" : "github";
-
-    if (p === "google") {
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(l)) return { ok: false, error: "that is not an email address" };
-    } else if (!/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/.test(l)) {
-      return { ok: false, error: "that is not a GitHub username or an email address" };
-    }
+  allow(login, { email = "" } = {}) {
+    const v = invitableLogin(login);
+    if (!v.ok) return v;
+    const { typed, login: l, provider: p } = v;
+    // A bare email invite IS its own recipient — no caller has to pass
+    // `email` separately for the common case of inviting an address directly.
+    const mail = String(email || (p === "google" ? l : "") || "").trim().toLowerCase();
 
     const existing = this.list().find((a) => provider(a) === p && a.login === l);
     if (existing) {
       // Already an active member (owner, or claimed by a real sign-in): there
       // is nothing pending to key, and re-typing their name is a no-op.
-      if (existing.id) return { ok: true, already: true };
+      if (existing.id) return { ok: true, already: true, login: l };
       // Still pending: re-inviting ROTATES the key rather than handing back
-      // the one already emailed, in case that email never arrived.
-      return { ok: true, already: true, key: this.inviteKey(l) };
+      // the one already emailed, in case that email never arrived. Also
+      // learns the recipient if this resend is the first time one was
+      // resolved, so a LATER invite typed under a different identifier can
+      // still find this row by email.
+      if (mail && !existing.email) {
+        existing.email = mail;
+        this.#save();
+      }
+      return { ok: true, already: true, key: this.inviteKey(l), login: l };
     }
+
+    if (mail) {
+      const byEmail = this.state.allowed.find((a) => !a.id && a.email === mail);
+      if (byEmail) return { ok: true, already: true, key: this.inviteKey(byEmail.login), login: byEmail.login };
+    }
+
     // Inviting somebody UN-BLOCKS them. The owner typing a name is the owner
     // saying yes, and a block left behind would make this button silently do
     // nothing — the worst shape a permission bug can take.
     this.state.blocked = this.state.blocked.filter((b) => !(provider(b) === p && b.login === l));
-    this.state.allowed.push({ provider: p, login: l, display: typed, id: "", added: new Date(this.now()).toISOString() });
+    this.state.allowed.push({ provider: p, login: l, display: typed, id: "", email: mail, added: new Date(this.now()).toISOString() });
     this.#save();
-    return { ok: true, already: false, key: this.inviteKey(l) };
+    return { ok: true, already: false, key: this.inviteKey(l), login: l };
+  }
+
+  /**
+   * Record what happened when hub/server.mjs tried to email a still-pending
+   * invite — persisted on the row so every later `/auth/whoami` poll shows it,
+   * not only the one HTTP response right after Invite/Resend was clicked. A
+   * no-op for a login with no pending row (already claimed, revoked, or never
+   * invited): there is nothing left to attach this to.
+   */
+  recordInviteEmail(login, { sent, error = "" } = {}) {
+    const l = String(login || "").trim().replace(/^@/, "").toLowerCase();
+    const entry = this.state.allowed.find((a) => a.login === l && !a.id);
+    if (!entry) return;
+    entry.emailSent = Boolean(sent);
+    entry.emailSentAt = new Date(this.now()).toISOString();
+    entry.emailError = sent ? "" : String(error || "");
+    this.#save();
+  }
+
+  /**
+   * The most recent activity timestamp (epoch ms) across every session this
+   * login holds, or 0 if it holds none — never signed in from a device, or
+   * its session aged out (`#sweep`/`session()`'s own TTL). This is the hub's
+   * existing per-device signal for "actually connected", reused rather than
+   * added to: `session()` bumps a session's `at` on every authenticated
+   * request that device makes, so it is a live heartbeat, not just the
+   * moment an invite was claimed.
+   */
+  lastSeen(login) {
+    const l = String(login || "").trim().replace(/^@/, "").toLowerCase();
+    let latest = 0;
+    for (const s of Object.values(this.state.sessions)) {
+      if (s.login === l && s.at > latest) latest = s.at;
+    }
+    return latest;
   }
 
   /**
@@ -717,6 +778,26 @@ export class Accounts {
     writeFileSync(tmp, JSON.stringify(this.state, null, 2), { mode: 0o600 });
     renameSync(tmp, this.file);
   }
+}
+
+/**
+ * Validate and normalise a typed invite identifier, without touching any
+ * state. Exported (not just inlined in `allow`) because hub/server.mjs needs
+ * to know the (provider, login) it resolved to BEFORE deciding whether an
+ * async lookup — a GitHub public-email fetch, to find somewhere to mail the
+ * invite — is even worth making; `allow` itself calls this too, so the two
+ * can never validate a login differently.
+ */
+export function invitableLogin(login) {
+  const typed = String(login || "").trim().replace(/^@/, "");
+  const l = typed.toLowerCase();
+  const p = l.includes("@") ? "google" : "github";
+  if (p === "google") {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(l)) return { ok: false, error: "that is not an email address" };
+  } else if (!/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/.test(l)) {
+    return { ok: false, error: "that is not a GitHub username or an email address" };
+  }
+  return { ok: true, typed, login: l, provider: p };
 }
 
 /** The default location, exported so server.mjs and the tests agree on it. */

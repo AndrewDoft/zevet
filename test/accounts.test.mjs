@@ -348,6 +348,82 @@ describe("invite keys", () => {
     assert.equal(r.ok, false);
     assert.equal(r.error, "bad key");
   });
+
+  // Andrew: "i invited michael twice" — a bare GitHub login one day and that
+  // same person's email address the next are two different (provider, login)
+  // pairs, and used to become two independent pending rows for one person.
+  test("re-inviting the same person under a DIFFERENT identifier resends the one pending row, not a second", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const first = a.allow("michael", { email: "michael@example.com" });
+    assert.equal(first.ok, true);
+    assert.equal(first.already, false);
+
+    // Typed as a bare email the second time — no `email` option needed, a
+    // bare email invite is its own recipient.
+    const second = a.allow("michael@example.com");
+    assert.equal(second.ok, true);
+    assert.equal(second.already, true, "recognised as the SAME pending invite");
+    assert.equal(second.login, "michael", "resent the original row, not a new one keyed on the email");
+    assert.notEqual(second.key, first.key, "the key still rotates on resend");
+
+    const pending = a.list().filter((p) => !p.id);
+    assert.equal(pending.length, 1, "one row per invitee");
+  });
+
+  test("cross-identifier dedupe only fires once an email is actually resolved — no email means no match to make", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    a.allow("michael"); // no email ever resolved for this one (e.g. no public profile email)
+    const second = a.allow("michael2");
+    assert.equal(second.already, false, "different login, no shared email on record — genuinely a different invite");
+    assert.equal(a.list().filter((p) => !p.id).length, 2);
+  });
+});
+
+describe("invite lifecycle — what person() (hub/server.mjs) reads back", () => {
+  test("recordInviteEmail persists the send outcome on the row; a login with no pending row is a no-op", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    a.allow("kai");
+    a.recordInviteEmail("kai", { sent: true });
+    let entry = a.list().find((p) => p.login === "kai");
+    assert.equal(entry.emailSent, true);
+    assert.ok(entry.emailSentAt);
+    assert.equal(entry.emailError, "");
+
+    a.recordInviteEmail("kai", { sent: false, error: "Resend: invalid domain" });
+    entry = a.list().find((p) => p.login === "kai");
+    assert.equal(entry.emailSent, false);
+    assert.equal(entry.emailError, "Resend: invalid domain");
+
+    assert.doesNotThrow(() => a.recordInviteEmail("nobody-pending", { sent: true }));
+  });
+
+  test("lastSeen is 0 for a login that never signed in, and tracks session() activity once they have", (t) => {
+    let now = 1_000_000;
+    const a = new Accounts({ file: path.join(tmp(t), "a.json"), now: () => now });
+    a.signIn(alice);
+    assert.equal(a.lastSeen("kai"), 0);
+
+    const { token } = a.signIn(bob); // bob's login is "kai"
+    assert.equal(a.lastSeen("kai"), now);
+
+    now += 2 * 60 * 60 * 1000; // two hours later, an authenticated request
+    a.session(token); // touches the session's `at` (throttled to once an hour)
+    assert.equal(a.lastSeen("kai"), now, "lastSeen tracks the desktop's own later activity, not just the first sign-in");
+  });
+
+  test("accepting an invite (redeeming its key) stamps acceptedAt on the claimed row", (t) => {
+    let now = 5_000_000;
+    const a = new Accounts({ file: path.join(tmp(t), "a.json"), now: () => now });
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    now += 10_000;
+    assert.equal(a.redeem(key).ok, true);
+    const entry = a.list().find((p) => p.login === "kai");
+    assert.equal(entry.acceptedAt, new Date(now).toISOString());
+  });
 });
 
 describe("the file", () => {
