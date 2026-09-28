@@ -387,12 +387,24 @@ export function installFixtureBridge(): boolean {
       { name: "claude", ok: true, signedIn: true, detail: "claude 2.1.0" },
       { name: "codex", ok: true, signedIn: true, detail: "codex 0.155.0" },
       { name: "opencode", ok: true, signedIn: false, detail: "opencode 1.18.31" },
+      // No adapter runs this one (see composercontrols.tsx) — only here so the
+      // fixture can show the Chat picker with Meta detected, same as a real
+      // MODEL_API_KEY would.
+      { name: "meta", ok: false, signedIn: true, detail: "MODEL_API_KEY" },
     ],
     startAgent: async (name) => {
       const id = `fixture-${++seq}`;
       play(id, name);
       return { ok: true, id };
     },
+    // Chat + Work stubs. Present only so chatAvailable() (chat.ts) is true and
+    // ModeSwitch renders the "Chat + Work" tab in the demo — nothing here
+    // actually threads a turn; the fixture has no Chat script the way
+    // CLAUDE_SCRIPT/CODEX_SCRIPT below replay Code consoles.
+    chatList: async () => [],
+    chatCreate: async () => ({ id: "fixture-chat", title: "New chat", created: Date.now(), updated: Date.now(), messages: [] }),
+    chatSend: async () => ({ ok: true }),
+    onChatEvent: () => () => {},
     sendToAgent: async (id) => {
       play(id, "claude");
       return { ok: true };

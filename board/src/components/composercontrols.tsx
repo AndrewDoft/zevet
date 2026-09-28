@@ -112,9 +112,18 @@ function useComposerSource(): ComposerSource {
     const runningModel = usage?.model ? { id: `${thread?.agent ?? "claude"}:${usage.model}`, name: model || "Default" } : undefined;
     // Every provider, installed or not: a missing one is a Connect chip in the
     // picker. Gemini has no adapter here, so it is always the chip.
+    //
+    // Meta is different: Andrew asked for it to show only when usable, not as
+    // a permanent upsell. `localAgents` carries a "meta" row (desktop/main.js
+    // `local:agents`) whose `signedIn` reflects a detected MODEL_API_KEY or a
+    // saved Settings credential — absent that, the group is left out of the
+    // picker entirely rather than shown disabled. `ok` stays false either way:
+    // there is no execution adapter yet (docs/contracts/meta-model-api.md).
+    const meta = localAgents.find((a) => a.name === "meta");
     const usable = [
       ...localAgents.filter((a) => (CHAT_AGENTS as readonly string[]).includes(a.name)),
       { name: "gemini", ok: false, signedIn: false, detail: "" },
+      ...(meta?.signedIn ? [{ name: "meta", ok: false, signedIn: true, detail: meta.detail }] : []),
     ];
     return {
       usage,

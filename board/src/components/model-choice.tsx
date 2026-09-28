@@ -47,6 +47,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   codex: "OpenAI",
   gemini: "Gemini",
   opencode: "Open models",
+  meta: "Meta",
 };
 
 /** codex is the one CLI here that takes a reasoning-effort flag. Offering the

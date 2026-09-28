@@ -388,6 +388,10 @@ const CREDENTIAL_ENV = {
   "anthropic:api_key": "ANTHROPIC_API_KEY",
   "anthropic:subscription_token": "CLAUDE_CODE_OAUTH_TOKEN",
   "openai:api_key": "OPENAI_API_KEY",
+  // Meta's Model API (Muse Spark) — docs/contracts/meta-model-api.md. Stored
+  // the same as any other provider's key; nothing spawns using it yet, since
+  // zevet has no execution adapter for it (see that note).
+  "meta:api_key": "MODEL_API_KEY",
 };
 
 /** Every env var ANY entry in CREDENTIAL_ENV could set, deleted from the
@@ -395,7 +399,7 @@ const CREDENTIAL_ENV = {
  *  stray ANTHROPIC_API_KEY the person already had in their shell would
  *  silently outrank the credential they just picked in Settings — same
  *  bug shape as authFor's `env: {}`, a few lines up, and the same fix. */
-const ALL_CREDENTIAL_ENV_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY"];
+const ALL_CREDENTIAL_ENV_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "MODEL_API_KEY"];
 
 /**
  * One credential id, resolved to `{provider, kind, key}` — or null if it
@@ -2999,6 +3003,20 @@ function loadDetect() {
   return detectPromise;
 }
 
+/** Candidate path for Meta's own Mac chat app (ai.meta.com/meta-ai/download,
+ *  live since 2026-08-19). Listed as a candidate, not a fact — nobody has
+ *  installed it to confirm the bundle name, same discipline detect.mjs
+ *  already uses for codex/opencode's macOS paths. Presence only; never
+ *  launched. No Windows build has shipped as of this session (search turned
+ *  up Mac coverage only), so there is nothing to check for on win32. This is
+ *  a separate product from Muse Code (the CLI) and from the Model API — it
+ *  grants no API key, so it is informational (`detail`) only. */
+function metaAiAppDetail() {
+  if (process.platform !== "darwin") return null;
+  const candidate = "/Applications/Meta AI.app";
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
 ipcMain.handle("local:agents", async () => {
   await runtimeReady;
   const detect = await loadDetect();
@@ -3008,7 +3026,7 @@ ipcMain.handle("local:agents", async () => {
   // zevet release. null when there is no cache: the board then keeps the list
   // it shipped with (board/src/lib/agent-models.generated.mjs, same reader).
   const catalogs = { claude: agentCatalogs.claudeModels(), codex: agentCatalogs.codexModels() };
-  return ["claude", "codex", "opencode"].map((name) => {
+  const rows = ["claude", "codex", "opencode"].map((name) => {
     const r = agentConsole.resolveAgent(name);
     const id = name === "claude" ? "claude-code" : name;
     const d = found.find((a) => a.id === id) || {};
@@ -3023,6 +3041,32 @@ ipcMain.handle("local:agents", async () => {
       hooks: d.hooks === undefined ? null : d.hooks,
     };
   });
+
+  // Meta's Model API — no execution adapter (docs/contracts/meta-model-api.md),
+  // so `ok` is always false; `signedIn` is what composercontrols.tsx uses to
+  // decide whether to list it at all. Three legitimate sources, any one
+  // suffices: the documented env var, a key saved in Settings, or Muse Code
+  // itself being installed with that env var present (its own auth path is
+  // the same MODEL_API_KEY — see docs/contracts/muse-code-hooks.md).
+  const museCode = found.find((a) => a.id === "muse-code") || {};
+  const hasSavedKey = credentials.listCredentials().some((c) => c.provider === "meta");
+  const hasEnvKey = Boolean(process.env.MODEL_API_KEY);
+  const appDetail = metaAiAppDetail();
+  const metaDetails = [
+    hasEnvKey && "MODEL_API_KEY",
+    hasSavedKey && "saved in Settings",
+    museCode.installed && !hasEnvKey && !hasSavedKey && "Muse Code installed, no key",
+    appDetail && `Meta AI app: ${appDetail}`,
+  ].filter(Boolean);
+  rows.push({
+    name: "meta",
+    ok: false,
+    detail: metaDetails.join(", "),
+    signedIn: hasEnvKey || hasSavedKey,
+    models: undefined,
+    hooks: null,
+  });
+  return rows;
 });
 
 /* ---------------------------------------------------------------------------

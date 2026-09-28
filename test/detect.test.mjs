@@ -95,3 +95,35 @@ test("OpenCode signed in via OPENROUTER_API_KEY env, with no auth file", async (
   });
   assert.match(out, /OpenCode\s+installed, signed in/);
 });
+
+test("Muse Code on PATH, signed in via MODEL_API_KEY env, has no hook contract", async (t) => {
+  const dir = tempDir("zevet-detect-muse-");
+  t.after(() => dir.cleanup());
+  const bin = path.join(dir.dir, "bin");
+  writeExe(path.join(bin, `muse${EXT}`));
+  const out = await detect({
+    HOME: dir.dir, USERPROFILE: dir.dir, PATH: bin,
+    APPDATA: path.join(dir.dir, "Roaming"), LOCALAPPDATA: path.join(dir.dir, "Local"),
+    MODEL_API_KEY: "sk-fake-for-this-test-only",
+  });
+  assert.match(out, /Muse Code\s+installed, signed in/);
+  // No hook contract yet (docs/contracts/muse-code-hooks.md) — must not claim
+  // watchability just because a key is present.
+  assert.match(out, /zevet can see it, but has no hook contract for it/);
+  assert.doesNotMatch(out, /zevet will watch:.*Muse Code/);
+});
+
+test("Muse Code absent, with a key in the environment, is still not installed", async (t) => {
+  // Mutation check for the id/bin wiring: an env-only key must never be read
+  // as "installed" — that would mean onPath()/firstExisting() were bypassed.
+  const dir = tempDir("zevet-detect-muse-absent-");
+  t.after(() => dir.cleanup());
+  const emptyBin = path.join(dir.dir, "empty-bin");
+  mkdirSync(emptyBin);
+  const out = await detect({
+    HOME: dir.dir, USERPROFILE: dir.dir, PATH: emptyBin,
+    APPDATA: path.join(dir.dir, "Roaming"), LOCALAPPDATA: path.join(dir.dir, "Local"),
+    MODEL_API_KEY: "sk-fake-for-this-test-only",
+  });
+  assert.match(out, /Muse Code\s+not installed/);
+});

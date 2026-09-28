@@ -21,10 +21,11 @@
  */
 import { CLAUDE_MODELS, CODEX_MODELS } from "./agent-models.generated.mjs";
 import { OPENCODE_MODEL_NAMES } from "./models.generated.mjs";
+import { MUSE_MODELS } from "./muse-models.mjs";
 
 /** id -> what that CLI's own picker calls it. */
 const CATALOGUE = new Map(
-  [...CLAUDE_MODELS, ...CODEX_MODELS].map((m) => [m.id, m]),
+  [...CLAUDE_MODELS, ...CODEX_MODELS, ...MUSE_MODELS].map((m) => [m.id, m]),
 );
 
 /**

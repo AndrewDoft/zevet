@@ -618,6 +618,7 @@ const CREDENTIAL_KINDS: Array<{ provider: string; kind: string; label: string; t
   { provider: "anthropic", kind: "api_key", label: "Anthropic — API key", teamOk: true },
   { provider: "anthropic", kind: "subscription_token", label: "Anthropic — subscription token", teamOk: false },
   { provider: "openai", kind: "api_key", label: "OpenAI — API key", teamOk: true },
+  { provider: "meta", kind: "api_key", label: "Meta — API key", teamOk: true },
 ];
 
 function credentialLine(c: CredentialMeta): string {

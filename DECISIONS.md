@@ -993,3 +993,50 @@ hint), green after. `test/onboard-live.test.mjs` (workflow_dispatch,
 the exact fresh-install "Create a team" move against the real hosted hub,
 since only that address can catch "stale" or "genuinely unreachable" — every
 other test here talks to a disposable hub this suite spawns itself.
+
+---
+
+## D-023 — Muse Spark and Muse Code get the Gemini treatment, not a fabricated adapter
+
+**2026-09-27**
+
+**Decision.** Meta's Model API (Muse Spark) is added to the composer's model picker the same way
+Gemini already is: listed, described, but with no execution adapter (`ok: false` always). Unlike
+Gemini — which is always shown behind a permanent Connect chip — the Meta group is only added to
+the Chat picker's `usable` list when a key is actually detected (`composercontrols.tsx`,
+`meta?.signedIn`), because Andrew asked for it to "show only when usable" rather than as a
+standing upsell. Muse Code (Meta's coding CLI) is added to `client/detect.mjs` for detection only
+(installed / signed-in via `MODEL_API_KEY`, same "presence only" discipline every other entry
+uses) with `hooks: false` — no `.muse/hooks.json` is written and no session/transcript file is
+read.
+
+**Alternatives considered.**
+- *Build a direct HTTP adapter now* (Node's built-in `fetch` against
+  `https://api.meta.ai/v1/chat/completions`, OpenAI-compatible shapes). Rejected for this pass:
+  the exact streaming/tool-call JSON was not fetched field-by-field this session (only confirmed
+  to exist, via docs nav and prose — see `docs/contracts/meta-model-api.md`), and CLAUDE.md-style
+  discipline (never guess a wire format) applies just as much to a response schema as to a hook
+  payload. INSUF-009 records this as the next step.
+- *Wire Muse Code hooks from the documented event names alone.* Rejected: the event names and
+  config LOCATIONS are documented, but the stdin PAYLOAD shape is not, and there is no `muse`
+  install on this machine to verify it against — exactly the mistake `docs/contracts/
+  codex-hooks.md` records having made once already (a repo-local hooks path that silently never
+  fired) and is asked not to repeat by guessing.
+- *Route Muse Spark through opencode's existing zen models instead of adding anything.* Already
+  true and unaffected by this change (`muse-spark-1.2/1.3-contributor-free` already show under
+  "Open models" once opencode is installed — no key needed) — but it does not give Andrew a place
+  to save his OWN Meta key, which he explicitly asked for, so it is additive to this, not a
+  replacement.
+
+**Reversibility.** High. Every addition is either inert until consumed (the `meta:api_key` ->
+`MODEL_API_KEY` credential-table entry; `client/detect.mjs`'s `muse-code` row) or purely
+presentational (the picker group). Nothing here changes what any existing agent does.
+
+**Verification.** `test/muse-model.test.mjs` (11 assertions, 2 mutation-checked live: the
+Chat-only gating condition, and `client/detect.mjs`'s `hooks: false`), `test/detect.test.mjs`
+(2 new cases), full suite green except pre-existing environment gaps unrelated to this change
+(missing `desktop/build/icon.png` asset, Electron's binary failing to download in this sandbox —
+both present before this change and unrelated to it). A headless Chromium screenshot
+(`?dev=1` fixture mode, Chat + Work tab, model picker open, filtered to "muse") confirms the Meta
+group renders with the correct name, icon, and disabled state; see the session's report for the
+image.
