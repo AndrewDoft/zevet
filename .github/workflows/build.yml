@@ -40,6 +40,21 @@ jobs:
         with:
           node-version: 22
 
+      # Same Defender gotcha masora2's sibling-install.yml already documents
+      # for a freshly-built, freshly-signed installer with no reputation yet:
+      # every real NSIS installer this job runs (smoke:win,
+      # repro:fresh-silent, repro-andrew-incident.mjs,
+      # repro-registry-hijack.mjs) exited 3221225477 (STATUS_ACCESS_VIOLATION)
+      # intermittently on 2026-09-28, always on the FIRST real install spawned
+      # in the job, sometimes within a second of starting -- consistent with
+      # cloud-delivered real-time scanning intervening on a binary it has
+      # never seen before. This runner is disposable, so there is nothing to
+      # protect it from.
+      - name: Disable Windows Defender real-time scanning (CI runner only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
       # build/icon.png is generated, not committed, and it must exist BEFORE the
       # suite runs because the packaging test reads its pixels.
       #
