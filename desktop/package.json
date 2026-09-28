@@ -57,6 +57,7 @@
       "index-capability.js",
       "code-index.js",
       "app-update.js",
+      "update-signing.js",
       "zevet-voice.js",
       "agent-sessions.js",
       "agent-catalogs.js",

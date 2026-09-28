@@ -38,7 +38,7 @@ const indexCapability = require("./index-capability.js");
 const embedder = require("./embedder.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
-const { AppUpdater } = require("./app-update.js");
+const { AppUpdater, loopbackProofKeys } = require("./app-update.js");
 const runtime = require("./runtime.js");
 const askServer = require("./ask-server.js");
 const agentApi = require("./agent-api.js");
@@ -3844,6 +3844,7 @@ let menuOffersRestart = false;
 const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
+  trustedKeys: loopbackProofKeys(process.env.ZEVET_APP_FEED),
   dir: path.join(app.getPath("userData"), "updates"),
   // Only meaningful on darwin; see canSelfReplaceMac() in app-update.js.
   // /Applications/zevet.app from .../zevet.app/Contents/MacOS/zevet.

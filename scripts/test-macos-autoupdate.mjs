@@ -181,6 +181,10 @@ async function main() {
   server = await serveFeed(feedDir);
   const feedUrl = `http://127.0.0.1:${server.address().port}/zevet-latest.json`;
   console.log(`serving ${feedDir} at ${feedUrl}`);
+  // The feed was signed with a throwaway key (make-feed --test-key); the app
+  // honours its public half only because the feed URL is loopback.
+  const testKey = JSON.parse(fs.readFileSync(path.join(feedDir, "test-key.json"), "utf8"));
+  const feedEnv = { ZEVET_APP_FEED: feedUrl, ZEVET_APP_FEED_TRUSTED_KEY: `${testKey.key_id}:${testKey.public_key}` };
 
   assert.equal(pgrepBin().length, 0, "a zevet process is already running before the test starts");
 
@@ -191,7 +195,7 @@ async function main() {
   fs.writeFileSync(SENTINEL, "x");
 
   let port = 9500 + Math.floor(Math.random() * 500);
-  let app = launch(port, { ZEVET_APP_FEED: feedUrl });
+  let app = launch(port, { ...feedEnv });
   started.push(app.pid);
   await waitForCDP(port);
   const readyA = await waitForReady(port, 120_000);
@@ -237,7 +241,7 @@ async function main() {
   fs.writeFileSync(SENTINEL, "x");
 
   port = 9500 + Math.floor(Math.random() * 500) + 1000;
-  app = launch(port, { ZEVET_APP_FEED: feedUrl, ZEVET_HOME: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "zevet-home-")), "h") });
+  app = launch(port, { ...feedEnv, ZEVET_HOME: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "zevet-home-")), "h") });
   started.push(app.pid);
   await waitForCDP(port);
   await waitForReady(port, 120_000);
