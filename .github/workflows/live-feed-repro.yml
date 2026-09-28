@@ -1,0 +1,24 @@
+# Scratch, workflow_dispatch-only: faithful repro of the masora2 CI report
+# (sibling-install.yml, run 36375729128) -- download the REAL live installer
+# from usemasora.com and run it with bare /S on a clean windows-latest
+# machine. See scripts/repro-live-feed-install.mjs. Delete once the defect
+# this exists to isolate is understood and covered by a permanent build.yml
+# gate (repro-fresh-silent-install.mjs builds locally in-job instead, which
+# is the right shape for a permanent gate but can't tell the installer script
+# apart from the manual gcloud-scp upload / Caddy hosting layer).
+name: live-feed-repro
+
+on:
+  workflow_dispatch:
+    inputs:
+      feed_url:
+        description: "Feed URL (defaults to the live production feed)"
+        required: false
+        default: "https://usemasora.com/download/zevet-latest.json"
+
+jobs:
+  repro:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/repro-live-feed-install.mjs "${{ inputs.feed_url }}"
