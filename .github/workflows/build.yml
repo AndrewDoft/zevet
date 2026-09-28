@@ -288,6 +288,23 @@ jobs:
         working-directory: desktop
         run: node ../scripts/repro-andrew-incident.mjs "../old-build/desktop/out"
 
+      # A THIRD incident, found by re-reading Andrew's real machine after the
+      # above two fixes: every silent update DID land somewhere and DID exit
+      # 0 -- just never in the copy actually running. masora2's own
+      # sibling-install test harness registers a per-machine copy pointing at
+      # a temp directory (/allusers /D=<temp>) on a real dev box, and
+      # app-update.js's install()/installOnQuit() never told NSIS's
+      # multiUser.nsh where the running copy actually is -- so it read the
+      # registry, found that per-machine entry, and every update since has
+      # been silently hijacked into the temp directory while
+      # %LOCALAPPDATA%\Programs\zevet sat on 0.2.71 the whole time. Fixed in
+      # desktop/app-update.js's winInstallArgs; reused here with the same
+      # old build as the self-heal step above.
+      - name: Prove an update reaches the RUNNING install, not a phantom per-machine copy elsewhere
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node ../scripts/repro-registry-hijack.mjs "../old-build/desktop/out"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
