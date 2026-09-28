@@ -23,6 +23,7 @@ import { tempDir, ROOT } from "./helpers.mjs";
 const require = createRequire(import.meta.url);
 const {
   AppUpdater,
+  INSTALL_ARGS,
   QUIT_INSTALL_ARGS,
   EVERY_MS,
   compareVersions,
@@ -30,6 +31,8 @@ const {
   safeArtifactName,
   artifactUrl,
   readManifest,
+  winInstallLocation,
+  winInstallArgs,
 } = require(path.join(ROOT, "desktop", "app-update.js"));
 
 const KEY = "win32-x64";
@@ -443,6 +446,55 @@ describe("the updater, end to end", () => {
   });
 });
 
+describe("Windows install scope and directory (the masora2 sibling-install fix)", () => {
+  const originalLAD = process.env.LOCALAPPDATA;
+  const win = (...parts) => path.win32.join(...parts);
+  const restoreLocalAppData = () => { process.env.LOCALAPPDATA = originalLAD; };
+
+  test("a per-user execPath resolves /currentuser", (t) => {
+    process.env.LOCALAPPDATA = win("C:", "Users", "andre", "AppData", "Local");
+    t.after(restoreLocalAppData);
+    const execPath = win(process.env.LOCALAPPDATA, "Programs", "zevet", "zevet.exe");
+    const { scope, dir } = winInstallLocation(execPath);
+    assert.equal(scope, "/currentuser");
+    assert.equal(dir, path.dirname(execPath));
+  });
+
+  test("a per-machine execPath (Program Files, or anywhere else) resolves /allusers", (t) => {
+    process.env.LOCALAPPDATA = win("C:", "Users", "andre", "AppData", "Local");
+    t.after(restoreLocalAppData);
+    // Exactly the masora2 incident's shape: a per-machine copy registered in
+    // an arbitrary temp directory, nowhere near either standard default.
+    const execPath = win("C:", "Users", "andre", "AppData", "Local", "Temp", "masora-real-install-JiPJgP", "zevet", "zevet.exe");
+    assert.equal(winInstallLocation(execPath).scope, "/allusers");
+  });
+
+  test("an unset LOCALAPPDATA cannot be mistaken for a per-user match", (t) => {
+    delete process.env.LOCALAPPDATA;
+    t.after(restoreLocalAppData);
+    assert.equal(winInstallLocation(win("C:", "Program Files", "zevet", "zevet.exe")).scope, "/allusers");
+  });
+
+  test("winInstallArgs appends scope then /D= LAST, after the base args, in that order", () => {
+    // Mutation check: swap the push order below (or in winInstallArgs itself)
+    // and this goes red -- NSIS reads everything after `/D=` to the end of
+    // the line as the directory, so anything placed after it is silently
+    // swallowed into the path instead of being its own switch.
+    const execPath = win("C:", "Program Files", "zevet", "zevet.exe");
+    const args = winInstallArgs(["--updated", "/S"], execPath);
+    assert.deepEqual(args, ["--updated", "/S", "/allusers", `/D=${path.dirname(execPath)}`]);
+    assert.equal(args[args.length - 1].startsWith("/D="), true, "/D= must be the last argument");
+  });
+
+  test("winInstallArgs never quotes the /D= value itself — that's spawn's job via windowsVerbatimArguments, not string content", () => {
+    const execPath = win("C:", "Program Files (x86)", "zevet team", "zevet.exe");
+    const args = winInstallArgs(["--updated", "/S"], execPath);
+    const dArg = args[args.length - 1];
+    assert.ok(!dArg.includes('"'), `winInstallArgs must never embed quotes itself: ${dArg}`);
+    assert.equal(dArg, `/D=${path.dirname(execPath)}`);
+  });
+});
+
 describe("installing", () => {
   test("nothing downloaded means nothing to install", async () => {
     const t = tempDir("zevet-upd-");
@@ -474,18 +526,29 @@ describe("installing", () => {
     }
   });
 
-  test("on Windows the installer is run silently and the app then quits", async () => {
-    const t = tempDir("zevet-upd-");
+  test("on Windows the installer is run silently, targeting THIS running install by path, and the app then quits", async () => {
+    // A space in the prefix, not incidental: /D=<dir> is the one argument
+    // Node must never quote (see windowsVerbatimArguments below), and a path
+    // without a space in it can't prove that.
+    const t = tempDir("zevet upd ");
+    const originalLAD = process.env.LOCALAPPDATA;
     try {
       const file = path.join(t.dir, "setup.exe");
       writeFileSync(file, "not really an installer");
       const calls = [];
       let quit = 0;
+      // A per-user install: execPath under %LOCALAPPDATA%\Programs, exactly
+      // the shape multiUser.nsh's own per-user default and installer.nsh's
+      // customInit both already assume.
+      const localAppData = path.win32.join(t.dir, "AppData", "Local");
+      const runningExe = path.win32.join(localAppData, "Programs", "zevet", "zevet.exe");
+      process.env.LOCALAPPDATA = localAppData;
       const u = new AppUpdater({
         currentVersion: "0.1.2",
         platform: "win32",
         dir: t.dir,
         platformKey: KEY,
+        execPath: runningExe,
         spawnImpl: (...a) => {
           calls.push(a);
           return { unref() {} };
@@ -508,12 +571,23 @@ describe("installing", () => {
       // electron-builder's installSection.nsh relaunches an assisted silent
       // install only when isForceRun is set. Without it the app quits to
       // install and never returns, after a button that said "restart".
-      assert.deepEqual(calls[0][1], ["--updated", "/S", "--force-run"]);
+      //
+      // /currentuser and /D=<runningExe's own dir> are the fix for the
+      // masora2 sibling-install incident: without them, NSIS's multiUser.nsh
+      // decides scope and directory from the registry, which a stray
+      // per-machine entry anywhere else can hijack away from the copy that
+      // is actually running.
+      assert.deepEqual(calls[0][1], ["--updated", "/S", "--force-run", "/currentuser", `/D=${path.win32.dirname(runningExe)}`]);
       assert.equal(calls[0][2].detached, true);
+      // /D= must reach NSIS unquoted even when the path has a space (which
+      // t.dir, under the "zevet upd " tempDir prefix, already does) --
+      // windowsVerbatimArguments is what stops Node quoting it for us.
+      assert.equal(calls[0][2].windowsVerbatimArguments, true);
       // The quit is on a short timer so the child is running before we go.
       await new Promise((r2) => setTimeout(r2, 900));
       assert.equal(quit, 1);
     } finally {
+      process.env.LOCALAPPDATA = originalLAD;
       t.cleanup();
     }
   });
@@ -676,11 +750,16 @@ describe("installing on quit", () => {
       writeFileSync(file, "not really an installer");
       const calls = [];
       let quit = 0;
+      // A per-machine install this time: execPath NOT under %LOCALAPPDATA%\
+      // Programs, so winInstallLocation must resolve /allusers -- covering
+      // the branch the install() test above doesn't.
+      const runningExe = path.win32.join(t.dir, "Program Files", "zevet", "zevet.exe");
       const u = new AppUpdater({
         currentVersion: "0.1.2",
         platform: "win32",
         dir: t.dir,
         platformKey: KEY,
+        execPath: runningExe,
         spawnImpl: (...a) => {
           calls.push(a);
           return { unref() {} };
@@ -701,9 +780,10 @@ describe("installing on quit", () => {
       // Mutation check: put --force-run back into QUIT_INSTALL_ARGS (or this
       // assertion) and this goes red — the whole point of the quit path is
       // that it must NOT ask the installer to bring the app back.
-      assert.deepEqual(calls[0][1], QUIT_INSTALL_ARGS);
+      assert.deepEqual(calls[0][1], [...QUIT_INSTALL_ARGS, "/allusers", `/D=${path.win32.dirname(runningExe)}`]);
       assert.ok(!QUIT_INSTALL_ARGS.includes("--force-run"), "the quit path must never force a relaunch");
       assert.equal(calls[0][2].detached, true);
+      assert.equal(calls[0][2].windowsVerbatimArguments, true);
       assert.equal(quit, 0, "installOnQuit must not itself quit — the app called it because it was already leaving");
     } finally {
       t.cleanup();

@@ -229,6 +229,66 @@ const INSTALL_ARGS = ["--updated", "/S", "--force-run"];
  *  whatever the person or the OS just asked for (close the window, log off). */
 const QUIT_INSTALL_ARGS = ["--updated", "/S"];
 
+/**
+ * Neither INSTALL_ARGS nor QUIT_INSTALL_ARGS names a scope or a directory,
+ * which leaves NSIS's own multiUser.nsh to decide both from the registry --
+ * and the registry is a claim about where zevet was last installed, not a
+ * fact about where THIS running copy actually lives. A per-machine entry
+ * registered anywhere else (masora2's sibling-install test harness did this
+ * on Andrew's own machine, registering a per-machine copy in a temp
+ * directory with `/allusers /D=<temp>`) makes multiUser.nsh land every
+ * silent update THERE, while the app that is actually running --
+ * `execPath`, always the real, currently-executing zevet.exe -- sits
+ * untouched, forever offering the same "update ready" that never applies.
+ *
+ * `execPath`'s own directory is not a claim, it is where this process
+ * loaded from, so it is the one thing here that cannot be stale. Passing it
+ * explicitly, as its own scope and its own /D=, means multiUser.nsh has
+ * nothing left to decide -- the update always lands in the copy that asked
+ * for it.
+ *
+ * ponytail: "per-user" is detected by directory shape (under
+ * %LOCALAPPDATA%\Programs), the same shape multiUser.nsh's own per-user
+ * default and installer.nsh's customInit both already assume elsewhere in
+ * this codebase -- not by reading back which registry hive this install
+ * actually used. A real per-user install at a fully custom, interactively-
+ * chosen directory (allowToChangeInstallationDirectory: true) would be
+ * misread as per-machine here and asked to elevate; expand this to read the
+ * HKCU uninstall entry for this app's own GUID if that combination is ever
+ * actually seen in the wild.
+ */
+function winInstallLocation(execPath) {
+  // path.win32, not the ambient `path`: this logic is Windows-only by
+  // definition (NSIS, %LOCALAPPDATA%, backslashes), but the SAME test file
+  // that exercises it runs on both the Windows and the macOS CI leg (see
+  // build.yml's shared "Test" step) -- the ambient module is POSIX's on the
+  // Mac runner, which does not know "C:\Users\..." is even absolute.
+  const w = path.win32;
+  const dir = w.dirname(execPath);
+  const localAppData = process.env.LOCALAPPDATA || "";
+  const norm = (p) => w.resolve(p).toLowerCase();
+  const perUserRoot = localAppData ? w.join(localAppData, "Programs") : null;
+  const isPerUser = perUserRoot !== null && (norm(dir) === norm(perUserRoot) || norm(dir).startsWith(norm(perUserRoot) + w.sep));
+  return { dir, scope: isPerUser ? "/currentuser" : "/allusers" };
+}
+
+/**
+ * Appends the running install's own scope and directory to a base NSIS
+ * silent-install arg list. NSIS requires `/D=` to be UNQUOTED and the LAST
+ * parameter on the command line (it takes everything after `=` to the end
+ * of the line as the path, which is exactly why a switch after it, or
+ * quotes around it, corrupts it) -- so nothing may be appended after this
+ * call's result, and install()/installOnQuit() spawn it with
+ * `windowsVerbatimArguments: true` so Node does not wrap the directory in
+ * its own quotes the moment it contains a space (every other spawn call in
+ * this codebase that needs `/D=` avoids it for exactly this reason; this one
+ * cannot, so it takes the verbatim-arguments route instead).
+ */
+function winInstallArgs(baseArgs, execPath) {
+  const { scope, dir } = winInstallLocation(execPath);
+  return [...baseArgs, scope, `/D=${dir}`];
+}
+
 /** POSIX single-quote a path for `/bin/sh -c`, so a space in the download
  *  directory or "Andrew's Mac" does not split the command in two. */
 function shQuote(s) {
@@ -248,6 +308,10 @@ class AppUpdater {
     this.onStatus = typeof o.onStatus === "function" ? o.onStatus : () => {};
     this.log = typeof o.log === "function" ? o.log : () => {};
     this.spawnImpl = o.spawnImpl || spawn;
+    /** The running app's own executable path -- ground truth for "where to
+     *  update", independent of whatever the registry claims. See
+     *  winInstallLocation()'s header. */
+    this.execPath = o.execPath || process.execPath;
     this.openImpl = o.openImpl || null; // set by main.js to shell.openPath
     this.quitImpl = typeof o.quitImpl === "function" ? o.quitImpl : () => {};
     /** The running .app's own path, e.g. /Applications/zevet.app. Only meant
@@ -539,6 +603,11 @@ class AppUpdater {
    * relaunch. There is no race with the single-instance lock: NSIS cannot
    * replace the .exe until this process is gone, so by the time it reaches
    * doStartApp the lock is long released.
+   *
+   * Two more are appended by winInstallArgs (see its header): an explicit
+   * scope and `/D=<this running install's own directory>`, so a stray
+   * per-machine registry entry elsewhere can never steal the update away
+   * from the copy that is actually running.
    */
   async install() {
     const v = this._verifyReady();
@@ -547,10 +616,12 @@ class AppUpdater {
     if (this.platform === "win32") {
       let child;
       try {
-        child = this.spawnImpl(this.state.file, INSTALL_ARGS, {
+        child = this.spawnImpl(this.state.file, winInstallArgs(INSTALL_ARGS, this.execPath), {
           detached: true,
           stdio: "ignore",
           windowsHide: true,
+          // See winInstallArgs's header: /D= must reach NSIS unquoted.
+          windowsVerbatimArguments: true,
         });
         if (child && typeof child.unref === "function") child.unref();
       } catch (err) {
@@ -654,10 +725,11 @@ class AppUpdater {
 
     try {
       if (canWin) {
-        const child = this.spawnImpl(this.state.file, QUIT_INSTALL_ARGS, {
+        const child = this.spawnImpl(this.state.file, winInstallArgs(QUIT_INSTALL_ARGS, this.execPath), {
           detached: true,
           stdio: "ignore",
           windowsHide: true,
+          windowsVerbatimArguments: true,
         });
         if (child && typeof child.unref === "function") child.unref();
       } else {
@@ -772,6 +844,8 @@ module.exports = {
   AppUpdater,
   INSTALL_ARGS,
   QUIT_INSTALL_ARGS,
+  winInstallLocation,
+  winInstallArgs,
   EVERY_MS,
   compareVersions,
   platformKey,
