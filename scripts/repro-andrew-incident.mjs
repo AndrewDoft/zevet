@@ -109,11 +109,21 @@ try {
   console.log(`Recovered onto the real install (headless version check): registry DisplayVersion=${finalVersion}`);
   recovered = true;
 } finally {
+  // Best-effort only: this is a throwaway CI runner, and a cleanup failure
+  // (observed: EBUSY removing installRoot right after a silent uninstall,
+  // presumably a transient AV/indexer handle) must never mask the REAL
+  // pass/fail result above by throwing out of a finally block, which
+  // replaces whatever exception was already propagating.
   const uninstallExe = path.join(installRoot, "Uninstall zevet.exe");
-  if (fs.existsSync(uninstallExe)) spawnSync(uninstallExe, ["/S", "/currentuser"], { timeout: 60_000 });
+  try {
+    if (fs.existsSync(uninstallExe)) spawnSync(uninstallExe, ["/S", "/currentuser"], { timeout: 60_000 });
+  } catch { /* best-effort cleanup */ }
   reg("delete", INSTALL_KEY, "/f");
   reg("delete", UNINSTALL_KEY, "/f");
-  fs.rmSync(CORRUPTED, { recursive: true, force: true });
-  fs.rmSync(installRoot, { recursive: true, force: true });
+  for (const dir of [CORRUPTED, installRoot]) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch { /* best-effort cleanup */ }
+  }
   if (!recovered) process.exitCode = 1;
 }

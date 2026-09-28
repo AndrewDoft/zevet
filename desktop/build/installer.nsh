@@ -34,15 +34,51 @@
 ; The exact interaction was not chased further -- root-caused instead to
 ; something in Call/Push/Pop from inside .onInit at this exact point, which
 ; instFilesPre never hits because it runs later, as its own Function called
-; through MUI2's page framework. This does the same check with only native
-; StrLen/StrCpy/IntOp, no Call to a shared Function and nothing on the
-; stack, which cannot exhibit whatever that was.
+; through MUI2's page framework. ${FileExists} below is a LogicLib macro
+; that expands to the native IfFileExists instruction, not a Call, so it
+; cannot exhibit whatever that was.
+;
+; A second incident (Andrew's own machine, observed 2026-09-27) went past
+; what a suffix-only sanitizer (this macro's first version) guards: the
+; registry's InstallLocation ended up completely EMPTY at DisplayVersion
+; 0.2.74 -- not merely missing its \${APP_FILENAME} suffix -- while the
+; REAL app on disk, at the standard per-user default, was still sitting
+; there untouched at the unsigned 0.2.71 build the whole time.
+;
+; A suffix check cannot catch this class of bug at all: appending
+; \${APP_FILENAME} onto a wrong-but-suffix-less root (the original
+; "C:\Program", truncated exactly at a space somewhere upstream) produces a
+; NEW wrong-but-correctly-suffixed path ("C:\Program\zevet") -- internally
+; consistent, and still nowhere the real app lives. installApplicationFiles
+; runs before registryAddInstallInfo (installSection.nsh), and NSIS does
+; not abort a section when a File/SetOutPath call into a bad path silently
+; extracts nothing -- it logs and keeps going -- so registryAddInstallInfo
+; still records the new DisplayVersion and InstallLocation as if the update
+; had worked, and the NEXT update reads that (still wrong) value back and
+; repeats, compounding across releases with no error ever surfaced.
+;
+; The registry is a CACHE of where the app was last installed, and a cache
+; can go stale. The ground truth is simpler and cannot lie the same way:
+; does ${APP_EXECUTABLE_FILENAME} actually exist at $INSTDIR? If yes, this
+; is a real install (default or a deliberately customised one) and nothing
+; changes. If no, prefer the real orphaned install at this mode's standard
+; location over trusting whatever the registry says -- so a corrupted
+; pointer can never make a working install look like there is nothing to
+; update. Runs before any UI page (customInit is in .onInit), so an
+; interactive install can still steer $INSTDIR elsewhere afterwards; this
+; only ever changes what a SILENT install treats as final, or what an
+; interactive one starts the directory page showing.
 
 !macro customInit
-  StrLen $0 "\${APP_FILENAME}"
-  IntOp $1 $0 * -1
-  StrCpy $2 "$INSTDIR" $0 $1
-  ${If} $2 != "\${APP_FILENAME}"
-    StrCpy $INSTDIR "$INSTDIR\${APP_FILENAME}"
+  ${IfNot} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+    ${If} $installMode == "all"
+      StrCpy $3 "$PROGRAMFILES64\${APP_FILENAME}"
+    ${Else}
+      ; ponytail: multiUser.nsh's own SHGetKnownFolderPath dance covers a
+      ; Win7 corner this plain default never needs; upgrade if that corner
+      ; ever turns out to matter.
+      StrCpy $3 "$LocalAppData\Programs\${APP_FILENAME}"
+    ${EndIf}
+    StrCpy $INSTDIR "$3"
   ${EndIf}
 !macroend
