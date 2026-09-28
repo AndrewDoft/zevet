@@ -1506,3 +1506,38 @@
   .tm-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
   .tm-end { font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle); }
   .tm-tool > span:first-of-type { color: var(--ink); }
+
+  /* The subagents panel (components/subagents-panel.tsx): every running
+     console with the detail People deliberately omits. Fixed in a corner so
+     it costs nothing collapsed, and never fights the rail or detail columns
+     for width. */
+  .subagents-panel {
+    position: fixed; right: 16px; bottom: 16px; z-index: 30;
+    font-family: var(--font-mono); font-size: 11.5px;
+  }
+  .subagents-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 999px;
+    background: var(--raise); border: 1px solid var(--line); color: var(--ink);
+    cursor: pointer; white-space: nowrap;
+  }
+  .subagents-toggle:hover { background: var(--raise-soft); }
+  .subagents-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--success);
+  }
+  .subagents-list {
+    margin-top: 6px; padding: 6px;
+    background: var(--raise); border: 1px solid var(--line); border-radius: 10px;
+    max-width: 60vw; max-height: 40vh; overflow: auto;
+  }
+  .subagents-row {
+    display: grid;
+    grid-template-columns: minmax(80px, 1fr) minmax(120px, 1.4fr) minmax(60px, auto) 44px 48px;
+    gap: 4px 12px; align-items: baseline;
+    padding: 5px 8px; border-radius: 6px;
+    white-space: nowrap; overflow: hidden;
+  }
+  .subagents-row:hover { background: var(--raise-soft); }
+  .subagents-name { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+  .subagents-meta, .subagents-tool { color: var(--subtle); overflow: hidden; text-overflow: ellipsis; }
+  .subagents-elapsed, .subagents-tokens { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }

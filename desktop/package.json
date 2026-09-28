@@ -73,6 +73,8 @@
       "credentials.js",
       "credential-ladder.js",
       "credential-usage.js",
+      "agent-engine.js",
+      "agent-api.js",
       "chat.js",
       "chat-claude.js",
       "chat-cli.js",

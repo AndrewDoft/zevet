@@ -729,6 +729,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       } else {
         if (closedMeanwhile(c, r.id)) return;
         c.id = r.id ? String(r.id) : null;
+        if (r.engine) c.engine = r.engine;
         // The prompt a fork was started to ask. It goes only after the spawn
         // succeeded, because a prompt sent to a console with no process is the
         // one case where the composer's own guard cannot help.
@@ -1652,6 +1653,8 @@ function reattachConsoles(held: HeldConsole[]): void {
       startedAt: h.startedAt,
       exitCode: null,
       ...(h.title ? { autoTitle: h.title } : {}),
+      ...(h.engine ? { engine: h.engine } : {}),
+      ...(h.label ? { label: h.label } : {}),
     };
     useBoard.setState((g) => ({ myConsoles: [...g.myConsoles, c] }));
     for (const evt of h.events) ingressAgentEvent(evt);

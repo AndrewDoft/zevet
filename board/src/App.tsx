@@ -13,6 +13,7 @@ import { DetailPane } from "./components/detail";
 import { SettingsSheet } from "./components/settings";
 import { UpdateBanner } from "./components/updatebanner";
 import { VoiceDialog } from "./components/voicedialog";
+import { SubagentsPanel } from "./components/subagents-panel";
 import {
   applyPanes,
   applyTheme,
@@ -267,6 +268,7 @@ function App() {
       <Palette />
       <UpdateBanner />
       <VoiceDialog />
+      <SubagentsPanel />
     </ConsoleRuntimeProvider>
   );
 }

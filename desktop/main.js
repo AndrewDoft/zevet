@@ -41,6 +41,7 @@ const { FileWatch } = require("./file-watch.js");
 const { AppUpdater } = require("./app-update.js");
 const runtime = require("./runtime.js");
 const askServer = require("./ask-server.js");
+const agentApi = require("./agent-api.js");
 const { GithubSignIn } = require("./github-signin.js");
 const { resolveHub, HOSTED_HUB, LEGACY_HUB } = require("./hub-target.js");
 const { GoogleSignIn } = require("./google-signin.js");
@@ -56,6 +57,7 @@ const { Family, familyDir, frameable, FRAME_URLS } = require("./family.js");
 const credentials = require("./credentials.js");
 const credentialLadder = require("./credential-ladder.js");
 const credentialUsage = require("./credential-usage.js");
+const agentEngine = require("./agent-engine.js");
 const masoraPush = require("./masora-push.js");
 const masoraConnect = require("./masora-connect.js");
 const chats = require("./chat.js");
@@ -80,6 +82,7 @@ const runtimeReady = runtime.preparePath();
 
 const HOME = zevetHome();
 const CONFIG = path.join(HOME, "config.json");
+const AGENT_API_FILE = path.join(HOME, "agent-api.json");
 
 /**
  * Test hook: record every `shell.openExternal` call instead of actually
@@ -508,6 +511,23 @@ async function credentialEnvFor() {
   for (const v of ALL_CREDENTIAL_ENV_VARS) delete env[v];
   env[envVar] = cred.key;
   return env;
+}
+
+/**
+ * The env to spawn an agent with, and which engine it ended up on --
+ * `{ok: true, env, engine}` or `{ok: false, error}`.
+ *
+ * A per-launch `engine` request (desktop/agent-engine.js: "engine1" |
+ * "engine2" | "auto") is a DIFFERENT axis from `credentialEnvFor`'s saved
+ * default above -- that one picks a hub-shared credential for this
+ * workspace; this one picks which of Andrew's own two Claude Max accounts
+ * runs the process. When a caller names an engine it wins outright, because
+ * it was asked for explicitly; with none named this is unchanged from
+ * before engine selection existed -- `credentialEnvFor()`'s own default.
+ */
+async function agentEnvFor(engine) {
+  if (!engine) return { ok: true, env: await credentialEnvFor(), engine: undefined };
+  return agentEngine.resolveEngine(engine, process.env);
 }
 
 /**
@@ -1867,6 +1887,23 @@ function knownRoot(root) {
   return readWorkspaces().some((d) => path.resolve(d) === want) ? want : null;
 }
 
+/**
+ * The `knownRoot` guard exists because the RENDERER is untrusted: a compromised
+ * web page could otherwise ask the main process to start a process anywhere on
+ * disk. The local control API (desktop/agent-api.js) is authenticated by a
+ * bearer secret only a user-only file on this machine holds, which is the same
+ * trust level as someone with a shell already has — so its `spawn` may target
+ * any directory that exists, not only a workspace opened through the UI.
+ */
+function trustedDir(root) {
+  const want = path.resolve(String(root || ""));
+  try {
+    return fs.statSync(want).isDirectory() ? want : null;
+  } catch {
+    return null;
+  }
+}
+
 ipcMain.handle("local:workspaces", () =>
   readWorkspaces().map((dir) => ({ dir, name: path.basename(dir), repo: localFs.isProbablyRepo(dir) })),
 );
@@ -3220,10 +3257,12 @@ async function masoraBriefFor(dir, prompt) {
   return result ? result.brief : null;
 }
 
-ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
+/** The shared body of `local:startAgent` and the control API's `spawn` --
+ *  `trusted` is what tells the two apart (see `trustedDir` above). */
+async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
   await runtimeReady;
-  const dir = knownRoot(cwd);
-  if (!dir) return { ok: false, error: "not an opened workspace" };
+  const dir = trusted ? trustedDir(cwd) : knownRoot(cwd);
+  if (!dir) return { ok: false, error: trusted ? "cwd does not exist" : "not an opened workspace" };
 
   // A claude fork has to start where its source session ran — claude finds a
   // session only from that folder — so it joins its source's worktree rather
@@ -3270,7 +3309,13 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   // zone — reading it throws a ReferenceError out of the error path, which is
   // the worst possible place to add a second failure.
   const handle = { id: null };
-  const env = await credentialEnvFor();
+  const engineReq = opts && typeof opts.engine === "string" ? opts.engine : "";
+  const resolved = await agentEnvFor(engineReq);
+  if (!resolved.ok) {
+    void releasePlacement(place);
+    return { ok: false, error: resolved.error };
+  }
+  const env = resolved.env;
   const started = agentConsole.startConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
@@ -3310,19 +3355,26 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   handle.id = started.id;
   trackPlacement(place, started.id);
   consoles.set(started.id, started);
-  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place));
-  return { ok: true, id: started.id, agent, cwd: dir };
-});
+  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place, resolved.engine));
+  return { ok: true, id: started.id, agent, cwd: dir, engine: resolved.engine };
+}
+ipcMain.handle("local:startAgent", (_e, args) => startAgentCore(args));
 
 /** What a reloaded board needs to rebuild a console's rail entry. `root` is
- *  the repo the user picked even when the agent works in a worktree of it. */
-function consoleMeta(agent, dir, opts, place) {
+ *  the repo the user picked even when the agent works in a worktree of it.
+ *  `engineUsed` is only set when a caller named an engine (desktop/
+ *  agent-engine.js) -- absent, the card shows nothing new, exactly as before
+ *  engine selection existed. `opts.label` names an API-spawned console
+ *  (desktop/agent-api.js "spawn"); UI-started consoles never set it. */
+function consoleMeta(agent, dir, opts, place, engineUsed) {
   return {
     agent: String(agent || ""),
     root: dir,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     startedAt: Date.now(),
+    ...(engineUsed ? { engine: engineUsed } : {}),
+    ...(opts && typeof opts.label === "string" && opts.label ? { label: opts.label } : {}),
     ...(place && place.worktree ? { worktree: place.worktree.dir, branch: place.worktree.branch } : {}),
   };
 }
@@ -3366,7 +3418,10 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
   }
 
   const handle = { id: null };
-  const env = await credentialEnvFor();
+  const engineReq = opts && typeof opts.engine === "string" ? opts.engine : "";
+  const resolved = await agentEnvFor(engineReq);
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  const env = resolved.env;
   const started = agentConsole.startConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
@@ -3394,7 +3449,7 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
   consoles.set(started.id, started);
   // The same thread, a new process: its history moves over rather than
   // coming back after a reload as a second thread, and the old handle goes.
-  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place), continues);
+  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place, resolved.engine), continues);
   const prev = consoles.get(continues);
   if (prev) {
     try {
@@ -3405,10 +3460,12 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
     }
     consoles.delete(continues);
   }
-  return { ok: true, id: started.id, agent, cwd: dir };
+  return { ok: true, id: started.id, agent, cwd: dir, engine: resolved.engine };
 });
 
-ipcMain.handle("local:sendToAgent", (_e, { id, text }) => {
+/** The shared body of `local:sendToAgent` and the control API's `spawn`
+ *  (which sends the prompt this same way, right after starting). */
+function sendToAgentCore(id, text) {
   const c = consoles.get(id);
   if (!c) return { ok: false, error: "no such console" };
   try {
@@ -3428,7 +3485,8 @@ ipcMain.handle("local:sendToAgent", (_e, { id, text }) => {
   } catch (err) {
     return { ok: false, error: err.message };
   }
-});
+}
+ipcMain.handle("local:sendToAgent", (_e, { id, text }) => sendToAgentCore(id, text));
 
 /**
  * A few generated words for a console's title, from its first prompt. Not
@@ -3453,7 +3511,8 @@ async function nameConsole(id, text) {
   }
 }
 
-ipcMain.handle("local:stopAgent", (_e, id) => {
+/** The shared body of `local:stopAgent` and the control API's `stop`. */
+function stopAgentCore(id) {
   const c = consoles.get(id);
   if (!c) return { ok: false, error: "no such console" };
   try {
@@ -3463,7 +3522,8 @@ ipcMain.handle("local:stopAgent", (_e, id) => {
   }
   consoles.delete(id);
   return { ok: true };
-});
+}
+ipcMain.handle("local:stopAgent", (_e, id) => stopAgentCore(id));
 
 /** Every console a reloaded board should show again, with what it has said. */
 ipcMain.handle("local:consoles", () => consoleLog.snapshot());
@@ -3494,6 +3554,13 @@ function stopAllConsoles() {
 }
 
 app.on("before-quit", stopAllConsoles);
+app.on("before-quit", () => {
+  // A stale discovery file pointing at a dead port is worse than none: a CLI
+  // that trusts it hangs on a connection nobody answers rather than failing
+  // fast with "zevet is not running".
+  fs.rmSync(AGENT_API_FILE, { force: true });
+  if (agentApiHandle) void agentApiHandle.close();
+});
 app.on("before-quit", () => family.stop());
 
 /* ==========================================================================
@@ -3808,8 +3875,29 @@ ipcMain.handle("app:updateStatus", () => appUpdater.status());
 ipcMain.handle("app:updateCheck", () => appUpdater.check());
 ipcMain.handle("app:updateInstall", () => appUpdater.install());
 
+/**
+ * The local control API (desktop/agent-api.js) -- started eagerly on app
+ * ready, not lazily on first use like ask-server.js's permit gate, because
+ * its whole point is a terminal caller who is not otherwise touching the
+ * app at all. The discovery file is user-only (mode 0600, same discipline
+ * masora.js's own token file uses) since holding it is what makes a caller
+ * trusted -- see `trustedDir` above for what that buys `spawn`.
+ */
+let agentApiHandle = null;
+async function startAgentApi() {
+  agentApiHandle = await agentApi.start({
+    startAgentCore,
+    sendToAgentCore,
+    stopAgentCore,
+    getConsole: (id) => consoleLog.get(id),
+    listConsoles: () => consoleLog.snapshot().consoles,
+  });
+  atomicWriteJson(AGENT_API_FILE, { url: agentApiHandle.url, token: agentApiHandle.token, pid: process.pid }, { mode: 0o600 });
+}
+
 app.whenReady().then(() => {
   buildMenu();
+  void startAgentApi();
   // No console outlives the app, so neither does a worktree made for one.
   void worktrees.prune();
   startScheduler();

@@ -16,6 +16,9 @@ export interface StartAgentResult {
   ok: boolean;
   id?: string;
   error?: string;
+  /** Which Claude account this actually ran on, only when the launch named
+   *  an engine (desktop/agent-engine.js) -- absent otherwise. */
+  engine?: string;
 }
 
 export interface StatsResult {
@@ -179,6 +182,13 @@ export interface HeldConsole {
   title?: string;
   running: boolean;
   events: AgentEvent[];
+  /** Which Claude account this ran on, only set when a caller named one
+   *  (desktop/agent-engine.js). Absent for a console started before engine
+   *  selection existed, or one that never named an engine. */
+  engine?: string;
+  /** Set only for a console the local control API spawned (desktop/
+   *  agent-api.js), never for one the board's own UI started. */
+  label?: string;
 }
 
 export interface ChatSummary {

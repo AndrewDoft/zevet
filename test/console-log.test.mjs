@@ -30,6 +30,22 @@ test("a snapshot hands back each console's metadata and events in order", () => 
   assert.deepEqual(c.events.map((e) => e.type), ["agent", "prompt"]);
 });
 
+test("get() returns one console in the same shape snapshot() gives each entry", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  log.record("a", { type: "agent", payload: { n: 1 } });
+  const [fromSnapshot] = log.snapshot().consoles;
+  assert.deepEqual(log.get("a"), fromSnapshot);
+});
+
+test("get() is undefined for a console that was never opened, or already forgotten", () => {
+  const log = createConsoleLog();
+  assert.equal(log.get("nope"), undefined);
+  log.open("a", META);
+  log.forget("a");
+  assert.equal(log.get("a"), undefined);
+});
+
 test("a console that finished during the reload comes back finished", () => {
   const log = createConsoleLog();
   log.open("a", META);

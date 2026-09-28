@@ -22,6 +22,19 @@
 const EVENT_CAP = 2000;
 const HEAD = 50;
 
+/** entries.get(id)'s stored shape, projected to what a caller may read --
+ *  shared by `snapshot()` and `get()` so the gap-marker splice happens once. */
+function toPublic(e, head) {
+  return {
+    id: e.id,
+    ...e.meta,
+    running: e.running,
+    events: e.dropped
+      ? [...e.events.slice(0, head), { type: "gap", id: e.id, dropped: e.dropped }, ...e.events.slice(head)]
+      : e.events.slice(),
+  };
+}
+
 // ponytail: capped by event count, not bytes; a run of huge tool results can
 // still hold a lot. Add a byte budget if memory ever shows up.
 function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
@@ -93,15 +106,17 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
     snapshot() {
       return {
         seq,
-        consoles: [...entries.values()].map((e) => ({
-          id: e.id,
-          ...e.meta,
-          running: e.running,
-          events: e.dropped
-            ? [...e.events.slice(0, head), { type: "gap", id: e.id, dropped: e.dropped }, ...e.events.slice(head)]
-            : e.events.slice(),
-        })),
+        consoles: [...entries.values()].map((e) => toPublic(e, head)),
       };
+    },
+
+    /** One console, in the same shape `snapshot()` hands each entry -- for a
+     *  caller that wants a single console rather than every one of them (the
+     *  control API's status/output/wait, desktop/agent-api.js). Undefined
+     *  when there is no such console. */
+    get(id) {
+      const e = entries.get(id);
+      return e ? toPublic(e, head) : undefined;
     },
 
     clear() {

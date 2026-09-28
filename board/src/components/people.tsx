@@ -163,6 +163,11 @@ type Row = {
   key: string;
   agent: string;
   model?: string;
+  /** Which Claude account this ran on, only set when the launch named one
+   *  (desktop/agent-engine.js). Absent for a disk session or an ordinary
+   *  console that never named one -- shown only in the row's tooltip, never
+   *  as a badge, per the "no tool use in People" rule at the top of this file. */
+  engine?: string;
   blurb: string;
   updated: number;
   console: ConsoleEntry | null;
@@ -257,7 +262,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
           aria-current={isOpen ? "true" : undefined}
           aria-expanded={hasKids ? isOpen : undefined}
           onClick={() => (c ? setActiveConsole(c.key) : openSession(s!))}
-          title={row.blurb}
+          title={row.engine ? `${row.blurb} · ${row.engine}` : row.blurb}
         >
           {hasKids ? <Twist open={isOpen} /> : <span className="agent-row-gap" aria-hidden="true" />}
           <AgentLogo agent={row.agent} model={row.model} hue={hue} className="agent-row-mark size-3" />
@@ -444,6 +449,7 @@ export function PeoplePane({
         key: `console:${c.key}`,
         agent: c.agent,
         model: c.model,
+        engine: c.engine,
         blurb: consoleBlurb(c),
         updated: c.startedAt,
         console: c,
