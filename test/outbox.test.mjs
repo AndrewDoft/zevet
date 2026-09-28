@@ -7,7 +7,7 @@
 // the exit is always 0.
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { startHub, state, runScript, tempDir, TOKEN } from "./helpers.mjs";
 import { addOpencodeRepo } from "../client/install-opencode.mjs";
@@ -19,6 +19,10 @@ const TOOL_PAYLOAD = JSON.stringify({
 });
 
 function hookRun(home, hub, extra = {}) {
+  // A fresh last-check stamp, so the hook does not spawn its detached updater:
+  // the interval below only suppresses it once a stamp exists, and an updater
+  // still writing into home.dir races the test's cleanup (ENOTEMPTY on CI).
+  writeFileSync(path.join(home.dir, "last-check"), String(Date.now()));
   return runScript("hook.mjs", {
     stdin: TOOL_PAYLOAD,
     args: ["--zevet-hook", "--zevet-agent", "claude-code", "--zevet-repo", home.repo],
