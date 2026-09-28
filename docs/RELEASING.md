@@ -549,7 +549,7 @@ step decodes it to a file and repoints the env var at that path before `npm run
 dist:mac`.
 
 With them set: `electron-builder.config.js` turns on `hardenedRuntime` + `notarize`;
-`@electron/osx-sign` (bundled into electron-builder 25.1.8) walks the whole `.app` and
+`@electron/osx-sign` (`desktop/sign-macos.cjs` uses the pinned 1.3.1; electron-builder 26.17.0 carries its own 1.3.3) walks the whole `.app` and
 signs every Mach-O it finds bottom-up; `desktop/staple-macos.cjs` (`afterSign`) staples
 the notarization ticket onto the `.app` (electron-builder's own `notarize()` submits and
 waits but never staples); `desktop/notarize-dmg.cjs` (`afterAllArtifactBuild`) separately

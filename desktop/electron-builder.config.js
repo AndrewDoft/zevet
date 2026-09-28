@@ -38,13 +38,9 @@
 // Actions runner without a cloud HSM anyway — so the cloud service is both
 // cheaper and the only one that fits this pipeline.
 //
-// ⚠️ NEITHER IS A SECURITY CONTROL FOR ZEVET'S UPDATER. The update manifest and
-// the file it names come from the same host, so the published sha256 proves the
-// bytes arrived intact, not that the host is honest (desktop/app-update.js says
-// so at length). Signing narrows that: a signed installer cannot be swapped for
-// somebody else's, because the OS checks the signature before running it. It is
-// a real improvement and it is not the same as the updater verifying a
-// publisher key, which zevet still does not do.
+// The update feed itself is Ed25519-signed (desktop/update-signing.js), and the
+// updater checks an installer's publisher against these signatures before
+// offering it (desktop/app-update.js); the OS signature is the second lock.
 "use strict";
 
 const base = require("./package.json").build;
