@@ -177,6 +177,18 @@ describe("names", () => {
     assert.ok(w.people.some((p) => p.login === "Andrew D" && p.key === "zevet-e2e-github"), "the People list shows the new name under a stable key");
   });
 
+  test("a name a hook-only teammate already wears on the board is refused", async () => {
+    const { base, owner } = await hubWith();
+    await call(base, "/ingest", { token: TOKEN, body: { actor: "bob", kind: "prompt", repo: "r", detail: "x" } });
+    const r = await call(base, "/auth/rename", { token: owner, body: { name: "Bob" } });
+    assert.equal(r.status, 400);
+    assert.match((await r.json()).error, /already on the board/);
+    // …but the name my own machine reports is mine to take.
+    await call(base, "/ingest", { token: TOKEN, body: { actor: "andrew", kind: "prompt", repo: "r", detail: "x" } });
+    const own = await call(base, "/auth/rename", { token: owner, body: { name: "andrew", actor: "andrew" } });
+    assert.equal(own.status, 200);
+  });
+
   test("you cannot rename somebody else, but the owner can", async () => {
     const { base, owner, others } = await hubWith({ extra: [kai] });
     const denied = await call(base, "/auth/rename", { token: others[0].token, body: { login: "zevet-e2e-github", name: "Boss" } });

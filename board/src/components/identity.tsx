@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { GithubMark, GoogleMark } from "./logos";
 import { combinePeople, identityLabel, linkAccount, unlinkAccount } from "../lib/identity.mjs";
 import { useBoard } from "../lib/board";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 const BTN = "sbtn";
 
@@ -95,7 +96,7 @@ export function IdentityRows({
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const from = useRef<HTMLInputElement>(null);
-  const into = useRef<HTMLSelectElement>(null);
+  const [into, setInto] = useState("");
 
   function unlink(i: Ident) {
     setBusy(true);
@@ -109,7 +110,7 @@ export function IdentityRows({
 
   function combine() {
     const f = (from.current && from.current.value.trim()) || "";
-    const t = (into.current && into.current.value) || "";
+    const t = into || (people[0] && (people[0].key || people[0].login)) || "";
     if (!f || !t) return;
     setBusy(true);
     setErr("");
@@ -165,13 +166,18 @@ export function IdentityRows({
               <option key={k} value={k} />
             ))}
           </datalist>
-          <select ref={into} aria-label="Into this person" defaultValue={people[0].key || people[0].login}>
-            {people.map((p) => (
-              <option key={p.key || p.login} value={p.key || p.login}>
-                into {p.login}
-              </option>
-            ))}
-          </select>
+          <Select value={into || people[0].key || people[0].login} onValueChange={(v: string | null) => v && setInto(v)}>
+            <SelectTrigger size="sm" className="h-7 shrink-0 rounded-full border-transparent bg-foreground/[0.04] px-2 text-xs" aria-label="Into this person">
+              <SelectValue>{() => `into ${(people.find((p) => (p.key || p.login) === (into || people[0].key || people[0].login)) || people[0]).login}`}</SelectValue>
+            </SelectTrigger>
+            <SelectContent align="start">
+              {people.map((p) => (
+                <SelectItem key={p.key || p.login} value={p.key || p.login}>
+                  into {p.login}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <button className={BTN} type="submit" disabled={busy}>
             Combine
           </button>

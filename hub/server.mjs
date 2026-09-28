@@ -1507,6 +1507,14 @@ async function handleRequest(req, res) {
       const mine = acc.profile(sess);
       const mineLogins = mine ? mine.identities.map((i) => i.login) : [sess.login];
       if (!mineLogins.includes(target) && !isOwner) return json(res, 403, { error: "you can only rename yourself" });
+      // A name already worn by somebody on the BOARD (a hook-only teammate has no
+      // account, so accounts cannot see them) is theirs: taking it would fold
+      // their row into yours. Names you already go by are fine.
+      const want = String(body.name || "").trim().toLowerCase();
+      const mineNames = new Set([...(mine ? [mine.name, ...mine.aliases, ...mine.identities.map((i) => i.login)] : []), body.actor].filter(Boolean).map((n) => String(n).toLowerCase()));
+      if (want && !mineNames.has(want) && boards.get(auth.team).events.some((e) => String(e.actor).toLowerCase() === want)) {
+        return json(res, 400, { error: `${String(body.name).trim()} is already on the board` });
+      }
       // The actor string is only ever taken for the caller's OWN person.
       const r = acc.rename(target, body.name, { actor: mineLogins.includes(target) ? body.actor : "" });
       if (!r.ok) return json(res, 400, { error: r.error });

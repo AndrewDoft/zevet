@@ -1089,3 +1089,26 @@ file already used for `window.paintUpdate`) since no path in that file's single 
 produce a REAL successful sign-in without a live GitHub/Google app or an owner session — the
 real HTTP-level "does redeeming a key actually work" contract stays covered in
 `test/team.test.mjs`'s `/team/join` describe block, unchanged.
+
+## D-025 — One person, many identities: linked on VERIFIED email or a second OAuth sign-in, never on a typed address
+
+**Decision.** A person record (the old allowlist row) may carry extra `identities`, each with the
+emails that identity proved. Sign-in links a new identity to an existing person only on *verified*
+evidence: GitHub's `GET /user/emails` rows with `verified: true` (needs the `user:email` scope,
+now requested alongside `read:user` — docs.github.com/rest/users/emails), or Google's
+`email_verified` id-token email. The GitHub public-profile email and an invite-key redemption's
+typed address are not evidence. A signed-in person can add a second identity from Settings by
+running that identity's own OAuth sign-in with `link: true` (session cookie required; no new
+session, no secret handed out), and unlink any but their last. `combine` (owner only) covers what
+evidence cannot prove ("andrew" + "@AndrewDoft"). `scripts/merge-people.mjs` merges stored
+duplicates that evidence proves; dry-run by default, idempotent.
+
+**Names.** Events name their actor as a string the machine reports. A person's display name,
+linked logins and aliases resolve those strings at read time (`actorResolver`), so a rename or a
+merge re-points events already in the log without rewriting `events.jsonl`. A rename may not take
+a name another person or a hook-only teammate already wears on the board.
+
+**Cost / reversibility.** Existing GitHub users are asked to approve one extra scope on their next
+sign-in; a token without it just yields no email evidence (the call is best-effort). Records gain
+optional fields only, so an older hub still reads the file. A merge is not undoable by the hub —
+`--apply` writes a `.bak-<timestamp>` copy first.
