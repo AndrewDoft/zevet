@@ -77,6 +77,50 @@ off the bytes that are about to be published.
 `--notes` is one short sentence. It is shown in the rail under "Version 0.2.0 is
 ready", in a 258px column, so it is a line and not a changelog.
 
+**The feed is signed, and unsigned feeds are rejected by the app.** The script
+refuses to write one without the private key:
+
+```
+$env:ZEVET_UPDATE_SIGNING_KEY = (pwsh -NoProfile -File C:/Users/andre/.claude/bin/update-signing-key.ps1 zevet | Out-String)
+node scripts/make-feed.mjs ./release-0.2.0 --notes "..."
+```
+
+Never log or commit that PEM. The same value is the GitHub Actions secret
+`ZEVET_UPDATE_SIGNING_KEY` on `AndrewDoft/zevet` (nothing in Actions builds the feed
+today; it is there so one can). To re-sign a feed that is already published, in place:
+`node scripts/make-feed.mjs --sign-only zevet-latest.json`.
+
+Scheme (the same as Zevet Voice's `updates/signing.py`): Ed25519 over
+`"zevet-update-v1\n"` (the domain string plus ONE newline byte) followed by the canonical
+JSON of `payload` (sorted keys, `,`/`:` separators, non-ASCII left as is). The feed keeps its
+old top-level `version`/`notes`/`platforms` so installed apps that predate signing keep
+updating; new apps read only `payload` and `signature`
+(`{algorithm:"ed25519", key_id:"zevet-2026-09", signature:<base64>}`). Pinned public key
+(raw, base64) `WtLCaM3MBForULoSLJ0tYRmPyr4fOv24wBbugXSahZc=`, id `zevet-2026-09`, in
+`desktop/update-signing.js`. Rotating: ship an app that pins both, then retire the old id.
+
+Before an installer is offered, the app also checks its publisher (Authenticode
+`CN=Andrew Doft`, or Developer ID team `27C8FVB83B`). It is enforced when the running app
+carries that publisher itself and log-only otherwise, so unsigned dev builds still update.
+
+### The hub's client manifest
+
+`hub/server.mjs` serves `/dist/manifest.json`; installed clients (`client/updater.mjs`)
+run the code it lists. It is signed the same way with the same key under the domain
+`"zevet-client-v1\n"`. The hub holds no private key, so the signature is made at release time:
+
+```
+$env:ZEVET_UPDATE_SIGNING_KEY = (pwsh -NoProfile -File C:/Users/andre/.claude/bin/update-signing-key.ps1 zevet | Out-String)
+node scripts/sign-client-manifest.mjs     # writes hub/client-manifest.signed.json — commit it
+```
+
+Run it after ANY change under `client/` and after every version bump.
+`scripts/release-check.mjs` fails while the file is stale. A stale or missing file is not
+fatal to the hub: it then serves the unsigned manifest, which current clients reject, so
+client updates pause until the file is re-signed and the hub redeployed. Clients also refuse
+a plain-`http` hub (loopback excepted). For a local dev hub only,
+`ZEVET_ALLOW_UNSIGNED_MANIFEST=1` makes the updater accept an unsigned manifest.
+
 ## 4. Upload
 
 The download host is `/srv/masora/downloads` on the GCE box `masora-app`
@@ -245,6 +289,12 @@ ZEVET_APP_FEED=http://127.0.0.1:8801/download/zevet-latest.json npm start
 
 This is how the feature was verified before it had ever been published — the
 real app, its own timer, a real stream, a real checksum.
+
+The feed must be signed. For a loopback feed only, the app also honours
+`ZEVET_APP_FEED_TRUSTED_KEY=<key id>:<raw public key, base64>`, so
+`node scripts/make-feed.mjs <dir> --test-key <dir>/test-key.json` (a throwaway key, never
+the real one) gives a feed a dev build will take. `codemagic.yaml`'s
+`macos-autoupdate` workflow does exactly that.
 
 ## What is not automated, and why
 
