@@ -691,7 +691,7 @@ function AccountSection() {
             {inviteResult.emailSent ? (
               "Sent"
             ) : inviteResult.recipientNeeded ? (
-              "No email found — type one and Resend from the row below"
+              "No email — add one below"
             ) : inviteResult.inviteText ? (
               <>
                 {inviteResult.emailError ? <span style={{ color: "var(--bad)" }}>Not sent · </span> : null}
