@@ -157,7 +157,8 @@ jobs:
       # ─────────────────────────────────────────────────────────────────────
       # Windows: two stages instead of one `npm run dist:win`.
       #
-      # electron-builder 25.1.8's own Azure Trusted Signing path (win.azureSignOptions)
+      # electron-builder 25.1.8's own Azure Trusted Signing path (win.azureSignOptions;
+      # this two-stage flow was left unchanged in the 26.17.0 upgrade)
       # gates on AZURE_CLIENT_SECRET / AZURE_CLIENT_CERTIFICATE_PATH / username+password
       # (packages/app-builder-lib/out/codeSign/windowsSignAzureManager.js, verified by
       # reading the installed package) — no federated-token branch, so a GitHub OIDC
