@@ -20,6 +20,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -39,6 +40,46 @@ const TARGETS = [
   { key: "win32-x64", re: /^zevet-(\d+(?:\.\d+)*)-windows-x64-setup\.exe$/ },
   { key: "darwin-arm64", re: /^zevet-(\d+(?:\.\d+)*)-macos-arm64\.dmg$/ },
 ];
+
+/**
+ * The masora2 incident this guards against: a manual `gcloud compute scp`
+ * upload (docs/RELEASING.md §2/§4) that lands a truncated or otherwise
+ * corrupted installer. Nothing before this hashed whatever bytes happened to
+ * be in the release directory, self-consistently -- a bad file "verifies"
+ * against its own bad hash all the way to a machine that downloads it and
+ * gets nothing (exit 0, no zevet.exe). A truncated PE fails Authenticode
+ * verification (the signature covers a hash of the file), which is a much
+ * stronger, independent check than re-hashing the same bytes.
+ *
+ * ponytail: no per-platform min-size table, one floor for both artifacts --
+ * raise it (or add a real expected-size check) if a legitimately smaller
+ * build ever trips it.
+ */
+const MIN_ARTIFACT_BYTES = 20 * 1024 * 1024;
+function verifyArtifactIntegrity(file, key) {
+  // test/make-feed.test.mjs writes fixture files a few bytes long on purpose,
+  // to test the versioning/mixed-release logic without needing a real
+  // installer -- this check is about THAT logic, not this one.
+  if (process.env.MAKE_FEED_SKIP_ARTIFACT_CHECK) return null;
+  const bytes = statSync(file).size;
+  if (bytes < MIN_ARTIFACT_BYTES) {
+    return `${path.basename(file)} is only ${bytes} bytes (< ${MIN_ARTIFACT_BYTES}) -- looks truncated, not publishing it`;
+  }
+  if (key === "win32-x64" && process.platform === "win32") {
+    const ps = spawnSync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", `(Get-AuthenticodeSignature '${file}').Status.ToString()`],
+      { encoding: "utf8" },
+    );
+    const status = (ps.stdout || "").trim();
+    if (status === "NotSigned") {
+      console.log(`  (${path.basename(file)} carries no Authenticode signature -- unsigned dev build, not verifying it)`);
+    } else if (status !== "Valid") {
+      return `${path.basename(file)} Authenticode status is ${status || `unknown (${ps.stderr || ps.error})`}, not "Valid" -- looks corrupted, not publishing it`;
+    }
+  }
+  return null;
+}
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(name);
@@ -70,6 +111,11 @@ for (const t of TARGETS) {
   const version = t.re.exec(hit)[1];
   versions.add(version);
   const full = path.join(dir, hit);
+  const integrityProblem = verifyArtifactIntegrity(full, t.key);
+  if (integrityProblem) {
+    console.error(integrityProblem);
+    process.exit(1);
+  }
   const bytes = statSync(full).size;
   const sha256 = createHash("sha256").update(readFileSync(full)).digest("hex");
   platforms[t.key] = { file: hit, bytes, sha256 };

@@ -69,25 +69,46 @@
 ; only ever changes what a SILENT install treats as final, or what an
 ; interactive one starts the directory page showing.
 
-; ZEVET_CUSTOMINIT_LOG: plain FileWrite (no plugin) appending every decision
-; this macro makes to %TEMP%\zevet-install-debug.log, so a silent /S run that
-; extracts nothing still leaves a trail of what $INSTDIR and $installMode
-; actually were. ponytail: delete once the fresh-/S CI gates below have been
-; green for a few releases and nobody has needed to read this file.
+; masora2 sibling-install.yml (run 36375729128) found this macro clobbering an
+; EXPLICIT /D=<dir> on a fresh machine: a brand-new /D= target obviously has
+; no ${APP_EXECUTABLE_FILENAME} yet (nothing has ever installed there), so
+; the guard below read that as "the registry pointer is corrupted" and
+; overwrote $INSTDIR with the per-mode default -- silently redirecting the
+; whole install away from the directory the caller explicitly asked for.
+; installApplicationFiles then extracts into that DEFAULT path while
+; whatever checked "did it land in the directory I named" finds nothing
+; there and reports a successful-exit-code install that installed nothing.
+;
+; multiUser.nsh (this template's own file, two macros up) already has to
+; tell an explicit /D= apart from its own registry-derived default for
+; exactly this reason (electron-builder#1551) and does it with
+; ${StdUtils.GetParameter} $R0 "D" "" -- the same plugin, the same call, is
+; used here to ask "was /D= given" BEFORE deciding $INSTDIR needs fixing.
+; This is not ${StrContains} (see below): StdUtils is already loaded and
+; called from customInit's own sibling macro at this same compile stage.
 !macro customInit
+  ; ZEVET_CUSTOMINIT_LOG: plain FileWrite (no plugin) appending every
+  ; decision this macro makes to %TEMP%\zevet-install-debug.log, so a silent
+  ; /S run that extracts nothing still leaves a trail of what $INSTDIR,
+  ; $installMode and the /D= override actually were. ponytail: delete once
+  ; the fresh-/S and explicit-/D= CI gates below have been green for a few
+  ; releases and nobody has needed to read this file.
+  ${StdUtils.GetParameter} $R8 "D" ""
   FileOpen $R9 "$TEMP\zevet-install-debug.log" a
-  FileWrite $R9 "customInit: installMode=$installMode INSTDIR(before)=$INSTDIR$\r$\n"
+  FileWrite $R9 "customInit: installMode=$installMode /D=$R8 INSTDIR(before)=$INSTDIR$\r$\n"
   FileClose $R9
-  ${IfNot} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
-    ${If} $installMode == "all"
-      StrCpy $3 "$PROGRAMFILES64\${APP_FILENAME}"
-    ${Else}
-      ; ponytail: multiUser.nsh's own SHGetKnownFolderPath dance covers a
-      ; Win7 corner this plain default never needs; upgrade if that corner
-      ; ever turns out to matter.
-      StrCpy $3 "$LocalAppData\Programs\${APP_FILENAME}"
+  ${If} $R8 == ""
+    ${IfNot} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+      ${If} $installMode == "all"
+        StrCpy $3 "$PROGRAMFILES64\${APP_FILENAME}"
+      ${Else}
+        ; ponytail: multiUser.nsh's own SHGetKnownFolderPath dance covers a
+        ; Win7 corner this plain default never needs; upgrade if that corner
+        ; ever turns out to matter.
+        StrCpy $3 "$LocalAppData\Programs\${APP_FILENAME}"
+      ${EndIf}
+      StrCpy $INSTDIR "$3"
     ${EndIf}
-    StrCpy $INSTDIR "$3"
   ${EndIf}
   FileOpen $R9 "$TEMP\zevet-install-debug.log" a
   FileWrite $R9 "customInit: INSTDIR(after)=$INSTDIR$\r$\n"
