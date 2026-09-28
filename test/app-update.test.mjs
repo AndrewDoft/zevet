@@ -457,7 +457,7 @@ describe("Windows install scope and directory (the masora2 sibling-install fix)"
     const execPath = win(process.env.LOCALAPPDATA, "Programs", "zevet", "zevet.exe");
     const { scope, dir } = winInstallLocation(execPath);
     assert.equal(scope, "/currentuser");
-    assert.equal(dir, path.dirname(execPath));
+    assert.equal(dir, path.win32.dirname(execPath));
   });
 
   test("a per-machine execPath (Program Files, or anywhere else) resolves /allusers", (t) => {
@@ -482,7 +482,7 @@ describe("Windows install scope and directory (the masora2 sibling-install fix)"
     // swallowed into the path instead of being its own switch.
     const execPath = win("C:", "Program Files", "zevet", "zevet.exe");
     const args = winInstallArgs(["--updated", "/S"], execPath);
-    assert.deepEqual(args, ["--updated", "/S", "/allusers", `/D=${path.dirname(execPath)}`]);
+    assert.deepEqual(args, ["--updated", "/S", "/allusers", `/D=${path.win32.dirname(execPath)}`]);
     assert.equal(args[args.length - 1].startsWith("/D="), true, "/D= must be the last argument");
   });
 
@@ -491,7 +491,7 @@ describe("Windows install scope and directory (the masora2 sibling-install fix)"
     const args = winInstallArgs(["--updated", "/S"], execPath);
     const dArg = args[args.length - 1];
     assert.ok(!dArg.includes('"'), `winInstallArgs must never embed quotes itself: ${dArg}`);
-    assert.equal(dArg, `/D=${path.dirname(execPath)}`);
+    assert.equal(dArg, `/D=${path.win32.dirname(execPath)}`);
   });
 });
 
