@@ -47,6 +47,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnInstallerWithRetry } from "./lib/spawn-installer-retry.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 assert.equal(process.platform, "win32", "only meaningful on Windows");
@@ -83,7 +84,7 @@ try {
   // starting condition, not a fixture. ────────────────────────────────────
   const oldPkg = JSON.parse(fs.readFileSync(path.join(oldOutDir, "../package.json"), "utf8"));
   const oldSetup = findSetup(oldOutDir, oldPkg.version);
-  const install1 = spawnSync(oldSetup, ["/S", "/currentuser"], { encoding: "utf8", timeout: 120_000 });
+  const install1 = spawnInstallerWithRetry(oldSetup, ["/S", "/currentuser"], { encoding: "utf8", timeout: 120_000 });
   assert.equal(install1.status, 0, `fresh install exited ${install1.status}: ${install1.stderr || install1.stdout}`);
   assert.ok(fs.existsSync(path.join(installRoot, "zevet.exe")), `zevet.exe missing at ${installRoot} after the fresh install`);
   const freshLocation = readValue(INSTALL_KEY, "InstallLocation");
@@ -103,7 +104,7 @@ try {
   const newPkg = JSON.parse(fs.readFileSync(path.join(root, "desktop/package.json"), "utf8"));
   assert.notEqual(newPkg.version, oldPkg.version, `the new build (${newPkg.version}) must differ from the old one (${oldPkg.version}) to prove an update happened`);
   newSetup = findSetup(newOutDir, newPkg.version);
-  const update = spawnSync(newSetup, ["--updated", "/S"], { encoding: "utf8", timeout: 120_000 });
+  const update = spawnInstallerWithRetry(newSetup, ["--updated", "/S"], { encoding: "utf8", timeout: 120_000 });
   assert.equal(update.status, 0, `update exited ${update.status}: ${update.stderr || update.stdout}`);
 
   // ── Step 4: prove the self-heal, not just "an install happened somewhere".

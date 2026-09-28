@@ -34,6 +34,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { spawnInstallerWithRetry, ACCESS_VIOLATION_EXIT_CODE } from "./lib/spawn-installer-retry.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 assert.equal(process.platform, "win32", "only meaningful on Windows");
@@ -73,7 +74,7 @@ try {
   // never pass a mode flag, and a real fresh install never gets one either).
   const oldPkg = JSON.parse(fs.readFileSync(path.join(oldOutDir, "../package.json"), "utf8"));
   const oldSetup = findSetup(oldOutDir, oldPkg.version);
-  const perUserInstall = spawnSync(oldSetup, ["/S"], { encoding: "utf8", timeout: 120_000 });
+  const perUserInstall = spawnInstallerWithRetry(oldSetup, ["/S"], { encoding: "utf8", timeout: 120_000 });
   assert.equal(perUserInstall.status, 0, `per-user install exited ${perUserInstall.status}: ${perUserInstall.stderr || perUserInstall.stdout}`);
   const perUserExe = path.join(perUserInstallRoot, "zevet.exe");
   assert.ok(fs.existsSync(perUserExe), `zevet.exe missing at ${perUserInstallRoot} after the per-user install`);
@@ -82,7 +83,7 @@ try {
   // ── Step 2: register a SECOND, per-machine copy elsewhere -- the exact
   // shape masora2's own sibling-install-real.mjs registers on a dev box, and
   // the shape still present on Andrew's real machine.
-  const phantomInstall = spawnSync(oldSetup, ["/S", "/allusers", `/D=${phantomRoot}`], {
+  const phantomInstall = spawnInstallerWithRetry(oldSetup, ["/S", "/allusers", `/D=${phantomRoot}`], {
     encoding: "utf8",
     timeout: 120_000,
     windowsVerbatimArguments: true,
@@ -106,16 +107,32 @@ try {
   const capturedArgs = [];
   let resolveExit;
   const exited = new Promise((res) => { resolveExit = res; });
+  // installOnQuit() calls spawnImpl exactly once, fire-and-forget (that IS
+  // production's real shape -- see its own header) -- so the retry for the
+  // known transient crash (spawn-installer-retry.mjs) happens here, inside
+  // the 'exit' handler, by respawning with the SAME file/args/opts rather
+  // than resolving, up to the same attempt budget.
+  const RETRY_ATTEMPTS = 3;
   const u = new AppUpdater({
     platform: "win32",
     dir: scratchDir,
     execPath: perUserExe, // the copy actually running -- ground truth, not the registry
     spawnImpl: (file, args, opts) => {
       capturedArgs.push(args);
-      const child = spawn(file, args, opts);
-      child.on("exit", (code) => resolveExit(code));
-      child.on("error", (err) => resolveExit(err));
-      return child;
+      const attempt = (n) => {
+        const child = spawn(file, args, opts);
+        child.on("exit", (code) => {
+          if (code === ACCESS_VIOLATION_EXIT_CODE && n > 1) {
+            console.log(`installer exited ${ACCESS_VIOLATION_EXIT_CODE} (${RETRY_ATTEMPTS - n + 1}/${RETRY_ATTEMPTS}) -- known transient runner crash, retrying`);
+            attempt(n - 1);
+          } else {
+            resolveExit(code);
+          }
+        });
+        child.on("error", (err) => resolveExit(err));
+        return child;
+      };
+      return attempt(RETRY_ATTEMPTS);
     },
     quitImpl: () => {},
   });

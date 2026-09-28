@@ -16,6 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnInstallerWithRetry } from "./lib/spawn-installer-retry.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 assert.equal(process.platform, "win32", "only meaningful on Windows");
@@ -63,7 +64,7 @@ let pass = true;
 
 console.log("=== Scenario: fresh machine, bare /S (production's own args shape) ===");
 uninstallEverywhere();
-const a = spawnSync(setup, ["/S"], { encoding: "utf8", timeout: 120_000 });
+const a = spawnInstallerWithRetry(setup, ["/S"], { encoding: "utf8", timeout: 120_000 });
 console.log(`exit=${a.status}`);
 dumpDebugLog("bare /S");
 scanForExe("bare /S");
@@ -85,7 +86,7 @@ try { fs.rmSync(explicitDir, { recursive: true, force: true }); } catch { /* bes
 // outright (0xC0000005). %TEMP% has no space on GitHub Actions runners, but
 // assert it rather than assume it.
 assert.ok(!explicitDir.includes(" "), `explicit /D target must not contain a space: ${explicitDir}`);
-const b = spawnSync(setup, ["/S", `/D=${explicitDir}`], { encoding: "utf8", timeout: 120_000 });
+const b = spawnInstallerWithRetry(setup, ["/S", `/D=${explicitDir}`], { encoding: "utf8", timeout: 120_000 });
 console.log(`exit=${b.status}`);
 dumpDebugLog("explicit /D=");
 console.log(`  ${explicitDir}: ${fs.existsSync(path.join(explicitDir, "zevet.exe")) ? "FOUND" : "absent"}`);

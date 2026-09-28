@@ -26,6 +26,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnInstallerWithRetry } from "./lib/spawn-installer-retry.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 assert.equal(process.platform, "win32", "the Windows artifact must be tested on Windows");
@@ -62,7 +63,7 @@ function readInstallLocation() {
   return m ? m[1].trim() : null;
 }
 function runInstaller(exe, extraArgs = []) {
-  const r = spawnSync(exe, ["/S", "/currentuser", ...extraArgs], { encoding: "utf8", timeout: 120_000 });
+  const r = spawnInstallerWithRetry(exe, ["/S", "/currentuser", ...extraArgs], { encoding: "utf8", timeout: 120_000 });
   assert.equal(r.status, 0, `installer exited ${r.status}: ${r.stderr || r.stdout}`);
 }
 // Not "launch": app.asar is a single-file archive Electron's patched fs
