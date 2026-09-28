@@ -102,7 +102,7 @@ describe("automatic linking on a verified email", () => {
     // address was never verified by anyone, so it is not linkable evidence.
     const s = acc.signIn(gh("someone", "55", ["v@example.com"]));
     assert.ok(s.token);
-    assert.equal(people(acc).length >= 2, true);
+    assert.equal(people(acc).length, 3, "owner, the key-redeemed v@, and someone — three people, not two");
   });
 
   test("a pending GitHub invite and a pending email invite become one person when the GitHub sign-in proves the email", (t) => {
@@ -195,6 +195,9 @@ describe("linking by hand", () => {
     acc.link(acc.session(k.token), goog("kai@x.example", "g-k"), ["kai@x.example"]);
     acc.revoke("kai@x.example");
     assert.equal(acc.session(k.token), null);
+    // The block, not just the deletion, is what stops the Workspace domain door
+    // re-adding somebody who was removed — for EVERY identity they had.
+    assert.equal(acc.mayEnter({ ...goog("kai@x.example", "g-k"), hd: "x.example" }, { domain: "x.example" }).ok, false, "google identity stays blocked");
     assert.equal(acc.mayEnter(gh("kai", "7")).ok, false);
     assert.equal(acc.mayEnter(goog("kai@x.example", "g-k")).ok, false);
   });
