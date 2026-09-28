@@ -19,7 +19,6 @@ import {
 import { readLastChat, readMode, writeLastChat, writeMode } from "./mode.mjs";
 import { noteModelLimit } from "./model-limits.mjs";
 import { useBoard } from "./board";
-import type { LaunchMode } from "./types";
 
 /** "chat" is the Chat + Work side of the switch. The id is what old prefs
  *  already hold, so a stored "chat" loads as Chat + Work with no migration. */

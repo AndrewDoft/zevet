@@ -26,7 +26,7 @@ import { ChatSurface } from "../lib/surface";
 import { ContextCardButton, PastPromptsButton } from "./composercards";
 import { PromptLibraryPanel } from "./promptlib";
 import { QuotaChip } from "./quota";
-import { RunMeterCard } from "./runmeters";
+import { RunMeterCard, type RunUsage } from "./runmeters";
 import { ModelChoice } from "./model-choice";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { mono } from "./assistant-ui/elements/surfaces";
@@ -86,7 +86,7 @@ const compactModelChoice = cn(
 );
 
 interface ComposerSource {
-  usage: { context: number | null; cacheHit: number | null; cost: number | null; model: string | null; window: number | null } | null;
+  usage: RunUsage | null;
   model: string;
   runningModel: { id: string; name: string } | undefined;
   agents: UsableAgent[];
@@ -328,8 +328,6 @@ export function ComposerControls() {
  */
 export function ComposerExtras() {
   const { usage } = useComposerSource();
-  const isChat = useContext(ChatSurface);
-
   return (
     <ContextCardButton>
       {usage && usage.context != null ? (

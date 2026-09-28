@@ -582,7 +582,6 @@ function AccountSection() {
   const people = Array.isArray(whoState.people)
     ? (whoState.people as Array<{ login: string; provider?: string; owner?: boolean; pending?: boolean }>)
     : [];
-  const teamLabel = typeof whoState.teamName === "string" ? whoState.teamName : "";
   // The SLUG (whoami's `team`), not teamLabel: passed through to
   // githubStart/googleStart below so a reconnect from a NON-default team
   // claims an identity on THAT team, not the hub's default one. Omitted

@@ -19,7 +19,6 @@ import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
 import { ContextChart, ContextTicker, RunUsageTable } from "./usageviews";
 import { ContextGauge } from "./mapviews";
 import { money, tokens } from "../lib/fmt";
-import { CONTEXT_FLOOR } from "../lib/usage.mjs";
 
 /** The fallback context window, used only when the agent hasn't said what its
  *  real one is (ConsoleUsage.window, lib/types.ts — claude's result payload
@@ -28,17 +27,20 @@ import { CONTEXT_FLOOR } from "../lib/usage.mjs";
  *  drawn against it undersells rather than oversells how full it is. */
 const CONTEXT_LIMIT = 200_000;
 
+/** What the meter reads: a console's usage has all of it, a chat thread's has no cost or window. */
+export interface RunUsage {
+  context: number | null;
+  cacheHit: number | null;
+  model: string | null;
+  cost?: number | null;
+  window?: number | null;
+  cachedInput?: number | null;
+  output?: number | null;
+}
+
 interface RunMeterCardProps {
   /** Usage passed directly (for Chat). If omitted, reads from active console (for Code). */
-  usage?: {
-    context: number | null;
-    cacheHit: number | null;
-    cost: number | null;
-    model: string | null;
-    window: number | null;
-    cachedInput: number | null;
-    output: number | null;
-  } | null;
+  usage?: RunUsage | null;
 }
 
 /**
@@ -88,7 +90,7 @@ export function RunMeterCard({ usage: passedUsage }: RunMeterCardProps) {
     { label: "prompt", tokens: fresh, tint: "var(--chart-1)" },
   ].filter((s) => s.tokens > 0);
 
-  const model = usage.model || (isChat ? "claude" : active?.model || active?.agent);
+  const model = usage.model || (isChat ? "claude" : active?.model || active?.agent) || "";
   const messages = isChat ? 0 : active?.transcript.messages.length ?? 0;
   const tools = isChat ? 0 : active?.transcript.messages.reduce(
     (n, m) => n + (Array.isArray(m.content) ? m.content.filter((part) => part.type === "tool-call").length : 0),
@@ -147,7 +149,7 @@ export function RunMeterCard({ usage: passedUsage }: RunMeterCardProps) {
           // cacheHit is a raw ratio off the usage payload; printing it
           // unrounded put "70.74109720885467%" on screen.
           ...(usage.cacheHit != null ? [{ label: "cache", value: `${Math.round(usage.cacheHit)}%` }] : []),
-          ...(isChat ? [] : [{ label: "posture", value: active?.mode }]),
+          ...(isChat ? [] : [{ label: "posture", value: active?.mode ?? "" }]),
         ]}
       />
 
