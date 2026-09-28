@@ -6,15 +6,15 @@
 // feature — and is NOT trusted to choose where the bytes come from, where they
 // land, or whether they are run before they have been checked.
 //
-// ⚠️ AND ONE THING THESE TESTS DO NOT SHOW. The sha256 is published by the
-// same host as the file, so none of this survives that host being taken over.
-// See the header of desktop/app-update.js: what the checksum buys is integrity
-// against corruption, not authenticity. The tests below are about the updater
-// obeying its own rules, not about the rules being sufficient.
+// The feed is signed (desktop/update-signing.js), so a host takeover alone no
+// longer publishes a build: "a feed that is not signed by a pinned key" below
+// is the test of that. Every other case serves a feed signed with a throwaway
+// key the updater is told to trust (TEST_KEYS), so it exercises the rules it
+// names rather than the signature.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, generateKeyPairSync } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -22,7 +22,7 @@ import { tempDir, ROOT } from "./helpers.mjs";
 
 const require = createRequire(import.meta.url);
 const {
-  AppUpdater,
+  AppUpdater: RealAppUpdater,
   INSTALL_ARGS,
   QUIT_INSTALL_ARGS,
   EVERY_MS,
@@ -33,7 +33,28 @@ const {
   readManifest,
   winInstallLocation,
   winInstallArgs,
+  readSignedFeed,
+  loopbackProofKeys,
 } = require(path.join(ROOT, "desktop", "app-update.js"));
+
+const { signDocument, UPDATE_DOMAIN } = require(path.join(ROOT, "desktop", "update-signing.js"));
+
+const TEST_PAIR = generateKeyPairSync("ed25519");
+const TEST_PEM = TEST_PAIR.privateKey.export({ format: "pem", type: "pkcs8" });
+const TEST_KEYS = { "zevet-test": TEST_PAIR.publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64") };
+
+/** The feed as make-feed.mjs writes it: legacy top-level fields, plus a signed payload. */
+function signedFeed(m, pem = TEST_PEM) {
+  const payload = JSON.parse(JSON.stringify({ schema: 1, type: "zevet-update", ...m }));
+  return { ...m, payload, signature: signDocument(UPDATE_DOMAIN, payload, pem, "zevet-test") };
+}
+
+/** Trusts the throwaway key; the publisher check reports "unsigned" (log-only) unless a test says otherwise. */
+class AppUpdater extends RealAppUpdater {
+  constructor(o) {
+    super({ trustedKeys: TEST_KEYS, inspectImpl: async () => ({ valid: false, publisher: null }), ...o });
+  }
+}
 
 const KEY = "win32-x64";
 const FILE = "zevet-0.2.0-windows-x64-setup.exe";
@@ -60,7 +81,7 @@ async function fakeHost({ manifest, files = {}, onRequest = null } = {}) {
         return;
       }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(typeof m === "string" ? m : JSON.stringify(m));
+      res.end(typeof m === "string" ? m : JSON.stringify(m.raw ? m.raw : signedFeed(m)));
       return;
     }
     const name = decodeURIComponent(req.url.replace(/^\/download\//, ""));
@@ -1036,5 +1057,118 @@ describe("old installers are pruned", () => {
       await host.close();
       t.cleanup();
     }
+  });
+});
+
+describe("a signed feed and a signed installer", () => {
+  const body = randomBytes(2048);
+  const good = { version: "0.2.0", notes: "n", platforms: { [KEY]: { file: FILE, sha256: sha(body), bytes: body.length } } };
+  const andrew = { valid: true, publisher: "CN=Andrew Doft, O=Andrew Doft, L=New York, S=ny, C=US" };
+
+  async function checked(context, manifest, opts = {}) {
+    const t = tempDir("zevet signed ");
+    const host = await fakeHost({ manifest, files: { [FILE]: body } });
+    context.after(async () => {
+      await host.close();
+      t.cleanup();
+    });
+    const u = updaterFor(host, t.dir, { platform: "win32", ...opts });
+    return { u, host, t, status: await u.check() };
+  }
+  const fetchedInstaller = (host) => host.seen.some((p) => p.endsWith(FILE));
+
+  test("an unsigned feed is rejected and nothing is downloaded", async (t) => {
+    const r = await checked(t, { raw: good });
+    assert.equal(r.status.phase, "error");
+    assert.match(r.status.error, /not validly signed/);
+    assert.equal(fetchedInstaller(r.host), false);
+  });
+
+  test("a feed signed by a key that is not pinned is rejected (real pinned keys, throwaway signer)", async (t) => {
+    const r = await checked(t, good, { trustedKeys: undefined });
+    assert.equal(r.status.phase, "error");
+    assert.match(r.status.error, /untrusted key/);
+    assert.equal(fetchedInstaller(r.host), false);
+  });
+
+  test("editing the signed payload after signing is rejected", async (t) => {
+    const feed = signedFeed(good);
+    feed.payload.platforms[KEY].sha256 = "0".repeat(64);
+    const r = await checked(t, { raw: feed });
+    assert.equal(r.status.phase, "error");
+    assert.match(r.status.error, /does not match the document/);
+    assert.equal(fetchedInstaller(r.host), false);
+  });
+
+  test("the legacy top-level fields are ignored: the signed payload decides", async (t) => {
+    const evil = "zevet-9.9.9-windows-x64-setup.exe";
+    const feed = {
+      ...signedFeed(good),
+      version: "9.9.9",
+      platforms: { [KEY]: { file: evil, sha256: "f".repeat(64), bytes: 1 } },
+    };
+    const r = await checked(t, { raw: feed });
+    assert.equal(r.status.phase, "ready");
+    assert.equal(r.status.version, "0.2.0");
+    assert.equal(fetchedInstaller(r.host), true);
+    assert.equal(r.host.seen.some((p) => p.includes("9.9.9")), false);
+  });
+
+  test("readSignedFeed hands back only the payload", () => {
+    const ok = readSignedFeed(signedFeed(good), TEST_KEYS);
+    assert.deepEqual(ok.payload.platforms, good.platforms);
+    assert.match(readSignedFeed({ version: "0.2.0" }, TEST_KEYS).error, /not signed|not validly signed/);
+    assert.match(readSignedFeed(null).error, /not an object/);
+  });
+
+  test("a running app signed by Andrew refuses an installer that is unsigned", async (t) => {
+    const r = await checked(t, good, {
+      inspectImpl: async (_p, file) => (file === FILE || file.endsWith(FILE) ? { valid: false, publisher: null } : andrew),
+    });
+    assert.equal(r.status.phase, "error");
+    assert.match(r.status.error, /not signed as Authenticode CN=Andrew Doft/);
+    assert.equal(existsSync(path.join(r.t.dir, FILE)), false, "the rejected installer was left on disk");
+    assert.equal(r.status.canInstall, false);
+  });
+
+  test("a running app signed by Andrew refuses an installer signed by somebody else", async (t) => {
+    const r = await checked(t, good, {
+      inspectImpl: async (_p, file) => (file.endsWith(FILE) ? { valid: true, publisher: "CN=Mallory" } : andrew),
+    });
+    assert.equal(r.status.phase, "error");
+    assert.equal(existsSync(path.join(r.t.dir, FILE)), false);
+  });
+
+  test("a properly signed installer is offered", async (t) => {
+    const r = await checked(t, good, { inspectImpl: async () => andrew });
+    assert.equal(r.status.phase, "ready");
+    assert.equal(r.status.canInstall, true);
+  });
+
+  test("an unsigned running app (dev build) only logs the publisher check", async (t) => {
+    const r = await checked(t, good);
+    assert.equal(r.status.phase, "ready");
+    assert.ok(r.u.logs.some((l) => /publisher check is log-only/.test(l)), r.u.logs.join(" | "));
+  });
+
+  test("a cached installer is publisher-checked too, not trusted for having been verified once", async (t) => {
+    const r = await checked(t, good, { inspectImpl: async () => andrew });
+    assert.equal(r.status.phase, "ready");
+    const again = updaterFor(r.host, r.t.dir, {
+      platform: "win32",
+      inspectImpl: async (_p, file) => (file.endsWith(FILE) ? { valid: false, publisher: null } : andrew),
+    });
+    assert.equal((await again.check()).phase, "error");
+    assert.equal(existsSync(path.join(r.t.dir, FILE)), false);
+  });
+
+  test("the loopback proof key applies to a loopback feed only", () => {
+    const env = { ZEVET_APP_FEED_TRUSTED_KEY: "zevet-test:AAAA" };
+    assert.deepEqual(loopbackProofKeys("http://127.0.0.1:9/zevet-latest.json", env), { "zevet-test": "AAAA" });
+    assert.equal(loopbackProofKeys("https://usemasora.com/download/zevet-latest.json", env), undefined);
+    assert.equal(loopbackProofKeys("http://evil.example/zevet-latest.json", env), undefined);
+    assert.equal(loopbackProofKeys("http://127.0.0.1.evil.example/x.json", env), undefined);
+    assert.equal(loopbackProofKeys("http://127.0.0.1:9/x.json", {}), undefined);
+    assert.equal(loopbackProofKeys(undefined, env), undefined);
   });
 });

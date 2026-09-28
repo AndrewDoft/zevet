@@ -15,9 +15,25 @@
 // here as a disagreement rather than as a feed that advertises 0.2.0 and
 // serves 0.1.2.
 //
+// SIGNING. The feed is signed with Ed25519 (domain "zevet-update-v1", key id
+// zevet-2026-09; see desktop/update-signing.js). The private PEM comes from the
+// environment and is never logged or written:
+//
+//   ZEVET_UPDATE_SIGNING_KEY=<PEM>            (GitHub Actions secret of that name)
+//   locally: $env:ZEVET_UPDATE_SIGNING_KEY = (pwsh -NoProfile -File C:/Users/andre/.claude/bin/update-signing-key.ps1 zevet | Out-String)
+//
+//   node scripts/make-feed.mjs <dir> ...              generate AND sign
+//   node scripts/make-feed.mjs --sign-only <feed.json> re-sign a published feed in place
+//   node scripts/make-feed.mjs <dir> --test-key <f>   sign with a throwaway key, write its
+//                                                     public half to <f> (loopback proofs only)
+//
+// The signed payload is {schema, type, version, notes, platforms}. The legacy
+// top-level version/notes/platforms are kept, identical, so installed clients
+// that predate signing keep updating; new clients read only the payload.
+//
 // What this does NOT do: upload anything. It prints a file. Publishing is a
 // separate, deliberate step — see docs/RELEASING.md.
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -25,7 +41,37 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { readManifest } = createRequire(import.meta.url)("../desktop/app-update.js");
+const require = createRequire(import.meta.url);
+const { readManifest } = require("../desktop/app-update.js");
+const { UPDATE_DOMAIN, PINNED_KEYS, signDocument, verifySigned } = require("../desktop/update-signing.js");
+const KEY_ID = Object.keys(PINNED_KEYS)[0];
+
+/** {schema,type,version,notes,platforms} -> the feed with payload + signature. */
+function signedFeed({ version, notes, platforms }, { pem, keyId, keys }) {
+  const payload = { schema: 1, type: "zevet-update", version, notes, platforms };
+  const signature = signDocument(UPDATE_DOMAIN, payload, pem, keyId);
+  // Read it back with the verifier the app will use, so a wrong key fails here.
+  verifySigned(UPDATE_DOMAIN, payload, signature, keys);
+  return { version, notes, platforms, payload, signature };
+}
+
+/** The key to sign with: the real one from the environment, or a throwaway
+ *  (--test-key FILE writes its public half to FILE) for loopback proofs. */
+function signer() {
+  const testKeyOut = arg("--test-key");
+  if (testKeyOut) {
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const raw = publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64");
+    writeFileSync(testKeyOut, JSON.stringify({ key_id: "zevet-test", public_key: raw }) + "\n", "utf8");
+    return { pem: privateKey.export({ format: "pem", type: "pkcs8" }), keyId: "zevet-test", keys: { "zevet-test": raw } };
+  }
+  const pem = (process.env.ZEVET_UPDATE_SIGNING_KEY || "").replaceAll("|", "\n").trim();
+  if (!pem) {
+    console.error("ZEVET_UPDATE_SIGNING_KEY is not set: refusing to write an unsigned feed (see the header)");
+    process.exit(1);
+  }
+  return { pem, keyId: KEY_ID, keys: PINNED_KEYS };
+}
 
 /**
  * Which artifact belongs to which machine.
@@ -86,9 +132,23 @@ function arg(name, fallback = null) {
   return i > 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
+if (process.argv[2] === "--sign-only") {
+  const file = process.argv[3];
+  if (!file) {
+    console.error("usage: node scripts/make-feed.mjs --sign-only <feed.json> [--out FILE]");
+    process.exit(2);
+  }
+  const old = JSON.parse(readFileSync(file, "utf8"));
+  const src = old.payload || old; // re-signing a signed feed re-signs its payload
+  const feed = signedFeed(src, signer());
+  writeFileSync(arg("--out", file), JSON.stringify(feed, null, 2) + "\n", "utf8");
+  console.log(`signed ${arg("--out", file)} (zevet ${feed.version})`);
+  process.exit(0);
+}
+
 const dir = process.argv[2];
 if (!dir || dir.startsWith("--")) {
-  console.error("usage: node scripts/make-feed.mjs <artifact-dir> [--out FILE] [--notes TEXT]");
+  console.error("usage: node scripts/make-feed.mjs <artifact-dir> [--out FILE] [--notes TEXT] [--test-key FILE]\n       node scripts/make-feed.mjs --sign-only <feed.json>");
   process.exit(2);
 }
 
@@ -143,16 +203,17 @@ if (pkg.version !== version) {
   process.exit(1);
 }
 
-const feed = { version, notes: arg("--notes", ""), platforms };
+const unsigned = { version, notes: arg("--notes", ""), platforms };
 // Apply the reader's own validation before writing something no installed
 // machine can use (for example a zero-byte file from an interrupted build).
 for (const key of Object.keys(platforms)) {
-  const { error } = readManifest(feed, key);
+  const { error } = readManifest(unsigned, key);
   if (error) {
     console.error(error);
     process.exit(1);
   }
 }
+const feed = signedFeed(unsigned, signer());
 const out = arg("--out", path.join(dir, "zevet-latest.json"));
 writeFileSync(out, JSON.stringify(feed, null, 2) + "\n", "utf8");
 

@@ -76,7 +76,8 @@ workflows:
           mkdir -p /tmp/zevet-feed
           X1_DMG="$(ls desktop/out/zevet-*-macos-arm64.dmg | sort -V | tail -1)"
           cp "$X1_DMG" /tmp/zevet-feed/
-          node scripts/make-feed.mjs /tmp/zevet-feed
+          # Signed with a throwaway key; the app trusts it only for this loopback feed.
+          node scripts/make-feed.mjs /tmp/zevet-feed --test-key /tmp/zevet-feed/test-key.json
       - name: Prove the macOS self-update on real hardware
         script: |
           set -euo pipefail

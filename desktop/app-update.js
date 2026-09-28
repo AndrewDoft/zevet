@@ -5,32 +5,25 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // WHY THIS IS NOT electron-updater
 //
-// electron-updater is the obvious answer and it was rejected for one reason
-// that is not a matter of taste: on macOS it CANNOT WORK HERE. Squirrel.Mac
-// verifies the code signature of the replacement bundle before swapping it in,
-// and zevet is unsigned — a recorded decision (an Apple Developer account is
-// 99 USD/year, see .github/workflows/build.yml). An updater that silently does
-// nothing on half the team's machines is worse than no updater, because
-// everyone believes they are current.
-//
-// Hand-rolling it also keeps the shape this project already has: client/
-// updater.mjs updates the hook client from a manifest with a sha256 per file,
-// and this is the same idea pointed at the desktop artifacts. The two were
-// written to be read together.
+// It was rejected when zevet was unsigned (Squirrel.Mac refuses an unsigned
+// replacement bundle). zevet is signed now, but the hand-rolled updater stays:
+// it shares its shape with client/updater.mjs, and the trust model below is
+// its own.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ⚠️ WHAT THE sha256 IN THE MANIFEST DOES AND DOES NOT BUY
+// WHAT IS TRUSTED, AND WHY
 //
-// It comes from the SAME ORIGIN as the file it describes. So it catches a
-// truncated download, a corrupted CDN object and a proxy that mangled the
-// bytes. It does NOT make a compromised download host safe: whoever can
-// replace the .exe can replace the number next to it. The only thing that
-// would fix that is code signing, which zevet does not have.
-//
-// This is written down rather than implied because the check LOOKS like a
-// security control and it is easy to start believing it is one. What actually
-// stands between a user and a hostile installer here is HTTPS to a host Andrew
-// controls, plus the fact that installing is a deliberate click.
+// 1. The feed is signed (Ed25519, key pinned in ./update-signing.js, domain
+//    "zevet-update-v1"). version / file / sha256 / size are read ONLY from the
+//    signed payload; the legacy top-level fields exist for already-installed
+//    clients and are ignored here. An unsigned, badly signed or untrusted-key
+//    feed is rejected with no fallback. So a compromised download host can no
+//    longer swap the .exe and the number next to it: it cannot sign.
+// 2. The sha256 then binds the signed feed to the exact installer bytes.
+// 3. Before an installer is offered, its publisher is checked (Authenticode
+//    CN=Andrew Doft on Windows, Developer ID team 27C8FVB83B on macOS). That
+//    check is enforced when THIS running app carries the same publisher and
+//    is otherwise log-only, so unsigned dev builds and CI proofs still work.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT IT ACTUALLY DOES, PER PLATFORM
@@ -38,9 +31,8 @@
 //   Windows  Downloads the NSIS installer, verifies it, and either on a click
 //            ("Restart now": /S plus --force-run, then quits) or silently as
 //            the app quits on its own (/S, no --force-run, no relaunch — see
-//            installOnQuit()). The installer replaces the app in place. This
-//            works unsigned; SmartScreen is not consulted for a process the
-//            app spawned.
+//            installOnQuit()). The installer replaces the app in place.
+//            SmartScreen is not consulted for a process the app spawned.
 //
 //   macOS    Downloads the .dmg and verifies it. If `bundlePath` was given and
 //            its parent looks writable (canSelfReplaceMac()), it mounts the
@@ -69,8 +61,9 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
-const { spawn } = require("node:child_process");
+const { spawn, execFile } = require("node:child_process");
 const { pipeline } = require("node:stream/promises");
+const { UPDATE_DOMAIN, PINNED_KEYS, verifySigned } = require("./update-signing");
 
 /** Where the manifest lives when nothing says otherwise.
  *
@@ -289,6 +282,92 @@ function winInstallArgs(baseArgs, execPath) {
   return [...baseArgs, scope, `/D=${dir}`];
 }
 
+/**
+ * The signed payload of a feed, or `{ error }`. `keys` is injectable for tests
+ * and for loopback proofs; production uses the pinned set.
+ */
+function readSignedFeed(json, keys = PINNED_KEYS) {
+  if (!json || typeof json !== "object") return { error: "the feed is not an object" };
+  try {
+    verifySigned(UPDATE_DOMAIN, json.payload, json.signature, keys);
+  } catch (err) {
+    return { error: `the feed is not validly signed: ${err.message}` };
+  }
+  return { payload: json.payload };
+}
+
+/**
+ * Trust override for the loopback update proofs (scripts/test-macos-autoupdate
+ * .mjs signs a throwaway feed with a throwaway key). Honoured ONLY when the
+ * feed URL is loopback, so it can never redirect trust for the real feed.
+ * `ZEVET_APP_FEED_TRUSTED_KEY` is `<key id>:<raw ed25519 key, base64>`.
+ */
+function loopbackProofKeys(feedUrl, env = process.env) {
+  const spec = env.ZEVET_APP_FEED_TRUSTED_KEY;
+  if (!spec || !feedUrl) return undefined;
+  try {
+    const u = new URL(feedUrl);
+    if (u.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(u.hostname)) return undefined;
+  } catch {
+    return undefined;
+  }
+  const i = spec.indexOf(":");
+  return i > 0 ? { [spec.slice(0, i)]: spec.slice(i + 1) } : undefined;
+}
+
+/** Who must have signed an installer. */
+const PUBLISHER = {
+  win32: { label: "Authenticode CN=Andrew Doft", test: (who) => /(^|, )CN=Andrew Doft(,|$)/.test(who || "") },
+  darwin: { label: "Developer ID team 27C8FVB83B", test: (who) => who === "27C8FVB83B" },
+};
+
+const run = (cmd, args, env) =>
+  new Promise((resolve) =>
+    execFile(cmd, args, { encoding: "utf8", windowsHide: true, timeout: 60000, env }, (error, stdout, stderr) =>
+      resolve({ error, out: `${stdout || ""}${stderr || ""}` }),
+    ),
+  );
+
+/**
+ * What signature does this file carry? `{ valid, publisher }`; publisher is
+ * the Authenticode subject (Windows) or the Team ID (macOS), null if unsigned.
+ * Windows reads an installer, macOS a .dmg (mounted read-only) or a .app.
+ */
+async function inspectSignature(platform, target) {
+  if (platform === "win32") {
+    const { PSModulePath, ...env } = process.env; // a leaked pwsh module path breaks 5.1
+    const r = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      '$s = Get-AuthenticodeSignature -LiteralPath $env:ZEVET_SIG_TARGET; "$($s.Status)|$($s.SignerCertificate.Subject)"'],
+    { ...env, ZEVET_SIG_TARGET: target });
+    const [status, subject] = r.out.trim().split("|");
+    return { valid: status === "Valid", publisher: subject || null };
+  }
+  if (platform === "darwin") {
+    let app = target;
+    let mount = null;
+    try {
+      if (/\.dmg$/i.test(target)) {
+        mount = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-sig-"));
+        const at = await run("hdiutil", ["attach", target, "-nobrowse", "-readonly", "-mountpoint", mount]);
+        if (at.error) return { valid: false, publisher: null };
+        const found = fs.readdirSync(mount).find((n) => n.endsWith(".app"));
+        if (!found) return { valid: false, publisher: null };
+        app = path.join(mount, found);
+      }
+      const ver = await run("codesign", ["--verify", "--deep", "--strict", app]);
+      const info = await run("codesign", ["-dv", "--verbose=2", app]);
+      const team = /TeamIdentifier=(\S+)/.exec(info.out);
+      return { valid: !ver.error, publisher: team && team[1] !== "not" ? team[1] : null };
+    } finally {
+      if (mount) {
+        await run("hdiutil", ["detach", mount, "-force"]);
+        try { fs.rmdirSync(mount); } catch { /* still mounted; the OS temp sweep gets it */ }
+      }
+    }
+  }
+  return { valid: false, publisher: null };
+}
+
 /** POSIX single-quote a path for `/bin/sh -c`, so a space in the download
  *  directory or "Andrew's Mac" does not split the command in two. */
 function shQuote(s) {
@@ -319,6 +398,10 @@ class AppUpdater {
      *  drag-to-Applications flow", which is also what every existing caller
      *  that never heard of this option still gets. */
     this.bundlePath = o.bundlePath || null;
+    /** Keys a feed may be signed with. Only tests and loopback proofs pass
+     *  their own; see main.js. */
+    this.trustedKeys = o.trustedKeys || PINNED_KEYS;
+    this.inspectImpl = o.inspectImpl || inspectSignature;
 
     /** Everything the renderer is told, and the only state that leaves here. */
     this.state = {
@@ -413,7 +496,13 @@ class AppUpdater {
         clearTimeout(timer);
       }
 
-      const m = readManifest(json, this.key);
+      const signed = readSignedFeed(json, this.trustedKeys);
+      if (signed.error) {
+        this.log(`rejecting the update feed: ${signed.error}`);
+        this._set({ phase: "error", error: signed.error });
+        return this.status();
+      }
+      const m = readManifest(signed.payload, this.key);
       if (m.error) {
         this.log(`rejecting the update feed: ${m.error}`);
         this._set({ phase: "error", error: m.error });
@@ -440,6 +529,8 @@ class AppUpdater {
       // without spending 90 MB of somebody's tethered connection again.
       const dest = path.join(this.dir, m.entry.file);
       if (this._verified(dest, m.entry)) {
+        const bad = await this._publisherProblem(dest);
+        if (bad) return this._rejectInstaller(dest, bad);
         this._readyEntry = m.entry;
         this._pruneOldInstallers([m.entry.file]);
         this._set({ phase: "ready", version: m.version, notes: m.notes, file: dest, percent: 100, canInstall: true, error: null });
@@ -448,6 +539,8 @@ class AppUpdater {
 
       this._set({ phase: "downloading", version: m.version, notes: m.notes, percent: 0, canInstall: false });
       await this._download(url, dest, m.entry);
+      const bad = await this._publisherProblem(dest);
+      if (bad) return this._rejectInstaller(dest, bad);
       this._readyEntry = m.entry;
       this._pruneOldInstallers([m.entry.file]);
       this._set({ phase: "ready", file: dest, percent: 100, canInstall: true });
@@ -460,6 +553,41 @@ class AppUpdater {
     } finally {
       this._busy = false;
     }
+  }
+
+  /**
+   * Is this installer from the publisher the running app came from? Returns a
+   * message when it is not, null when it is or when the check is log-only.
+   *
+   * Enforced only when the RUNNING app carries the expected publisher: an
+   * unsigned dev build (or a CI proof) has nothing to compare against, and
+   * refusing there would only break testing. The expected publisher is
+   * pinned in PUBLISHER, not read from the running app.
+   */
+  async _publisherProblem(file) {
+    const want = PUBLISHER[this.platform];
+    const selfPath = this.platform === "win32" ? this.execPath : this.bundlePath;
+    if (!want || !selfPath) {
+      this.log("publisher check skipped: no way to inspect this platform's signatures");
+      return null;
+    }
+    const self = await this.inspectImpl(this.platform, selfPath);
+    const got = await this.inspectImpl(this.platform, file);
+    if (!self.valid || !want.test(self.publisher)) {
+      this.log(`publisher check is log-only: the running app is not signed as ${want.label}; installer valid=${got.valid} publisher=${got.publisher}`);
+      return null;
+    }
+    if (!got.valid || !want.test(got.publisher)) {
+      return `the installer is not signed as ${want.label} (valid=${got.valid}, publisher=${got.publisher})`;
+    }
+    return null;
+  }
+
+  _rejectInstaller(file, why) {
+    this.log(`rejecting the download: ${why}`);
+    try { fs.rmSync(file, { force: true }); } catch { /* the next prune gets it */ }
+    this._set({ phase: "error", error: why, file: null, canInstall: false });
+    return this.status();
   }
 
   /**
@@ -852,6 +980,9 @@ module.exports = {
   safeArtifactName,
   artifactUrl,
   readManifest,
+  readSignedFeed,
+  loopbackProofKeys,
+  PUBLISHER,
   DEFAULT_FEED,
   MAX_BYTES,
 };
