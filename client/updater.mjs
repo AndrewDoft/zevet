@@ -19,10 +19,10 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import os from "node:os";
 import { resolveAuth } from "./secret.mjs";
+import { zevetHome, atomicWriteJson } from "./zevet-home.mjs";
 
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const CLIENT_DIR = path.join(HOME, "client");
 const MANIFEST = path.join(HOME, "manifest.json");
 const STAMP = path.join(HOME, "last-check");
@@ -230,7 +230,7 @@ async function main() {
       }
     }
 
-    writeFileSync(MANIFEST, JSON.stringify(remote, null, 2), "utf8");
+    atomicWriteJson(MANIFEST, remote);
     writeFileSync(STAMP, String(Date.now()), "utf8");
     log(`now on ${remote.version}`);
   } catch (err) {

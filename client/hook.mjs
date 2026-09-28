@@ -21,6 +21,7 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { resolveAuth } from "./secret.mjs";
+import { zevetHome } from "./zevet-home.mjs";
 
 /**
  * Settings, from ~/.zevet/config.json, with environment variables winning.
@@ -33,7 +34,7 @@ import { resolveAuth } from "./secret.mjs";
 function settings() {
   let file = {};
   try {
-    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    const home = zevetHome();
     // Strip a UTF-8 BOM. Windows PowerShell 5.1 writes one with
     // `Set-Content -Encoding UTF8`, and JSON.parse rejects a leading U+FEFF —
     // which silently sent every Windows teammate back to the 127.0.0.1 default
@@ -109,7 +110,7 @@ const isCodex = AGENT_FLAG ? AGENT_FLAG === "codex" : false;
 function repoIsOptedIn(dir) {
   let list;
   try {
-    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    const home = zevetHome();
     const raw = readFileSync(path.join(home, "codex-repos.json"), "utf8").replace(/^﻿/, "");
     const parsed = JSON.parse(raw);
     list = Array.isArray(parsed) ? parsed : [];
@@ -172,7 +173,7 @@ const OUTBOX_TRY_MS = 250;
 const OUTBOX_MAX = 100;
 
 function outboxFile() {
-  const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+  const home = zevetHome();
   return path.join(home, "outbox.jsonl");
 }
 
@@ -197,7 +198,7 @@ function outboxRead() {
 
 function outboxWrite(list) {
   try {
-    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    const home = zevetHome();
     mkdirSync(home, { recursive: true });
     writeFileSync(outboxFile(), list.map((e) => JSON.stringify(e)).join("\n") + (list.length ? "\n" : ""), "utf8");
   } catch (err) {
@@ -272,7 +273,7 @@ async function flushOutbox() {
  * dropped as some other checkout's. Keep in sync with the copy in opencode-plugin.mjs.
  */
 function zevetOrigin(dir) {
-  const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+  const home = zevetHome();
   const same = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
   if (!same(path.dirname(dir), path.resolve(home, "worktrees"))) return null;
   try {
@@ -505,7 +506,7 @@ async function main() {
  */
 function maybeCheckForUpdates() {
   try {
-    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    const home = zevetHome();
     const updater = path.join(path.dirname(fileURLToPath(import.meta.url)), "updater.mjs");
     if (!existsSync(updater)) return;
 

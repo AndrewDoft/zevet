@@ -72,12 +72,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const os = require("node:os");
+const { zevetHome, atomicWriteJson } = require("./zevet-home.js");
 
 // Node, npm agent shims and the tools those agents launch need the same PATH
 // whether zevet was opened from Finder or from Terminal.
 const runtimeReady = runtime.preparePath();
 
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const CONFIG = path.join(HOME, "config.json");
 
 /**
@@ -551,7 +552,7 @@ function targetHub() {
 
 function writeConfig(cfg) {
   fs.mkdirSync(HOME, { recursive: true });
-  fs.writeFileSync(CONFIG, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+  atomicWriteJson(CONFIG, cfg);
   try {
     // Best effort: the token is a shared secret sitting in a home directory.
     fs.chmodSync(CONFIG, 0o600);
@@ -1851,8 +1852,7 @@ function readWorkspaces() {
 }
 function writeWorkspaces(list) {
   fs.mkdirSync(HOME, { recursive: true });
-  fs.writeFileSync(workspacesPath(), `${JSON.stringify(list, null, 2)}
-`, "utf8");
+  atomicWriteJson(workspacesPath(), list);
 }
 
 /**
@@ -2327,7 +2327,7 @@ function writeAgentSettingsFor(dir, patch) {
   };
   try {
     fs.mkdirSync(HOME, { recursive: true });
-    fs.writeFileSync(AGENT_SETTINGS, `${JSON.stringify(all, null, 2)}\n`, "utf8");
+    atomicWriteJson(AGENT_SETTINGS, all);
   } catch (err) {
     console.error(`zevet: could not save agent settings: ${err.message}`);
   }
@@ -2372,7 +2372,7 @@ function readPrefs() {
 function writePrefs(all) {
   try {
     fs.mkdirSync(HOME, { recursive: true });
-    fs.writeFileSync(PREFS, `${JSON.stringify(all, null, 2)}\n`, "utf8");
+    atomicWriteJson(PREFS, all);
   } catch (err) {
     console.error(`zevet: could not save prefs: ${err.message}`);
   }
@@ -2419,7 +2419,7 @@ function readSchedules() {
 function writeSchedules(list) {
   try {
     fs.mkdirSync(HOME, { recursive: true });
-    fs.writeFileSync(SCHEDULES, `${JSON.stringify(list, null, 2)}\n`, "utf8");
+    atomicWriteJson(SCHEDULES, list);
   } catch (err) {
     console.error(`zevet: could not save schedules: ${err.message}`);
   }

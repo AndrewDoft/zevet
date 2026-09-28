@@ -37,11 +37,11 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
+const { zevetHome } = require("./zevet-home.js");
 
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const CHATS = path.join(HOME, "chats");
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Same cap Masora applies to content_text (C1). */

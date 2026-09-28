@@ -31,9 +31,10 @@ import os from "node:os";
 import { detectAgents } from "./detect.mjs";
 import { resolveAuth } from "./secret.mjs";
 import { openrouterReady } from "./install-opencode.mjs";
+import { zevetHome } from "./zevet-home.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const CONFIG = path.join(HOME, "config.json");
 const TIMEOUT_MS = Number(process.env.ZEVET_TIMEOUT_MS || 3000);
 
@@ -67,6 +68,7 @@ const CLIENT_FILES = [
   // hook that cannot start at all, which is the least visible failure in the
   // product: silence is what a working hook also looks like.
   "secret.mjs",
+  "zevet-home.mjs",
   // Not imported by anything here yet; the editor is what will use it. Listed
   // because this list's job is to mirror what the hub ships, not to guess what
   // is currently reachable.

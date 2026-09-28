@@ -221,6 +221,10 @@ const CLIENT_FILES = [
   // test/codex-trust.test.mjs is what makes that ordering enforceable rather
   // than remembered.
   "secret.mjs",
+  // zevet-home.mjs is imported BY hook.mjs, updater.mjs, doctor.mjs, install*.mjs
+  // and uninstall.mjs (ZEVET_HOME lookup, atomic JSON writes). The updater
+  // stages every listed file before replacing any, so they arrive together.
+  "zevet-home.mjs",
   // doc-crypto.mjs is NOT yet imported by anything in this list -- the editor
   // is what will use it. It is shipped anyway, deliberately: the alternative is
   // that the file arrives on teammates' machines in the same update as the code

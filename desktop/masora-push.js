@@ -19,12 +19,12 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const zlib = require("node:zlib");
 const { execFile } = require("node:child_process");
+const { zevetHome } = require("./zevet-home.js");
 
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const OUTBOX_PATH = path.join(HOME, "masora-outbox.jsonl");
 /** Zevet Chat records (`surface: "zevet_chat"`) get their OWN outbox. A Masora
  *  that predates that surface answers such a line with a whole-batch 400, and

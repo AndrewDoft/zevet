@@ -29,10 +29,10 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
+const { zevetHome, atomicWriteJson } = require("./zevet-home.js");
 
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const CONFIG_PATH = path.join(HOME, "masora.json");
 
 // Masora runs on this machine (the Masora desktop app); usemasora.com only hosts downloads.
@@ -55,7 +55,7 @@ function readRaw() {
 
 function writeRaw(cfg) {
   fs.mkdirSync(HOME, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+  atomicWriteJson(CONFIG_PATH, cfg);
   try {
     fs.chmodSync(CONFIG_PATH, 0o600);
   } catch {
