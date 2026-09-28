@@ -17,7 +17,7 @@ import path from "node:path";
 import { Accounts } from "../hub/accounts.mjs";
 
 /** Enough of an address to recognise, not enough to read out. */
-const redact = (s) => String(s).replace(/([^s@]{1,2})[^s@]*@/g, "$1***@");
+const redact = (s) => String(s).replace(/([^\s@]{1,2})[^\s@]*@/g, "$1***@");
 
 export function run(file, { apply = false, out = console.log } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "zevet-merge-"));
