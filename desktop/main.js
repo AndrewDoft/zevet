@@ -1547,10 +1547,18 @@ ipcMain.handle("zevet:pickRepo", async () => {
     title: "Choose a project folder",
     properties: ["openDirectory"],
   });
+  pickedRepo = picked.canceled ? null : path.resolve(picked.filePaths[0]);
   return picked.canceled ? null : picked.filePaths[0];
 });
 
-ipcMain.handle("zevet:install", async (_e, repo) => installHooks(repo));
+// Only a folder the user opened as a workspace, or just picked in setup, may be
+// handed to the installer — never a path the renderer made up (audit B7).
+let pickedRepo = null;
+ipcMain.handle("zevet:install", async (_e, repo) => {
+  const root = knownRoot(repo) || (pickedRepo && path.resolve(String(repo || "")) === pickedRepo ? pickedRepo : null);
+  if (!root) return { ok: false, detail: "That folder is not one you opened in Zevet." };
+  return installHooks(root);
+});
 
 ipcMain.handle("zevet:done", () => {
   const cfg = readConfig();
