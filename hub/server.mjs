@@ -15,7 +15,7 @@ import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypt
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Accounts, defaultAccountsFile, deriveAuthToken } from "./accounts.mjs";
-import { deviceStart, devicePoll, githubUser, githubPublicEmail } from "./github-auth.mjs";
+import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedEmails } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
 
@@ -372,7 +372,7 @@ function makeBoard(file) {
     }
   };
 
-  board.record = function record(evt) {
+  board.record = function record(evt, resolve = (a) => a) {
     events.push(evt);
     while (events.length > MAX_EVENTS) events.shift();
     // Best effort, and deliberately synchronous: one small append per event, no
@@ -388,12 +388,21 @@ function makeBoard(file) {
         console.error(`zevet: event log unwritable (${err.message}) — board will not survive a restart`);
       }
     }
-    board.emit("activity", evt);
+    const shown = resolve(evt.actor);
+    board.emit("activity", shown === evt.actor ? evt : { ...evt, actor: shown });
   };
 
   /** Presence, collisions and recent files, derived fresh — nothing cached to drift. */
-  board.snapshot = function snapshot() {
+  board.snapshot = function snapshot(resolve = (a) => a) {
     const now = Date.now();
+    // Events name their actor as whatever string the machine reported. The
+    // person that string belongs to — after a rename, a linked identity or a
+    // merge — is decided by the accounts, at read time, so the archive follows
+    // without being rewritten.
+    const named = events.map((e) => {
+      const a = resolve(e.actor);
+      return a === e.actor ? e : { ...e, actor: a };
+    });
     // Prompt bodies and shell commands age out of the served board after
     // ZEVET_DETAIL_TTL_MS (0, the default, keeps everything). Structure —
     // who, what tool, what file, what repo — is the board's long memory and is
@@ -403,7 +412,7 @@ function makeBoard(file) {
     const show = (e) =>
       DETAIL_TTL_MS > 0 && now - e.ts > DETAIL_TTL_MS ? { ...e, detail: "" } : e;
     const actors = new Map();
-    for (const e of events) {
+    for (const e of named) {
       const a = actors.get(e.actor) || { actor: e.actor, hue: null, lastTs: 0, lastEvent: null, turns: 0, tools: 0 };
       a.lastTs = Math.max(a.lastTs, e.ts);
       if (!a.lastEvent || e.ts >= a.lastEvent.ts) a.lastEvent = show(e);
@@ -436,7 +445,7 @@ function makeBoard(file) {
     //   4. CASE. `src/DB.ts` and `src/db.ts` are one file on the case-insensitive
     //      filesystems Windows and macOS both ship by default, and were two keys.
     const byTarget = new Map();
-    for (const e of events) {
+    for (const e of named) {
       if (!e.target || e.kind !== "tool") continue;
       if (!WRITING_TOOLS.has(e.tool)) continue;
       if (now - e.ts > COLLISION_WINDOW_MS) continue;
@@ -466,7 +475,7 @@ function makeBoard(file) {
     }
     collisions.sort((x, y) => y.lastTs - x.lastTs);
 
-    return { now, roster, collisions, events: events.slice(-300).map(show), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
+    return { now, roster, collisions, events: named.slice(-300).map(show), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
   };
 
   return board;
@@ -1078,7 +1087,28 @@ function parseInvite(raw) {
 /** One row of the People list. Shared by `/auth/whoami` and `/auth/allow` so
  *  the two cannot drift into describing the same person differently. */
 function person(a) {
-  return { login: a.display || a.login, provider: a.provider, owner: a.owner, pending: !a.id };
+  return {
+    // `login` is what is SHOWN (the person's display name, which they can
+    // change); `key` is what every route takes to name them, and never changes
+    // on a rename.
+    login: a.display || a.login,
+    key: a.login,
+    provider: a.provider,
+    owner: a.owner,
+    pending: !a.id,
+    identities: [{ provider: a.provider, login: a.login, id: a.id }, ...(a.identities || [])].filter((i) => i.id).map((i) => ({ provider: i.provider || "github", login: i.login })),
+    aliases: a.aliases || [],
+  };
+}
+
+/** Link mode for a sign-in route: a caller who is ALREADY signed in as a
+ *  person, adding a second identity to themselves. `null` if this request is
+ *  not one; `{ error }` if it is and cannot be. */
+function linkAuth(req, url, body) {
+  if (!body || body.link !== true) return null;
+  const auth = teamFrom(req, url);
+  if (!auth || !auth.session) return { error: "sign in before linking another account", status: 401 };
+  return { auth };
 }
 
 function escapeHtml(s) {
@@ -1157,7 +1187,14 @@ async function handleRequest(req, res) {
       return json(res, 400, { error: "expected JSON" });
     }
 
-    const team = body && body.team ? resolveTeamSlug(body.team) : DEFAULT_TEAM;
+    // Linking a second account to somebody already signed in: the session
+    // decides the team and the person, the device flow proves the second
+    // identity. Nothing below — no allowlist check, no new session, no secret —
+    // applies to it.
+    const linking = linkAuth(req, url, body);
+    if (linking && linking.error) return json(res, linking.status, { error: linking.error });
+
+    const team = linking ? linking.auth.team : body && body.team ? resolveTeamSlug(body.team) : DEFAULT_TEAM;
     if (!team) return json(res, 404, { error: "no such team — create one first" });
     const acc = teamAccounts.get(team);
 
@@ -1170,6 +1207,17 @@ async function handleRequest(req, res) {
 
     const who = await githubUser({ accessToken: polled.accessToken, fetchImpl: TEST_IDP_FETCH });
     if (!who.ok) return json(res, 502, { error: who.error });
+    // The evidence that lets the hub recognise this login as somebody it
+    // already knows by email. Best effort: no scope, no evidence, sign-in goes on.
+    who.emails = (await githubVerifiedEmails({ accessToken: polled.accessToken, fetchImpl: TEST_IDP_FETCH })).emails;
+
+    if (linking) {
+      const r = acc.link(linking.auth.session, { provider: "github", login: who.login, id: who.id, display: who.login }, who.emails);
+      if (!r.ok) return json(res, 403, { error: r.error });
+      console.log(`zevet: linked @${who.login} to ${r.person ? r.person.name : "a person"}${r.merged ? " (merged)" : ""}`);
+      notifyPeopleChanged(team);
+      return json(res, 200, { ok: true, linked: true, login: who.login, merged: Boolean(r.merged) });
+    }
 
     // ZEVET_GITHUB_OWNER reserves the DEFAULT team for a named person; a team
     // created at runtime has no such reservation — trust-on-first-use hands
@@ -1225,12 +1273,15 @@ async function handleRequest(req, res) {
     } catch {
       body = {};
     }
-    const team = body && body.team ? resolveTeamSlug(body.team) : DEFAULT_TEAM;
+    const linking = linkAuth(req, url, body);
+    if (linking && linking.error) return json(res, linking.status, { error: linking.error });
+    const team = linking ? linking.auth.team : body && body.team ? resolveTeamSlug(body.team) : DEFAULT_TEAM;
     if (!team) return json(res, 404, { error: "no such team — create one first" });
     // Any team's own domain door (see domainFor), or the default team's
     // env-wide fallback. A created team with no domain set is invite-only
-    // beyond its owner, so no `hd` hint is sent below.
-    const domain = domainFor(team, teamAccounts.get(team));
+    // beyond its owner, so no `hd` hint is sent below. Linking has no domain
+    // door: the second address may be a personal Gmail.
+    const domain = linking ? "" : domainFor(team, teamAccounts.get(team));
 
     sweepGooglePairs();
     if (googlePairs.size >= GOOGLE_PAIRS_MAX) return json(res, 429, { error: "too many sign-ins in flight — try again in a minute" });
@@ -1245,7 +1296,11 @@ async function handleRequest(req, res) {
     // ⚠️ `team` travels through the pair record, not through Google's
     // redirect: `callback` only ever sees `state` (this pairCode), so this is
     // the one place the team for this attempt is recorded.
-    googlePairs.set(pairCode, { at: Date.now(), ip, team, result: null, error: null, tried: false });
+    // `link` is the signed-in person this attempt will add an identity to —
+    // set here, from the caller's own session, never from anything Google or
+    // the browser later sends.
+    const link = linking ? { provider: linking.auth.session.provider, login: linking.auth.session.login, id: linking.auth.session.id } : null;
+    googlePairs.set(pairCode, { at: Date.now(), ip, team, link, result: null, error: null, tried: false });
     return json(res, 200, {
       ok: true,
       pairCode,
@@ -1307,7 +1362,7 @@ async function handleRequest(req, res) {
       pair.error = "that team no longer exists";
       return googlePage(res, 404, pair.error);
     }
-    const domain = domainFor(pair.team || DEFAULT_TEAM, acc);
+    const domain = pair.link ? "" : domainFor(pair.team || DEFAULT_TEAM, acc);
 
     /* ⚠️ THE IDENTITY COMES FROM HERE AND NOWHERE ELSE. Not from the query
      * string, not from anything the browser carried — from an id token this
@@ -1318,6 +1373,19 @@ async function handleRequest(req, res) {
       pair.error = who.error;
       authFailed(req, url);
       return googlePage(res, 403, who.error);
+    }
+
+    if (pair.link) {
+      const r = acc.link(pair.link, who, who.emails);
+      if (!r.ok) {
+        pair.error = r.error;
+        return googlePage(res, 403, r.error);
+      }
+      console.log(`zevet: linked ${who.login} to ${r.person ? r.person.name : "a person"}${r.merged ? " (merged)" : ""}`);
+      notifyPeopleChanged(pair.team || DEFAULT_TEAM);
+      // No token, no secret: the person is already signed in.
+      pair.result = { linked: true, login: who.login, merged: Boolean(r.merged), team: pair.team || DEFAULT_TEAM };
+      return googlePage(res, 200, `Linked ${who.login}. You can close this tab and go back to zevet.`);
     }
 
     const may = acc.mayEnter(who, { requiredOwner: domain ? GOOGLE_OWNER : "", domain });
@@ -1408,7 +1476,56 @@ async function handleRequest(req, res) {
       // get: every OTHER person's name and status is exactly the leak this
       // route otherwise would not have — see teamFromSession's comment.
       people: sess ? acc.list().map(person) : [],
+      // You: your display name and every identity linked to you — what the
+      // agents tab needs to know which row is yours after a rename, and what
+      // Settings lists under "Link another account".
+      me: sess ? acc.profile(sess) : null,
     });
+  }
+
+  /* Renaming, unlinking, combining. `rename` is yours to do to yourself (the
+   * owner may rename anyone); `unlink` only ever touches the caller's own
+   * person; `merge` is OWNER ONLY, because it asserts two people are one
+   * without a provider having proved it. */
+  if ((url.pathname === "/auth/rename" || url.pathname === "/auth/unlink" || url.pathname === "/auth/merge") && req.method === "POST") {
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    if (!sess) return json(res, 403, { error: "sign in first" });
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    body = body && typeof body === "object" ? body : {};
+    const isOwner = acc.owner === sess.login;
+
+    if (url.pathname === "/auth/rename") {
+      const target = String(body.login || sess.login).toLowerCase().replace(/^@/, "");
+      const mine = acc.profile(sess);
+      const mineLogins = mine ? mine.identities.map((i) => i.login) : [sess.login];
+      if (!mineLogins.includes(target) && !isOwner) return json(res, 403, { error: "you can only rename yourself" });
+      // The actor string is only ever taken for the caller's OWN person.
+      const r = acc.rename(target, body.name, { actor: mineLogins.includes(target) ? body.actor : "" });
+      if (!r.ok) return json(res, 400, { error: r.error });
+      notifyPeopleChanged(auth.team);
+      return json(res, 200, { ok: true, me: acc.profile(sess), people: acc.list().map(person) });
+    }
+
+    if (url.pathname === "/auth/unlink") {
+      const r = acc.unlink(sess, { provider: body.provider, login: body.login });
+      if (!r.ok) return json(res, 400, { error: r.error });
+      notifyPeopleChanged(auth.team);
+      return json(res, 200, { ok: true, me: acc.profile(sess), people: acc.list().map(person) });
+    }
+
+    if (!isOwner) return json(res, 403, { error: acc.owner ? `only @${acc.owner} can combine people` : "nobody has claimed this team yet" });
+    const r = acc.combine(body.into, body.from);
+    if (!r.ok) return json(res, 400, { error: r.error });
+    notifyPeopleChanged(auth.team);
+    return json(res, 200, { ok: true, merged: Boolean(r.merged), people: acc.list().map(person), me: acc.profile(sess) });
   }
 
   /* Signing yourself out. NOT owner-gated, unlike allow/revoke below: ending
@@ -1747,14 +1864,14 @@ async function handleRequest(req, res) {
       // are two participants, and without this they were one.
       machine: String(parsed.machine || "").slice(0, 60),
     };
-    boards.get(auth.team).record(evt);
+    boards.get(auth.team).record(evt, teamAccounts.get(auth.team).actorResolver());
     return json(res, 200, { ok: true });
   }
 
   if (url.pathname === "/api/state") {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
-    return json(res, 200, boards.get(auth.team).snapshot());
+    return json(res, 200, boards.get(auth.team).snapshot(auth.accounts.actorResolver()));
   }
 
   if (url.pathname === "/events") {
@@ -1767,7 +1884,7 @@ async function handleRequest(req, res) {
       connection: "keep-alive",
       "x-accel-buffering": "no",
     });
-    res.write(`event: hello\ndata: ${JSON.stringify(board.snapshot())}\n\n`);
+    res.write(`event: hello\ndata: ${JSON.stringify(board.snapshot(auth.accounts.actorResolver()))}\n\n`);
     board.listeners.add(res);
     // A proxy that sees nothing for a minute will close the stream. Ping.
     const ping = setInterval(() => {
