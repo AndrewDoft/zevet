@@ -581,8 +581,8 @@ function tokenFrom(req, url) {
     const eq = part.indexOf("=");
     if (eq < 0) continue;
     if (part.slice(0, eq).trim() !== COOKIE) continue;
-    const value = decodeURIComponent(part.slice(eq + 1).trim());
-    if (tokenOk(value)) return value;
+    const value = safeDecode(part.slice(eq + 1).trim());
+    if (value !== null && tokenOk(value)) return value;
   }
 
   const q = url.searchParams.get("token");
@@ -1081,8 +1081,13 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url, "http://localhost");
+async function handleRequest(req, res) {
+  let url;
+  try {
+    url = new URL(req.url, "http://localhost");
+  } catch {
+    return json(res, 400, { error: "unreadable request line" });
+  }
 
 
   /* ── Signing in ────────────────────────────────────────────────────────────
@@ -1902,7 +1907,20 @@ const server = createServer(async (req, res) => {
   }
 
   json(res, 404, { error: "no such route" });
+}
+
+// One request's exception answers that request; it must not take the hub down.
+const server = createServer((req, res) => {
+  handleRequest(req, res).catch((err) => {
+    console.error(`zevet: request failed — ${req.method} ${String(req.url).slice(0, 200)}: ${err && err.stack ? err.stack : err}`);
+    if (!res.headersSent) json(res, 500, { error: "internal error" });
+    else res.destroy();
+  });
 });
+
+// Last resort: log and keep serving. Startup failures exit through server.on("error").
+process.on("unhandledRejection", (err) => console.error("zevet: unhandled rejection —", err));
+process.on("uncaughtException", (err) => console.error("zevet: uncaught exception —", err));
 
 // ---- the sync transport: RFC 6455, by hand ---------------------------------
 //
