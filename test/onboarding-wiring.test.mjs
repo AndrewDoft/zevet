@@ -63,9 +63,10 @@ describe("hubs are named", () => {
     assert.match(handler("zevet:teamCreate"), /targetHub\(\)/);
   });
 
-  test("the rail and Settings show it", () => {
+  test("the rail shows it; Settings folds it into Account & Team", () => {
     assert.match(read("board", "src", "App.tsx"), /id="railTeam"/);
-    assert.match(read("board", "src", "components", "settings.tsx"), /<SSection title="Team" summary=\{teamName\}>/);
+    assert.match(read("board", "src", "components", "settings.tsx"), /<SSection title="Account & Team"/);
+    assert.doesNotMatch(read("board", "src", "components", "settings.tsx"), /<SSection title="Team"/);
   });
 });
 

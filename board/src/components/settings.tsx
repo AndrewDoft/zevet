@@ -424,13 +424,13 @@ function AccountSection() {
 
   if (!whoState) {
     return (
-      <SSection title="Account" summary="loading…">{null}</SSection>
+      <SSection title="Account & Team" summary="loading…">{null}</SSection>
     );
   }
 
   if (whoState.ok === false) {
     return (
-      <SSection title="Account" summary="Error">
+      <SSection title="Account & Team" summary="Error">
                 <button className={MAKE_BTN} type="button" onClick={() => refreshWhoami()}>
           Retry
         </button>
@@ -585,7 +585,7 @@ function AccountSection() {
   if (whoErr) out.push(<SNote key="err">{whoErr}</SNote>);
 
   return (
-    <SSection title="Account" summary={login ? handle(login) : "not signed in"}>
+    <SSection title="Account & Team" summary={login ? handle(login) : "not signed in"}>
       {out}
     </SSection>
   );
@@ -1387,8 +1387,6 @@ export function SettingsSheet() {
   const viewMode = useBoard(selectViewMode);
   const setView = useBoard((s) => s.setView);
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
-  const myActor = useBoard((s) => s.myActor);
-  const teamName = useBoard((s) => (s.who.state as { teamName?: string } | null)?.teamName || "");
 
   const sheetRef = useRef<HTMLDivElement>(null);
   const wasOpen = useRef(false);
@@ -1500,10 +1498,6 @@ export function SettingsSheet() {
         <MasoraSection />
         <FamilySection />
         <ConnectionsSection />
-
-        <SSection title="Team" summary={teamName}>
-          <SRow k="You" v={myActor || "unknown"} />
-        </SSection>
 
         <VersionSection />
       </div>
