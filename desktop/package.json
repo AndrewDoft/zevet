@@ -64,6 +64,7 @@
       "google-signin.js",
       "masora.js",
       "masora-link.js",
+      "open-safe.js",
       "family.js",
       "masora-connect.js",
       "masora-push.js",

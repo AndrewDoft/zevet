@@ -25,6 +25,7 @@
 // despite loading a remote origin, and local:write below for why a WRITE over
 // that same bridge is a bigger thing to hand out than a read.
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor } = require("electron");
+const { openSafe } = require("./open-safe.js");
 const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
 const repoStats = require("./repo-stats.js");
@@ -676,7 +677,7 @@ function openBoard(cfg) {
     try {
       if (new URL(target).origin !== hubOrigin) {
         e.preventDefault();
-        shell.openExternal(target);
+        openSafe(target).catch(() => {});
       }
     } catch {
       e.preventDefault();
@@ -725,7 +726,7 @@ function openBoard(cfg) {
 
   // Anything that wants a new window is a link to the outside world.
   boardWindow.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (/^https?:/.test(target)) shell.openExternal(target);
+    openSafe(target).catch(() => {});
     return { action: "deny" };
   });
 
@@ -1227,7 +1228,7 @@ ipcMain.handle("zevet:githubStart", async (_e, { team } = {}) => {
     // URLs in the system browser is a hub that can too.
     // No browser, or none that would take it: the code is on screen, that is the
     // entire reason it is on screen, and `opened` lets the window say so.
-    const opened = await shell.openExternal(r.verificationUriComplete).then(() => true, () => false);
+    const opened = await openSafe(r.verificationUriComplete).then(() => true, () => false);
     return { ok: true, userCode: r.userCode, url: r.verificationUriComplete, expiresIn: r.expiresIn, opened };
   } catch (err) {
     signIn = null;
@@ -1258,7 +1259,7 @@ ipcMain.handle("zevet:googleStart", async (_e, { team } = {}) => {
     // code that a completed sign-in will be handed over for.
     // No browser, or none that would take it: the URL goes back to the window
     // with `opened: false` so it can say so rather than wait on nothing.
-    const opened = await shell.openExternal(r.authUrl).then(() => true, () => false);
+    const opened = await openSafe(r.authUrl).then(() => true, () => false);
     // No `userCode`: there is nothing for the person to read or type, which is
     // the whole reason this flow is the web one and not Google's device flow.
     return { ok: true, url: r.authUrl, expiresIn: r.expiresIn, domain: r.domain, opened };
@@ -1583,7 +1584,7 @@ const masoraLink = new MasoraLink({
     if (!safeStorage.isEncryptionAvailable()) throw new Error("This machine's OS keychain is unavailable.");
     masora.saveToken(token, (s) => safeStorage.encryptString(s));
   },
-  openExternal: (url) => shell.openExternal(url),
+  openExternal: (url) => openSafe(url),
   host: os.hostname(),
   platform: process.platform,
 });
@@ -1601,7 +1602,7 @@ const family = new Family({
     masoraLink.cancel(); // paired: the code flow has nothing left to wait for
   },
   clearToken: () => masora.unpair(),
-  openExternal: (url) => shell.openExternal(url),
+  openExternal: (url) => openSafe(url),
   // Zevet's OWN hub session — same readConfig()/authFor() the main process
   // already uses for its own hub calls (see resolveCredential, above). Masora
   // never receives this: the roster it reads is only the heartbeat's output.

@@ -21,12 +21,12 @@ function handler(channel) {
 }
 
 describe("sign-in opens the system browser", () => {
-  test("GitHub and Google both call shell.openExternal with the URL the hub gave, and report whether it opened", () => {
+  test("GitHub and Google both call openSafe (shell.openExternal, https/loopback only) with the URL the hub gave, and report whether it opened", () => {
     const gh = handler("zevet:githubStart");
-    assert.match(gh, /opened = await shell\.openExternal\(r\.verificationUriComplete\)\.then\(\(\) => true, \(\) => false\)/);
+    assert.match(gh, /opened = await openSafe\(r\.verificationUriComplete\)\.then\(\(\) => true, \(\) => false\)/);
     assert.match(gh, /expiresIn: r\.expiresIn, opened/);
     const g = handler("zevet:googleStart");
-    assert.match(g, /opened = await shell\.openExternal\(r\.authUrl\)\.then\(\(\) => true, \(\) => false\)/);
+    assert.match(g, /opened = await openSafe\(r\.authUrl\)\.then\(\(\) => true, \(\) => false\)/);
     assert.match(g, /domain: r\.domain, opened/);
   });
 
