@@ -14,7 +14,15 @@ import { chromium } from "playwright-core";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
 const DESKTOP = path.join(ROOT, "desktop");
-const STATE_FILE = path.join(HERE, ".state.json");
+// BUG-2026-09-28: a single fixed path meant any two test FILES that both
+// drive Electron (setup-window.test.mjs, hub-unreachable.test.mjs, and now
+// setup-sso-e2e.test.mjs) collided the moment `node --test` ran them
+// concurrently — the default — each thinking the other's launch was its own
+// ("already launched (pid N); run close first"), measured on CI once a
+// third such file existed to make the race land every time instead of most
+// of the time. ZEVET_DRIVE_STATE lets each caller point at its own file;
+// every `before()` in this repo's own drive-based test files sets one.
+const STATE_FILE = process.env.ZEVET_DRIVE_STATE ? path.resolve(process.env.ZEVET_DRIVE_STATE) : path.join(HERE, ".state.json");
 
 function loadState() {
   try {

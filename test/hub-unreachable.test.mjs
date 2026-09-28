@@ -50,6 +50,10 @@ before(() => {
     JSON.stringify({ hub: DEAD_HUB, secret: randomBytes(24).toString("hex"), actor: "citest" }, null, 2),
   );
   process.env.ZEVET_HOME = homeDir;
+  // A file of its own — see drive.mjs's own comment on ZEVET_DRIVE_STATE.
+  // Without this, this file collides with any other drive-based test file
+  // `node --test` happens to run concurrently (BUG-2026-09-28).
+  process.env.ZEVET_DRIVE_STATE = path.join(homeDir, "drive-state.json");
   drive("launch");
 });
 

@@ -69,6 +69,10 @@ before(async () => {
   // The app resolves the hub itself (desktop/hub-target.js); this is how the
   // driven one is pointed at the test hub, since setup has no field for it.
   process.env.ZEVET_HUB = hub.base;
+  // A file of its own, not scripts/drive/.state.json's fixed default — see
+  // drive.mjs's own comment. Without this, this file collides with any other
+  // drive-based test file `node --test` happens to run concurrently.
+  process.env.ZEVET_DRIVE_STATE = path.join(accountsDir, "drive-state.json");
   drive("launch");
 });
 after(async () => {

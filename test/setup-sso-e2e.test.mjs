@@ -68,6 +68,11 @@ before(async () => {
     ZEVET_TEST_HOOKS: "1",
   });
   process.env.ZEVET_HUB = hub.base;
+  // A file of its own — see drive.mjs's own comment on ZEVET_DRIVE_STATE.
+  // Without this, this file collides with any other drive-based test file
+  // `node --test` happens to run concurrently (BUG-2026-09-28, found by this
+  // exact file being the third one and making the race land every time).
+  process.env.ZEVET_DRIVE_STATE = path.join(accountsDir, "drive-state.json");
 });
 after(async () => {
   try {
