@@ -23,12 +23,24 @@
 // it, use that -- so a corrupted pointer can never out-vote a real,
 // working install.
 //
-// Runs the REAL v0.2.71 installer as the starting state (not a fixture --
-// that release is what is actually still running on the stranded
-// machines), then updates it with installOnQuit()'s own args and nothing
+// Runs a REAL old release's installer as the starting state (not a
+// fixture), then updates it with installOnQuit()'s own args and nothing
 // else: no /allusers, no /currentuser, no /D. Production never passes a
 // mode flag; whichever branch runs is registry autodetection, exactly as
 // it was for Andrew.
+//
+// NOT literally v0.2.71, the version actually stranded on real machines:
+// its OWN customInit (the first, ${StrContains}-based sanitizer, replaced
+// by bcfd70f before 0.2.72) crashes outright (0xC0000005) in .onInit on
+// GitHub Actions windows-latest specifically -- this is the exact,
+// already-documented CI-only crash that motivated bcfd70f, confirmed again
+// here (a fresh v0.2.71 install cannot even complete on this runner image)
+// and NOT something a real machine hits: Andrew's own is proof, since it
+// is v0.2.71 and running. v0.2.70 predates installer.nsh entirely (no
+// customInit at all yet) and is used instead purely as a clean, crash-free
+// "some old unsigned build is already installed" starting point -- the
+// mechanism under test (this repo's CURRENT customInit trusting disk over
+// the registry) does not depend on which old version put the app there.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -69,7 +81,7 @@ function readValue(key, name) {
 try {
   // ── Step 1: install the REAL old release, fresh, per-user -- the exact
   // starting condition, not a fixture. ────────────────────────────────────
-  const oldPkg = JSON.parse(fs.readFileSync(path.join(root, "old-v0.2.71/desktop/package.json"), "utf8"));
+  const oldPkg = JSON.parse(fs.readFileSync(path.join(oldOutDir, "../package.json"), "utf8"));
   const oldSetup = findSetup(oldOutDir, oldPkg.version);
   const install1 = spawnSync(oldSetup, ["/S", "/currentuser"], { encoding: "utf8", timeout: 120_000 });
   assert.equal(install1.status, 0, `fresh install exited ${install1.status}: ${install1.stderr || install1.stdout}`);
@@ -89,7 +101,7 @@ try {
   // args and NOTHING else. Whichever build is checked out here (with the
   // fix, or without it, for the mutation pass) is what actually runs. ─────
   const newPkg = JSON.parse(fs.readFileSync(path.join(root, "desktop/package.json"), "utf8"));
-  assert.notEqual(newPkg.version, oldPkg.version, "the new build must be a different version than 0.2.71 to prove an update happened");
+  assert.notEqual(newPkg.version, oldPkg.version, `the new build (${newPkg.version}) must differ from the old one (${oldPkg.version}) to prove an update happened`);
   newSetup = findSetup(newOutDir, newPkg.version);
   const update = spawnSync(newSetup, ["--updated", "/S"], { encoding: "utf8", timeout: 120_000 });
   assert.equal(update.status, 0, `update exited ${update.status}: ${update.stderr || update.stdout}`);

@@ -207,23 +207,27 @@ jobs:
         working-directory: desktop
         run: npm run smoke:win
 
-      # A second, real-world incident (Andrew's own machine, 2026-09-27):
-      # zevet 0.2.71 is what is ACTUALLY still installed on stranded
-      # machines, so this checks it out and builds the true old installer
-      # rather than a fixture, corrupts InstallLocation to the exact
-      # observed shape, then proves this build's own installer self-heals
-      # it with installOnQuit()'s real args -- no /allusers, no
-      # /currentuser, no /D. See scripts/repro-andrew-incident.mjs.
-      - name: Check out zevet 0.2.71 (the version stranded on real machines)
+      # A second, real-world incident (Andrew's own machine, 2026-09-27): the
+      # registry's InstallLocation was corrupted to "C:\Program" while the
+      # REAL app, at the standard per-user default, sat there untouched on
+      # an old unsigned build the whole time. Reproduces that exact shape
+      # against a real (not fixture) old installer, then proves THIS build's
+      # installer self-heals it with installOnQuit()'s real args -- no
+      # /allusers, no /currentuser, no /D. See scripts/repro-andrew-incident.mjs,
+      # whose header explains why this checks out v0.2.70 rather than the
+      # literal v0.2.71 that is actually stranded: 0.2.71's own installer
+      # crashes outright on THIS runner image, a separate, already-fixed,
+      # CI-only defect unrelated to the one under test here.
+      - name: Check out zevet 0.2.70 (old, unsigned, pre-dates installer.nsh)
         if: runner.os == 'Windows'
         uses: actions/checkout@v4
         with:
-          ref: v0.2.71
-          path: old-v0.2.71
+          ref: v0.2.70
+          path: old-build
 
-      - name: Build zevet 0.2.71 (unsigned -- matches the real stranded install)
+      - name: Build zevet 0.2.70 (unsigned -- an old build already installed)
         if: runner.os == 'Windows'
-        working-directory: old-v0.2.71/desktop
+        working-directory: old-build/desktop
         run: |
           npm ci
           node make-icon.mjs
@@ -232,7 +236,7 @@ jobs:
       - name: Reproduce and prove the self-heal (Andrew's exact incident)
         if: runner.os == 'Windows'
         working-directory: desktop
-        run: node ../scripts/repro-andrew-incident.mjs "../old-v0.2.71/desktop/out"
+        run: node ../scripts/repro-andrew-incident.mjs "../old-build/desktop/out"
 
       - uses: actions/upload-artifact@v4
         with:
