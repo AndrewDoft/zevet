@@ -70,6 +70,12 @@ before(async () => {
   // The app resolves the hub itself (desktop/hub-target.js); this is how the
   // driven one is pointed at the test hub, since setup has no field for it.
   process.env.ZEVET_HUB = hub.base;
+  // The driven app's real updater checks its feed 25s after launch. Left at the
+  // default that is the LIVE usemasora.com feed, so this file's first test was
+  // asserting on whatever production happened to publish (a feed the app rejects,
+  // e.g. an unsigned one, paints "Update failed"). The hub answers 404 here,
+  // which the updater treats as "nothing published": a hermetic "current".
+  process.env.ZEVET_APP_FEED = `${hub.base}/download/zevet-latest.json`;
   // A file of its own, not scripts/drive/.state.json's fixed default — see
   // drive.mjs's own comment. Without this, this file collides with any other
   // drive-based test file `node --test` happens to run concurrently.
