@@ -26,6 +26,8 @@
 // that same bridge is a bigger thing to hand out than a read.
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor } = require("electron");
 const { openSafe } = require("./open-safe.js");
+// Must run before the first ipcMain.handle below. readConfig is a hoisted function declaration.
+require("./ipc-guard.js").guardIpc(ipcMain, () => (readConfig() || {}).hub);
 const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
 const repoStats = require("./repo-stats.js");

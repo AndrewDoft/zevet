@@ -44,3 +44,33 @@ test("no shell.openExternal call site in desktop/*.js bypasses openSafe", async 
     assert.deepEqual(calls.filter((l) => !/openSafe/.test(l)), [], `${f} calls shell.openExternal directly`);
   }
 });
+
+const { senderAllowed, guardIpc } = createRequire(import.meta.url)("../desktop/ipc-guard.js");
+
+test("IPC sender check: hub origin and setup.html pass, everything else is refused", () => {
+  const hub = "https://hub.example.com/?token=x";
+  const setup = new URL("../desktop/setup.html", import.meta.url).href;
+  assert.equal(senderAllowed("https://hub.example.com/board", hub), true);
+  assert.equal(senderAllowed(`${setup}?actor=a`, hub), true);
+  for (const bad of ["https://evil.example.com/", "http://hub.example.com/", "file:///tmp/x.html", "data:text/html,hi", "about:blank", "", undefined]) {
+    assert.equal(senderAllowed(bad, hub), false, String(bad));
+  }
+  assert.equal(senderAllowed("https://hub.example.com/", undefined), false);
+});
+
+test("guardIpc rejects a foreign sender before the handler runs", async () => {
+  const handlers = {};
+  const ipc = { handle: (ch, fn) => (handlers[ch] = fn) };
+  guardIpc(ipc, () => "https://hub.example.com");
+  let ran = 0;
+  ipc.handle("x", (_e, v) => (ran++, v));
+  assert.equal(await handlers.x({ senderFrame: { url: "https://hub.example.com/" } }, 7), 7);
+  assert.throws(() => handlers.x({ senderFrame: { url: "https://evil.example.com/" } }, 7), /not allowed/);
+  assert.throws(() => handlers.x({}, 7), /not allowed/);
+  assert.equal(ran, 1);
+});
+
+test("main.js installs the guard before its first ipcMain.handle", () => {
+  const g = main.indexOf("guardIpc(");
+  assert.ok(g > 0 && g < main.indexOf("ipcMain.handle("), "guardIpc must precede every handler registration");
+});
