@@ -1040,3 +1040,52 @@ both present before this change and unrelated to it). A headless Chromium screen
 (`?dev=1` fixture mode, Chat + Work tab, model picker open, filtered to "muse") confirms the Meta
 group renders with the correct name, icon, and disabled state; see the session's report for the
 image.
+
+---
+
+## D-024 — The manual master-secret field is removed from setup.html, not merged
+
+**2026-09-28**
+
+**Decision.** Andrew, verbatim: "there are two spaces for the key, we only need the top ones."
+`desktop/setup.html` had two key-shaped inputs: `#inviteKey` (the per-invite join key, always
+visible in Join mode) and `#token` (the raw master secret, behind an "Other" disclosure, wired to
+`zevet:test`/`zevet:save`). The second is deleted outright — the `<details id="manual">` block,
+its `#check` handler, and every reference to `$("token")` in `signedIn()`/`finish` are gone.
+GitHub sign-in, Google sign-in, and the invite key are the only three ways into a team from this
+window now.
+
+**Why it came up.** The two fields serve genuinely different mechanisms (a personal, revocable,
+per-invitee key vs. an anonymous shared master secret for a hub with no OAuth app configured), so
+a literal reading of "merge them" would need one input to parse two incompatible formats
+(9-char `XXXX-XXXX` vs. a 48-char hex secret) behind one button — fragile, and not what was asked.
+Andrew's instruction was to remove the second field, not reconcile it with the first.
+
+**Alternatives considered.**
+- *Keep both fields, reorder/relabel only.* Rejected: does not satisfy "we only need the top
+  ones" — the complaint is about the field existing at all, not its position.
+- *Merge into one field with format-sniffing (short code vs. long secret).* Rejected: two
+  different `maxlength`/`type` constraints on one input is exactly the kind of clever-but-fragile
+  code this project's own CLAUDE.md-equivalent discipline (ponytail: fewest files, boring over
+  clever) argues against, for a capability that already has a non-UI path.
+- *Remove the UI but keep `zevet:test`/`zevet:save`'s IPC surface wired.* Taken — no other file
+  calls it from a still-live UI element, but ripping out main.js/preload.js plumbing that costs
+  nothing to leave is a bigger diff for no behavior change.
+
+**Reversibility.** Medium. A self-hosted hub with NEITHER GitHub nor Google configured (no
+`ZEVET_GITHUB_CLIENT_ID`, no `ZEVET_GOOGLE_CLIENT_ID`) has no way to become the FIRST owner from
+this window any more — `createTeam` already refuses `/team/create` with no provider configured
+(hub/server.mjs), so this window was never the only gate for that case anyway. A brand-new
+machine still connects headlessly via `ZEVET_TOKEN`/`ZEVET_SECRET` (client/secret.mjs,
+doctor.mjs) — the setup WINDOW loses the capability, the product does not.
+
+**Verification.** `test/board.test.mjs`'s "there is exactly one key field in the whole window"
+and `test/setup-window.test.mjs`'s "there is no second key field" — both mutation-tested: adding
+a synthetic second key-shaped input (or restoring `#token`/`#manual`/`#check`) turns them red;
+restored to green after reverting the mutation. `test/setup-window.test.mjs`'s
+"a completed sign-in enables Open and reveals Folder" replaces the removed
+"the team-key path connects..." test, driving `window.signedIn()` directly (the same pattern this
+file already used for `window.paintUpdate`) since no path in that file's single hub instance can
+produce a REAL successful sign-in without a live GitHub/Google app or an owner session — the
+real HTTP-level "does redeeming a key actually work" contract stays covered in
+`test/team.test.mjs`'s `/team/join` describe block, unchanged.
