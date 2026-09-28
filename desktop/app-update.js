@@ -63,7 +63,7 @@ const path = require("node:path");
 const { createHash } = require("node:crypto");
 const { spawn, execFile } = require("node:child_process");
 const { pipeline } = require("node:stream/promises");
-const { UPDATE_DOMAIN, PINNED_KEYS, verifySigned } = require("./update-signing");
+const { UPDATE_DOMAIN, PINNED_KEYS, verifySigned } = require("./update-signing.js");
 
 /** Where the manifest lives when nothing says otherwise.
  *
