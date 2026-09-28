@@ -16,10 +16,17 @@
 //   - It never runs in the path of anybody's turn. The hook spawns this
 //     detached and forgets it; nothing waits on the result.
 //   - It never replaces a file it has not verified.
+//   - It never runs code the hub alone vouches for. The manifest is signed
+//     (Ed25519, key pinned in ./signing.mjs, domain "zevet-client-v1") and the
+//     per-file sha256 is read ONLY from the signed payload, so a compromised or
+//     impersonated hub cannot push new client code; it cannot sign. The hub URL
+//     must be https (loopback http excepted). ZEVET_ALLOW_UNSIGNED_MANIFEST=1
+//     accepts an unsigned manifest, for a local dev hub only.
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { resolveAuth } from "./secret.mjs";
+import { resolveAuth, insecureHub } from "./secret.mjs";
+import { readSignedManifest } from "./signing.mjs";
 import { zevetHome, atomicWriteJson } from "./zevet-home.mjs";
 
 const HOME = zevetHome();
@@ -148,6 +155,10 @@ async function main() {
     log("no hub or token configured — nothing to check against");
     return;
   }
+  if (insecureHub(hub)) {
+    log("the hub is plain http — refusing to send the token or run its code; use an https hub");
+    return;
+  }
   if (!takeLock()) return;
 
   try {
@@ -172,6 +183,13 @@ async function main() {
       clearTimeout(timer);
     }
 
+    const checked = readSignedManifest(remote, { hub });
+    if (checked.error) {
+      log(`rejecting the hub's manifest: ${checked.error} — current build kept`);
+      return;
+    }
+    remote = checked.manifest;
+
     // Validate the WHOLE manifest before acting on any of it. One hostile
     // entry means the manifest is not one we trust, not one we partly obey.
     const complaint = validManifest(remote);
@@ -190,6 +208,7 @@ async function main() {
     }
 
     log(`updating ${local.version} -> ${remote.version} (${stale.length} file(s))`);
+    if (checked.unsigned) log("accepting an UNSIGNED manifest (ZEVET_ALLOW_UNSIGNED_MANIFEST=1) — dev hub only");
     mkdirSync(CLIENT_DIR, { recursive: true });
 
     // Download and VERIFY everything before moving anything into place, so a

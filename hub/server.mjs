@@ -192,6 +192,7 @@ if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
 }
 
 const CLIENT_DIR = path.join(HERE, "..", "client");
+const SIGNED_CLIENT_MANIFEST = process.env.ZEVET_SIGNED_CLIENT_MANIFEST || path.join(HERE, "client-manifest.signed.json");
 /** Exactly what the update channel will serve. An allowlist, not a directory listing. */
 const CLIENT_FILES = [
   "hook.mjs",
@@ -225,6 +226,9 @@ const CLIENT_FILES = [
   // and uninstall.mjs (ZEVET_HOME lookup, atomic JSON writes). The updater
   // stages every listed file before replacing any, so they arrive together.
   "zevet-home.mjs",
+  // signing.mjs is imported BY updater.mjs (pinned key, manifest signature check).
+  // An updater that imports it before the hub serves it dies on ERR_MODULE_NOT_FOUND.
+  "signing.mjs",
   // doc-crypto.mjs is NOT yet imported by anything in this list -- the editor
   // is what will use it. It is shipped anyway, deliberately: the alternative is
   // that the file arrives on teammates' machines in the same update as the code
@@ -279,7 +283,22 @@ async function buildManifest() {
     const buf = await readFile(path.join(CLIENT_DIR, name));
     files.push({ name, bytes: buf.length, sha256: createHash("sha256").update(buf).digest("hex") });
   }
-  return { version: pkg.version, files };
+  const live = { version: pkg.version, files };
+  // The signature is made offline at release time (scripts/sign-client-manifest
+  // .mjs, docs/RELEASING.md): the hub holds no private key. It is attached only
+  // when it covers exactly what is on disk; otherwise the unsigned live manifest
+  // is served, which current clients reject, so the update is withheld rather
+  // than silently unsigned. The legacy top-level fields stay for old clients.
+  try {
+    const signed = JSON.parse(await readFile(SIGNED_CLIENT_MANIFEST, "utf8"));
+    if (JSON.stringify(signed.payload) === JSON.stringify({ schema: 1, type: "zevet-client", ...live })) {
+      return { ...live, payload: signed.payload, signature: signed.signature };
+    }
+    console.warn("zevet: hub/client-manifest.signed.json is stale — serving an unsigned client manifest; re-sign at release");
+  } catch (err) {
+    if (err.code !== "ENOENT") console.warn(`zevet: cannot read the signed client manifest: ${err.message}`);
+  }
+  return live;
 }
 
 /**

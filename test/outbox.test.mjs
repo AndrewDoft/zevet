@@ -44,6 +44,17 @@ function outboxOf(home) {
 }
 
 describe("the hook outbox", () => {
+  test("a plain-http hub that is not loopback gets neither the token nor a queued retry", async (t) => {
+    const home = tempDir("zevet-outbox-http-");
+    t.after(() => home.cleanup());
+    home.repo = home.dir;
+    const r = await hookRun(home, "http://203.0.113.9:8787");
+    assert.equal(r.stdout, "");
+    assert.equal(r.code, 0);
+    assert.match(r.stderr, /plain-http hub/);
+    assert.equal(existsSync(outboxOf(home)), false, "an event was queued for a hub that must not be contacted");
+  });
+
   test("an unreachable hub queues the event without touching the turn", async (t) => {
     const home = tempDir("zevet-outbox-");
     t.after(() => home.cleanup());

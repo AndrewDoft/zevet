@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { resolveAuth } from "./secret.mjs";
+import { resolveAuth, insecureHub } from "./secret.mjs";
 import { zevetHome } from "./zevet-home.mjs";
 
 /**
@@ -219,6 +219,9 @@ function outboxAppend(body) {
  * `{ status: "sent" }` or `{ status: "rejected", code }`.
  */
 async function postEvent(body, timeoutMs) {
+  // The token would cross the network in cleartext. Not "failed": queueing it
+  // for a retry would only re-send it later to the same hub.
+  if (insecureHub(HUB)) return { status: "refused", why: "refusing to send the token to a plain-http hub — use an https hub" };
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
@@ -493,6 +496,8 @@ async function main() {
     warn(`hub unreachable (${r.why}) — kept for later, this turn is unaffected`);
   } else if (r.status === "rejected") {
     warn(`hub answered ${r.code} — this turn is unaffected`);
+  } else if (r.status === "refused") {
+    warn(`${r.why} — this turn is unaffected`);
   }
 }
 

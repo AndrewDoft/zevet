@@ -69,6 +69,8 @@ const CLIENT_FILES = [
   // product: silence is what a working hook also looks like.
   "secret.mjs",
   "zevet-home.mjs",
+  // Imported by updater.mjs: verifies the hub's signed client manifest.
+  "signing.mjs",
   // Not imported by anything here yet; the editor is what will use it. Listed
   // because this list's job is to mirror what the hub ships, not to guess what
   // is currently reachable.
