@@ -69,7 +69,15 @@
 ; only ever changes what a SILENT install treats as final, or what an
 ; interactive one starts the directory page showing.
 
+; ZEVET_CUSTOMINIT_LOG: plain FileWrite (no plugin) appending every decision
+; this macro makes to %TEMP%\zevet-install-debug.log, so a silent /S run that
+; extracts nothing still leaves a trail of what $INSTDIR and $installMode
+; actually were. ponytail: delete once the fresh-/S CI gates below have been
+; green for a few releases and nobody has needed to read this file.
 !macro customInit
+  FileOpen $R9 "$TEMP\zevet-install-debug.log" a
+  FileWrite $R9 "customInit: installMode=$installMode INSTDIR(before)=$INSTDIR$\r$\n"
+  FileClose $R9
   ${IfNot} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
     ${If} $installMode == "all"
       StrCpy $3 "$PROGRAMFILES64\${APP_FILENAME}"
@@ -81,4 +89,7 @@
     ${EndIf}
     StrCpy $INSTDIR "$3"
   ${EndIf}
+  FileOpen $R9 "$TEMP\zevet-install-debug.log" a
+  FileWrite $R9 "customInit: INSTDIR(after)=$INSTDIR$\r$\n"
+  FileClose $R9
 !macroend

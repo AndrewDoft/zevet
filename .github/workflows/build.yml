@@ -244,6 +244,19 @@ jobs:
         working-directory: desktop
         run: npm run smoke:win
 
+      # A masora2 CI job (sibling-install.yml, run 36375729128) found that
+      # downloading this exact signed installer and running it with bare `/S`
+      # on a clean machine exits 0 but extracts nothing. smoke:win above
+      # always passes an explicit /currentuser; production's own real callers
+      # (app-update.js's INSTALL_ARGS/QUIT_INSTALL_ARGS, and masora2's
+      # sibling-family.js) never pass a mode flag at all -- this is the one
+      # starting condition (fresh machine, no mode flag) nothing else here
+      # tests. See scripts/repro-fresh-silent-install.mjs.
+      - name: Prove a fresh bare /S and explicit /D= install actually extract
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: npm run repro:fresh-silent
+
       # A second, real-world incident (Andrew's own machine, 2026-09-27): the
       # registry's InstallLocation was corrupted to "C:\Program" while the
       # REAL app, at the standard per-user default, sat there untouched on
