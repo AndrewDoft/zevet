@@ -1112,3 +1112,37 @@ a name another person or a hook-only teammate already wears on the board.
 sign-in; a token without it just yields no email evidence (the call is best-effort). Records gain
 optional fields only, so an older hub still reads the file. A merge is not undoable by the hub —
 `--apply` writes a `.bak-<timestamp>` copy first.
+
+## D-026 — Both update channels are Ed25519-signed with one pinned key; publisher checks are enforced only where the running app has a publisher
+
+**Decided (Andrew, 2026-09-28).** Audit B3/B4: the desktop feed and the hub's client manifest took
+their sha256 from the host that served the file, so host compromise was code execution on every
+install. Now `zevet-latest.json` carries a signed `payload` (domain `"zevet-update-v1\n"`) and the hub's
+`/dist/manifest.json` a signed `payload` (domain `"zevet-client-v1\n"`), both under key
+`zevet-2026-09` (raw public key pinned in `desktop/update-signing.js` and `client/signing.mjs`).
+Scheme is Zevet Voice's (`updates/signing.py`): domain bytes (including the trailing `\n`) + canonical
+JSON. Legacy top-level fields stay so already-installed clients keep updating; new clients read only
+the payload. Hubs must be https (loopback http excepted).
+
+- **No fallback for unsigned.** The app rejects an unsigned feed outright. The client updater accepts
+  one only with `ZEVET_ALLOW_UNSIGNED_MANIFEST=1`, and a test key only for a loopback hub/feed
+  (`ZEVET_HUB_TRUSTED_KEY`, `ZEVET_APP_FEED_TRUSTED_KEY`) so tests never need the real key.
+- **The hub holds no private key.** The client manifest is signed at release time
+  (`scripts/sign-client-manifest.mjs` -> `hub/client-manifest.signed.json`); the hub attaches the
+  signature only when it covers exactly the files on disk, else serves the unsigned manifest, which
+  current clients reject (updates pause instead of shipping unsigned code). `release-check` fails while stale.
+- **Publisher check** (Authenticode `CN=Andrew Doft` / Developer ID team `27C8FVB83B`) runs before an
+  installer is offered. It is enforced when the RUNNING app carries that publisher and log-only otherwise,
+  so unsigned dev builds and CI proofs still update. Alternative rejected: enforce always, which breaks
+  every local build and the Codemagic unsigned proofs.
+- **Bootstrap.** Clients that predate signing take the first signed update on trust of the old channel;
+  only later updates are protected. Unavoidable without a flag day.
+
+**Reversibility.** Key rotation: ship a build that pins both ids, then retire the old one. Backing out
+signing entirely means restoring `readManifest(json, ...)` in `AppUpdater.check()` and the manifest read in
+`client/updater.mjs`.
+
+**Verification.** `test/update-signing.test.mjs` (real-key vector; CJS/ESM parity; domain separation),
+`test/app-update.test.mjs` "a signed feed and a signed installer", `test/updater.test.mjs` "a signed
+manifest", `test/hub-client-manifest.test.mjs`, `test/outbox.test.mjs` (plain-http hook). Each guard was
+mutated (removed) and its test went red before restoring.
