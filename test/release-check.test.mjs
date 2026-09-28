@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { tempDir } from "./helpers.mjs";
-import { checkVersions, checkClientFiles } from "../scripts/release-check.mjs";
+import { checkVersions, checkClientFiles, checkSignedManifest } from "../scripts/release-check.mjs";
+import { clientPayload } from "../scripts/sign-client-manifest.mjs";
 
 function layOut(t, { version = "0.2.5", desktop = version, files = ["hook.mjs"] } = {}) {
   const d = tempDir("zevet-release-");
@@ -24,6 +25,16 @@ function layOut(t, { version = "0.2.5", desktop = version, files = ["hook.mjs"] 
 }
 
 describe("release-check", () => {
+  test("a missing or stale signed client manifest blocks the release", async (t) => {
+    const root = layOut(t);
+    assert.match(checkSignedManifest(root), /missing/);
+    const signed = path.join(root, "hub", "client-manifest.signed.json");
+    writeFileSync(signed, JSON.stringify({ payload: clientPayload(root), signature: {} }));
+    assert.equal(checkSignedManifest(root), null);
+    writeFileSync(path.join(root, "client", "hook.mjs"), "// changed after signing\n");
+    assert.match(checkSignedManifest(root), /stale/);
+  });
+
   test("agreeing versions and lists pass", async (t) => {
     const root = layOut(t);
     assert.equal(checkVersions(root), null);
