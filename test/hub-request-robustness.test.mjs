@@ -32,3 +32,13 @@ test("unparseable request target gets a 400, not a dead hub", async () => {
   assert.match(out, /^HTTP\/1\.1 4\d\d /);
   assert.equal((await fetch(`${hub.base}/healthz`)).status, 200);
 });
+
+test("every response carries the security headers", async () => {
+  for (const p of ["/healthz", "/api/state", "/nope"]) {
+    const res = await fetch(`${hub.base}${p}`);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff", p);
+    assert.equal(res.headers.get("referrer-policy"), "no-referrer", p);
+    assert.equal(res.headers.get("x-frame-options"), "DENY", p);
+    await res.arrayBuffer();
+  }
+});

@@ -1082,6 +1082,12 @@ function escapeHtml(s) {
 }
 
 async function handleRequest(req, res) {
+  // Central, so no route can forget them. Nothing in this repo frames the hub
+  // (the board's iframes point at usemasora.com), hence DENY for every route.
+  // No CSP: the board relies on inline styles and it was not browser-verified.
+  res.setHeader("x-content-type-options", "nosniff");
+  res.setHeader("referrer-policy", "no-referrer");
+  res.setHeader("x-frame-options", "DENY");
   let url;
   try {
     url = new URL(req.url, "http://localhost");
