@@ -540,6 +540,33 @@ function list({ cwd = null, limit = MAX_SESSIONS } = {}) {
 }
 
 /**
+ * The folder a session ran in, as its OWN transcript recorded it — or null.
+ *
+ * This is what lets a terminal session be continued from a folder that was
+ * never opened as a workspace: main.js accepts the renderer's `cwd` only when
+ * it equals this, so a renderer can name a session but not choose a directory.
+ * `id` is claude's file name or codex's `sessionId` (the id each CLI resumes by).
+ */
+function cwdOf(source, id) {
+  if (typeof id !== "string" || !SEGMENT.test(id)) return null;
+  let s = null;
+  if (source === "codex") {
+    const titles = codexTitles();
+    for (const f of listCodex()) {
+      const d = describeCodex(f.slug, f.id, f.stat, titles);
+      if (d.sessionId === id) {
+        s = d;
+        break;
+      }
+    }
+  } else {
+    const f = listClaude().find((x) => x.id === id);
+    if (f) s = describeClaude(f.slug, f.id, f.stat);
+  }
+  return s && s.cwd && path.isAbsolute(s.cwd) ? s.cwd : null;
+}
+
+/**
  * The subagents one claude session spawned, newest first.
  *
  * Each `agent-<id>.jsonl` has an `agent-<id>.meta.json` beside it carrying
@@ -752,4 +779,4 @@ function live(source, id) {
   return { title, context: null, cached: null, output: null, window: null };
 }
 
-module.exports = { list, read, children, live, claudeDir, codexDir, _fileFor: fileFor, _firstAsk: firstAsk };
+module.exports = { list, read, children, live, cwdOf, claudeDir, codexDir, _fileFor: fileFor, _firstAsk: firstAsk };

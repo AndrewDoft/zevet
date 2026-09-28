@@ -52,6 +52,7 @@
       "ask-server.js",
       "computer.js",
       "zevet-mcp.js",
+      "permit-grants.js",
       "embedder.js",
       "index-capability.js",
       "code-index.js",

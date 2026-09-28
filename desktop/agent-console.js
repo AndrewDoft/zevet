@@ -429,6 +429,34 @@ function resumeSafe(extra) {
   return out;
 }
 
+/** `claude --help`: --effort <level> (low, medium, high, xhigh, max). */
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
+/**
+ * The launch options a renderer may ask for beyond model and mode, reduced to
+ * what is safe to put on argv. The renderer is the untrusted side of the
+ * bridge: an extra directory must be an absolute path to a directory that
+ * exists, and effort must be one of the CLI's own levels — anything else is
+ * dropped rather than passed on. claude only; the other CLIs have no flag.
+ */
+function extrasFrom(opts) {
+  const o = opts || {};
+  const addDirs = [];
+  for (const d of Array.isArray(o.addDirs) ? o.addDirs : []) {
+    if (typeof d !== "string" || !path.isAbsolute(d) || addDirs.includes(d)) continue;
+    try {
+      if (fs.statSync(d).isDirectory()) addDirs.push(d);
+    } catch {
+      // Missing or unreadable: not a directory claude could use either.
+    }
+  }
+  return {
+    ...(addDirs.length ? { addDirs } : {}),
+    ...(EFFORTS.includes(o.effort) ? { effort: o.effort } : {}),
+    ...(o.continueLatest === true ? { continueLatest: true } : {}),
+  };
+}
+
 function invocationFor(agent, opts) {
   const o = opts || {};
   const extra = [];
@@ -462,6 +490,10 @@ function invocationFor(agent, opts) {
     if (typeof o.permissionTool === "string" && o.permissionTool.trim()) {
       extra.push("--permission-prompt-tool", o.permissionTool.trim());
     }
+    // Repeated rather than variadic: `--add-dir a b` would swallow whatever
+    // positional follows. See extrasFrom for what reaches here.
+    for (const d of Array.isArray(o.addDirs) ? o.addDirs : []) extra.push("--add-dir", d);
+    if (EFFORTS.includes(o.effort)) extra.push("--effort", o.effort);
     return [
       "-p",
       "--input-format",
@@ -469,20 +501,26 @@ function invocationFor(agent, opts) {
       "--output-format",
       "stream-json",
       "--verbose",
-      /* ⚠️ NO --include-partial-messages. It makes claude wrap every raw SSE
-       * event in a `stream_event` payload, and zevet has never had a reader
-       * for one: each arrived at transcript.mjs's "unknown but real" branch
-       * and was printed as the literal text `[claude: stream_event]` INTO THE
-       * ASSISTANT'S MESSAGE. Measured in the running app 2026-09-21 — a
-       * one-sentence question answered with dozens of them, and nothing else.
-       *
-       * Asking for them buys nothing either way: the same content arrives
-       * complete as an `assistant` payload PER CONTENT BLOCK, which is what
-       * the board renders and what it rendered before this flag was added.
-       * The partials would only be useful token-by-token, and using them that
-       * way means de-duplicating against the block that follows. */
+      /* PARTIAL MESSAGES ARE ON, and the thing they used to break is now
+       * handled on the reading side. History: with this flag claude wraps every
+       * raw SSE event in a `stream_event` payload, transcript.mjs had no reader
+       * for one, and each printed the literal text `[claude: stream_event]` into
+       * the assistant's message (measured in the running app 2026-09-21).
+       * transcript.mjs still DROPS them — they are never transcript content.
+       * Instead lib/chat-stream.mjs's `draftAfter` grows a view-only `draft`
+       * from the text deltas, and the complete `assistant` block replaces it, so
+       * nothing is counted twice. desktop/console-log.js does not keep them
+       * (hundreds per answer would push real events out of a reload's replay).
+       * test/agent-console.test.mjs and test/transcript.test.mjs pin both halves. */
+      "--include-partial-messages",
       "--replay-user-messages",
-      ...(forkFrom ? ["--resume", forkFrom, "--fork-session"] : resumeFrom ? ["--resume", resumeFrom] : []),
+      ...(forkFrom
+        ? ["--resume", forkFrom, "--fork-session"]
+        : resumeFrom
+        ? ["--resume", resumeFrom]
+        : o.continueLatest === true
+        ? ["--continue"]
+        : []),
       ...extra,
     ];
   }
@@ -924,6 +962,7 @@ module.exports = {
   MODES,
   modeFlags,
   invocationFor,
+  extrasFrom,
   resolveAgent,
   startConsole,
   // Exported for the suite, which tests these directly rather than inferring

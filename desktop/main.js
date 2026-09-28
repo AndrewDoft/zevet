@@ -3154,6 +3154,9 @@ const pendingPermits = new Map();
  *  map per ask-server route because a permit id and an ask id share no
  *  namespace and must never be answerable through the other's channel. */
 const pendingAsks = new Map();
+/** "Always allow" answers for Claude's own tools, per run. */
+const permitGrantsModule = require("./permit-grants.js");
+const permitGrants = { ...permitGrantsModule.createGrants(), ruleKey: permitGrantsModule.ruleKey };
 let permitSeq = 0;
 let askServerPromise = null;
 
@@ -3162,13 +3165,28 @@ function ensureAskServer() {
     askServerPromise = askServer.start({
       onPermit: (request) =>
         new Promise((resolve) => {
+          // "Always allow this" answered earlier in this run (permit-grants.js).
+          const run = request && typeof request.run === "string" ? request.run : "";
+          if (request && request.via === "claude" && permitGrants.allows(run, request.tool, request.arguments)) {
+            resolve({ ok: true });
+            return;
+          }
           const id = `p${++permitSeq}`;
-          pendingPermits.set(id, resolve);
+          pendingPermits.set(id, (answer) => {
+            if (answer.ok && answer.always && request && request.via === "claude") {
+              permitGrants.grant(run, request.tool, request.arguments);
+            }
+            resolve(answer);
+          });
           // The board decides. If no board is listening — the window is gone,
           // or it is an older build that does not know this event — nothing
           // resolves this and the ask-server's own timeout denies it, which is
           // the correct end for a question nobody can be asked.
-          toBoard("local:permitRequest", { id, ...(request || {}) });
+          toBoard("local:permitRequest", {
+            id,
+            ...(request || {}),
+            ...(request && request.via === "claude" ? { canAlways: permitGrants.ruleKey(request.tool, request.arguments) !== null } : {}),
+          });
         }),
       onAsk: (request) =>
         new Promise((resolve) => {
@@ -3187,7 +3205,7 @@ ipcMain.handle("local:permitAnswer", (_e, arg) => {
   const resolve = pendingPermits.get(id);
   if (!resolve) return { ok: false, error: "no such request" };
   pendingPermits.delete(id);
-  resolve({ ok: arg && arg.allow === true, reason: (arg && arg.reason) || "refused" });
+  resolve({ ok: arg && arg.allow === true, reason: (arg && arg.reason) || "refused", always: Boolean(arg && arg.always) });
   return { ok: true };
 });
 
@@ -3217,27 +3235,37 @@ ipcMain.handle("local:askAnswer", (_e, arg) => {
  * handshake for that connection is the CLI's own job, not zevet's -- no
  * token is written here, unlike the `zevet` stdio entry below.
  */
-async function mcpConfigFor(dir) {
+async function mcpConfigFor(dir, mode) {
   const servers = {};
-  let computerUse = false;
-  if (agentSettingsFor(dir).computerUse && fs.existsSync(MCP_SERVER)) {
+  const computerUse = Boolean(agentSettingsFor(dir).computerUse);
+  /* The zevet server also carries `permission_prompt`, which is how a headless
+     claude asks the person instead of silently denying what would prompt. Every
+     posture but "skip permissions" needs it (nothing prompts under that one). */
+  const gate = mode !== "dangerous";
+  if ((computerUse || gate) && fs.existsSync(MCP_SERVER)) {
     const { url, token } = await ensureAskServer();
     servers.zevet = {
       command: process.execPath,
       args: [MCP_SERVER],
-      env: { ELECTRON_RUN_AS_NODE: "1", ZEVET_MCP_URL: url, ZEVET_MCP_TOKEN: token },
+      env: {
+        ELECTRON_RUN_AS_NODE: "1",
+        ZEVET_MCP_URL: url,
+        ZEVET_MCP_TOKEN: token,
+        ZEVET_MCP_RUN: `r${process.pid}-${++permitSeq}`,
+        // Without this the four computer tools are never listed, whatever the setting says.
+        ZEVET_MCP_COMPUTER: computerUse ? "1" : "0",
+      },
     };
-    computerUse = true;
   }
   const masoraCfg = masora.readConfig();
   if (masoraCfg.paired) Object.assign(servers, masora.mcpServerEntry(masoraCfg.url));
   if (!Object.keys(servers).length) return null;
   const file = path.join(app.getPath("temp"), `zevet-mcp-${process.pid}-${++permitSeq}.json`);
   fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }), "utf8");
-  // `computerUse` says whether the `zevet` tool server (and so its permission
+  // `permissions` says whether the `zevet` tool server (and so its permission
   // tool) is actually in this file -- a masora-only config must not claim a
   // permission tool that config does not register.
-  return { file, computerUse };
+  return { file, computerUse, permissions: Boolean(servers.zevet) };
 }
 
 /**
@@ -3270,8 +3298,15 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
   // awaits below, so an agent started meanwhile sees this one.
   const forkFrom = opts && typeof opts.forkFrom === "string" ? opts.forkFrom : "";
   const source = forkFrom && String(agent || "") === "claude" ? [...placements].find((p) => p.session === forkFrom) : null;
-  const place = source ? { ...source, id: null, session: "", title: "" } : await placeAgent(dir);
-  if (source) placements.add(place);
+  /* `--continue` finds "the latest session in this folder", so it must start IN
+     the folder: a fresh worktree would have no sessions to continue. */
+  const inPlace = Boolean(opts && opts.continueLatest === true && String(agent || "") === "claude");
+  const place = source
+    ? { ...source, id: null, session: "", title: "" }
+    : inPlace
+    ? { id: null, root: dir, cwd: dir, worktree: null, session: "", title: "" }
+    : await placeAgent(dir);
+  if (source || inPlace) placements.add(place);
 
   // Standing instructions for this repo, if any were saved. Only claude has a
   // flag for them (agent-console.js § invocationFor); the other two ignore the
@@ -3297,7 +3332,7 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
   let mcpConfig = null;
   if (String(agent || "") === "claude") {
     try {
-      mcpConfig = await mcpConfigFor(dir);
+      mcpConfig = await mcpConfigFor(dir, opts && typeof opts.mode === "string" ? opts.mode : "auto");
     } catch (err) {
       console.error(`zevet: could not set up MCP servers: ${err.message}`);
     }
@@ -3328,7 +3363,7 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
           mcpConfig: mcpConfig.file,
           // claude names an MCP tool `mcp__<server>__<tool>`; the server is
           // registered as `zevet` above, only when computer use is actually on.
-          ...(mcpConfig.computerUse ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
+          ...(mcpConfig.permissions ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
         }
       : {}),
     /* ⚠️ ASKED FOR, AND ALLOWED, ARE TWO DIFFERENT THINGS. The renderer may
@@ -3336,6 +3371,7 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
        saved settings, because the renderer is the untrusted side of the
        bridge. Same rule the workspace guard follows above. */
     forkFrom,
+    ...(String(agent || "") === "claude" ? agentConsole.extrasFrom(opts) : {}),
     onEvent: (evt) => {
       // The status strip's rolling windows are fed HERE, in the main process,
       // and not in the renderer. The renderer shows the live figures off the
@@ -3392,16 +3428,31 @@ function consoleMeta(agent, dir, opts, place, engineUsed) {
  */
 ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) => {
   await runtimeReady;
-  const dir = knownRoot(cwd);
-  if (!dir) return { ok: false, error: "not an opened workspace" };
   if (typeof resumeFrom !== "string" || !resumeFrom.trim()) {
     return { ok: false, error: "no session to resume" };
   }
+  /* A session started in a terminal resumes from the folder IT ran in, which
+     need not be an opened workspace. The renderer cannot choose that folder:
+     it is accepted only when it is the one the session's own transcript
+     recorded (agent-sessions.cwdOf) and still exists. Anything else is the
+     workspace rule, as before. */
+  let dir = knownRoot(cwd);
+  if (!dir && typeof cwd === "string") {
+    const own = agentSessions.cwdOf(String(agent || ""), resumeFrom.trim());
+    if (own && path.resolve(own) === path.resolve(cwd)) {
+      try {
+        if (fs.statSync(own).isDirectory()) dir = path.resolve(own);
+      } catch {
+        return { ok: false, error: `That session's folder no longer exists: ${own}` };
+      }
+    }
+  }
+  if (!dir) return { ok: false, error: "not an opened workspace" };
   const settings = agentSettingsFor(dir);
   let mcpConfig = null;
   if (String(agent || "") === "claude") {
     try {
-      mcpConfig = await mcpConfigFor(dir);
+      mcpConfig = await mcpConfigFor(dir, opts && typeof opts.mode === "string" ? opts.mode : "auto");
     } catch (err) {
       console.error(`zevet: could not set up computer use: ${err.message}`);
     }
@@ -3429,11 +3480,12 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt: settings.systemPrompt,
     resumeFrom: resumeFrom.trim(),
+    ...(String(agent || "") === "claude" ? agentConsole.extrasFrom({ ...opts, continueLatest: false }) : {}),
     env,
     ...(mcpConfig
       ? {
           mcpConfig: mcpConfig.file,
-          ...(mcpConfig.computerUse ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
+          ...(mcpConfig.permissions ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
         }
       : {}),
     onEvent: (evt) => {

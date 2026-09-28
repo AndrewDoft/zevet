@@ -53,6 +53,8 @@ const PROVIDER_LABEL: Record<string, string> = {
 /** codex is the one CLI here that takes a reasoning-effort flag. Offering the
  *  control for models that ignore it would be inventing a setting. */
 const HAS_EFFORT = new Set(["codex"]);
+/** `claude --help`: --effort <level> (low, medium, high, xhigh, max). */
+const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"].map((id) => ({ id, name: id === "xhigh" ? "XHigh" : id[0].toUpperCase() + id.slice(1) }));
 
 
 /** `running`: the console in front, whose model the trigger shows instead of
@@ -123,7 +125,7 @@ export function ModelChoice({
               // The provider's own mark, where one is honest. opencode fronts a
               // dozen providers, so the MODEL is what identifies it, not the CLI.
               icon: <AgentLogo agent={a.name} model={alias} className="size-3.5" />,
-              efforts: HAS_EFFORT.has(a.name) && alias ? true : undefined,
+              efforts: a.name === "claude" ? CLAUDE_EFFORTS : HAS_EFFORT.has(a.name) && alias ? true : undefined,
               // Grayed and unselectable until it clears — a model that would
               // only fail the same way again is not a real choice. The reset
               // time is the tooltip (ModelSelectorItem's `title` below).

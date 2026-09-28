@@ -20,7 +20,7 @@
  * run running.
  */
 import { useContext } from "react";
-import { FolderIcon } from "lucide-react";
+import { FolderIcon, SlidersHorizontalIcon } from "lucide-react";
 import { bridge } from "../lib/bridge";
 import { ChatSurface } from "../lib/surface";
 import { ContextCardButton, PastPromptsButton } from "./composercards";
@@ -28,6 +28,8 @@ import { PromptLibraryPanel } from "./promptlib";
 import { QuotaChip } from "./quota";
 import { RunMeterCard, type RunUsage } from "./runmeters";
 import { ModelChoice } from "./model-choice";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Textarea } from "./ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { mono } from "./assistant-ui/elements/surfaces";
 import { cn } from "@/lib/utils";
@@ -209,6 +211,41 @@ function FolderChip() {
   );
 }
 
+/** claude launch flags with no other home: `--continue` (the latest session in
+ *  this folder, for the next start only) and `--add-dir` (more folders the
+ *  agent may touch). Effort lives in the model picker. Code surface only. */
+function LaunchExtras() {
+  const cont = useBoard((s) => s.launchContinue);
+  const setCont = useBoard((s) => s.setLaunchContinue);
+  const dirs = useBoard((s) => s.launchAddDirs);
+  const setDirs = useBoard((s) => s.setLaunchAddDirs);
+  const on = cont || dirs.trim().length > 0;
+  return (
+    <Popover>
+      <PopoverTrigger
+        aria-label="Session options"
+        title="Continue the latest session here · extra folders"
+        className={cn(
+          "flex h-7 shrink-0 items-center rounded-full px-2 text-xs",
+          on ? "bg-foreground/10 text-foreground" : "bg-foreground/[0.04] text-foreground/60",
+        )}
+      >
+        <SlidersHorizontalIcon className="size-3.5" aria-hidden="true" />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="flex w-72 flex-col gap-3 text-xs">
+        <label className="flex items-start gap-2">
+          <input type="checkbox" checked={cont} onChange={(e) => setCont(e.target.checked)} className="mt-0.5" />
+          <span>Continue the latest Claude session in this folder (next start only)</span>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>Extra folders Claude may use, one path per line</span>
+          <Textarea value={dirs} onChange={(e) => setDirs(e.target.value)} rows={3} className="text-xs" />
+        </label>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function ComposerControls() {
   const { usage, model, runningModel, agents, launchMode, setLaunchMode, setConsoleMode, activeKey } = useComposerSource();
   const isChat = useContext(ChatSurface);
@@ -299,7 +336,7 @@ export function ComposerControls() {
         </SelectContent      >
       </Select>
 
-      {isChat ? <FolderChip /> : null}
+      {isChat ? <FolderChip /> : <LaunchExtras />}
 
       {facts}
     </div>

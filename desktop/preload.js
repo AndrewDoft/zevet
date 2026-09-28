@@ -352,8 +352,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
     ipcRenderer.on("local:permitRequest", handler);
     return () => ipcRenderer.removeListener("local:permitRequest", handler);
   },
-  permitAnswer: (id, allow, reason) =>
-    ipcRenderer.invoke("local:permitAnswer", { id, allow, reason }),
+  permitAnswer: (id, allow, reason, always) =>
+    ipcRenderer.invoke("local:permitAnswer", { id, allow, reason, always }),
   /* An agent has asked the PERSON something (not a yes/no permission — a
      question with its own options) and is blocked on the answer. Same shape
      as the permit channel above, different event names. */

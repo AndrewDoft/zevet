@@ -41,8 +41,8 @@ function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
   const openSession = useBoard((st) => st.openSession);
   const isOpen = open?.id === s.id && open?.source === s.source;
   const project = sessionProject(s);
-
   return (
+    <div className="session-row-line">
     <button
       type="button"
       className="session-row"
@@ -64,6 +64,28 @@ function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
         {project ? <span className="session-row-project">{project}</span> : null}
         <span className="session-row-ago">{agoLabel(s.updated, Date.now())}</span>
       </span>
+    </button>
+    <ContinueInZevet s={s} />
+    </div>
+  );
+}
+
+/** "Continue in Zevet" is for sessions Zevet did NOT start. A session zevet
+ *  (or any SDK host) launched records surface "sdk"; a terminal, desktop-app or
+ *  IDE one does not. Not offered without an id to resume by, or a bridge. */
+function ContinueInZevet({ s }: { s: SessionSummary }) {
+  const continueSession = useBoard((st) => st.continueSession);
+  const canMove =
+    s.surface !== "sdk" && Boolean(resumeIdForSession(s)) && typeof bridge.local?.resumeAgent === "function";
+  if (!canMove) return null;
+  return (
+    <button
+      type="button"
+      className="session-row-continue"
+      title="Resume this session in Zevet, with its full history"
+      onClick={() => continueSession(s)}
+    >
+      Continue in Zevet
     </button>
   );
 }
@@ -282,7 +304,7 @@ export function SessionBanner() {
             className="session-banner-close"
             onClick={() => continueSession(open)}
           >
-            Continue
+            {open.surface !== "sdk" ? "Continue in Zevet" : "Continue"}
           </button>
         ) : null}
         <button type="button" className="session-banner-close" onClick={() => closeSession()}>

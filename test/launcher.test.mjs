@@ -51,7 +51,9 @@ describe("the model selector states agent facts once", () => {
 
   test("reasoning effort is offered only where a CLI takes the flag", () => {
     assert.match(choice, /const HAS_EFFORT = new Set\(\["codex"\]\)/);
-    assert.match(choice, /efforts: HAS_EFFORT\.has\(a\.name\) && alias \? true : undefined/);
+    // claude takes --effort <low|medium|high|xhigh|max> (`claude --help`, 2.1.284).
+    assert.match(choice, /efforts: a\.name === "claude" \? CLAUDE_EFFORTS : HAS_EFFORT\.has\(a\.name\) && alias \? true : undefined/);
+    assert.match(choice, /\["low", "medium", "high", "xhigh", "max"\]/);
   });
 });
 

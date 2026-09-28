@@ -41,6 +41,33 @@ const DESCRIPTIONS = {
   schedule: "Create or manage scheduled agents",
 };
 
+/**
+ * MEASURED 2026-09-28, claude 2.1.284, headless (`claude -p "/x" --output-format
+ * stream-json`, haiku/sonnet, scratch folder). A local command that works
+ * answers with zero model turns; everything below is what the init line
+ * announces but does not do here.
+ *
+ *   /fast    "Fast mode is not available in the Agent SDK"
+ *   /focus   "/focus isn't available here yet"
+ *   /agents  "The /agents wizard has been removed" (a notice, nothing to run)
+ *   __remote-workflow, workflow-launch-exec  internal hand-offs, not commands
+ *
+ * They are HIDDEN rather than listed, because a menu entry that answers "not
+ * available" is a broken button. Also measured: /usage (aliases /cost, /stats),
+ * /context, /compact, /clear, /color, /config k=v, /effort, /model, /rename,
+ * /output-style, /advisor, /autocompact, /mcp, /list-agents, /recap, /goal,
+ * /reload-skills, /reload-plugins and /skill-doctor all work, and /init and
+ * /review run as ordinary agent turns (so they need tool approval).
+ */
+const HEADLESS_UNAVAILABLE = new Set(["fast", "focus", "agents", "__remote-workflow", "workflow-launch-exec"]);
+
+/** Announced, and not tried: they change account state, open a browser or bill
+ *  a cloud run, which is no reason to run them to find out. Listed, and said so. */
+const UNVERIFIED = new Set(["heapdump", "import", "design", "design-consent", "design-revoke", "ultrareview", "usage-credits", "extra-usage", "team-onboarding"]);
+
+/** Measured to work and to cost real money: a long model report, not a lookup. */
+const COSTLY = { insights: "Long report — runs a model for a while (measured ~$1.9 on Sonnet)" };
+
 /** Commands zevet answers itself, for every agent. `claudeToo` = zevet handles
  *  it even for claude (nothing in the CLI does the same thing). */
 export const LOCAL = [
@@ -56,7 +83,10 @@ export const LOCAL = [
 const CLAUDE_FALLBACK = ["clear", "compact", "context", "cost", "usage", "model", "effort", "init", "mcp", "config", "rename", "recap"];
 
 const describe = (name) =>
-  DESCRIPTIONS[name] || (name.includes(":") ? `${name.split(":")[0]} plugin` : "");
+  COSTLY[name] ||
+  (UNVERIFIED.has(name) ? "Not verified to work in Zevet — try it in a terminal if it misbehaves" : "") ||
+  DESCRIPTIONS[name] ||
+  (name.includes(":") ? `${name.split(":")[0]} plugin` : "");
 
 /**
  * @param {string | null | undefined} agent  the console's agent, or the one the launcher names
@@ -74,7 +104,7 @@ export function commandsFor(agent, announced) {
   const isClaude = agent === "claude";
   for (const c of LOCAL) if (!isClaude || c.claudeToo) add({ name: c.name, description: c.description, local: true });
   if (isClaude) {
-    const names = announced && announced.length ? announced : CLAUDE_FALLBACK;
+    const names = (announced && announced.length ? announced : CLAUDE_FALLBACK).filter((n) => !HEADLESS_UNAVAILABLE.has(n));
     // Known built-ins first, then the rest alphabetically: a long tail of
     // skills should not bury `/compact`.
     const order = Object.keys(DESCRIPTIONS);
