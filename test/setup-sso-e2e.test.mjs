@@ -24,7 +24,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { startHub, ROOT } from "./helpers.mjs";
+import { startHub, ROOT, NO_DRIVE } from "./helpers.mjs";
 
 const DRIVE = path.join(ROOT, "scripts", "drive", "drive.mjs");
 
@@ -52,6 +52,7 @@ async function outline() {
 let hub;
 let accountsDir;
 before(async () => {
+  if (NO_DRIVE) return;
   accountsDir = mkdtempSync(path.join(tmpdir(), "zevet-sso-e2e-accounts-"));
   hub = await startHub({
     ZEVET_ACCOUNTS: path.join(accountsDir, "accounts.json"),
@@ -75,6 +76,7 @@ before(async () => {
   process.env.ZEVET_DRIVE_STATE = path.join(accountsDir, "drive-state.json");
 });
 after(async () => {
+  if (NO_DRIVE) return;
   try {
     drive("close");
   } catch {
@@ -84,7 +86,7 @@ after(async () => {
   if (accountsDir) rmSync(accountsDir, { recursive: true, force: true, maxRetries: 120, retryDelay: 250 });
 });
 
-describe("GitHub sign-in, real Electron app + real hub + faked GitHub", () => {
+describe("GitHub sign-in, real Electron app + real hub + faked GitHub", { skip: NO_DRIVE }, () => {
   test("Create + GitHub: browser URL captured, poll completes, board is reachable as owner", async () => {
     drive("launch");
     try {
@@ -113,7 +115,7 @@ describe("GitHub sign-in, real Electron app + real hub + faked GitHub", () => {
   });
 });
 
-describe("Google sign-in, real Electron app + real hub + faked Google", () => {
+describe("Google sign-in, real Electron app + real hub + faked Google", { skip: NO_DRIVE }, () => {
   // Create, not Join: a plain Google identity joining a team GitHub already
   // claimed (test A) would be refused by accounts.mjs's mayEnter — it is
   // allowlist-gated once a team has an owner, and that allowlist path

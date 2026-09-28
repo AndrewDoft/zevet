@@ -5,7 +5,7 @@
 // clicking "Start an agent" threw it three times and blanked the editor).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -20,7 +20,9 @@ test("board.ts hands encodeAwarenessUpdate the Awareness, never a stand-in", () 
   for (const c of calls) assert.ok(!/\{\s*clientID/.test(c), `stand-in object passed: ${c}`);
 });
 
-test("y-protocols really needs the Awareness (why the stand-in threw)", async () => {
+const NO_EDITOR_DEPS = existsSync(path.join(ROOT, "editor", "node_modules", "y-protocols")) ? false : "editor deps not installed (run `npm ci` in editor/)";
+
+test("y-protocols really needs the Awareness (why the stand-in threw)", { skip: NO_EDITOR_DEPS }, async () => {
   const Y = await import(pathToFileURL(req.resolve("yjs")).href);
   const { Awareness, encodeAwarenessUpdate } = await import(pathToFileURL(req.resolve("y-protocols/awareness")).href);
   const a = new Awareness(new Y.Doc());

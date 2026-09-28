@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { startHub, ROOT } from "./helpers.mjs";
+import { startHub, ROOT, NO_DRIVE } from "./helpers.mjs";
 
 const DRIVE = path.join(ROOT, "scripts", "drive", "drive.mjs");
 const SECRET = randomBytes(24).toString("hex");
@@ -45,6 +45,7 @@ async function waitFor(pred, { tries = 30, everyMs = 150 } = {}) {
 let hub;
 let accountsDir;
 before(async () => {
+  if (NO_DRIVE) return;
   // ZEVET_SECRET, and ZEVET_TOKEN cleared to "" rather than left at helpers'
   // default: the manual "Team key" field in setup.html is the master secret,
   // and this hub's shared token must be DERIVED from it (matching what a
@@ -76,6 +77,7 @@ before(async () => {
   drive("launch");
 });
 after(async () => {
+  if (NO_DRIVE) return;
   try {
     drive("close");
   } catch {
@@ -85,7 +87,7 @@ after(async () => {
   if (accountsDir) rmSync(accountsDir, { recursive: true, force: true, maxRetries: 120, retryDelay: 250 });
 });
 
-describe("a fresh install's setup window", () => {
+describe("a fresh install's setup window", { skip: NO_DRIVE }, () => {
   test("shows the controls a first-run person needs, with Open disabled", () => {
     const { outline } = drive("snapshot");
     assert.match(outline, /input#teamName/);

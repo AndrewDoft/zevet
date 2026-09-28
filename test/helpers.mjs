@@ -6,9 +6,29 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { Accounts } from "../hub/accounts.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/**
+ * Why the real-Electron suites (scripts/drive/drive.mjs) cannot run here, or
+ * false when they can. They SKIP with this reason — a skip is reported as
+ * skipped, never as passed, and never as a cancelled hook.
+ */
+export const NO_DRIVE = (() => {
+  try {
+    createRequire(path.join(ROOT, "package.json"))("playwright-core");
+  } catch {
+    return "playwright-core is not installed (run `npm ci` at the repo root)";
+  }
+  try {
+    createRequire(path.join(ROOT, "desktop", "package.json"))("electron");
+  } catch {
+    return "no Electron binary (run `npm ci` in desktop/)";
+  }
+  return false;
+})();
+
 export const TOKEN = "test-token-0123456789abcdef";
 
 /**

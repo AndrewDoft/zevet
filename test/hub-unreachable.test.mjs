@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { ROOT } from "./helpers.mjs";
+import { ROOT, NO_DRIVE } from "./helpers.mjs";
 
 const DRIVE = path.join(ROOT, "scripts", "drive", "drive.mjs");
 
@@ -40,6 +40,7 @@ const DEAD_HUB = "http://127.0.0.1:1";
 
 let homeDir;
 before(() => {
+  if (NO_DRIVE) return;
   // A pre-seeded config, not a fresh profile: this is a test of the BOARD
   // window's failure path, which only runs once setup is already done. See
   // scripts/drive/drive.mjs's "launch" -- it respects an already-set
@@ -58,6 +59,7 @@ before(() => {
 });
 
 after(() => {
+  if (NO_DRIVE) return;
   try {
     drive("close");
   } catch {
@@ -67,7 +69,7 @@ after(() => {
   if (homeDir) rmSync(homeDir, { recursive: true, force: true, maxRetries: 120, retryDelay: 250 });
 });
 
-describe("a hub nobody answers on", () => {
+describe("a hub nobody answers on", { skip: NO_DRIVE }, () => {
   test("the board names the host and gives an actionable reason, not a bare error code", async () => {
     // main.js retries once (a fresh network interface can lose the very first
     // request) before it gives up, so this has to outlast that retry.
