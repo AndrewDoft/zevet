@@ -29,6 +29,7 @@ import {
 import { bridge } from "./lib/bridge";
 import { ChatMain, ChatRail, ModeSwitch } from "./components/chatmode";
 import { useChat, wireChat } from "./lib/chat";
+import { CHECK_MS, createStaleReload } from "./lib/stale-build.mjs";
 
 function RailFoot() {
   const theme = useBoard(selectTheme);
@@ -101,6 +102,32 @@ function App() {
     boot();
     wireChat();
     useBoard.getState().refreshWhoami();
+  }, []);
+
+  /* A hub deploy reaches an open board: see lib/stale-build.mjs. */
+  useEffect(() => {
+    const mine = document.querySelector<HTMLMetaElement>('meta[name="zevet-build"]')?.content ?? "";
+    const stale = createStaleReload({
+      mine,
+      fetchBuild: async () => ((await (await fetch("/version", { cache: "no-store" })).json()) as { build?: string }).build ?? "",
+      doc: document,
+      now: Date.now,
+      editorDirty: () => Boolean(useBoard.getState().edView?.dirty),
+      reload: () => window.location.reload(),
+    });
+    const tick = () => void stale.tick();
+    const touch = () => stale.touch();
+    const timer = setInterval(tick, CHECK_MS);
+    const inputs = ["pointerdown", "keydown", "wheel"] as const;
+    inputs.forEach((e) => window.addEventListener(e, touch, { passive: true, capture: true }));
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      inputs.forEach((e) => window.removeEventListener(e, touch, { capture: true }));
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", tick);
+    };
   }, []);
 
   useEffect(() => {

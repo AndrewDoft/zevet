@@ -1172,6 +1172,9 @@ describe("observability", () => {
       const before = await (await fetch(`${fresh.base}/healthz`)).json();
       // `teams` is additive too, same rule as the two ws counts: a hub with
       // no teams created yet still has the DEFAULT one.
+      // `build` (the board build id) is additive as well; test/stale-build.test.mjs owns its value.
+      assert.match(before.build, /^[0-9a-f]{12}$/);
+      delete before.build;
       assert.deepEqual(before, { ok: true, events: 0, listeners: 0, rooms: 0, wsListeners: 0, teams: 1 });
 
       const a = connect(fresh.base);

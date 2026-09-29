@@ -21,6 +21,22 @@ import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
 import { initSentry } from "./sentry.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The id of the board this hub serves, so an open board can tell a deploy
+ * happened. It is the two committed source stamps (board.js.srchash and
+ * editor.js.srchash) folded together: they change exactly when board.js or
+ * editor.js is rebuilt from different source. HUB_BUILD_ID overrides it. Read
+ * once at boot — a deploy restarts the hub, and the stamps only change then.
+ */
+const BUILD_ID =
+  process.env.HUB_BUILD_ID ||
+  createHash("sha256")
+    .update(["board", "editor"].map((n) => {
+      try { return readFileSync(path.join(HERE, "public", `${n}.js.srchash`), "utf8").trim(); } catch { return ""; }
+    }).join("\n"))
+    .digest("hex")
+    .slice(0, 12);
 const PORT = Number(process.env.PORT || 8787);
 
 /* ── Who this hub lets in ────────────────────────────────────────────────────
@@ -1898,6 +1914,7 @@ async function handleRequest(req, res) {
     const board = boards.get(DEFAULT_TEAM);
     return json(res, 200, {
       ok: true,
+      build: BUILD_ID,
       events: board.events.length,
       listeners: board.listeners.size,
       rooms: rooms.size,
@@ -1905,6 +1922,9 @@ async function handleRequest(req, res) {
       teams: teamAccounts.size,
     });
   }
+
+  // Unauthenticated like /healthz: an id that says "the board was rebuilt", no data.
+  if (url.pathname === "/version") return json(res, 200, { build: BUILD_ID });
 
   if (url.pathname === "/ingest" && req.method === "POST") {
     // ⚠️ NOT teamFromSession, on purpose, unlike every other route this
@@ -2109,7 +2129,8 @@ async function handleRequest(req, res) {
     try {
       const html = await readFile(path.join(HERE, "public", "index.html"), "utf8");
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      return res.end(html);
+      // The build this page was served at: the board compares it with /version.
+      return res.end(html.replace("<head>", `<head>\n    <meta name="zevet-build" content="${BUILD_ID}" />`));
     } catch (err) {
       return json(res, 500, { error: `dashboard missing: ${err.message}` });
     }

@@ -1225,3 +1225,14 @@ showing `0.2.88` after its 5-minute ISR window revalidated.
 live hub serves (see above), so `docs/RELEASING.md`'s "Deploying the hub" section did not apply this
 release. DECISIONS.md has no entry for 0.2.87 itself (`e760e22`/`edd75d4` shipped without one); that gap
 predates this release and was not backfilled here.
+
+## D-029 — An open board reloads itself onto a new hub deploy, only when idle
+
+The desktop app loads the board from the hub and never navigates again, so a hub deploy never reached an open
+window. The hub now has a build id — sha256 of `board.js.srchash` + `editor.js.srchash`, first 12 hex, or
+`HUB_BUILD_ID` — served at `GET /version` (`{build}`, no-store), in `/healthz`, and stamped into the served
+`index.html` as `<meta name="zevet-build">`. The board (`board/src/lib/stale-build.mjs`, wired in `App.tsx`)
+polls `/version` every 60 s and on focus/visibility and reloads when it differs **and** the board has had no
+input for 2 min (hidden counts as idle) **and** no dialog is open **and** the editor has no unsaved buffer
+**and** no input/textarea/contenteditable holds text (the agent and terminal prompts are textareas). Baseline is
+the page's own meta, not the first poll, so a deploy landing between page load and first poll is still seen.
