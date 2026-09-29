@@ -938,9 +938,14 @@ class AppUpdater {
       // folder and BOTH ~/Applications and /Applications, since the running
       // bundle can be in either. Never touches `bundlePath` itself — that is
       // the one just installed.
+      // Every step here is chained with `&&` (see _spawnMacReplace), and a
+      // `for` loop's exit status is whatever its last command's was -- so
+      // when there is nothing stray to sweep, the trailing `[ -e "$f" ]`
+      // test is false and the loop "fails", silently cancelling the `open`
+      // (relaunch) chained after it. `true` pins this step's exit to 0.
       `for d in ${shQuote(path.dirname(bundlePath))} ${shQuote(path.join(os.homedir(), "Applications"))} /Applications; do ` +
         `for f in "$d"/zevet*.app "$d"/zevet*.app.update; do ` +
-        `[ -e "$f" ] && [ "$f" != ${shQuote(bundlePath)} ] && rm -rf "$f"; done; done`,
+        `[ -e "$f" ] && [ "$f" != ${shQuote(bundlePath)} ] && rm -rf "$f"; done; done; true`,
     ];
   }
 
