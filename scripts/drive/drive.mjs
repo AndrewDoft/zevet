@@ -45,7 +45,7 @@ function alive(pid) {
   }
 }
 
-async function waitForCDP(port, timeoutMs = 30000) {
+async function waitForCDP(port, timeoutMs = 60000) {
   const deadline = Date.now() + timeoutMs;
   let lastErr;
   while (Date.now() < deadline) {

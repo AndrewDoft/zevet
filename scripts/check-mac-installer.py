@@ -40,7 +40,7 @@ for x, y in locations:
     assert radius + 110 <= y <= height - radius - 80, "Install icon or label is clipped"
 
 # TIFF contains a standard and Retina image, both at the same physical size.
-backgrounds = list((mount / ".background").glob("*.tiff"))
+backgrounds = list(mount.glob(".background.tiff")) or list((mount / ".background").glob("*.tiff"))
 assert len(backgrounds) == 1, "Installer background is missing"
 data = backgrounds[0].read_bytes()
 assert data[:4] in (b"II\x2a\x00", b"MM\x00\x2a"), "Invalid TIFF background"

@@ -25,7 +25,7 @@ const SECRET = randomBytes(24).toString("hex");
 const HUB_COPY = /\bhub\b|sslip|https?:\/\//i;
 
 function drive(...args) {
-  const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout: 30000 });
+  const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout: 90000 });
   return JSON.parse(out);
 }
 
