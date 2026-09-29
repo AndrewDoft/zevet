@@ -907,6 +907,10 @@ function openSetup(existing) {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
+      // The shared preload requires @sentry/electron, which a sandboxed
+      // preload cannot load: without this window.zevet never exists and every
+      // button on this page is dead (same as the board window above).
+      sandbox: false,
     },
   });
   setupWindow.loadFile(path.join(__dirname, "setup.html"), {

@@ -144,3 +144,11 @@ describe("setup.html: no bundler, so it forwards through preload instead", () =>
     assert.match(setupHtml, /sentryTest.*===\s*"1"[\s\S]{0,120}reportMessage\("zevet sentry test"\)/);
   });
 });
+
+describe("preload.js requires @sentry/electron, so no window may sandbox it", () => {
+  test("every window that loads preload.js sets sandbox: false", () => {
+    const blocks = main.split("preload: path.join(__dirname, \"preload.js\")").slice(1);
+    assert.ok(blocks.length >= 2);
+    for (const b of blocks) assert.match(b.slice(0, 900), /sandbox: false/);
+  });
+});
