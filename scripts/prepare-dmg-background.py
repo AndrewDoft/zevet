@@ -9,7 +9,7 @@ from ds_store import DSStore
 from mac_alias import Bookmark
 
 mount = Path(sys.argv[1])
-backgrounds = list((mount / ".background").glob("*.tiff"))
+backgrounds = list(mount.glob(".background.tiff")) or list((mount / ".background").glob("*.tiff"))
 assert len(backgrounds) == 1, "Expected the branded Retina background"
 with tempfile.TemporaryDirectory(prefix="zevet-dmg-bookmark-") as directory:
     bookmark = Path(directory) / "background.bookmark"
