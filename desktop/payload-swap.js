@@ -34,7 +34,7 @@ function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows,
   let timer = null;
   let lastWhy = null;
 
-  function tick() {
+  async function tick() {
     if (swapping || !payload.staged()) return "idle";
     const why = busyReason({ now: now(), activity, chatBusy, lastInputAt, windows, inputQuietMs });
     if (why !== lastWhy) log(`payload ${payload.staged().build} staged; ${why ? `waiting: ${why}` : "idle"}`);
@@ -42,7 +42,7 @@ function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows,
     if (why) return why;
     swapping = true;
     try {
-      const next = payload.activate();
+      const next = await payload.activate();
       log(`payload ${next.build} activated; relaunching`);
       release();
       app.relaunch();
@@ -58,7 +58,7 @@ function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows,
   return {
     tick,
     start() {
-      payload.on("staged", () => tick());
+      payload.on("staged", () => { tick(); });
       timer = setIntervalImpl(tick, POLL_MS);
       if (timer && timer.unref) timer.unref();
     },
@@ -66,9 +66,9 @@ function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows,
       clearIntervalImpl(timer);
     },
     /** will-quit: the staged build becomes current for the NEXT launch. No relaunch. */
-    applyOnQuit() {
+    async applyOnQuit() {
       if (!payload.staged()) return false;
-      payload.activate();
+      await payload.activate();
       return true;
     },
   };

@@ -3748,7 +3748,12 @@ if (bootShell.payload) {
     log: bootShell.log,
   });
   swapper.start();
-  app.on("will-quit", () => swapper.applyOnQuit());
+  let quitApplied = false;
+  app.on("will-quit", (e) => { // activate() is async: hold the quit until the staged build is current
+    if (quitApplied) return;
+    e.preventDefault();
+    swapper.applyOnQuit().catch((err) => bootShell.log(`payload apply on quit failed: ${err && err.message}`)).finally(() => { quitApplied = true; app.quit(); });
+  });
   if (bootShell.trial) {
     const loaded = new Promise((resolve) => {
       app.on("browser-window-created", (_e, w) => w.webContents.once("did-stop-loading", resolve));

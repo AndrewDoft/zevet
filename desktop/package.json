@@ -16,7 +16,7 @@
     "repro:fresh-silent": "node ../scripts/repro-fresh-silent-install.mjs"
   },
   "dependencies": {
-    "@masora/desktop-kit": "github:AndrewDoft/desktop-kit#v0.2.0",
+    "@masora/desktop-kit": "github:AndrewDoft/desktop-kit#v0.2.3",
     "@sentry/electron": "7.20.0"
   },
   "devDependencies": {

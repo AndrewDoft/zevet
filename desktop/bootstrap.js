@@ -37,13 +37,13 @@ const shell = {
 };
 globalThis.__zevetShell = shell;
 
-function run() {
+async function run() {
   // One app per profile. ZEVET_ALLOW_MULTI=1 skips the lock — see the two-instance rig; it needs a separate ZEVET_HOME.
   if (process.env.ZEVET_ALLOW_MULTI !== "1" && !singleInstance(app, () => shell.onSecondInstance && shell.onSecondInstance())) return;
 
   let dir = __dirname;
   const platform = cfg.platformKey();
-  if (app.isPackaged && platform) dir = startPayload(platform);
+  if (app.isPackaged && platform) dir = await startPayload(platform);
   if (!dir) return; // the entry check failed and a relaunch is under way
 
   // The payload lives outside the asar, so it cannot see this node_modules by walking up. Point the
@@ -61,7 +61,7 @@ function run() {
 }
 
 /** Resolve the build to run, check its entry points, arm the trial crash guard. Returns its dir. */
-function startPayload(platform) {
+async function startPayload(platform) {
   const root = cfg.payloadRoot();
   const channel = process.env.ZEVET_PAYLOAD_CHANNEL || readTrim(path.join(root, "channel")) || "stable";
   const pulse = cfg.pulseUrl(channel, platform);
@@ -87,7 +87,7 @@ function startPayload(platform) {
 
   if (cur.source !== "seed") {
     try {
-      payload.verifyEntry(["main.js", "preload.js", "zevet-mcp.js"]);
+      await payload.verifyEntry(["main.js", "preload.js", "zevet-mcp.js"]);
     } catch (err) {
       payload.revert(`entry point failed verification: ${err.message}`);
       relaunch(1);
@@ -136,4 +136,4 @@ function installId(root) {
   return id;
 }
 
-run();
+shell.booted = run().catch((err) => bootFailed(`bootstrap failed: ${err && err.stack || err}`));

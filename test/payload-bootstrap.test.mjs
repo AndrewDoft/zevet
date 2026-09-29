@@ -15,29 +15,29 @@ const cfg = require(path.join(DESKTOP, "payload-config.js"));
 const pkg = JSON.parse(fs.readFileSync(path.join(DESKTOP, "package.json"), "utf8"));
 
 describe("payload-config", () => {
-  test("seqOf is monotonic across patch, minor and major", () => {
+  test("seqOf is monotonic across patch, minor and major", async () => {
     const v = ["0.2.88", "0.2.89", "0.2.100", "0.3.0", "0.10.0", "1.0.0"].map(cfg.seqOf);
     assert.deepEqual(v, [...v].sort((a, b) => a - b));
     assert.equal(new Set(v).size, v.length);
     assert.equal(cfg.seqOf("0.2.89"), 2089);
   });
-  test("seqOf refuses what it cannot order", () => {
+  test("seqOf refuses what it cannot order", async () => {
     assert.throws(() => cfg.seqOf("0.2.89-canary.1"));
     assert.throws(() => cfg.seqOf("0.2.1000"));
   });
-  test("only the two shipped platforms have a payload", () => {
+  test("only the two shipped platforms have a payload", async () => {
     assert.equal(cfg.platformKey("win32", "x64"), "win-x64");
     assert.equal(cfg.platformKey("darwin", "arm64"), "mac-arm64");
     assert.equal(cfg.platformKey("linux", "x64"), null);
     assert.equal(cfg.platformKey("win32", "arm64"), null);
   });
-  test("the payload root is LOCALAPPDATA on Windows (never Roaming) and Application Support on macOS", () => {
+  test("the payload root is LOCALAPPDATA on Windows (never Roaming) and Application Support on macOS", async () => {
     assert.equal(cfg.payloadRoot({ LOCALAPPDATA: "C:\\L" }, "win32", "C:\\H"), path.join("C:\\L", "Zevet", "payload"));
     assert.equal(cfg.payloadRoot({}, "win32", "C:\\H"), path.join("C:\\H", "AppData", "Local", "Zevet", "payload"));
     assert.equal(cfg.payloadRoot({}, "darwin", "/Users/a"), path.join("/Users/a", "Library", "Application Support", "Zevet", "payload"));
     assert.equal(cfg.payloadRoot({ ZEVET_PAYLOAD_ROOT: "/x" }, "darwin", "/Users/a"), "/x");
   });
-  test("the pulse lives where the plan's wire format puts it, and only an env var moves it", () => {
+  test("the pulse lives where the plan's wire format puts it, and only an env var moves it", async () => {
     assert.equal(cfg.pulseUrl("canary", "win-x64", {}), "https://usemasora.com/download/p/zevet/canary/win-x64/pulse.json");
     assert.equal(cfg.pulseUrl("canary", "win-x64", { ZEVET_PAYLOAD_PULSE: "http://127.0.0.1:1/pulse.json" }), "http://127.0.0.1:1/pulse.json");
   });
@@ -47,29 +47,29 @@ describe("the shell/payload split", () => {
   const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
   const shellFiles = new Set(pkg.build.files.filter((f) => !f.startsWith("!")));
 
-  test("the asar entry is bootstrap.js and ships with what it needs and nothing more", () => {
+  test("the asar entry is bootstrap.js and ships with what it needs and nothing more", async () => {
     assert.equal(pkg.main, "bootstrap.js");
     assert.ok(shellFiles.has("bootstrap.js"));
     assert.equal(pkg.payload.files.some((f) => shellFiles.has(f)), false, "a file is in both the shell and the payload");
     assert.equal(pkg.payload.files.includes("main.js"), true);
   });
-  test("every local module the shell requires is in the shell", () => {
+  test("every local module the shell requires is in the shell", async () => {
     for (const f of shellFiles) {
       for (const [, dep] of stripComments(fs.readFileSync(path.join(DESKTOP, f), "utf8")).matchAll(/(?<![.\w])require\("\.\/([^"]+)"\)/g)) {
         assert.ok(shellFiles.has(dep), `${f} requires ./${dep}, which the installer does not carry`);
       }
     }
   });
-  test("the pinned keys and the installer updater stay in the shell: a payload cannot change what it trusts", () => {
+  test("the pinned keys and the installer updater stay in the shell: a payload cannot change what it trusts", async () => {
     for (const f of ["update-signing.js", "app-update.js"]) {
       assert.ok(shellFiles.has(f), `${f} left the shell`);
       assert.equal(pkg.payload.files.includes(f), false);
     }
   });
-  test("the installer carries the payload tree as resources/app-core", () => {
+  test("the installer carries the payload tree as resources/app-core", async () => {
     assert.ok(pkg.build.extraResources.some((r) => r.from === "app-core" && r.to === "app-core"));
   });
-  test("the staged tree is the listed files, the client modules and a package.json, and nothing of the shell", () => {
+  test("the staged tree is the listed files, the client modules and a package.json, and nothing of the shell", async () => {
     const icon = path.join(DESKTOP, "build", "icon.png");
     if (!fs.existsSync(icon)) require("node:child_process").execFileSync(process.execPath, ["make-icon.mjs"], { cwd: DESKTOP });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-tree-"));
@@ -87,7 +87,7 @@ describe("the shell/payload split", () => {
 });
 
 /** Load bootstrap.js fresh with a fake Electron app and a fake payload client. */
-function boot({ packaged = true, lock = true, resolved = {}, verifyThrows = false, mainSrc, multi = false } = {}) {
+async function boot({ packaged = true, lock = true, resolved = {}, verifyThrows = false, mainSrc, multi = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-boot-"));
   const payloadDir = path.join(dir, "versions", "0.2.90");
   fs.mkdirSync(payloadDir, { recursive: true });
@@ -96,7 +96,7 @@ function boot({ packaged = true, lock = true, resolved = {}, verifyThrows = fals
   fs.writeFileSync(payloadDir + "/main.js", mainSrc ?? "globalThis.__bootTest.loaded++; globalThis.__bootTest.nodePathDuringLoad = process.env.NODE_PATH;");
   const client = {
     resolve: () => ({ dir: payloadDir, build: "0.2.90", source: "current", trial: false, ...resolved }),
-    verifyEntry: () => {
+    verifyEntry: async () => {
       if (verifyThrows) throw new Error("hash mismatch");
       log.push("verifyEntry");
     },
@@ -143,6 +143,7 @@ function boot({ packaged = true, lock = true, resolved = {}, verifyThrows = fals
   let threw = null;
   try {
     require(file);
+    await globalThis.__zevetShell.booted;
   } catch (e) {
     threw = e;
   } finally {
@@ -169,7 +170,7 @@ describe("bootstrap.js", () => {
   });
 
   test("a healthy current build: entry points are verified, main.js from the payload dir is loaded, the client starts", async () => {
-    r = boot();
+    r = await boot();
     assert.equal(r.threw, null);
     assert.equal(r.state.loaded, 1);
     assert.ok(r.log.includes("verifyEntry"));
@@ -177,55 +178,55 @@ describe("bootstrap.js", () => {
     await new Promise((res) => setImmediate(res));
     assert.ok(r.log.includes("start"), "the client never started checking");
   });
-  test("NODE_PATH is used to reach the shell's node_modules, and is gone again while main.js runs", () => {
+  test("NODE_PATH is used to reach the shell's node_modules, and is gone again while main.js runs", async () => {
     delete process.env.NODE_PATH;
-    r = boot();
+    r = await boot();
     assert.equal(r.state.nodePathDuringLoad, undefined, "NODE_PATH must not be set while the payload runs: spawned agents inherit it");
     assert.equal(process.env.NODE_PATH, undefined);
   });
-  test("a second instance loads nothing", () => {
-    r = boot({ lock: false });
+  test("a second instance loads nothing", async () => {
+    r = await boot({ lock: false });
     assert.equal(r.state.loaded, 0);
     assert.ok(r.log.includes("quit"));
   });
-  test("an entry point that fails its hash is reverted, main.js is never loaded, and the app relaunches", () => {
-    r = boot({ verifyThrows: true });
+  test("an entry point that fails its hash is reverted, main.js is never loaded, and the app relaunches", async () => {
+    r = await boot({ verifyThrows: true });
     assert.equal(r.state.loaded, 0);
     assert.ok(r.log.some((l) => l.startsWith("revert entry point failed verification")));
     assert.deepEqual(r.log.slice(-2), ["relaunch", "exit 1"]);
     assert.equal(r.log.filter((l) => l === "relaunch").length, 1, "one relaunch, not one per failure path");
     assert.equal(r.log.some((l) => l.startsWith("bootFailed")), false, "a failed hash is a revert, not a boot strike on top of it");
   });
-  test("ZEVET_ALLOW_MULTI=1 skips the lock entirely (the two-instance rig)", () => {
-    r = boot({ multi: true, lock: false });
+  test("ZEVET_ALLOW_MULTI=1 skips the lock entirely (the two-instance rig)", async () => {
+    r = await boot({ multi: true, lock: false });
     assert.equal(r.log.includes("lock requested"), false);
     assert.equal(r.state.loaded, 1);
   });
-  test("the seed is not hash-checked against a manifest (it has none)", () => {
-    r = boot({ resolved: { source: "seed" } });
+  test("the seed is not hash-checked against a manifest (it has none)", async () => {
+    r = await boot({ resolved: { source: "seed" } });
     assert.equal(r.log.includes("verifyEntry"), false);
     assert.equal(r.state.loaded, 1);
   });
-  test("a trial build whose main.js throws at load is a strike and a relaunch", () => {
-    r = boot({ resolved: { trial: true }, mainSrc: 'throw new Error("boom")' });
+  test("a trial build whose main.js throws at load is a strike and a relaunch", async () => {
+    r = await boot({ resolved: { trial: true }, mainSrc: 'throw new Error("boom")' });
     assert.equal(r.threw, null);
     assert.ok(r.log.includes("bootFailed main.js threw at load"));
     assert.deepEqual(r.log.slice(-2), ["relaunch", "exit 1"]);
   });
-  test("the seed that throws at load is a real failure: no strike, no relaunch loop", () => {
-    r = boot({ resolved: { source: "seed" }, mainSrc: 'throw new Error("boom")' });
+  test("the seed that throws at load is a real failure: no strike, no relaunch loop", async () => {
+    r = await boot({ resolved: { source: "seed" }, mainSrc: 'throw new Error("boom")' });
     assert.match(String(r.threw), /main\.js threw at load/);
     assert.equal(r.log.includes("relaunch"), false);
   });
-  test("a trial build arms a crash guard that a confirmed one removes", () => {
-    r = boot({ resolved: { trial: true } });
+  test("a trial build arms a crash guard that a confirmed one removes", async () => {
+    r = await boot({ resolved: { trial: true } });
     assert.equal(r.guards.length, 1);
     r.shell.trial.confirm();
     assert.equal(process.listeners("uncaughtException").includes(r.guards[0]), false);
     assert.ok(r.log.includes("confirm"));
   });
-  test("unpackaged, there is no client: the shell's own directory is the payload", () => {
-    r = boot({ packaged: false });
+  test("unpackaged, there is no client: the shell's own directory is the payload", async () => {
+    r = await boot({ packaged: false });
     assert.equal(r.shell.payload, null);
     assert.deepEqual(r.log, ["lock requested", "dev main.js"]);
     assert.equal(r.guards.length, 0);

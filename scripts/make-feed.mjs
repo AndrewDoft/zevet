@@ -171,14 +171,14 @@ if (process.argv[2] === "payload") {
     process.exit(2);
   }
   const { pem, keyId } = signer();
-  const env = { ...process.env, ZEVET_PAYLOAD_SIGNING_KEY: JSON.stringify({ key_id: keyId, private_key: pem }) };
+  const env = { ...process.env, ZEVET_PAYLOAD_SIGNING_KEY: pem.replaceAll("\n", "|") };
   const tree = arg("--tree") || require("../desktop/payload-tree.cjs").stage(mkdtempSync(path.join(tmpdir(), "zevet-payload-")));
   const publisher = path.join(ROOT, "desktop", "node_modules", "@masora", "desktop-kit", "bin", "publish-payload.mjs");
   for (const platform of ["win-x64", "mac-arm64"]) {
     const r = spawnSync(process.execPath, [
       publisher, "--app", "zevet", "--channel", arg("--channel", "canary"), "--platform", platform,
       "--build", build, "--seq", String(config.seqOf(build)), "--schema-head", "0", "--shell-min", String(config.SHELL_VERSION),
-      "--tree", tree, "--out", out, "--key-env", "ZEVET_PAYLOAD_SIGNING_KEY", ...(arg("--have") ? ["--have", arg("--have")] : []),
+      "--tree", tree, "--out", out, "--key-env", "ZEVET_PAYLOAD_SIGNING_KEY", "--key-id", keyId, ...(arg("--have") ? ["--have", arg("--have")] : []),
     ], { encoding: "utf8", windowsHide: true, env });
     process.stdout.write(r.stdout || "");
     if (r.status !== 0) {

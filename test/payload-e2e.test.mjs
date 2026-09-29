@@ -92,7 +92,7 @@ describe("payload client + publisher + Zevet's tree", { skip: haveKit ? false : 
     assert.equal(c.staged().build, nextBuild);
     assert.match(fs.readFileSync(path.join(c.staged().dir, "console-log.js"), "utf8"), /\/\/ v1/);
     assert.ok(fs.existsSync(path.join(c.staged().dir, "main.js")), "the staged tree has no main.js for bootstrap to require");
-    const next = c.activate();
+    const next = await c.activate();
     assert.equal(next.build, nextBuild);
     const again = client("root-b").resolve();
     assert.equal(again.source, "current");
@@ -119,7 +119,7 @@ describe("payload client + publisher + Zevet's tree", { skip: haveKit ? false : 
     const c = client("root-d");
     c.resolve();
     await c.check();
-    c.activate();
+    await c.activate();
     let r;
     for (let i = 1; i <= 3; i++) {
       const cur = client("root-d").resolve();

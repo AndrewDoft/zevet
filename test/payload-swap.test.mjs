@@ -51,7 +51,7 @@ function fakes({ staged = { build: "0.2.90", seq: 2090 }, ...over } = {}) {
   const handlers = {};
   const payload = {
     staged: () => staged,
-    activate: () => { calls.push("activate"); return { build: staged.build, dir: "d", previous: "0.2.89" }; },
+    activate: async () => { calls.push("activate"); return { build: staged.build, dir: "d", previous: "0.2.89" }; },
     on: (ev, fn) => { handlers[ev] = fn; },
   };
   const app = { relaunch: () => calls.push("relaunch"), exit: (c) => calls.push(`exit ${c}`) };
@@ -64,52 +64,52 @@ function fakes({ staged = { build: "0.2.90", seq: 2090 }, ...over } = {}) {
 }
 
 describe("createSwapper", () => {
-  test("idle and staged: activate, release the app's children, relaunch, exit 0 — in that order", () => {
+  test("idle and staged: activate, release the app's children, relaunch, exit 0 — in that order", async () => {
     const { swapper, calls } = fakes();
-    assert.equal(swapper.tick(), "swapped");
+    assert.equal(await swapper.tick(), "swapped");
     assert.deepEqual(calls, ["activate", "release", "relaunch", "exit 0"]);
   });
-  test("busy: nothing is activated, and the reason is reported", () => {
+  test("busy: nothing is activated, and the reason is reported", async () => {
     const { swapper, calls } = fakes({ activity: () => ({ running: 2, lastAt: NOW }) });
-    assert.match(swapper.tick(), /agent is running/);
+    assert.match(await swapper.tick(), /agent is running/);
     assert.deepEqual(calls, []);
   });
-  test("nothing staged: nothing happens", () => {
+  test("nothing staged: nothing happens", async () => {
     const { swapper, calls } = fakes({ staged: null });
-    assert.equal(swapper.tick(), "idle");
+    assert.equal(await swapper.tick(), "idle");
     assert.deepEqual(calls, []);
   });
-  test("a second tick after the swap started does not activate twice", () => {
+  test("a second tick after the swap started does not activate twice", async () => {
     const { swapper, calls } = fakes();
-    swapper.tick();
-    swapper.tick();
+    await swapper.tick();
+    await swapper.tick();
     assert.equal(calls.filter((c) => c === "activate").length, 1);
   });
-  test("an activate that throws leaves the app running and the gate retryable", () => {
+  test("an activate that throws leaves the app running and the gate retryable", async () => {
     const { swapper, calls } = fakes();
     let n = 0;
-    const payload = { staged: () => ({ build: "x" }), activate: () => { if (n++ === 0) throw new Error("disk full"); return { build: "x" }; }, on() {} };
+    const payload = { staged: () => ({ build: "x" }), activate: async () => { if (n++ === 0) throw new Error("disk full"); return { build: "x" }; }, on() {} };
     const s = createSwapper({ payload, app: { relaunch: () => calls.push("relaunch"), exit: () => calls.push("exit") }, release() {}, log: () => {}, ...idle(), now: () => NOW });
-    assert.equal(s.tick(), "failed");
+    assert.equal(await s.tick(), "failed");
     assert.deepEqual(calls, []);
-    assert.equal(s.tick(), "swapped");
+    assert.equal(await s.tick(), "swapped");
   });
-  test("the staged event ticks immediately: an idle app swaps at once, a busy one waits", () => {
+  test("the staged event ticks immediately: an idle app swaps at once, a busy one waits", async () => {
     const a = fakes();
     a.swapper.start();
-    a.handlers.staged();
+    await a.handlers.staged(); await new Promise((r) => setImmediate(r));
     assert.deepEqual(a.calls, ["activate", "release", "relaunch", "exit 0"]);
     const b = fakes({ chatBusy: () => true });
     b.swapper.start();
-    b.handlers.staged();
+    await b.handlers.staged(); await new Promise((r) => setImmediate(r));
     assert.deepEqual(b.calls, []);
   });
-  test("quit applies the staged build without relaunching, and does nothing when none is staged", () => {
+  test("quit applies the staged build without relaunching, and does nothing when none is staged", async () => {
     const a = fakes();
-    assert.equal(a.swapper.applyOnQuit(), true);
+    assert.equal(await a.swapper.applyOnQuit(), true);
     assert.deepEqual(a.calls, ["activate"]);
     const b = fakes({ staged: null });
-    assert.equal(b.swapper.applyOnQuit(), false);
+    assert.equal(await b.swapper.applyOnQuit(), false);
     assert.deepEqual(b.calls, []);
   });
 });
@@ -177,8 +177,8 @@ describe("main.js hands the gate real state and the swap real teardown", async (
     assert.match(main, /NOT_INPUT = new Set\(\["mouseMove", "mouseEnter", "mouseLeave"\]\)/);
     assert.match(main, /if \(input && NOT_INPUT\.has\(input\.type\)\) return;/);
   });
-  test("quit applies a staged build", () => {
-    assert.match(main, /app\.on\("will-quit", \(\) => swapper\.applyOnQuit\(\)\)/);
+  test("quit applies a staged build", async () => {
+    assert.match(main, /swapper\.applyOnQuit\(\)\.catch/);
   });
   test("a trial build is confirmed through the trial handle, once a window has stopped loading and the agent API answers", () => {
     assert.match(main, /if \(bootShell\.trial\) \{[\s\S]{0,400}did-stop-loading[\s\S]{0,300}confirmWhenHealthy\(\{ payload: bootShell\.trial, loaded, apiAnswers: agentApiAnswers/);
