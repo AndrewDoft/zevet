@@ -5,5 +5,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const packaged = process.resourcesPath && path.join(process.resourcesPath, "client", "zevet-home.mjs");
-module.exports = require(packaged && fs.existsSync(packaged) ? packaged : path.join(__dirname, "..", "client", "zevet-home.mjs"));
+// The payload carries its own copy (payload-tree.cjs), which wins over the installer's.
+const candidates = [
+  path.join(__dirname, "client", "zevet-home.mjs"),
+  process.resourcesPath && path.join(process.resourcesPath, "client", "zevet-home.mjs"),
+  path.join(__dirname, "..", "client", "zevet-home.mjs"),
+];
+module.exports = require(candidates.find((f) => f && fs.existsSync(f)));

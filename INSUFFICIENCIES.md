@@ -344,3 +344,19 @@ contributor-free` in `board/src/lib/models.generated.mjs`) is unaffected and alr
 key — this only blocks a DIRECT, non-opencode Muse Spark run and Muse Code's live-board wiring.
 Nobody is blocked from using Muse Spark today; they use it through opencode, same as before this
 session.
+
+## INSUF-010 — The payload swap was proven against the kit and a faked Electron, never inside a packaged Zevet — **OPEN**
+
+**What is missing.** `test/payload-e2e.test.mjs` runs the real kit client and publisher on Zevet's real
+tree, and `scripts/test-payload-swap.mjs` was dry-run against the REAL `bootstrap.js` and kit under a
+fake Electron (swap, confirm, three-strike revert all passed). What has not run: the real `main.js` under
+real Electron doing the same. That needs the packaged app, which this work could not launch (no GUI
+launches here); it is wired into `build.yml` (both legs) and Codemagic `macos-autoupdate` and unproven
+until one of those is green. Also unverified: that Electron 44 emits `input-event` for mouse and wheel
+(main.js listens for it and for `before-input-event`; the second is keyboard-only, so a person who only
+scrolls or clicks is treated as idle after 2 minutes if the first does not exist), and that a
+`--zevet-shell-dir` preload resolves `@sentry/electron` from the asar in a real window.
+
+**Blast radius.** A wrong idle gate relaunches under a reader, never under a running agent. A boot the
+proof would have caught costs the three-strike revert, then the seed, so an install is never left without a
+runnable tree.

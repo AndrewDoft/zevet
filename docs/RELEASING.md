@@ -14,7 +14,7 @@ npm test              # the whole gate, from the repo root
 
 Green, or stop. The gate includes `test/desktop-packaging.test.mjs`, which is
 what catches the classic failure: a `require` added to `main.js` without adding
-the file to `build.files` in `desktop/package.json`, which produces an app that
+the file to `payload.files` in `desktop/package.json`, which produces an app that
 crashes on launch and a build that succeeded.
 
 ## 1. Bump the version
@@ -274,6 +274,64 @@ row. Click it; on Windows the app exits and comes back on the new version.
 
 If it says nothing at all, the phases that are deliberately silent are
 "checking" and "current" — Settings shows the real state and the error text.
+
+## 7. Payload releases: publishing IS the update
+
+`desktop/main.js` and everything it requires (`payload.files` in `desktop/package.json`, plus
+`client/*.mjs`) is the **payload**; `bootstrap.js`, `payload-config.js`, `update-signing.js`,
+`app-update.js`, Electron and the native modules are the **shell**. The installer carries both
+(the payload as `resources/app-core`, the seed). The installer feed above updates the shell;
+running apps take a payload by themselves, with no installer and no bar.
+
+**Which release is which.** Changed only payload files → publish a payload and leave
+`zevet-latest.json` alone (an app that sees a newer installer shows the update bar). Changed
+`bootstrap.js`, Electron, a native module or a shell file → publish the installer (steps 2-4)
+and bump `SHELL_VERSION` in `desktop/payload-config.js` if the new payload needs the new shell.
+Installers are still built for every tag (new downloads); only the feed decides who is offered one.
+`seq` is `seqOf(version)` (0.2.89 -> 2089), so it rises with every version and the seed maps exactly.
+
+```
+npm run icon --prefix desktop                    # the tree includes build/icon.png
+export ZEVET_UPDATE_SIGNING_KEY=...              # the same key as the feed (step 3)
+node scripts/make-feed.mjs payload --out ./payload-0.2.89 [--channel canary] [--have hashes.txt]
+```
+
+Default channel is `canary`; an install follows it when `<payload root>/channel` says `canary`
+(or `ZEVET_PAYLOAD_CHANNEL=canary`), otherwise it follows `stable`. Promote by re-running the same
+build with `--channel stable` after a day without a revert event. The command stages the tree,
+publishes it for `win-x64` and `mac-arm64` with desktop-kit's `bin/publish-payload.mjs`, and writes the
+`p/` layout: `p/b/<aa>/<sha>` (brotli blobs), `p/m/<sha>.json` (manifests), and one
+`p/zevet/<channel>/<platform>/pulse.json` per platform. `--have` lists blob hashes already on the host
+(`ls /srv/masora/downloads/p/b/*`); without it every blob is written, and uploading only the new ones is on you.
+
+⚠️ **Upload bytes before the pointer**: `p/b/`, then `p/m/`, then the pulses, last. A pulse that names
+a manifest the host lacks is a check that fails until it lands. Caddy must serve `/download/p/b/*` and
+`/download/p/m/*` immutable and `/download/p/*/pulse.json` with `Cache-Control: no-store`.
+
+**When an app swaps.** Never while a console (agent, zagent-hosted agent, agent-API spawn) has a live
+process or spoke in the last 5 minutes, a chat turn is in flight, a window had input in the last
+2 minutes, or no window is open. Otherwise: activate, `app.relaunch()`, `app.exit(0)` (about 2 s). Quit
+activates a staged build without relaunching. The relaunched app confirms the build once a window has
+finished loading (or failed: an unreachable hub is not the payload's fault) and the agent API
+answers; three failed boots (load throw, uncaught exception before confirm, no healthy signal in
+120 s) revert to the previous build and mark it bad for good.
+
+**What survives a relaunch, what does not.**
+- Survives (on disk): config, credentials, workspaces, `~/.zevet`, the family key, the payload store.
+  The board window comes back and reconnects to the hub and its editor rooms by itself.
+- Changes: the agent API port and token (`listen(0)`; `agent-api.json` is rewritten and the
+  `zevet-agent` CLI re-reads it on every call). Window size and position (not persisted anywhere).
+- Lost: everything held in main-process memory: finished agents' transcripts (console-log), pending
+  permit/ask cards, unsaved composer text. The gate exists so that nothing
+  *running* is lost: there are no open terminals or agents at swap time by construction.
+
+**Proof.** `scripts/test-payload-swap.mjs` (GitHub Actions `build`, both legs, and Codemagic
+`macos-autoupdate`) launches the packaged app against a local pulse server: asserts one blob fetched
+for a one-file change, the swap without the installer (`app.asar` byte-identical), and a payload whose
+`main.js` throws reverting after three strikes. `test/payload-e2e.test.mjs` is the same with the kit's
+client alone, in `npm test`. Locally, `ZEVET_PAYLOAD_PULSE`, `ZEVET_PAYLOAD_ROOT`,
+`ZEVET_PAYLOAD_CHANNEL` and `ZEVET_PAYLOAD_CHECK_MS` point a packaged app at a fake host (loopback pulses
+are trusted with `ZEVET_APP_FEED_TRUSTED_KEY`, like the installer feed).
 
 ---
 

@@ -36,6 +36,7 @@ function addBackgroundBookmark(dmg) {
 createYargs().command(["build", "*"], "Build", configureBuildCommand, async (args) => {
   try {
     await loadEnv(path.join(process.cwd(), "electron-builder.env"));
+    require("./payload-tree.cjs").stage(); // resources/app-core: the seed payload
     const artifacts = await build(args);
     for (const file of artifacts.filter((f) => f.endsWith(".dmg"))) addBackgroundBookmark(file);
   } catch (error) {

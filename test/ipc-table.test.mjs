@@ -51,7 +51,7 @@ describe("every bridge method exists, and main handles exactly the table's chann
     };
     // the preload also wires Sentry (a prelude, not an IPC call): stub those modules
     const sentry = { init() {}, setTag() {}, captureException() {}, captureMessage() {} };
-    vm.runInNewContext(readFileSync(path.join(ROOT, "desktop", "preload.js"), "utf8"), { require: (m) => (m === "electron" ? electron : sentry), console, Uint8Array });
+    vm.runInNewContext(readFileSync(path.join(ROOT, "desktop", "preload.js"), "utf8"), { require: (m) => (m === "electron" ? electron : sentry), process: { argv: [] }, console, Uint8Array });
     assert.deepEqual(Object.keys(exposed), ["zevetSentry", "zevet", "zevetLocal", "zevetDoc"]);
     for (const c of calls) {
       assert.equal(typeof exposed[c.global][c.name], "function", `window.${c.global}.${c.name} is missing`);
@@ -79,7 +79,7 @@ describe("every bridge method exists, and main handles exactly the table's chann
 
   test("the packaged app ships the table (main.js requires it at startup)", () => {
     const pkg = JSON.parse(readFileSync(path.join(ROOT, "desktop", "package.json"), "utf8"));
-    assert.ok(pkg.build.files.includes("ipc-table.js"));
+    assert.ok(pkg.payload.files.includes("ipc-table.js"));
   });
 });
 

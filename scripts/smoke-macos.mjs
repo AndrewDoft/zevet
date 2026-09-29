@@ -103,6 +103,8 @@ try {
     assert.equal(process.arch, 'arm64');
     assert.equal(req('./package.json').version, process.argv[2]);
     for (const file of JSON.parse(process.argv[3])) fs.accessSync(path.join(resources, 'app.asar', file));
+    for (const file of JSON.parse(process.argv[4])) fs.accessSync(path.join(resources, 'app-core', file));
+    req('@masora/desktop-kit/lib/payload');
     const transformers = req('@huggingface/transformers');
     const ort = req('onnxruntime-node');
     assert.equal(typeof transformers.pipeline, 'function');
@@ -110,10 +112,11 @@ try {
     const secret = require(path.join(resources, 'client/secret.mjs'));
     assert.equal(typeof secret.deriveAuthToken, 'function');
     fs.accessSync(path.join(resources, 'client/install.mjs'));
-    console.log('Packaged Node', process.version, process.arch, ': app files, client, Transformers and ONNX Runtime loaded');
+    console.log('Packaged Node', process.version, process.arch, ': app files, payload seed, client, Transformers and ONNX Runtime loaded');
   `;
   const appFiles = pkg.build.files.filter((file) => !file.includes("*") && !file.startsWith("!"));
-  console.log(run(bin, ["-e", probe, resources, pkg.version, JSON.stringify(appFiles)], {
+  const payloadFiles = pkg.payload.files.filter((file) => !file.includes("*"));
+  console.log(run(bin, ["-e", probe, resources, pkg.version, JSON.stringify(appFiles), JSON.stringify(payloadFiles)], {
     env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
   }).trim());
 

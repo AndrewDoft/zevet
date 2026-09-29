@@ -99,7 +99,7 @@ describe("the family runs from the main process", () => {
     assert.match(main, /appUpdater\.start\(\);\s*family\.start\(\)/);
     assert.match(main, /before-quit", \(\) => family\.stop\(\)/);
     for (const n of ["familyStatus", "familyAct"]) assert.match(preload, new RegExp(n + ":"));
-    assert.ok(pkg.build.files.includes("family.js"));
+    assert.ok(pkg.payload.files.includes("family.js"));
   });
   test("a 401 from Masora re-pairs", () => {
     assert.match(handler("masora:sources"), /res\.status === 401\) void family\.repair\(\)/);
@@ -120,7 +120,7 @@ describe("the Masora link is a background job", () => {
   });
 
   test("it ships in the installer", () => {
-    assert.ok(pkg.build.files.includes("masora-link.js"));
+    assert.ok(pkg.payload.files.includes("masora-link.js"));
   });
 });
 

@@ -87,5 +87,7 @@ workflows:
           set -euo pipefail
           X_DMG="$(ls desktop/out/zevet-*-macos-arm64.dmg | sort -V | head -1)"
           node scripts/test-macos-autoupdate.mjs "$X_DMG" /tmp/zevet-feed
+      - name: Prove the payload swap (no installer) and the 3-strike revert
+        script: node scripts/test-payload-swap.mjs desktop/out/mac-arm64/zevet.app/Contents/MacOS/zevet
     artifacts:
       - desktop/out/*.dmg

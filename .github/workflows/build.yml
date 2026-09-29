@@ -264,6 +264,19 @@ jobs:
         working-directory: desktop
         run: npm run smoke:win
 
+      # The payload swap on the packaged app, both platforms: a second payload is published
+      # to a local pulse server and the app must take it WITHOUT the installer (only the
+      # changed file fetched, app.asar untouched), and a payload that crashes on boot must
+      # revert after three strikes. Launches the app for real, in throwaway directories.
+      # See scripts/test-payload-swap.mjs.
+      - name: Prove the payload swap (no installer) and the 3-strike revert
+        if: runner.os == 'macOS'
+        run: node scripts/test-payload-swap.mjs desktop/out/mac-arm64/zevet.app/Contents/MacOS/zevet
+
+      - name: Prove the payload swap (no installer) and the 3-strike revert
+        if: runner.os == 'Windows'
+        run: node scripts/test-payload-swap.mjs desktop/out/win-unpacked/zevet.exe
+
       # A masora2 CI job (sibling-install.yml, run 36375729128) found that
       # downloading this exact signed installer and running it with bare `/S`
       # on a clean machine exits 0 but extracts nothing. smoke:win above

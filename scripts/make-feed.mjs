@@ -34,7 +34,8 @@
 // What this does NOT do: upload anything. It prints a file. Publishing is a
 // separate, deliberate step — see docs/RELEASING.md.
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -147,6 +148,45 @@ if (process.argv[2] === "--sign-only") {
   const feed = signedFeed(src, signer());
   writeFileSync(arg("--out", file), JSON.stringify(feed, null, 2) + "\n", "utf8");
   console.log(`signed ${arg("--out", file)} (zevet ${feed.version})`);
+  process.exit(0);
+}
+
+// PAYLOAD MODE. The installer feed above is for SHELL updates (bootstrap, Electron, natives). A release
+// that changed only desktop/'s payload files is published as a payload instead: every running app takes
+// it without an installer (desktop/payload-swap.js says when).
+//
+//   node scripts/make-feed.mjs payload --out <staging> [--channel canary] [--have FILE]
+//        [--test-key FILE] [--tree DIR --build X.Y.Z]
+//
+// Stages desktop/'s payload tree (or --tree), then runs desktop-kit's publish-payload.mjs once per platform.
+// It writes the p/ layout under --out and uploads nothing. seq = seqOf(build) (desktop/payload-config.js).
+// UPLOAD ORDER: p/b/, then p/m/, then p/zevet/<channel>/<platform>/pulse.json LAST — a pulse that names
+// bytes the host does not have yet is a check that fails until they arrive.
+if (process.argv[2] === "payload") {
+  const config = require("../desktop/payload-config.js");
+  const build = arg("--build", JSON.parse(readFileSync(path.join(ROOT, "desktop", "package.json"), "utf8")).version);
+  const out = arg("--out");
+  if (!out) {
+    console.error("usage: node scripts/make-feed.mjs payload --out <staging dir> [--channel canary] [--have FILE] [--test-key FILE] [--tree DIR --build X.Y.Z]");
+    process.exit(2);
+  }
+  const { pem, keyId } = signer();
+  const env = { ...process.env, ZEVET_PAYLOAD_SIGNING_KEY: JSON.stringify({ key_id: keyId, private_key: pem }) };
+  const tree = arg("--tree") || require("../desktop/payload-tree.cjs").stage(mkdtempSync(path.join(tmpdir(), "zevet-payload-")));
+  const publisher = path.join(ROOT, "desktop", "node_modules", "@masora", "desktop-kit", "bin", "publish-payload.mjs");
+  for (const platform of ["win-x64", "mac-arm64"]) {
+    const r = spawnSync(process.execPath, [
+      publisher, "--app", "zevet", "--channel", arg("--channel", "canary"), "--platform", platform,
+      "--build", build, "--seq", String(config.seqOf(build)), "--schema-head", "0", "--shell-min", String(config.SHELL_VERSION),
+      "--tree", tree, "--out", out, "--key-env", "ZEVET_PAYLOAD_SIGNING_KEY", ...(arg("--have") ? ["--have", arg("--have")] : []),
+    ], { encoding: "utf8", windowsHide: true, env });
+    process.stdout.write(r.stdout || "");
+    if (r.status !== 0) {
+      process.stderr.write(r.stderr || "");
+      process.exit(r.status || 1);
+    }
+  }
+  console.log(`wrote ${out}/p — upload p/b, then p/m, then the pulses (see the header)`);
   process.exit(0);
 }
 

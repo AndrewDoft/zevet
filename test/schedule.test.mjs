@@ -112,7 +112,7 @@ describe("the module ships", () => {
     const pkg = JSON.parse(
       readFileSyncSafe(path.join(ROOT, "desktop", "package.json")),
     );
-    assert.ok(pkg.build.files.includes("schedule.js"));
+    assert.ok(pkg.payload.files.includes("schedule.js"));
   });
 });
 

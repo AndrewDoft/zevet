@@ -431,7 +431,7 @@ describe("the workspace guard is still in front of every new handler", () => {
 });
 
 describe("every module main.js requires is actually in the installer", () => {
-  test("nothing main.js requires is left out of build.files", () => {
+  test("nothing main.js requires is left out of payload.files", () => {
     // ⚠️ THIS ONE FAILS ONLY IN A PACKAGED BUILD, which is the worst place for
     // a failure to first appear. `electron-builder` treats `files` as an
     // allowlist: a module that is required at the top of main.js and absent
@@ -444,11 +444,11 @@ describe("every module main.js requires is actually in the installer", () => {
     // written. Asserted from the require statements rather than from a list,
     // so the next module added needs no one to remember this file exists.
     const pkg = JSON.parse(readFileSync(path.join(DESKTOP, "package.json"), "utf8"));
-    const packaged = new Set(pkg.build.files);
-    const required = [...stripComments(main).matchAll(/require\("\.\/([^"]+)"\)/g)].map((m) => m[1]);
+    const packaged = new Set(pkg.payload.files);
+    const required = [...stripComments(main).matchAll(/(?<![.\w])require\("\.\/([^"]+)"\)/g)].map((m) => m[1]);
     assert.ok(required.length >= 4, `only found ${required.length} local requires — did the scrape break?`);
     for (const file of new Set(required)) {
-      assert.ok(packaged.has(file), `main.js requires ./${file} and build.files does not ship it`);
+      assert.ok(packaged.has(file), `main.js requires ./${file} and payload.files does not ship it`);
     }
   });
 
@@ -465,11 +465,11 @@ describe("every module main.js requires is actually in the installer", () => {
     // from __dirname, and the requires of every local module that is packaged,
     // transitively.
     const pkg = JSON.parse(readFileSync(path.join(DESKTOP, "package.json"), "utf8"));
-    const packaged = new Set(pkg.build.files);
+    const packaged = new Set(pkg.payload.files);
 
     const byPath = [...stripComments(main).matchAll(/__dirname,\s*"([^"]+\.(?:js|mjs|cjs|json|html))"/g)].map((m) => m[1]);
     for (const file of new Set(byPath)) {
-      assert.ok(packaged.has(file), `main.js reaches ./${file} by path and build.files does not ship it`);
+      assert.ok(packaged.has(file), `main.js reaches ./${file} by path and payload.files does not ship it`);
     }
 
     // Transitive: what the shipped modules themselves pull in.
@@ -485,10 +485,10 @@ describe("every module main.js requires is actually in the installer", () => {
       } catch {
         continue; // a glob or a directory entry, not a file we can read
       }
-      for (const [, dep] of stripComments(src).matchAll(/require\("\.\/([^"]+)"\)/g)) {
+      for (const [, dep] of stripComments(src).matchAll(/(?<![.\w])require\("\.\/([^"]+)"\)/g)) {
         assert.ok(
           packaged.has(dep),
-          `${file} requires ./${dep} and build.files does not ship it`,
+          `${file} requires ./${dep} and payload.files does not ship it`,
         );
         if (!seen.has(dep)) queue.push(dep);
       }

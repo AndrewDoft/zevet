@@ -29,10 +29,12 @@ test("the signature, safe-open and IPC-guard modules are thin adapters over the 
   assert.doesNotMatch(upd, /createHash|pipeline\(|verifySigned\(/, "app-update.js reimplements the kit's download/verify");
 });
 
-test("main.js takes the single-instance lock and the rotating log from the kit", () => {
+test("bootstrap.js takes the single-instance lock, main.js the rotating log, both from the kit", () => {
+  const boot = strip(D("bootstrap.js"));
+  assert.match(boot, /singleInstance\(app,/);
+  assert.doesNotMatch(boot + strip(D("main.js")), /requestSingleInstanceLock/, "the raw lock is called instead of the kit's");
   const main = strip(D("main.js"));
-  assert.match(main, /singleInstance\(app,/);
-  assert.doesNotMatch(main, /requestSingleInstanceLock/, "main.js still calls the raw lock");
+  assert.doesNotMatch(main, /singleInstance\(/, "main.js takes a second lock");
   assert.match(main, /createLog\(\{ dir: app\.getPath\("logs"\), name: "zevet" \}\)/);
   assert.match(main, /for \(const level of \["warn", "error"\]\)[\s\S]{0,200}fileLog\[level\]\(\.\.\.a\)/, "warn/error are not teed to the file log");
   assert.match(main, /log: \(m\) => \{[\s\S]{0,200}fileLog\.info/, "the updater's log lines do not reach the file log");

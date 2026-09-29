@@ -211,3 +211,18 @@ test("onceDone fires after the first result of a console marked setOnce, and onl
   log.record("a", result());
   assert.deepEqual(done, ["a"]);
 });
+
+test("activity() says how many consoles have a live process and when any last spoke (the payload swap gate reads it)", () => {
+  let t = 1000;
+  const log = createConsoleLog({ now: () => t });
+  assert.deepEqual(log.activity(), { running: 0, lastAt: 0 });
+  log.open("a", { agent: "claude" });
+  log.open("b", { agent: "codex" });
+  assert.deepEqual(log.activity(), { running: 2, lastAt: 1000 });
+  t = 5000;
+  log.record("a", { type: "exit" });
+  assert.deepEqual(log.activity(), { running: 1, lastAt: 5000 }, "an exited console is no longer running, but its exit is activity");
+  t = 9000;
+  log.record("b", { type: "exit" });
+  assert.deepEqual(log.activity(), { running: 0, lastAt: 9000 });
+});

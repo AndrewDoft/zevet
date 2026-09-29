@@ -3,7 +3,7 @@
   "version": "0.2.88",
   "private": true,
   "description": "zevet — watch your team's coding agents",
-  "main": "main.js",
+  "main": "bootstrap.js",
   "author": "Andrew Doft",
   "scripts": {
     "start": "electron .",
@@ -16,7 +16,7 @@
     "repro:fresh-silent": "node ../scripts/repro-fresh-silent-install.mjs"
   },
   "dependencies": {
-    "@masora/desktop-kit": "github:AndrewDoft/desktop-kit#v0.1.2",
+    "@masora/desktop-kit": "github:AndrewDoft/desktop-kit#v0.2.0",
     "@sentry/electron": "7.20.0"
   },
   "devDependencies": {
@@ -27,19 +27,10 @@
   "optionalDependencies": {
     "@huggingface/transformers": "4.3.0"
   },
-  "build": {
-    "afterPack": "./sign-macos.cjs",
-    "afterSign": "./staple-macos.cjs",
-    "afterAllArtifactBuild": "./notarize-dmg.cjs",
-    "appId": "com.andrewdoft.zevet",
-    "productName": "zevet",
-    "copyright": "Copyright © 2026 Andrew Doft",
-    "directories": {
-      "output": "out",
-      "buildResources": "build"
-    },
+  "payload": {
     "files": [
       "main.js",
+      "payload-swap.js",
       "runtime.js",
       "preload.js",
       "local-fs.js",
@@ -59,8 +50,6 @@
       "embedder.js",
       "index-capability.js",
       "code-index.js",
-      "app-update.js",
-      "update-signing.js",
       "zevet-voice.js",
       "agent-sessions.js",
       "agent-catalogs.js",
@@ -87,7 +76,25 @@
       "sentry.js",
       "setup.html",
       "fonts/**",
-      "build/icon.png",
+      "build/icon.png"
+    ]
+  },
+  "build": {
+    "afterPack": "./sign-macos.cjs",
+    "afterSign": "./staple-macos.cjs",
+    "afterAllArtifactBuild": "./notarize-dmg.cjs",
+    "appId": "com.andrewdoft.zevet",
+    "productName": "zevet",
+    "copyright": "Copyright © 2026 Andrew Doft",
+    "directories": {
+      "output": "out",
+      "buildResources": "build"
+    },
+    "files": [
+      "bootstrap.js",
+      "payload-config.js",
+      "update-signing.js",
+      "app-update.js",
       "!out/**",
       "!make-icon.mjs",
       "!node_modules/onnxruntime-web/**",
@@ -95,6 +102,10 @@
       "!node_modules/onnxruntime-node/bin/napi-v6/*/*/{DirectML.dll,dxcompiler.dll,dxil.dll}"
     ],
     "extraResources": [
+      {
+        "from": "app-core",
+        "to": "app-core"
+      },
       {
         "from": "../client",
         "to": "client",

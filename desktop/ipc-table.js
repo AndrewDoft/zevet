@@ -42,10 +42,14 @@ const zevet = defineIpc({
 // event, this one included, via its own beforeSend. Passing a real DSN here
 // would be inert at best, misleading at worst (implying this realm talks to
 // Sentry directly, which it never does).
-require("@sentry/electron/preload");
+// This file lives in the payload, outside the asar where node_modules is, so bare specifiers do not resolve
+// from here: main passes the shell's directory (bootstrap.js) and packages are resolved from there.
+const shellDir = (process.argv.find((a) => a.startsWith("--zevet-shell-dir=")) || "").slice("--zevet-shell-dir=".length);
+const shellRequire = shellDir ? require("node:module").createRequire(require("node:path").join(shellDir, "bootstrap.js")) : require;
+shellRequire("@sentry/electron/preload");
 let SentryPreload = null;
 try {
-  SentryPreload = require("@sentry/electron/renderer");
+  SentryPreload = shellRequire("@sentry/electron/renderer");
   SentryPreload.init({ sendDefaultPii: false });
   SentryPreload.setTag("realm", "preload");
 } catch (err) {

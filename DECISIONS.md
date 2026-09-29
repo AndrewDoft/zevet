@@ -1236,3 +1236,33 @@ polls `/version` every 60 s and on focus/visibility and reloads when it differs 
 input for 2 min (hidden counts as idle) **and** no dialog is open **and** the editor has no unsaved buffer
 **and** no input/textarea/contenteditable holds text (the agent and terminal prompts are textareas). Baseline is
 the page's own meta, not the first poll, so a deploy landing between page load and first poll is still seen.
+
+## D-030 — The main process is split into a shell (bootstrap.js, in the asar) and a hot-swapped payload
+
+**Decided (masora2 plan 2026-09-29-seamless-updates §3.6, W5).** `desktop/bootstrap.js` is the asar
+entry: single-instance lock, the desktop-kit payload client, then `require(<payload dir>/main.js)`.
+Everything in `payload.files` (`desktop/package.json`: `main.js` and every module it requires, the
+preload, the setup page, fonts, icon) plus `client/*.mjs` is the payload; the installer carries it as
+`resources/app-core`, the seed. The shell is `bootstrap.js`, `payload-config.js`, `update-signing.js`
+(the pinned keys), `app-update.js` (the installer updater), Electron and the native modules. The split
+follows `git log origin/main -30 -- desktop/`: releases touch `main.js`, `agent-*.js`, `console-log.js`,
+`preload.js`, `ipc-table.js`, `package.json`; `app-update.js` and `update-signing.js` last changed for
+the kit adoption, and the pinned keys must not be replaceable by the thing they verify.
+
+- **seq** = `seqOf(version)` = `major*1e6 + minor*1e3 + patch` (0.2.89 -> 2089), so every version has a
+  higher seq and the seed maps to the pulse exactly. `SHELL_VERSION = 1`.
+- **Idle gate** (`payload-swap.js`): no swap while a console has a live process or spoke in 5 min, a chat
+  turn is in flight, a window had input in 2 min, or no window is open. Then `activate(); relaunch();
+  exit(0)`; quit activates without relaunching (`will-quit`, not `before-quit`, which a beforeunload can cancel).
+- **Trial**: confirmed once a window has stopped loading (success OR failure: an unreachable hub is not the
+  payload's fault) and the agent API answers, else a strike after 120 s; a load throw or an uncaught
+  exception before confirm is a strike; three revert.
+- **Installer feed** stays for shell updates. `app.getVersion()` is the installer's version and feeds only
+  the installer updater; everything user-visible (Sentry release, hub version) reads the payload build.
+- **Preload** sits in the payload, outside the asar, so it resolves `@sentry/electron` from the shell's
+  directory, passed as `--zevet-shell-dir=`; the main process resolves shell packages through `NODE_PATH`
+  set only while `bootstrap.js` loads `main.js` (spawned agents must not inherit it).
+- **Open**: `client/*.mjs` also ships as `resources/client` (extraResources) as the fallback; the payload
+  copy is preferred. Drop the extraResource once a release has run on the payload path.
+
+> Renumbered from D-029 at merge: D-029 went to the hub build-id reload (hub-build-reload).

@@ -26,7 +26,11 @@
 // that same bridge is a bigger thing to hand out than a read.
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor } = require("electron");
 const { openSafe } = require("./open-safe.js");
-const { createLog, singleInstance, createIpcRegistry } = require("@masora/desktop-kit");
+const { createLog, createIpcRegistry } = require("@masora/desktop-kit");
+// bootstrap.js (the asar entry) loaded this file; what only it can hand over is on this object.
+const bootShell = globalThis.__zevetShell;
+/** The payload build running, which is NOT app.getVersion() (that is the installer's). */
+const APP_VERSION = bootShell.build;
 // A packaged app has no console to read: warnings and errors from every module,
 // plus the updater's own lines, also go to a size-capped rotating file (logs/zevet.log, 3 x 1 MB).
 const fileLog = createLog({ dir: app.getPath("logs"), name: "zevet" });
@@ -51,8 +55,9 @@ const indexCapability = require("./index-capability.js");
 const embedder = require("./embedder.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
-const { AppUpdater, loopbackProofKeys } = require("./app-update.js");
+const { AppUpdater, loopbackProofKeys } = bootShell.require("./app-update.js");
 const runtime = require("./runtime.js");
+const { createSwapper, confirmWhenHealthy } = require("./payload-swap.js");
 const askServer = require("./ask-server.js");
 const agentApi = require("./agent-api.js");
 const { GithubSignIn } = require("./github-signin.js");
@@ -110,7 +115,7 @@ const AGENT_API_FILE = path.join(HOME, "agent-api.json");
   const startupCfg = readConfig();
   sentry.initMain({
     sentryMain: Sentry,
-    release: sentry.releaseName(app.getVersion()),
+    release: sentry.releaseName(APP_VERSION),
     tags: {
       platform: process.platform,
       arch: process.arch,
@@ -172,6 +177,8 @@ app.setAppUserModelId(APP_ID);
 
 /** The icon, for the dev run and for Linux; a packaged .exe carries its own. */
 const ICON = path.join(__dirname, "build", "icon.png");
+/** The preload lives in the payload, outside the asar: it finds @sentry/electron from the shell's directory (see ipc-table.js). */
+const SHELL_DIR_ARG = `--zevet-shell-dir=${bootShell.dir}`;
 const iconOption = fs.existsSync(ICON) ? { icon: ICON } : {};
 const CLIENT_DIR = path.join(HOME, "client");
 // The eggshell the board is painted on. Used as the window background so there
@@ -380,6 +387,7 @@ let secretModule;
 function loadSecretModule() {
   if (secretModule !== undefined) return secretModule;
   const candidates = [];
+  candidates.push(path.join(__dirname, "client", "secret.mjs")); // the payload's own copy
   if (process.resourcesPath) candidates.push(path.join(process.resourcesPath, "client", "secret.mjs"));
   candidates.push(path.join(__dirname, "..", "client", "secret.mjs"));
   secretModule = null;
@@ -717,6 +725,7 @@ function openBoard(cfg) {
       // any other origin — a hub that redirects must not hand the bridge to
       // whoever it redirected to.
       preload: path.join(__dirname, "preload.js"),
+      additionalArguments: [SHELL_DIR_ARG],
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
@@ -918,6 +927,7 @@ function openSetup(existing) {
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
+      additionalArguments: [SHELL_DIR_ARG],
       nodeIntegration: false,
       contextIsolation: true,
       // The shared preload requires @sentry/electron, which a sandboxed
@@ -1180,7 +1190,7 @@ bridge.handle("zevet:config", () => {
     // Not a credential -- electron-builder's own version string, read for the
     // board's own Sentry release tag (board/src/lib/sentry.ts) so a renderer
     // report reads "zevet@0.2.85" the same as a main-process one.
-    version: app.getVersion(),
+    version: APP_VERSION,
   };
 });
 
@@ -1727,7 +1737,7 @@ const family = new Family({
   // button makes (teamJoin, above) — no separate hub credential of any kind
   // is ever held by or sent to Masora.
   joinTeam: (team, key) => teamJoin(team, key),
-  version: app.getVersion(),
+  version: APP_VERSION,
   installPath: path.dirname(app.getPath("exe")),
 });
 bridge.handle("zevet:familyStatus", () => family.status());
@@ -3686,6 +3696,57 @@ app.on("before-quit", () => {
 app.on("before-quit", () => family.stop());
 
 /* ==========================================================================
+ * PAYLOAD SWAP (bootstrap.js loaded this file from the current payload build)
+ *
+ * A staged payload replaces this process by relaunch, never while work is in
+ * flight (payload-swap.js has the whole gate). app.exit skips before-quit, so
+ * what before-quit tidies is done here by hand — and NOT appUpdater's
+ * installOnQuit, which would start an installer under the relaunch.
+ * ======================================================================== */
+let lastInputAt = 0;
+app.on("web-contents-created", (_e, wc) => {
+  // before-input-event is keyboard; input-event (newer Electron) adds mouse and wheel. Either is "the person is here".
+  for (const ev of ["before-input-event", "input-event"]) wc.on(ev, () => { lastInputAt = Date.now(); });
+});
+function releaseForRelaunch() {
+  stopChatRun();
+  fs.rmSync(AGENT_API_FILE, { force: true });
+  family.stop();
+}
+/** The agent API answers with the token the discovery file carries. */
+function agentApiAnswers() {
+  if (!agentApiHandle) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const req = require("node:http").get(`${agentApiHandle.url}/list`, { headers: { authorization: `Bearer ${agentApiHandle.token}` }, timeout: 3000 }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => { req.destroy(); resolve(false); });
+  });
+}
+if (bootShell.payload) {
+  const swapper = createSwapper({
+    payload: bootShell.payload,
+    app,
+    activity: () => consoleLog.activity(),
+    chatBusy: () => Boolean(chatRun && chatRun.turn),
+    lastInputAt: () => lastInputAt,
+    windows: () => BrowserWindow.getAllWindows().length,
+    release: releaseForRelaunch,
+    log: bootShell.log,
+  });
+  swapper.start();
+  app.on("will-quit", () => swapper.applyOnQuit());
+  if (bootShell.trial) {
+    const loaded = new Promise((resolve) => {
+      app.on("browser-window-created", (_e, w) => w.webContents.once("did-stop-loading", resolve));
+    });
+    void confirmWhenHealthy({ payload: bootShell.trial, loaded, apiAnswers: agentApiAnswers, app, log: bootShell.log });
+  }
+}
+
+/* ==========================================================================
  * ZEVET CHAT — conversations with no repository behind them (desktop/chat.js)
  *
  * One claude process at a time, kept alive across the turns of the chat in
@@ -4087,14 +4148,12 @@ app.on("window-all-closed", () => {
  * shipped — which is the specific failure this codebase's Windows/macOS section
  * exists to complain about.
  */
-if (process.env.ZEVET_ALLOW_MULTI === "1") {
-  // Nothing to do: no lock requested, no `second-instance` handler wanted.
-} else {
-  singleInstance(app, () => {
-    const w = boardWindow || setupWindow;
-    if (w && !w.isDestroyed()) {
-      if (w.isMinimized()) w.restore();
-      w.focus();
-    }
-  });
-}
+// The lock itself is taken in bootstrap.js, with the ZEVET_ALLOW_MULTI escape hatch described above; this is
+// only what the first instance does when a second launch is attempted.
+bootShell.onSecondInstance = () => {
+  const w = boardWindow || setupWindow;
+  if (w && !w.isDestroyed()) {
+    if (w.isMinimized()) w.restore();
+    w.focus();
+  }
+};

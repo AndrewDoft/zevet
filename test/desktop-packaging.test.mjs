@@ -153,6 +153,6 @@ describe("the icon is the current masora theme", () => {
   test("both platforms are pointed at it, and it is packaged", () => {
     assert.equal(pkg.build.win.icon, "build/icon.png");
     assert.equal(pkg.build.mac.icon, "build/icon.png");
-    assert.ok(pkg.build.files.includes("build/icon.png"), "the icon is not in build.files");
+    assert.ok(pkg.payload.files.includes("build/icon.png"), "the icon is not in build.files");
   });
 });

@@ -56,9 +56,10 @@ function isPromptEcho(evt) {
 
 /** `onceDone(id)` fires when the first turn's `result` arrives on a console
  *  marked `setOnce` -- fire-and-forget workers use it to end the process. */
-function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone } = {}) {
+function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone, now = Date.now } = {}) {
   const entries = new Map();
   let seq = 0;
+  let lastAt = 0;
 
   return {
     /**
@@ -68,6 +69,7 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone } = {}) {
      * second thread.
      */
     open(id, meta, continues) {
+      lastAt = now();
       const prev = continues ? entries.get(continues) : null;
       if (prev) entries.delete(continues);
       entries.set(id, {
@@ -97,6 +99,7 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone } = {}) {
      *  snapshot already holds. */
     record(id, evt) {
       const out = { ...evt, id, seq: ++seq };
+      lastAt = now();
       const e = entries.get(id);
       // Partial-message deltas (claude --include-partial-messages) are live-only:
       // hundreds per answer, and the complete block that follows is what a reload needs.
@@ -165,6 +168,12 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone } = {}) {
     get(id) {
       const e = entries.get(id);
       return e ? toPublic(e, head) : undefined;
+    },
+
+    /** For the payload swap gate (payload-swap.js): how many consoles have a live
+     *  process, and when any console last opened or spoke (0 = never). */
+    activity() {
+      return { running: [...entries.values()].filter((e) => e.running).length, lastAt };
     },
 
     clear() {

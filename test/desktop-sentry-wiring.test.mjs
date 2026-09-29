@@ -32,7 +32,7 @@ describe("the dependency electron-builder must package", () => {
   });
 
   test("desktop/sentry.js is in build.files", () => {
-    assert.ok(pkg.build.files.includes("sentry.js"), "sentry.js was added but never told to electron-builder");
+    assert.ok(pkg.payload.files.includes("sentry.js"), "sentry.js was added but never told to electron-builder");
   });
 });
 
@@ -48,7 +48,7 @@ describe("main.js: init before any window, tagged from the start", () => {
   test("the release name and platform/arch/member tags are supplied", () => {
     const idx = main.indexOf("sentry.initMain(");
     const block = main.slice(idx, main.indexOf("}", main.indexOf("tags:", idx)) + 1);
-    assert.match(block, /release: sentry\.releaseName\(app\.getVersion\(\)\)/);
+    assert.match(block, /release: sentry\.releaseName\(APP_VERSION\)/);
     assert.match(block, /platform: process\.platform/);
     assert.match(block, /arch: process\.arch/);
     assert.match(block, /member:/);
@@ -104,18 +104,18 @@ describe("the renderer test trigger reaches both windows", () => {
 
 describe("preload.js: a client per isolated realm", () => {
   test("the IPC bridge is hooked up for the page's own realm", () => {
-    assert.match(preload, /require\("@sentry\/electron\/preload"\)/);
+    assert.match(preload, /shellRequire\("@sentry\/electron\/preload"\)/);
   });
 
   test("the preload realm gets its own client, tagged so it reads apart from the page", () => {
-    const idx = preload.indexOf('require("@sentry/electron/renderer")');
+    const idx = preload.indexOf('shellRequire("@sentry/electron/renderer")');
     const block = preload.slice(idx, idx + 400);
     assert.match(block, /\.init\(\{\s*sendDefaultPii:\s*false\s*\}\)/);
     assert.match(block, /setTag\("realm",\s*"preload"\)/);
   });
 
   test("no dsn/release/environment passed to the renderer init — deprecated, and ignored, on this SDK version", () => {
-    const idx = preload.indexOf('require("@sentry/electron/renderer")');
+    const idx = preload.indexOf('shellRequire("@sentry/electron/renderer")');
     const block = preload.slice(idx, idx + 400);
     assert.doesNotMatch(block, /dsn:/, "the renderer client never talks to Sentry directly; only main does");
   });
