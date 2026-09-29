@@ -26,6 +26,14 @@
 // that same bridge is a bigger thing to hand out than a read.
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor } = require("electron");
 const { openSafe } = require("./open-safe.js");
+const { createLog, singleInstance } = require("@masora/desktop-kit");
+// A packaged app has no console to read: warnings and errors from every module,
+// plus the updater's own lines, also go to a size-capped rotating file (logs/zevet.log, 3 x 1 MB).
+const fileLog = createLog({ dir: app.getPath("logs"), name: "zevet" });
+for (const level of ["warn", "error"]) {
+  const orig = console[level].bind(console);
+  console[level] = (...a) => { orig(...a); fileLog[level](...a); };
+}
 // Must run before the first ipcMain.handle below. readConfig is a hoisted function declaration.
 require("./ipc-guard.js").guardIpc(ipcMain, () => (readConfig() || {}).hub);
 const localFs = require("./local-fs.js");
@@ -3927,7 +3935,7 @@ const appUpdater = new AppUpdater({
       buildMenu();
     }
   },
-  log: (m) => console.log(`[zevet-app-update] ${m}`),
+  log: (m) => { console.log(`[zevet-app-update] ${m}`); fileLog.info(`[zevet-app-update] ${m}`); },
   openImpl: (f) => shell.openPath(f),
   quitImpl: () => {
     // ⚠️ NOT app.quit(): the board's beforeunload and the single-instance
@@ -4075,10 +4083,8 @@ app.on("window-all-closed", () => {
  */
 if (process.env.ZEVET_ALLOW_MULTI === "1") {
   // Nothing to do: no lock requested, no `second-instance` handler wanted.
-} else if (!app.requestSingleInstanceLock()) {
-  app.quit();
 } else {
-  app.on("second-instance", () => {
+  singleInstance(app, () => {
     const w = boardWindow || setupWindow;
     if (w && !w.isDestroyed()) {
       if (w.isMinimized()) w.restore();
