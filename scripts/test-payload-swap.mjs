@@ -150,9 +150,10 @@ async function main() {
   child.unref();
 
   // The seed must be the version package.json says, or B1 is not newer than it and rightly never applies.
-  const seedLine = await waitFor("the app's boot log", () => {
-    const log = walk(base).find((f) => /zevet-boot\.log$/.test(f)); // <userData>/logs on Windows, ~/Library/Logs/zevet on macOS
-    return log && fs.readFileSync(log, "utf8").match(/running payload (\S+) \(seed\)/)?.[1];
+  const seedLine = await waitFor("the app to say which payload it runs", () => {
+    // stdout, not the boot log: macOS writes that under the real home, outside this run's directory.
+    const said = fs.readFileSync(path.join(base, "stdout.log"), "utf8").match(/running payload (\S+) \(seed\)/);
+    return said && said[1];
   }, 60_000);
   assert.equal(seedLine, V, `the packaged app was built at ${seedLine}, not package.json's ${V}: publish a payload newer than what it carries`);
 
