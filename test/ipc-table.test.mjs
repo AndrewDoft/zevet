@@ -49,8 +49,10 @@ describe("every bridge method exists, and main handles exactly the table's chann
       contextBridge: { exposeInMainWorld: (n, api) => { exposed[n] = api; } },
       ipcRenderer: { invoke: (ch, ...a) => { invoked.push(ch); return Promise.resolve(); }, on: (ch) => listened.push(ch), removeListener() {} },
     };
-    vm.runInNewContext(readFileSync(path.join(ROOT, "desktop", "preload.js"), "utf8"), { require: () => electron, Uint8Array });
-    assert.deepEqual(Object.keys(exposed), ["zevet", "zevetLocal", "zevetDoc"]);
+    // the preload also wires Sentry (a prelude, not an IPC call): stub those modules
+    const sentry = { init() {}, setTag() {}, captureException() {}, captureMessage() {} };
+    vm.runInNewContext(readFileSync(path.join(ROOT, "desktop", "preload.js"), "utf8"), { require: (m) => (m === "electron" ? electron : sentry), console, Uint8Array });
+    assert.deepEqual(Object.keys(exposed), ["zevetSentry", "zevet", "zevetLocal", "zevetDoc"]);
     for (const c of calls) {
       assert.equal(typeof exposed[c.global][c.name], "function", `window.${c.global}.${c.name} is missing`);
       invoked.length = 0;
