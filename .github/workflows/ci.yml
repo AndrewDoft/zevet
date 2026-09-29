@@ -23,6 +23,11 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix board
       - run: npm ci --prefix editor
+      # desktop/*.js require @masora/desktop-kit. No Electron binary and no optional
+      # deps: the real-Electron suites skip here, as before (test/helpers.mjs NO_DRIVE).
+      - run: npm ci --prefix desktop --omit=optional --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - run: npm test
       - run: npm run typecheck
       - run: node build.mjs
