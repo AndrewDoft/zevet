@@ -1184,3 +1184,44 @@ download links (`/download/Zevet.dmg`, `/download/Zevet-Setup.exe`) confirmed by
 
 **Not done.** RELEASING.md's landing-page rebuild step (§5, "only when the page itself changes") was
 not needed and not run — the page picked up the new version from the feed alone, as designed.
+
+## D-028 — Shipped: @masora/desktop-kit v0.1.2 — updater core, safe-open, IPC guard, family module (0.2.88)
+
+**Decided (Andrew, 2026-09-29, "release Zevet 0.2.88").** The 11 commits since v0.2.87 (`d28b7e5`..`5bf2536`)
+moved the desktop app's updater core, signed-feed verify, single-instance lock, safe-open, IPC guard,
+rotating log, and the family (dir/key/heartbeat/request) module onto `@masora/desktop-kit` v0.1.2, and
+replaced the hand-maintained preload/bridge with one IPC table (`desktop/ipc-table.js`) that generates
+both `desktop/preload.js` and `board/src/lib/bridge.generated.d.ts`. No `hub/` or `client/` file changed
+functionally — `hub/public/board.js` is byte-identical to 0.2.87 (only its `.map` and `.srchash` moved,
+tracking the source-only `bridge.ts` -> `bridge.generated.d.ts` split) — so this release needed no hub
+redeploy, only the desktop app.
+
+- **Verified before tagging.** `node scripts/run-tests.mjs`: 2645 pass, 0 fail, 7 skipped (all named).
+  `ci` and a `workflow_dispatch` `build` both green on `5bf2536` before the version bump, confirming the
+  exact commit being tagged was already proven on both Windows and macOS runners.
+- **Built and signed on the real `v0.2.88` tag pipeline**, not an ad-hoc local build: Windows
+  `Get-AuthenticodeSignature` -> `Valid`, `CN=Andrew Doft` on both `zevet.exe` and the NSIS installer;
+  macOS `.app` signed `Developer ID Application: Michael Shvidler (27C8FVB83B)`, notarized and stapled
+  twice (app then dmg), `spctl` -> `source=Notarized Developer ID`.
+  `hub/client-manifest.signed.json` re-signed for the version bump alone (file list and hashes
+  unchanged from 0.2.87) — `scripts/release-check.mjs`'s `checkSignedManifest` passed before tagging.
+- **The stable links needed their usual per-release repoint.** `/srv/masora/Caddyfile`'s
+  `Zevet.dmg`/`Zevet-Setup.exe` rewrites were still pinned to `zevet-0.2.87-*`, exactly as RELEASING.md
+  §4a describes — edited in place with the `r+` python script (never `sed -i`, same bind-mount-inode
+  trap), confirmed inside the running container at `/etc/caddy/Caddyfile` (the doc's example path is the
+  HOST path; the container sees it at `/etc/caddy/Caddyfile`, per `docker inspect --format '{{.Mounts}}'`),
+  then `caddy reload`.
+
+**Verification.** Live feed (`https://usemasora.com/download/zevet-latest.json`) parses and verifies
+under the pinned key via `desktop/app-update.js`'s real `readSignedFeed`; a one-byte tamper to
+`payload.platforms["win32-x64"].bytes` is rejected with "signature does not match the document". Both
+installer URLs return `200` with `Content-Length` exactly equal to the feed's `bytes`, and the bytes
+served over HTTPS hash to the feed's `sha256` exactly (`sha256sum` on a fresh `curl` download, not just
+on the upload source). The stable links (`/download/Zevet.dmg`, `/download/Zevet-Setup.exe`) confirmed
+repointed by exact `Content-Length` match after the Caddy reload. `usemasora.com/zevet` confirmed
+showing `0.2.88` after its 5-minute ISR window revalidated.
+
+**Not done.** No hub redeploy — nothing under `hub/` or `client/` changed in a way that affects what the
+live hub serves (see above), so `docs/RELEASING.md`'s "Deploying the hub" section did not apply this
+release. DECISIONS.md has no entry for 0.2.87 itself (`e760e22`/`edd75d4` shipped without one); that gap
+predates this release and was not backfilled here.
