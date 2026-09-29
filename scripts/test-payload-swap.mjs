@@ -146,6 +146,12 @@ async function main() {
   });
   child.unref();
 
+  // The seed must be the version package.json says, or B1 is not newer than it and rightly never applies.
+  const seedLine = await waitFor("the app's boot log", () => {
+    try { return fs.readFileSync(path.join(userData, "logs", "zevet-boot.log"), "utf8").match(/running payload (\S+) \(seed\)/)?.[1]; } catch { return null; }
+  }, 60_000);
+  assert.equal(seedLine, V, `the packaged app was built at ${seedLine}, not package.json's ${V}: publish a payload newer than what it carries`);
+
   // ---- 1. B1 arrives, swaps, confirms --------------------------------------
   await waitFor(`${B1} to become current`, () => current()?.build === B1);
   console.log(`swapped to ${current().build} (trial: ${current().trial})`);

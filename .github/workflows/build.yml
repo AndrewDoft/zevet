@@ -255,6 +255,12 @@ jobs:
           ZEVET_EXPECT_SIGNED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' && '1' || '0' }}
         run: npm run smoke:mac
 
+      # Windows runs it BEFORE smoke:win, which rebuilds win-unpacked at a bumped
+      # version: the proof needs the app built from the version in package.json.
+      - name: Prove the payload swap (no installer) and the 3-strike revert
+        if: runner.os == 'Windows'
+        run: node scripts/test-payload-swap.mjs desktop/out/win-unpacked/zevet.exe
+
       # Install -> update -> install-on-quit's own args -> launch, on a real
       # NSIS installer. Exists because of a real incident: an update silently
       # left Program Files\zevet empty, exit code 0 the whole way. See
@@ -272,10 +278,6 @@ jobs:
       - name: Prove the payload swap (no installer) and the 3-strike revert
         if: runner.os == 'macOS'
         run: node scripts/test-payload-swap.mjs desktop/out/mac-arm64/zevet.app/Contents/MacOS/zevet
-
-      - name: Prove the payload swap (no installer) and the 3-strike revert
-        if: runner.os == 'Windows'
-        run: node scripts/test-payload-swap.mjs desktop/out/win-unpacked/zevet.exe
 
       # A masora2 CI job (sibling-install.yml, run 36375729128) found that
       # downloading this exact signed installer and running it with bare `/S`
