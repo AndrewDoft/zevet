@@ -65,6 +65,7 @@ function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows,
     stop() {
       clearIntervalImpl(timer);
     },
+    pending: () => Boolean(payload.staged()),
     /** will-quit: the staged build becomes current for the NEXT launch. No relaunch. */
     async applyOnQuit() {
       if (!payload.staged()) return false;

@@ -3750,7 +3750,7 @@ if (bootShell.payload) {
   swapper.start();
   let quitApplied = false;
   app.on("will-quit", (e) => { // activate() is async: hold the quit until the staged build is current
-    if (quitApplied) return;
+    if (quitApplied || !swapper.pending()) return;
     e.preventDefault();
     swapper.applyOnQuit().catch((err) => bootShell.log(`payload apply on quit failed: ${err && err.message}`)).finally(() => { quitApplied = true; app.quit(); });
   });
