@@ -4086,6 +4086,8 @@ async function startAgentApi() {
     getConsole: (id) => consoleLog.get(id),
     listConsoles: () => consoleLog.snapshot().consoles,
   });
+  // HOME is otherwise created by whichever writer runs first; on a fresh profile that is not this one.
+  fs.mkdirSync(HOME, { recursive: true });
   atomicWriteJson(AGENT_API_FILE, { url: agentApiHandle.url, token: agentApiHandle.token, pid: process.pid }, { mode: 0o600 });
 }
 

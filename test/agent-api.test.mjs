@@ -391,3 +391,10 @@ describe("turn state: /wait, /send, --once", () => {
     await close();
   });
 });
+
+test("startAgentApi creates the zevet home before writing the discovery file (a fresh profile has none, and the write is unhandled)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
+  const body = main.slice(main.indexOf("async function startAgentApi()"), main.indexOf("app.whenReady()"));
+  assert.match(body, /fs\.mkdirSync\(HOME, \{ recursive: true \}\);\s*atomicWriteJson\(AGENT_API_FILE/);
+});
