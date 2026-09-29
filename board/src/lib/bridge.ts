@@ -357,6 +357,10 @@ export interface ZevetConfig {
   session?: boolean;
   hasSecret?: boolean;
   legacy?: boolean;
+  /* electron-builder's own version string — not a credential, just what
+     board/src/lib/sentry.ts tags a renderer report with. Absent from a plain
+     browser visit to the hub (no desktop bridge, nothing to report). */
+  version?: string;
 }
 
 export interface ZevetBridge {

@@ -16,6 +16,9 @@
     "smoke:win": "node ../scripts/smoke-windows.mjs",
     "repro:fresh-silent": "node ../scripts/repro-fresh-silent-install.mjs"
   },
+  "dependencies": {
+    "@sentry/electron": "7.20.0"
+  },
   "devDependencies": {
     "@electron/osx-sign": "1.3.1",
     "electron": "38.1.2",
@@ -79,6 +82,7 @@
       "chat.js",
       "chat-claude.js",
       "chat-cli.js",
+      "sentry.js",
       "setup.html",
       "fonts/**",
       "build/icon.png",

@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
+    "@sentry/electron": "7.20.0",
     "@assistant-ui/react": "^0.15.21",
     "@assistant-ui/react-markdown": "^0.14.16",
     "@base-ui/react": "^1.8.0",
