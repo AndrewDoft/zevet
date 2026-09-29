@@ -23,11 +23,10 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix board
       - run: npm ci --prefix editor
-      # desktop/*.js require @masora/desktop-kit. No Electron binary and no optional
-      # deps: the real-Electron suites skip here, as before (test/helpers.mjs NO_DRIVE).
-      - run: npm ci --prefix desktop --omit=optional --ignore-scripts
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      # desktop/*.js require @masora/desktop-kit. Production deps only: the kit, and NOT
+      # electron (a devDependency) -- with it present the real-Electron suites would try
+      # to run here instead of skipping (test/helpers.mjs NO_DRIVE), and hang without a display.
+      - run: npm ci --prefix desktop --omit=dev --omit=optional --ignore-scripts
       - run: npm test
       - run: npm run typecheck
       - run: node build.mjs
