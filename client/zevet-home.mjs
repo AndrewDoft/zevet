@@ -5,7 +5,7 @@
 // opencode-plugin.mjs deliberately does NOT: it is copied alone into wired repos.
 import os from "node:os";
 import path from "node:path";
-import { writeFileSync, renameSync, rmSync } from "node:fs";
+import { writeFileSync, renameSync, rmSync, mkdirSync } from "node:fs";
 
 export function zevetHome(env = process.env, homedir = os.homedir) {
   return env.ZEVET_HOME || path.join(homedir(), ".zevet");
@@ -15,6 +15,7 @@ export function zevetHome(env = process.env, homedir = os.homedir) {
 export function atomicWriteJson(file, value, { mode } = {}) {
   const tmp = `${file}.${process.pid}.tmp`;
   try {
+    mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode });
     renameSync(tmp, file);
   } catch (err) {

@@ -22,6 +22,13 @@ test("atomicWriteJson writes formatted JSON and leaves no temp file", () => {
   assert.deepEqual(readdirSync(dir), ["a.json"]);
 });
 
+test("atomicWriteJson creates the target directory when it does not exist yet (ELECTRON-4: a fresh ZEVET_HOME)", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zevet-home-"));
+  const f = path.join(dir, "not-yet-created", "agent-api.json");
+  atomicWriteJson(f, { a: 1 });
+  assert.equal(readFileSync(f, "utf8"), '{\n  "a": 1\n}\n');
+});
+
 test("atomicWriteJson: a failed replace throws, cleans its temp and keeps the old file", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "zevet-home-"));
   const target = path.join(dir, "d");
