@@ -118,7 +118,7 @@ const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
 const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
 
 test("a follow-up drops the old process's handle", () => {
-  const resume = main.slice(main.indexOf('ipcMain.handle("local:resumeAgent"'), main.indexOf('ipcMain.handle("local:sendToAgent"'));
+  const resume = main.slice(main.indexOf('bridge.handle("local:resumeAgent"'), main.indexOf('bridge.handle("local:sendToAgent"'));
   assert.match(resume, /consoles\.delete\(continues\)/, "every follow-up leaks the exited handle");
 });
 

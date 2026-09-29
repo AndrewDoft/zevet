@@ -214,7 +214,7 @@ describe("the default permission posture", () => {
     // One table of modes, and it is the one that builds the actual flags.
     const guard = /hasOwnProperty\.call\(agentConsole\.MODES, /g;
     assert.ok((main.match(guard) || []).length >= 2, "a mode list was copied instead of shared");
-    assert.ok(main.includes('ipcMain.handle("local:defaultMode"'), "nothing can set it");
+    assert.ok(main.includes('bridge.handle("local:defaultMode"'), "nothing can set it");
   });
 
   test("the board seeds from it and the sheet can change it", () => {

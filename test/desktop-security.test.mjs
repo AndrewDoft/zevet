@@ -10,7 +10,7 @@ import { ROOT } from "./helpers.mjs";
 const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
 
 test("zevet:install refuses a path that is not a known workspace or the one just picked", () => {
-  const at = main.indexOf('ipcMain.handle("zevet:install"');
+  const at = main.indexOf('bridge.handle("zevet:install"');
   assert.ok(at > 0);
   const body = main.slice(at, main.indexOf("\n});", at));
   assert.match(body, /knownRoot\(repo\)/);
@@ -72,5 +72,5 @@ test("guardIpc rejects a foreign sender before the handler runs", async () => {
 
 test("main.js installs the guard before its first ipcMain.handle", () => {
   const g = main.indexOf("guardIpc(");
-  assert.ok(g > 0 && g < main.indexOf("ipcMain.handle("), "guardIpc must precede every handler registration");
+  assert.ok(g > 0 && g < main.indexOf("bridge.handle("), "guardIpc must precede every handler registration");
 });

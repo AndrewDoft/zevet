@@ -194,7 +194,7 @@ describe("3. continuing a terminal session", () => {
 
   test("resumeAgent takes that folder only when it IS the session's, and keeps the workspace rule otherwise", () => {
     const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
-    const body = main.slice(main.indexOf('ipcMain.handle("local:resumeAgent"'), main.indexOf('ipcMain.handle("local:sendToAgent"'));
+    const body = main.slice(main.indexOf('bridge.handle("local:resumeAgent"'), main.indexOf('bridge.handle("local:sendToAgent"'));
     assert.match(body, /let dir = knownRoot\(cwd\);/);
     assert.match(body, /agentSessions\.cwdOf\(String\(agent \|\| ""\), resumeFrom\.trim\(\)\)/);
     assert.match(body, /path\.resolve\(own\) === path\.resolve\(cwd\)/);

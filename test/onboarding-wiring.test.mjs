@@ -15,7 +15,7 @@ const pkg = JSON.parse(read("desktop", "package.json"));
 
 /** The body of `ipcMain.handle("<channel>", ...)`, up to its closing `});`. */
 function handler(channel) {
-  const i = main.indexOf(`ipcMain.handle("${channel}"`);
+  const i = main.indexOf(`bridge.handle("${channel}"`);
   assert.ok(i >= 0, `${channel} is registered`);
   return main.slice(i, main.indexOf("\n});", i));
 }

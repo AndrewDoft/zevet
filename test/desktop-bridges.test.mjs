@@ -49,9 +49,9 @@ function stripComments(src) {
 
 /** The body of one `ipcMain.handle("channel", …)`, up to the next handler. */
 function handlerBody(channel) {
-  const start = main.indexOf(`ipcMain.handle("${channel}"`);
+  const start = main.indexOf(`bridge.handle("${channel}"`);
   assert.ok(start >= 0, `main.js has no handler for ${channel}`);
-  const after = main.indexOf("ipcMain.handle(", start + 10);
+  const after = main.indexOf("bridge.handle(", start + 10);
   return main.slice(start, after < 0 ? main.length : after);
 }
 
@@ -101,7 +101,7 @@ describe("the bridge surface the renderer is written against", () => {
     // registered for 'local:stats'" — which reaches the renderer as an
     // exception from a call that looks perfectly well formed.
     const invoked = [...preload.matchAll(/ipcRenderer\.invoke\("([^"]+)"/g)].map((m) => m[1]);
-    const handled = new Set([...main.matchAll(/ipcMain\.handle\("([^"]+)"/g)].map((m) => m[1]));
+    const handled = new Set([...main.matchAll(/bridge\.handle\("([^"]+)"/g)].map((m) => m[1]));
     assert.ok(invoked.length >= 15, `only found ${invoked.length} invoke calls — did the scrape break?`);
     for (const channel of new Set(invoked)) {
       assert.ok(handled.has(channel), `preload invokes "${channel}" and main.js handles nothing of that name`);
@@ -264,7 +264,7 @@ describe("the key, the secret and the socket stay in the main process", () => {
       "closing the board window leaves its agents running",
     );
     assert.match(main, /app\.on\("before-quit", stopAllConsoles\)/, "quitting leaves agents running");
-    assert.match(main, /ipcMain\.handle\("local:consoles"/, "a reloaded board cannot ask for its consoles");
+    assert.match(main, /bridge\.handle\("local:consoles"/, "a reloaded board cannot ask for its consoles");
     assert.match(preload, /consoles: \(\) => ipcRenderer\.invoke\("local:consoles"\)/);
     assert.match(preload, /forgetAgent: \(id\) => ipcRenderer\.invoke\("local:forgetAgent", id\)/);
   });

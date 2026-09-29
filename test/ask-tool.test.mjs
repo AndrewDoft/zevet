@@ -182,14 +182,14 @@ describe("the desktop side actually wires the gate up", () => {
   test("ensureAskServer passes an onAsk handler to the gate", () => {
     const start = main.indexOf("askServer.start(");
     assert.ok(start >= 0, "main.js never calls askServer.start");
-    const end = main.indexOf("ipcMain.handle(", start);
+    const end = main.indexOf("bridge.handle(", start);
     const body = main.slice(start, end < 0 ? start + 1000 : end);
     assert.match(body, /onPermit:/, "sanity: onPermit should still be in this slice");
     assert.match(body, /onAsk:/, "askServer.start is missing onAsk — /ask stays 404 forever");
   });
 
   test("local:askAnswer is handled, and answers with the picked labels", () => {
-    assert.match(main, /ipcMain\.handle\("local:askAnswer"/);
+    assert.match(main, /bridge\.handle\("local:askAnswer"/);
   });
 
   test("preload exposes onAskRequest and askAnswer on window.zevetLocal", () => {
