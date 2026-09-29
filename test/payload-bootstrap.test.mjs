@@ -135,12 +135,19 @@ function boot({ packaged = true, lock = true, resolved = {}, verifyThrows = fals
   const file = path.join(DESKTOP, "bootstrap.js");
   delete require.cache[file];
   const listenersBefore = process.listeners("uncaughtException");
+  // A payload exists only for win-x64 and mac-arm64: pretend to be one whatever host runs this (Linux CI).
+  const realPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+  const realArch = Object.getOwnPropertyDescriptor(process, "arch");
+  Object.defineProperty(process, "platform", { value: "win32" });
+  Object.defineProperty(process, "arch", { value: "x64" });
   let threw = null;
   try {
     require(file);
   } catch (e) {
     threw = e;
   } finally {
+    Object.defineProperty(process, "platform", realPlatform);
+    Object.defineProperty(process, "arch", realArch);
     Module._load = load;
     for (const k of Object.keys(process.env)) if (!(k in env)) delete process.env[k];
     Object.assign(process.env, env);
