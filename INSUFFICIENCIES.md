@@ -345,18 +345,20 @@ key — this only blocks a DIRECT, non-opencode Muse Spark run and Muse Code's l
 Nobody is blocked from using Muse Spark today; they use it through opencode, same as before this
 session.
 
-## INSUF-010 — The payload swap was proven against the kit and a faked Electron, never inside a packaged Zevet — **OPEN**
+## INSUF-010 — Payload swap: what the packaged proof does not reach — **OPEN (narrowed)**
 
-**What is missing.** `test/payload-e2e.test.mjs` runs the real kit client and publisher on Zevet's real
-tree, and `scripts/test-payload-swap.mjs` was dry-run against the REAL `bootstrap.js` and kit under a
-fake Electron (swap, confirm, three-strike revert all passed). What has not run: the real `main.js` under
-real Electron doing the same. That needs the packaged app, which this work could not launch (no GUI
-launches here); it is wired into `build.yml` (both legs) and Codemagic `macos-autoupdate` and unproven
-until one of those is green. Also unverified: that Electron 44 emits `input-event` for mouse and wheel
-(main.js listens for it and for `before-input-event`; the second is keyboard-only, so a person who only
-scrolls or clicks is treated as idle after 2 minutes if the first does not exist), and that a
-`--zevet-shell-dir` preload resolves `@sentry/electron` from the asar in a real window.
+**Proven.** GitHub Actions `build` run 36630981357 (both legs green): the REAL packaged app on Windows and on
+macOS took a second payload from a loopback pulse without the installer (one blob fetched for a one-file change,
+`app.asar` byte-identical), confirmed it after the window loaded and the agent API answered, and reverted a
+payload whose `main.js` throws after three strikes, never re-applying it. The proof found two real defects on the
+way (fixed): `startAgentApi` wrote into a home directory that did not exist yet, and pointer movement from a
+window opening under a still cursor counted as "input", which would have held every swap for 2 minutes.
 
-**Blast radius.** A wrong idle gate relaunches under a reader, never under a running agent. A boot the
-proof would have caught costs the three-strike revert, then the seed, so an install is never left without a
-runnable tree.
+**Not proven.** (1) Codemagic `macos-autoupdate` runs the same script but has not been run. (2) The idle gate
+is proven by unit tests and by the swap happening with no input; no packaged run holds a live agent or a typing
+person and watches the swap wait. (3) The proof sets `ZEVET_PAYLOAD_INPUT_QUIET_MS=0`, so it does not exercise
+the 2-minute input window itself. (4) Electron 44's `input-event` for mouse buttons and wheel is assumed from the
+docs; only pointer *movement* and keyboard were seen. (5) A real update from usemasora.com: nothing is published there.
+
+**Blast radius.** A wrong idle gate relaunches under a reader, never under a running agent. A boot the proof
+would have caught costs the three-strike revert, then the seed, so an install is never left without a runnable tree.
