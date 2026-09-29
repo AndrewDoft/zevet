@@ -261,6 +261,14 @@ async function main() {
     if (relaunched.length) break;
     await delay(1000);
   }
+  if (!(relaunched && relaunched.length)) {
+    console.log(`DIAG bundle version: ${plistVersion()}; old pid alive: ${alive(app.pid)}`);
+    try { console.log("DIAG ps:
+" + run("sh", ["-c", "ps -axo pid,ppid,stat,command | grep -i zevet | grep -v grep"])); } catch (e) { console.log("DIAG ps: none"); }
+    try { console.log("DIAG open: " + run("open", ["-n", BUNDLE], { stdio: ["ignore", "pipe", "pipe"] })); } catch (e) { console.log(`DIAG open failed: ${e.stderr || e.message}`); }
+    await delay(10_000);
+    console.log(`DIAG pids after manual open: ${pgrepBin().join(",") || "none"}`);
+  }
   assert.ok(relaunched && relaunched.length, "no new zevet process appeared after Restart now");
   assert.equal(plistVersion(), X1, "the relaunched bundle is not X+1");
   assertCleanSwap("(b)");
