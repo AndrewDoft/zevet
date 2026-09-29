@@ -58,7 +58,7 @@ const phantomRoot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "masora-real
 const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-registry-hijack-"));
 
 function reg(...args) {
-  return spawnSync("reg", args, { encoding: "utf8" });
+  return spawnSync("reg", args, { encoding: "utf8", windowsHide: true });
 }
 function displayVersion(hive) {
   const r = reg("query", `${hive}\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${guid}`, "/v", "DisplayVersion");
@@ -120,7 +120,7 @@ try {
     spawnImpl: (file, args, opts) => {
       capturedArgs.push(args);
       const attempt = (n) => {
-        const child = spawn(file, args, opts);
+        const child = spawn(file, args, { ...opts, windowsHide: true });
         child.on("exit", (code) => {
           if (code === ACCESS_VIOLATION_EXIT_CODE && n > 1) {
             console.log(`installer exited ${ACCESS_VIOLATION_EXIT_CODE} (${RETRY_ATTEMPTS - n + 1}/${RETRY_ATTEMPTS}) -- known transient runner crash, retrying`);
@@ -164,11 +164,11 @@ try {
   // Best-effort only: this is a throwaway CI runner.
   try {
     const perUserUninstall = path.join(perUserInstallRoot, "Uninstall zevet.exe");
-    if (fs.existsSync(perUserUninstall)) spawnSync(perUserUninstall, ["/S"], { timeout: 60_000 });
+    if (fs.existsSync(perUserUninstall)) spawnSync(perUserUninstall, ["/S"], { timeout: 60_000, windowsHide: true });
   } catch { /* best-effort cleanup */ }
   try {
     const phantomUninstall = path.join(phantomRoot, "Uninstall zevet.exe");
-    if (fs.existsSync(phantomUninstall)) spawnSync(phantomUninstall, ["/S", "/allusers"], { timeout: 60_000 });
+    if (fs.existsSync(phantomUninstall)) spawnSync(phantomUninstall, ["/S", "/allusers"], { timeout: 60_000, windowsHide: true });
   } catch { /* best-effort cleanup */ }
   reg("delete", `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${guid}`, "/f");
   reg("delete", `HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${guid}`, "/f");

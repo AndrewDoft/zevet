@@ -71,7 +71,7 @@ let recovered;
 let newSetup;
 
 function reg(...args) {
-  return spawnSync("reg", args, { encoding: "utf8" });
+  return spawnSync("reg", args, { encoding: "utf8", windowsHide: true });
 }
 function readValue(key, name) {
   const r = reg("query", key, "/v", name);
@@ -129,7 +129,7 @@ try {
   // replaces whatever exception was already propagating.
   const uninstallExe = path.join(installRoot, "Uninstall zevet.exe");
   try {
-    if (fs.existsSync(uninstallExe)) spawnSync(uninstallExe, ["/S", "/currentuser"], { timeout: 60_000 });
+    if (fs.existsSync(uninstallExe)) spawnSync(uninstallExe, ["/S", "/currentuser"], { timeout: 60_000, windowsHide: true });
   } catch { /* best-effort cleanup */ }
   reg("delete", INSTALL_KEY, "/f");
   reg("delete", UNINSTALL_KEY, "/f");

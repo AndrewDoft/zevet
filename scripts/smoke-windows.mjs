@@ -55,7 +55,7 @@ let launched;
 let newSetup;
 
 function reg(...args) {
-  return spawnSync("reg", args, { encoding: "utf8" });
+  return spawnSync("reg", args, { encoding: "utf8", windowsHide: true });
 }
 function readInstallLocation() {
   const r = reg("query", INSTALL_KEY, "/v", "InstallLocation");
@@ -97,7 +97,7 @@ try {
   execFileSync(process.execPath, [
     path.join(root, "desktop/build.cjs"), "-c", "electron-builder.config.js", "--win", "--publish", "never",
     `--config.extraMetadata.version=${bumped}`,
-  ], { cwd: path.join(root, "desktop"), stdio: "inherit" });
+  ], { cwd: path.join(root, "desktop"), stdio: "inherit", windowsHide: true });
   newSetup = findSetup(outDir, bumped);
   runInstaller(newSetup, ["--updated"]);
   checkInstalledVersion(bumped);
@@ -124,7 +124,7 @@ try {
 } finally {
   reg("delete", INSTALL_KEY, "/f");
   const uninstallExe = path.join(installRoot, "Uninstall zevet.exe");
-  if (fs.existsSync(uninstallExe)) spawnSync(uninstallExe, ["/S", "/currentuser"], { timeout: 60_000 });
+  if (fs.existsSync(uninstallExe)) spawnSync(uninstallExe, ["/S", "/currentuser"], { timeout: 60_000, windowsHide: true });
   fs.rmSync(home, { recursive: true, force: true });
   // This throwaway bumped-version build has no reason to survive the test:
   // desktop/out is never cleaned between builds (RELEASING.md says so), and

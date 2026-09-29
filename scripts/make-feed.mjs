@@ -69,7 +69,7 @@ function verifyArtifactIntegrity(file, key) {
     const ps = spawnSync(
       "powershell.exe",
       ["-NoProfile", "-Command", `(Get-AuthenticodeSignature '${file}').Status.ToString()`],
-      { encoding: "utf8" },
+      { encoding: "utf8", windowsHide: true },
     );
     const status = (ps.stdout || "").trim();
     if (status === "NotSigned") {

@@ -26,6 +26,7 @@ for (const [dir, marker] of [[".", "playwright-core"], ["editor", "yjs"]]) {
     cwd: path.join(ROOT, dir),
     stdio: "inherit",
     shell: process.platform === "win32",
+    windowsHide: true,
   });
   if (r.status !== 0) console.error(`run-tests: npm ci in ${dir} failed — the tests that need it will be SKIPPED, not passed.`);
 }
@@ -33,7 +34,7 @@ for (const [dir, marker] of [[".", "playwright-core"], ["editor", "yjs"]]) {
 const child = spawn(
   process.execPath,
   ["--test", "test/**/*.test.mjs", "editor/test/**/*.test.mjs"],
-  { cwd: ROOT, stdio: ["inherit", "pipe", "pipe"] },
+  { cwd: ROOT, stdio: ["inherit", "pipe", "pipe"], windowsHide: true },
 );
 
 let out = "";

@@ -32,7 +32,7 @@ const perUserDefault = path.join(process.env.LOCALAPPDATA || path.join(os.homedi
 const debugLog = path.join(process.env.TEMP || os.tmpdir(), "zevet-install-debug.log");
 
 function reg(...args) {
-  return spawnSync("reg", args, { encoding: "utf8" });
+  return spawnSync("reg", args, { encoding: "utf8", windowsHide: true });
 }
 function dumpDebugLog(label) {
   console.log(`--- installer.nsh customInit log after ${label} ---`);
@@ -50,7 +50,7 @@ function scanForExe(label) {
 function uninstallEverywhere() {
   for (const dir of [perUserDefault, path.join(process.env.PROGRAMFILES || "C:\\Program Files", "zevet")]) {
     const un = path.join(dir, "Uninstall zevet.exe");
-    if (fs.existsSync(un)) spawnSync(un, ["/S"], { timeout: 60_000 });
+    if (fs.existsSync(un)) spawnSync(un, ["/S"], { timeout: 60_000, windowsHide: true });
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
   }
   for (const root of ["HKCU", "HKLM"]) {
@@ -100,7 +100,7 @@ if (b.status !== 0 || !bExe) {
 }
 try {
   const un = path.join(explicitDir, "Uninstall zevet.exe");
-  if (fs.existsSync(un)) spawnSync(un, ["/S"], { timeout: 60_000 });
+  if (fs.existsSync(un)) spawnSync(un, ["/S"], { timeout: 60_000, windowsHide: true });
   fs.rmSync(explicitDir, { recursive: true, force: true });
 } catch { /* best-effort */ }
 

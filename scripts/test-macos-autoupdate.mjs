@@ -38,7 +38,7 @@ const X1 = feed.version;
 assert.notEqual(X, X1, "the feed must advertise a version newer than X");
 console.log(`X = ${X}, X+1 = ${X1}`);
 
-const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: "utf8", timeout: 60_000, ...opts });
+const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: "utf8", timeout: 60_000, windowsHide: true, ...opts });
 const BUNDLE = path.join(os.homedir(), "Applications", "zevet.app");
 const BIN = path.join(BUNDLE, "Contents/MacOS/zevet");
 // Null while the updater has the bundle moved aside mid-swap.
@@ -157,6 +157,7 @@ function launch(port, extraEnv) {
   const outLog = fs.openSync(path.join(base, "stdout.log"), "w");
   const errLog = fs.openSync(path.join(base, "stderr.log"), "w");
   const child = spawn(BIN, [`--remote-debugging-port=${port}`, `--user-data-dir=${path.join(base, "user-data")}`], {
+    windowsHide: true,
     env: {
       ...process.env,
       HOME: base,

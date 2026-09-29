@@ -21,7 +21,7 @@ const mount = path.join(temp, "volume");
 let mounted = false;
 let appProcess;
 let log = "";
-const run = (program, args, options = {}) => execFileSync(program, args, { encoding: "utf8", timeout: 60_000, ...options });
+const run = (program, args, options = {}) => execFileSync(program, args, { encoding: "utf8", timeout: 60_000, windowsHide: true, ...options });
 
 function nativeFiles(dir) {
   const files = [];
@@ -62,7 +62,7 @@ try {
     // which only returns stdout. A merely-signed (not notarized) app is
     // accepted too, so the source= line is the only thing that actually
     // distinguishes notarized from "just has a Developer ID signature".
-    const spctl = spawnSync("spctl", ["-a", "-vv", "-t", "exec", app], { encoding: "utf8", timeout: 60_000 });
+    const spctl = spawnSync("spctl", ["-a", "-vv", "-t", "exec", app], { encoding: "utf8", timeout: 60_000, windowsHide: true });
     const verdict = `${spctl.stdout || ""}${spctl.stderr || ""}`;
     console.log(verdict.trim());
     assert.equal(spctl.status, 0, `spctl rejected the app: ${verdict}`);
@@ -117,7 +117,7 @@ try {
     env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
   }).trim());
 
-  appProcess = spawn(bin, [`--user-data-dir=${path.join(temp, "user-data")}`], { env, stdio: ["ignore", "pipe", "pipe"] });
+  appProcess = spawn(bin, [`--user-data-dir=${path.join(temp, "user-data")}`], { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   appProcess.stdout.on("data", (data) => { log += data; });
   appProcess.stderr.on("data", (data) => { log += data; });
   let launchError;
