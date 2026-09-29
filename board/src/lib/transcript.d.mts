@@ -41,6 +41,7 @@ export function appendAgentPayload(
   payload: unknown,
   opts?: TranscriptOptions,
 ): TranscriptState;
+export function turnInFlight(state: TranscriptState): boolean;
 export function closeTranscript(
   state: TranscriptState,
   ending?: { code?: number | null; error?: string | null; stopped?: boolean },

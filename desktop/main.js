@@ -2966,7 +2966,7 @@ const consoles = new Map();
 
 /** What every console has already sent the board, so a reload can replay it.
  *  See console-log.js. */
-const consoleLog = createConsoleLog();
+const consoleLog = createConsoleLog({ onceDone: (id) => stopAgentCore(id) });
 
 const worktrees = createAgentWorktrees({ home: HOME });
 
@@ -3941,6 +3941,7 @@ async function startAgentApi() {
     startAgentCore,
     sendToAgentCore,
     stopAgentCore,
+    setOnce: (id) => consoleLog.setOnce(id),
     getConsole: (id) => consoleLog.get(id),
     listConsoles: () => consoleLog.snapshot().consoles,
   });

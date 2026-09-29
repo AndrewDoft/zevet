@@ -141,3 +141,73 @@ test("a generated title is kept with the metadata and follows a continued thread
   assert.equal(log.snapshot().consoles[0].title, "Greeting");
   assert.equal(log.setTitle("a", "Gone"), false);
 });
+
+const result = (extra = {}) => ({ type: "agent", payload: { type: "result", result: "ZEVET-OK", total_cost_usd: 0.02, usage: { output_tokens: 4 }, ...extra } });
+
+test("state: idle after open, working after a prompt, idle again on the result, exited on exit", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  assert.equal(log.get("a").state, "idle");
+  log.record("a", { type: "prompt", text: "go" });
+  assert.equal(log.get("a").state, "working");
+  log.record("a", result());
+  const c = log.get("a");
+  assert.equal(c.state, "idle");
+  assert.equal(c.running, true);
+  assert.equal(c.turns, 1);
+  assert.equal(c.lastResult, "ZEVET-OK");
+  assert.equal(c.costUsd, 0.02);
+  assert.deepEqual(c.usage, { output_tokens: 4 });
+  log.record("a", { type: "prompt", text: "again" });
+  assert.equal(log.get("a").state, "working");
+  log.record("a", { type: "exit", code: 0, signal: null });
+  assert.equal(log.get("a").state, "exited");
+});
+
+test("an errored result is flagged", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  log.record("a", result({ is_error: true }));
+  assert.equal(log.get("a").isError, true);
+});
+
+test("turn state survives a follow-up's new process id", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  log.record("a", result());
+  log.open("b", META, "a");
+  assert.equal(log.get("b").turns, 1);
+  assert.equal(log.get("b").lastResult, "ZEVET-OK");
+});
+
+test("claude's text-only user echo is not stored; a tool_result user line is", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  log.record("a", { type: "prompt", text: "hi" });
+  log.record("a", { type: "agent", payload: { type: "user", message: { role: "user", content: [{ type: "text", text: "hi" }] } } });
+  log.record("a", { type: "agent", payload: { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "ok" }] } } });
+  const kinds = log.get("a").events.map((e) => (e.payload ? e.payload.message.content[0].type : e.type));
+  assert.deepEqual(kinds, ["prompt", "tool_result"]);
+});
+
+test("partial-message deltas are live-only: sent to the board, never stored", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  const live = log.record("a", { type: "agent", payload: { type: "stream_event", event: { delta: { text: "ZE" } } } });
+  assert.equal(live.payload.type, "stream_event");
+  assert.equal(log.get("a").events.length, 0);
+});
+
+test("onceDone fires after the first result of a console marked setOnce, and only then", () => {
+  const done = [];
+  const log = createConsoleLog({ onceDone: (id) => done.push(id) });
+  log.open("a", META);
+  log.open("b", META);
+  log.setOnce("a");
+  log.record("b", result());
+  assert.deepEqual(done, []);
+  log.record("a", { type: "prompt", text: "x" });
+  assert.deepEqual(done, []);
+  log.record("a", result());
+  assert.deepEqual(done, ["a"]);
+});

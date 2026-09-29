@@ -1544,6 +1544,7 @@
     padding: 5px 8px; border-radius: 6px;
     white-space: nowrap; overflow: hidden;
   }
+  .subagents-row[data-state="idle"] { opacity: 0.65; }
   .subagents-row:hover { background: var(--raise-soft); }
   .subagents-name { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
   .subagents-meta, .subagents-tool { color: var(--subtle); overflow: hidden; text-overflow: ellipsis; }

@@ -29,6 +29,12 @@ function toPublic(e, head) {
     id: e.id,
     ...e.meta,
     running: e.running,
+    state: e.running ? e.state : "exited",
+    turns: e.turns,
+    lastResult: e.lastResult,
+    isError: e.isError,
+    costUsd: e.costUsd,
+    usage: e.usage,
     events: e.dropped
       ? [...e.events.slice(0, head), { type: "gap", id: e.id, dropped: e.dropped }, ...e.events.slice(head)]
       : e.events.slice(),
@@ -37,7 +43,20 @@ function toPublic(e, head) {
 
 // ponytail: capped by event count, not bytes; a run of huge tool results can
 // still hold a lot. Add a byte budget if memory ever shows up.
-function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
+/** claude's --replay-user-messages echoes each prompt back as a text-only
+ *  `user` line; the console already stores its own `prompt` event for it, so
+ *  the echo is a second copy. A `user` line carrying a tool_result is the
+ *  tool's record and stays. */
+function isPromptEcho(evt) {
+  const p = evt.type === "agent" && evt.payload;
+  if (!p || p.type !== "user" || !p.message) return false;
+  const c = p.message.content;
+  return typeof c === "string" || (Array.isArray(c) && !c.some((part) => part && part.type === "tool_result"));
+}
+
+/** `onceDone(id)` fires when the first turn's `result` arrives on a console
+ *  marked `setOnce` -- fire-and-forget workers use it to end the process. */
+function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone } = {}) {
   const entries = new Map();
   let seq = 0;
 
@@ -57,6 +76,15 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
         // on a follow-up either. Nor does its generated title.
         meta: prev ? { ...meta, startedAt: prev.meta.startedAt, ...(prev.meta.title ? { title: prev.meta.title } : {}) } : meta,
         running: true,
+        // working = a prompt is out and its `result` has not come back; idle =
+        // the process is up and waiting for the next one (claude stays alive
+        // between turns, so `running` alone never says a turn is done).
+        state: "idle",
+        turns: prev ? prev.turns : 0,
+        lastResult: prev ? prev.lastResult : "",
+        isError: prev ? prev.isError : false,
+        costUsd: prev ? prev.costUsd : null,
+        usage: prev ? prev.usage : null,
         // Re-stamped with the new id: the board replays them against the
         // console that now answers to it, and drops what matches no console.
         events: prev ? prev.events.map((e) => ({ ...e, id })) : [],
@@ -73,15 +101,32 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
       // Partial-message deltas (claude --include-partial-messages) are live-only:
       // hundreds per answer, and the complete block that follows is what a reload needs.
       const partial = evt.type === "agent" && evt.payload && evt.payload.type === "stream_event";
-      if (e && !partial) {
+      if (e && !partial && !isPromptEcho(evt)) {
         e.events.push(out);
         if (evt.type === "exit") e.running = false;
+        else if (evt.type === "prompt") e.state = "working";
+        else if (evt.type === "agent" && evt.payload && evt.payload.type === "result") {
+          const r = evt.payload;
+          e.state = "idle";
+          e.turns++;
+          e.lastResult = typeof r.result === "string" ? r.result : "";
+          e.isError = Boolean(r.is_error);
+          if (typeof r.total_cost_usd === "number") e.costUsd = r.total_cost_usd;
+          if (r.usage && typeof r.usage === "object") e.usage = r.usage;
+          if (e.once && onceDone) onceDone(id);
+        }
         if (e.events.length > cap) {
           e.events.splice(head, 1);
           e.dropped++;
         }
       }
       return out;
+    },
+
+    /** Mark a console fire-and-forget: `onceDone` fires after its first result. */
+    setOnce(id) {
+      const e = entries.get(id);
+      if (e) e.once = true;
     },
 
     /** Whether the thread has been sent a prompt yet: the first one is what

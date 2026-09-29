@@ -94,22 +94,37 @@ describe("formatters", () => {
 
   test("fmtList: a row per console, aligned columns, missing fields dashed", () => {
     const out = fmtList([
-      { id: "c1", label: "worker-a", agent: "claude", engine: "engine2", model: "opus", running: true, elapsedMs: 5000, lastTool: "Bash" },
+      { id: "c1", label: "worker-a", agent: "claude", engine: "engine2", model: "opus", running: true, state: "working", elapsedMs: 5000, lastTool: "Bash" },
       { id: "c2", agent: "claude", running: false, elapsedMs: 0 },
     ]);
     const lines = out.split("\n");
     assert.equal(lines.length, 3);
     assert.match(lines[0], /^ID\s+LABEL\s+AGENT\s+ENGINE\s+MODEL\s+STATE\s+ELAPSED\s+LAST TOOL\s*$/);
-    assert.match(lines[1], /^c1\s+worker-a\s+claude\s+engine2\s+opus\s+running\s+5s\s+Bash\s*$/);
-    assert.match(lines[2], /^c2\s+-\s+claude\s+-\s+-\s+stopped\s+0s\s+-\s*$/);
+    assert.match(lines[1], /^c1\s+worker-a\s+claude\s+engine2\s+opus\s+working\s+5s\s+Bash\s*$/);
+    assert.match(lines[2], /^c2\s+-\s+claude\s+-\s+-\s+exited\s+0s\s+-\s*$/);
   });
 
   test("fmtEvent: a prompt line", () => {
     assert.equal(fmtEvent({ type: "prompt", text: "fix the parser" }), "> fix the parser");
   });
 
-  test("fmtEvent: claude's own result line wins over content parts", () => {
-    assert.equal(fmtEvent({ type: "agent", payload: { type: "result", result: "done" } }), "done");
+  test("fmtEvent: a result line is the turn's outcome, not a second copy of the answer", () => {
+    assert.equal(fmtEvent({ type: "agent", payload: { type: "result", result: "done" } }), "[turn done]");
+    assert.equal(fmtEvent({ type: "agent", payload: { type: "result", result: "boom", is_error: true } }), "[error] boom");
+  });
+
+  test("fmtEvent: claude's text-only user echo prints nothing (the prompt line already did)", () => {
+    assert.equal(fmtEvent({ type: "agent", payload: { type: "user", message: { content: [{ type: "text", text: "hi" }] } } }), "");
+  });
+
+  test("fmtOutput: a one-turn transcript shows each message once", () => {
+    const events = [
+      { type: "prompt", text: "Reply with exactly: ZEVET-OK" },
+      { type: "agent", payload: { type: "user", message: { content: [{ type: "text", text: "Reply with exactly: ZEVET-OK" }] } } },
+      { type: "agent", payload: { type: "assistant", message: { content: [{ type: "text", text: "ZEVET-OK" }] } } },
+      { type: "agent", payload: { type: "result", result: "ZEVET-OK" } },
+    ];
+    assert.equal(fmtOutput(events), "> Reply with exactly: ZEVET-OK\nZEVET-OK\n[turn done]");
   });
 
   test("fmtEvent: text and tool_use content parts", () => {
@@ -204,6 +219,65 @@ describe("run — command dispatch", () => {
     const r = await run(["stop", "--id", "c1"], { disc, fetchImpl });
     assert.equal(r.exitCode, 0);
     assert.equal(r.text, "stopped");
+  });
+
+  test("--once and --json never swallow the next word", () => {
+    assert.deepEqual(parseArgs(["spawn", "--once", "--cwd", "/r"]).opts, { once: true, cwd: "/r" });
+    assert.deepEqual(parseArgs(["list", "--json", "x"]).opts, { json: true });
+  });
+
+  test("spawn --once sends once:true", async () => {
+    let sent;
+    const fetchImpl = async (_u, init) => {
+      sent = JSON.parse(init.body);
+      return { status: 200, json: async () => ({ ok: true, id: "c1" }) };
+    };
+    await run(["spawn", "--cwd", "/repo", "--once", "--prompt", "go"], { disc, fetchImpl });
+    assert.equal(sent.once, true);
+    await run(["spawn", "--cwd", "/repo", "--prompt", "go"], { disc, fetchImpl });
+    assert.equal("once" in sent, false);
+  });
+
+  test("send posts the prompt to /send for the id", async () => {
+    const calls = [];
+    const fetchImpl = async (u, init) => {
+      calls.push({ url: String(u), method: init.method, body: JSON.parse(init.body) });
+      return { status: 200, json: async () => ({ ok: true }) };
+    };
+    const r = await run(["send", "--id", "c1", "--prompt", "and now?"], { disc, fetchImpl });
+    assert.equal(r.exitCode, 0);
+    assert.equal(calls[0].method, "POST");
+    assert.match(calls[0].url, /\/send\?id=c1$/);
+    assert.deepEqual(calls[0].body, { prompt: "and now?" });
+  });
+
+  test("send with no prompt is an error; a server refusal is a non-zero exit", async () => {
+    await assert.rejects(() => run(["send", "--id", "c1"], { disc, fetchImpl: async () => ({}), stdin: fakeStdin("") }), /prompt/);
+    const fetchImpl = async () => ({ status: 409, json: async () => ({ ok: false, error: "agent has exited" }) });
+    const r = await run(["send", "--id", "c1", "--prompt", "x"], { disc, fetchImpl });
+    assert.equal(r.exitCode, 1);
+    assert.equal(r.text, "agent has exited");
+  });
+
+  test("status is human text by default and JSON with --json", async () => {
+    const b = { ok: true, id: "c1", state: "idle", turns: 1, elapsedMs: 4000, costUsd: 0.0123, lastResult: "ZEVET-OK" };
+    const fetchImpl = async () => ({ status: 200, json: async () => b });
+    const human = await run(["status", "--id", "c1"], { disc, fetchImpl });
+    assert.equal(human.text, "c1  idle  1 turn(s)  4s  $0.0123\nZEVET-OK");
+    const machine = await run(["status", "--id", "c1", "--json"], { disc, fetchImpl });
+    assert.deepEqual(JSON.parse(machine.text), b);
+  });
+
+  test("list --json is the raw array; idle shows as idle", async () => {
+    const consoles = [{ id: "c1", state: "idle", running: true, elapsedMs: 0 }];
+    const fetchImpl = async () => ({ status: 200, json: async () => ({ ok: true, consoles }) });
+    assert.deepEqual(JSON.parse((await run(["list", "--json"], { disc, fetchImpl })).text), consoles);
+    assert.match((await run(["list"], { disc, fetchImpl })).text, /c1\s+-\s+-\s+-\s+-\s+idle\s/);
+  });
+
+  test("wait --json prints the whole body", async () => {
+    const fetchImpl = async () => ({ status: 200, json: async () => ({ ok: true, resultText: "x", state: "idle" }) });
+    assert.equal(JSON.parse((await run(["wait", "--id", "c1", "--json"], { disc, fetchImpl })).text).state, "idle");
   });
 
   test("an unknown command shows usage and fails", async () => {
