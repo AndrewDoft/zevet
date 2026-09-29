@@ -43,13 +43,20 @@
 export const DEVICE_CODE_URL = "https://github.com/login/device/code";
 export const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 export const USER_URL = "https://api.github.com/user";
+export const EMAILS_URL = "https://api.github.com/user/emails";
 
 /**
  * The scopes requested.
  *
  * ⚠️ DELIBERATELY THE NARROWEST THING THAT WORKS. `read:user` reads the public
- * profile — a login and a numeric id — and nothing else. It does not grant
- * access to code, to private repositories, to organisations or to email.
+ * profile — a login and a numeric id. `user:email` is the one addition, and it
+ * exists for exactly one call: `GET /user/emails` (docs.github.com/rest/users/emails
+ * — "OAuth app tokens … need the user:email scope"), which lists the person's
+ * addresses WITH a `verified` flag. That is what lets the hub recognise that an
+ * email invite and a GitHub login are the same human, on evidence rather than a
+ * guess. Neither scope grants access to code, private repositories or
+ * organisations. Existing sign-ins keep working; GitHub asks the person to
+ * approve the extra scope the next time they sign in.
  *
  * It is tempting to ask for `repo` now, because the ORIGINAL request that
  * started this ("a way to edit the github repos it can access... that might
@@ -60,7 +67,7 @@ export const USER_URL = "https://api.github.com/user";
  * day something does, it is one string here and a re-authorisation prompt —
  * which is the correct moment to ask, rather than years earlier.
  */
-export const SCOPES = "read:user";
+export const SCOPES = "read:user user:email";
 
 /** GitHub answers JSON only when asked. Without this header both OAuth
  *  endpoints reply with a form-urlencoded body, which is the single most common
@@ -234,6 +241,30 @@ export async function githubUser({ accessToken, fetchImpl } = {}) {
     avatar: b.avatar_url ? String(b.avatar_url) : null,
     email: b.email ? String(b.email).toLowerCase() : null,
   };
+}
+
+/**
+ * The person's VERIFIED email addresses, from `GET /user/emails` (needs the
+ * `user:email` scope). Only rows GitHub marks `verified: true` count — an
+ * unverified row is a string somebody typed into their settings. Never throws
+ * and never fails a sign-in: a token without the scope (403), or GitHub having
+ * an afternoon, is just "no evidence" — `{ ok: false, emails: [] }`.
+ */
+export async function githubVerifiedEmails({ accessToken, fetchImpl } = {}) {
+  if (!accessToken) return { ok: false, emails: [] };
+  const r = await call(
+    EMAILS_URL,
+    { method: "GET", headers: { Accept: "application/vnd.github+json", "User-Agent": UA, Authorization: `Bearer ${accessToken}` } },
+    fetchImpl,
+  );
+  if (!r.ok || r.status !== 200 || !Array.isArray(r.body)) return { ok: false, emails: [] };
+  const emails = r.body
+    .filter((e) => e && e.verified === true && typeof e.email === "string" && e.email.includes("@"))
+    .map((e) => e.email.toLowerCase())
+    // GitHub's privacy placeholder (id+login@users.noreply.github.com) is
+    // verified but is not an address anyone else could have typed for them.
+    .filter((e) => !e.endsWith("@users.noreply.github.com"));
+  return { ok: true, emails: [...new Set(emails)] };
 }
 
 /**

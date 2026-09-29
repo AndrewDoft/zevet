@@ -393,6 +393,33 @@ interface BoardState {
   bumpTick: () => void;
 }
 
+/** Every name (lower-cased) the hub knows a person by: what they are called now,
+ *  what they were called, and each login they have linked. */
+export function myActorNames(me: { name: string; identities?: Array<{ login: string }>; aliases?: string[] }): string[] {
+  return [me.name, ...(me.aliases || []), ...(me.identities || []).map((i) => i.login)].map((n) => String(n).toLowerCase().replace(/^@/, ""));
+}
+
+/** Change MY display name on the hub. Yourself only (the hub refuses otherwise;
+ *  the owner renames others from Settings). `actor` is the string this machine's
+ *  hook reports, so the events already in the log follow the new name. */
+export async function renameSelf(name: string): Promise<{ ok: boolean; error?: string }> {
+  const actor = (bridge.cfg && bridge.cfg.actor) || useBoard.getState().myActor || undefined;
+  try {
+    const r = await fetch("/auth/rename", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, actor }),
+    });
+    const b = (await r.json().catch(() => ({}))) as { error?: string };
+    if (!r.ok) return { ok: false, error: b.error || `Could not rename (${r.status})` };
+    useBoard.getState().refreshWhoami();
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not connect." };
+  }
+}
+
 export type UsableAgentShape = {
   name: string;
   ok: boolean;
@@ -409,7 +436,16 @@ interface WhoStateShape {
   allow?: string[];
   shared?: boolean;
   githubSignIn?: boolean;
-  people?: Array<{ login: string; owner?: boolean; pending?: boolean }>;
+  people?: Array<{
+    login: string;
+    key?: string;
+    owner?: boolean;
+    pending?: boolean;
+    identities?: Array<{ provider: string; login: string }>;
+    aliases?: string[];
+  }>;
+  /** Me: my display name and every identity linked to me (see hub `profile`). */
+  me?: { name: string; login: string; owner: boolean; identities: Array<{ provider: string; login: string }>; aliases: string[] } | null;
 }
 
 export interface EditorViewState {
@@ -1068,6 +1104,12 @@ export const useBoard = create<BoardState>((set, get) => ({
         // a network error -- AccountSection renders that as an explicit
         // error with a Retry, rather than the comment here just claiming one.
         set({ who: { state: r && r.ok ? r : { ok: false }, busy: false } });
+        // My machine reports an actor string (config, OS user). When the hub has
+        // tied that string to me, the roster and every event now carry my
+        // display name instead, so that is what "me" has to be compared to.
+        const me = r && r.ok ? r.me : null;
+        const actor = bridge.cfg && bridge.cfg.actor;
+        if (me && actor && myActorNames(me).includes(actor.toLowerCase()) && get().myActor !== me.name) set({ myActor: me.name });
       })
       .catch(() => set({ who: { state: { ok: false }, busy: false } }));
   },
@@ -2765,6 +2807,14 @@ export function connect(): void {
   // is the whole point of the event.
   es.addEventListener("people", () => {
     useBoard.getState().refreshWhoami();
+    // A rename, a link or a merge changes what the roster CALLS people, and the
+    // roster is folded from the events, so take a fresh snapshot with it.
+    void fetch("/api/state", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => {
+        if (s) useBoard.getState().applySnapshot(s);
+      })
+      .catch(() => undefined);
   });
   es.onopen = () => {
     useBoard.getState().setConn("live");

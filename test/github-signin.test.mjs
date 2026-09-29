@@ -73,12 +73,14 @@ describe("asking GitHub for a code", () => {
     assert.equal(f.seen[0].body.scope, SCOPES);
   });
 
-  test("asks for read:user and NOTHING that touches code", () => {
+  test("asks for read:user and user:email and NOTHING that touches code", () => {
     // ⚠️ If this ever fails because somebody widened the scope, that is a
     // product decision about what zevet asks permission for, not a test to fix.
     // `repo` is read-write access to every private repository the person can
     // see, requested from everybody who only wanted to sign in.
-    assert.equal(SCOPES, "read:user");
+    // user:email is the one addition: it is what GET /user/emails needs, and
+    // that is how the hub learns a GitHub login and an email are one person.
+    assert.equal(SCOPES, "read:user user:email");
   });
 
   test("builds the complete URL itself if GitHub stops sending one", async () => {

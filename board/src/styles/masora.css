@@ -250,6 +250,14 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .person-row[data-idle="true"] .person-row-name { color: var(--ink-muted); }
+  /* MY name while it is being renamed (double-click the row): same footprint,
+     an underline instead of a box, so the row does not jump. */
+  .person-row-edit {
+    font: inherit; letter-spacing: inherit; background: none;
+    border: 0; border-bottom: 1px solid var(--who); border-radius: 0; outline: none;
+    padding: 0 0 1px;
+  }
+  .person-row-edit[aria-invalid="true"] { border-bottom-color: var(--bad); }
   .person-row-state {
     flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle);
   }

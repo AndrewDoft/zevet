@@ -12,6 +12,7 @@ import { updateCommand, updatePercent, updateStatusText } from "../lib/update.mj
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { Twist } from "./twist";
 import { GithubMark, GoogleMark } from "./logos";
+import { IdentityRows } from "./identity";
 
 function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   return (
@@ -326,8 +327,12 @@ function PendingRow({
   pending,
   canManage,
   onRemoved,
+  revokeKey,
 }: {
   login: string;
+  /** The person's stable login — what `/auth/revoke` takes. `login` is their
+   *  display name, which they may have changed. */
+  revokeKey?: string;
   isOwnerRow: boolean;
   pending: boolean;
   canManage: boolean;
@@ -389,7 +394,7 @@ function PendingRow({
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ login }),
+      body: JSON.stringify({ login: revokeKey || login }),
     }).then(
       () => onRemoved(),
       () => setState({ phase: "failed", message: "Could not connect." }),
@@ -580,7 +585,7 @@ function AccountSection() {
   const shared = Boolean(whoState.shared);
   const owner = Boolean(whoState.owner);
   const people = Array.isArray(whoState.people)
-    ? (whoState.people as Array<{ login: string; provider?: string; owner?: boolean; pending?: boolean }>)
+    ? (whoState.people as Array<{ login: string; key?: string; provider?: string; owner?: boolean; pending?: boolean }>)
     : [];
   // The SLUG (whoami's `team`), not teamLabel: passed through to
   // githubStart/googleStart below so a reconnect from a NON-default team
@@ -624,13 +629,31 @@ function AccountSection() {
     if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" team={teamSlug} onDone={() => refreshWhoami()} />);
   }
 
+  // One person, many sign-ins: what is linked to me, link another, and the
+  // owner's combine. Only for a real personal session.
+  const me = whoState.me as { identities: Array<{ provider: string; login: string }> } | null | undefined;
+  if (login && me) {
+    out.push(
+      <IdentityRows
+        key="identities"
+        identities={me.identities}
+        owner={owner}
+        people={people.filter((p) => !p.pending)}
+        githubSignIn={githubSignIn}
+        googleSignIn={googleSignIn}
+        onChanged={() => refreshWhoami()}
+      />,
+    );
+  }
+
   const list: ReactNode[] = [];
   if (people.length) {
     people.forEach((p) => {
       list.push(
         <PendingRow
-          key={p.login}
+          key={p.key || p.login}
           login={p.login}
+          revokeKey={p.key}
           isOwnerRow={Boolean(p.owner)}
           pending={Boolean(p.pending)}
           canManage={owner && !p.owner}

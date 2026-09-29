@@ -71,6 +71,14 @@ export function makeFakeIdpFetch({ googleClientId }) {
     if (u === "https://api.github.com/user") {
       return jsonRes(200, { login: "zevet-e2e-github", id: 900001, email: null });
     }
+    if (u === "https://api.github.com/user/emails") {
+      // What the fake GitHub account's verified addresses are — a JSON array
+      // of strings in ZEVET_TEST_GH_EMAILS, empty by default. Read here (only
+      // ever under ZEVET_TEST_HOOKS) so the link tests can decide whether the
+      // hub has evidence that this login and the fake Google account are one.
+      const list = JSON.parse(process.env.ZEVET_TEST_GH_EMAILS || "[]");
+      return jsonRes(200, list.map((email, i) => ({ email, primary: i === 0, verified: true, visibility: null })));
+    }
     if (u === "https://oauth2.googleapis.com/token") {
       return jsonRes(200, { id_token: fakeIdToken() });
     }
