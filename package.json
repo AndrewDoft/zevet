@@ -1,6 +1,6 @@
 {
   "name": "zevet",
-  "version": "0.2.86",
+  "version": "0.2.87",
   "private": true,
   "type": "module",
   "description": "Watch your team's AI coding agents work, live, in one place.",
@@ -16,5 +16,8 @@
   },
   "devDependencies": {
     "playwright-core": "1.63.0"
+  },
+  "dependencies": {
+    "@sentry/node": "10.75.0"
   }
 }

@@ -228,7 +228,7 @@ async function start(deps = {}) {
       // The turn is over when its `result` arrived (idle) or the process
       // died (exited) -- not only on exit, or a follow-up-capable console
       // would never finish.
-      if (!entry.running) {
+      if (!entry.running || entry.state === "idle") {
         return { status: 200, body: { ok: true, ...summarize(entry), resultText: entry.lastResult || resultTextFrom(entry.events) } };
       }
       if (Date.now() >= deadline) return { status: 200, body: { ok: false, error: "timed out waiting", ...summarize(entry) } };

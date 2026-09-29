@@ -18,6 +18,7 @@ import { Accounts, defaultAccountsFile, deriveAuthToken, invitableLogin } from "
 import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedEmails } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
+import { initSentry } from "./sentry.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -2117,9 +2118,12 @@ async function handleRequest(req, res) {
   json(res, 404, { error: "no such route" });
 }
 
+const sentry = await initSentry();
+
 // One request's exception answers that request; it must not take the hub down.
 const server = createServer((req, res) => {
   handleRequest(req, res).catch((err) => {
+    sentry?.captureException(err);
     console.error(`zevet: request failed — ${req.method} ${String(req.url).slice(0, 200)}: ${err && err.stack ? err.stack : err}`);
     if (!res.headersSent) json(res, 500, { error: "internal error" });
     else res.destroy();
