@@ -104,8 +104,10 @@ async function waitFor(what, fn, ms = 120_000) {
 }
 
 function dumpLogs() {
+  console.log(`----- ${requests.length} requests: ${requests.join(" ")}
+processes still ours: ${ours().join(",") || "none"}; current.json = ${JSON.stringify(current())}`);
   const walk = (d) => (fs.existsSync(d) ? fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)])) : []);
-  for (const f of walk(base).filter((f) => /zevet-boot.*\.log$|stderr\.log$/.test(f))) {
+  for (const f of walk(base).filter((f) => /zevet-boot.*\.log$|std(err|out)\.log$/.test(f))) {
     console.log(`----- ${f}\n${fs.readFileSync(f, "utf8").split("\n").slice(-40).join("\n")}`);
   }
 }

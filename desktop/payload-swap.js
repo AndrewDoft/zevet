@@ -32,10 +32,13 @@ function busyReason({ now, activity, chatBusy, lastInputAt, windows }) {
 function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows, release, log, now = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval }) {
   let swapping = false;
   let timer = null;
+  let lastWhy = null;
 
   function tick() {
     if (swapping || !payload.staged()) return "idle";
     const why = busyReason({ now: now(), activity, chatBusy, lastInputAt, windows });
+    if (why !== lastWhy) log(`payload ${payload.staged().build} staged; ${why ? `waiting: ${why}` : "idle"}`);
+    lastWhy = why;
     if (why) return why;
     swapping = true;
     try {
