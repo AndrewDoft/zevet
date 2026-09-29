@@ -71,6 +71,7 @@
       "open-safe.js",
       "zevet-home.js",
       "ipc-guard.js",
+      "ipc-table.js",
       "family.js",
       "masora-connect.js",
       "masora-push.js",
@@ -167,6 +168,6 @@
     }
   },
   "dependencies": {
-    "@masora/desktop-kit": "github:AndrewDoft/desktop-kit#v0.1.0"
+    "@masora/desktop-kit": "github:AndrewDoft/desktop-kit#v0.1.1"
   }
 }

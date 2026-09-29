@@ -26,7 +26,7 @@
 // that same bridge is a bigger thing to hand out than a read.
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor } = require("electron");
 const { openSafe } = require("./open-safe.js");
-const { createLog, singleInstance } = require("@masora/desktop-kit");
+const { createLog, singleInstance, createIpcRegistry } = require("@masora/desktop-kit");
 // A packaged app has no console to read: warnings and errors from every module,
 // plus the updater's own lines, also go to a size-capped rotating file (logs/zevet.log, 3 x 1 MB).
 const fileLog = createLog({ dir: app.getPath("logs"), name: "zevet" });
@@ -36,6 +36,11 @@ for (const level of ["warn", "error"]) {
 }
 // Must run before the first ipcMain.handle below. readConfig is a hoisted function declaration.
 require("./ipc-guard.js").guardIpc(ipcMain, () => (readConfig() || {}).hub);
+// Every bridge handler below is registered through the IPC table (ipc-table.js), which also generates
+// preload.js: a channel that is not in the table is refused, and bridge.assertComplete() (after the last
+// handler) fails startup if a table call has no handler. ipcMain.handle is looked up per registration, so
+// the guard above still wraps each one.
+const bridge = createIpcRegistry(ipcMain, require("./ipc-table.js").tables);
 const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
 const repoStats = require("./repo-stats.js");
@@ -1150,7 +1155,7 @@ async function installHooks(repo) {
  * `c.actor` from this call and nothing else; it only ever WRITES a credential.
  * That was checked, not assumed.
  */
-ipcMain.handle("zevet:config", () => {
+bridge.handle("zevet:config", () => {
   const cfg = readConfig();
   if (!cfg) return null;
   const hasSecret = typeof cfg.secret === "string" && cfg.secret.length > 0;
@@ -1193,7 +1198,7 @@ ipcMain.handle("zevet:config", () => {
  * sent as an empty token and coming back as "the hub rejected that token" —
  * which would be true, useless, and point at the wrong end of the problem.
  */
-ipcMain.handle("zevet:test", async (_e, { token }) => {
+bridge.handle("zevet:test", async (_e, { token }) => {
   const auth = authFor({ secret: String(token || "") });
   if (auth.error) return { ok: false, why: `That secret is not usable: ${auth.error}` };
   // An empty field resolves cleanly to an empty token — `resolveAuth` has
@@ -1242,7 +1247,7 @@ ipcMain.handle("zevet:test", async (_e, { token }) => {
  * rather than at a blank board — but they are not TOLD which of the two it was,
  * because nothing here can know.
  */
-ipcMain.handle("zevet:save", (_e, cfg) => {
+bridge.handle("zevet:save", (_e, cfg) => {
   const hub = targetHub();
   const actor = String(cfg.actor);
   // `token` is what setup.html still calls the field; what it holds is now the
@@ -1306,7 +1311,7 @@ ipcMain.handle("zevet:save", (_e, cfg) => {
  */
 let signIn = null;
 
-ipcMain.handle("zevet:githubStart", async (_e, { team } = {}) => {
+bridge.handle("zevet:githubStart", async (_e, { team } = {}) => {
   try {
     if (signIn) signIn.cancel();
     signIn = new GithubSignIn({ hub: targetHub(), team });
@@ -1337,7 +1342,7 @@ ipcMain.handle("zevet:githubStart", async (_e, { team } = {}) => {
  * flow racing is the same bug with two names, and each would try to write the
  * config over the other.
  */
-ipcMain.handle("zevet:googleStart", async (_e, { team } = {}) => {
+bridge.handle("zevet:googleStart", async (_e, { team } = {}) => {
   try {
     if (signIn) signIn.cancel();
     signIn = new GoogleSignIn({ hub: targetHub(), team });
@@ -1432,8 +1437,8 @@ async function awaitSignIn(what) {
   }
 }
 
-ipcMain.handle("zevet:githubWait", () => awaitSignIn("GitHub"));
-ipcMain.handle("zevet:googleWait", () => awaitSignIn("Google"));
+bridge.handle("zevet:githubWait", () => awaitSignIn("GitHub"));
+bridge.handle("zevet:googleWait", () => awaitSignIn("Google"));
 
 /* Cancelling is provider-blind — there is one attempt in flight and this ends
  * it, whichever kind it is. Registered under both names so the renderer can
@@ -1443,8 +1448,8 @@ const cancelSignIn = () => {
   signIn = null;
   return true;
 };
-ipcMain.handle("zevet:githubCancel", cancelSignIn);
-ipcMain.handle("zevet:googleCancel", cancelSignIn);
+bridge.handle("zevet:githubCancel", cancelSignIn);
+bridge.handle("zevet:googleCancel", cancelSignIn);
 
 /* ── Creating a team ───────────────────────────────────────────────────────
  *
@@ -1457,7 +1462,7 @@ ipcMain.handle("zevet:googleCancel", cancelSignIn);
  * hub's default one. Unauthenticated on the hub side — this call decides
  * nothing by itself, same as the sign-in "start" calls above.
  */
-ipcMain.handle("zevet:teamCreate", async (_e, { name } = {}) => {
+bridge.handle("zevet:teamCreate", async (_e, { name } = {}) => {
   const base = targetHub();
   const teamName = String(name || "").trim();
   if (!teamName) return { ok: false, error: "Name the team." };
@@ -1484,7 +1489,7 @@ ipcMain.handle("zevet:teamCreate", async (_e, { name } = {}) => {
 });
 
 /** Does a team by this name exist on the hub? `{ ok, exists, team }`. */
-ipcMain.handle("zevet:teamResolve", async (_e, { name } = {}) => {
+bridge.handle("zevet:teamResolve", async (_e, { name } = {}) => {
   const base = targetHub();
   if (!String(name || "").trim()) return { ok: false, error: "Name?" };
   try {
@@ -1545,7 +1550,7 @@ async function teamJoin(team, key) {
   }
 }
 
-ipcMain.handle("zevet:teamJoin", (_e, { team, key } = {}) => teamJoin(team, key));
+bridge.handle("zevet:teamJoin", (_e, { team, key } = {}) => teamJoin(team, key));
 
 /* ── Sign out of GitHub, from Settings ─────────────────────────────────────
  *
@@ -1586,7 +1591,7 @@ const signOut = async () => {
 };
 // Signing out ends a SESSION, and a session does not remember which provider
 // minted it — so this is one function, under the name each button expects.
-ipcMain.handle("zevet:githubLogout", signOut);
+bridge.handle("zevet:githubLogout", signOut);
 
 /* ── Sign out of the TEAM, from Settings (or the setup screen) ────────────
  *
@@ -1628,10 +1633,10 @@ const signOutTeam = async () => {
   openSetup(null);
   return { ok: true };
 };
-ipcMain.handle("zevet:signOutTeam", signOutTeam);
-ipcMain.handle("zevet:googleLogout", signOut);
+bridge.handle("zevet:signOutTeam", signOutTeam);
+bridge.handle("zevet:googleLogout", signOut);
 
-ipcMain.handle("zevet:pickRepo", async () => {
+bridge.handle("zevet:pickRepo", async () => {
   const picked = await dialog.showOpenDialog(setupWindow, {
     title: "Choose a project folder",
     properties: ["openDirectory"],
@@ -1643,13 +1648,13 @@ ipcMain.handle("zevet:pickRepo", async () => {
 // Only a folder the user opened as a workspace, or just picked in setup, may be
 // handed to the installer — never a path the renderer made up (audit B7).
 let pickedRepo = null;
-ipcMain.handle("zevet:install", async (_e, repo) => {
+bridge.handle("zevet:install", async (_e, repo) => {
   const root = knownRoot(repo) || (pickedRepo && path.resolve(String(repo || "")) === pickedRepo ? pickedRepo : null);
   if (!root) return { ok: false, detail: "That folder is not one you opened in Zevet." };
   return installHooks(root);
 });
 
-ipcMain.handle("zevet:done", () => {
+bridge.handle("zevet:done", () => {
   const cfg = readConfig();
   if (!cfg) return false;
   openBoard(cfg);
@@ -1725,32 +1730,32 @@ const family = new Family({
   version: app.getVersion(),
   installPath: path.dirname(app.getPath("exe")),
 });
-ipcMain.handle("zevet:familyStatus", () => family.status());
-ipcMain.handle("zevet:familyAct", (_e, { app: which, action } = {}) => family.act(String(which), String(action)));
+bridge.handle("zevet:familyStatus", () => family.status());
+bridge.handle("zevet:familyAct", (_e, { app: which, action } = {}) => family.act(String(which), String(action)));
 
-ipcMain.handle("zevet:masoraConfig", () => masora.readConfig());
+bridge.handle("zevet:masoraConfig", () => masora.readConfig());
 
-ipcMain.handle("zevet:masoraSaveUrl", (_e, { url } = {}) => {
+bridge.handle("zevet:masoraSaveUrl", (_e, { url } = {}) => {
   const cfg = masora.saveUrl(url);
   masoraLink.cancel();
   masoraLink.start(); // a new address is a new attempt
   return cfg;
 });
 
-ipcMain.handle("zevet:masoraLinkStatus", () => masoraLink.status());
-ipcMain.handle("zevet:masoraLinkStart", () => {
+bridge.handle("zevet:masoraLinkStatus", () => masoraLink.status());
+bridge.handle("zevet:masoraLinkStart", () => {
   masoraLink.start();
   return masoraLink.status();
 });
-ipcMain.handle("zevet:masoraLinkApprove", () => masoraLink.approve());
+bridge.handle("zevet:masoraLinkApprove", () => masoraLink.approve());
 
-ipcMain.handle("zevet:masoraUnpair", () => {
+bridge.handle("zevet:masoraUnpair", () => {
   masora.unpair();
   masoraLink.cancel();
   return true;
 });
 
-ipcMain.handle("masora:sources", async () => {
+bridge.handle("masora:sources", async () => {
   const cfg = masora.readConfig();
   if (!cfg.paired) return { sources: [] };
   const token = masora.loadToken((b) => safeStorage.decryptString(b));
@@ -1776,7 +1781,7 @@ ipcMain.handle("masora:sources", async () => {
   }
 });
 
-ipcMain.handle("masora:connect", async (_e, { provider } = {}) => {
+bridge.handle("masora:connect", async (_e, { provider } = {}) => {
   const cfg = masora.readConfig();
   if (!cfg.paired) {
     return { error: "Not paired with Masora" };
@@ -1810,7 +1815,7 @@ ipcMain.handle("masora:connect", async (_e, { provider } = {}) => {
  *  fetch that fails (no hub, no auth, hub down) degrades to "no team
  *  credentials" rather than failing the whole call — the personal list is
  *  still useful on its own. */
-ipcMain.handle("zevet:listCredentials", async () => {
+bridge.handle("zevet:listCredentials", async () => {
   const cfg = readConfig() || {};
   const personal = credentials.listCredentials().map((c) => ({ ...c, scope: "personal" }));
 
@@ -1836,7 +1841,7 @@ ipcMain.handle("zevet:listCredentials", async () => {
  *  Anthropic key shape, subscription tokens refused) all happens on the hub,
  *  same as it does for a board client talking to it directly — this is a
  *  second caller of the same route, not a second copy of the rule. */
-ipcMain.handle("zevet:addCredential", async (_e, { scope, label, provider, kind, key } = {}) => {
+bridge.handle("zevet:addCredential", async (_e, { scope, label, provider, kind, key } = {}) => {
   if (scope === "personal") {
     if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: "This machine's OS keychain is unavailable." };
     const { id } = credentials.addCredential({ label, provider, kind, key }, (s) => safeStorage.encryptString(s));
@@ -1864,7 +1869,7 @@ ipcMain.handle("zevet:addCredential", async (_e, { scope, label, provider, kind,
   return { ok: false, error: `unknown scope: ${scope}` };
 });
 
-ipcMain.handle("zevet:removeCredential", async (_e, { scope, id } = {}) => {
+bridge.handle("zevet:removeCredential", async (_e, { scope, id } = {}) => {
   if (scope === "personal") return { ok: credentials.removeCredential(id) };
   if (scope === "team") {
     const cfg = readConfig() || {};
@@ -1891,7 +1896,7 @@ ipcMain.handle("zevet:removeCredential", async (_e, { scope, id } = {}) => {
  *  `{scope: "auto"}` to walk `credentialLadder` (below) instead of a single
  *  fixed choice. `null`/omitted clears it — spawn exactly as today,
  *  inheriting process.env — see credentialEnvFor. */
-ipcMain.handle("zevet:setDefaultCredential", (_e, arg) => {
+bridge.handle("zevet:setDefaultCredential", (_e, arg) => {
   const cfg = readConfig() || {};
   const next = { ...cfg };
   if (arg && arg.scope === "auto") next.defaultCredential = { scope: "auto" };
@@ -1908,9 +1913,9 @@ ipcMain.handle("zevet:setDefaultCredential", (_e, arg) => {
  * that a member can edit the ladder while offline or before either
  * credential it names has been probed even once.
  */
-ipcMain.handle("zevet:credentialLadder", () => (readConfig() || {}).credentialLadder || []);
+bridge.handle("zevet:credentialLadder", () => (readConfig() || {}).credentialLadder || []);
 
-ipcMain.handle("zevet:setCredentialLadder", (_e, ladder) => {
+bridge.handle("zevet:setCredentialLadder", (_e, ladder) => {
   const cfg = readConfig() || {};
   const clean = Array.isArray(ladder)
     ? ladder
@@ -1969,11 +1974,11 @@ function trustedDir(root) {
   }
 }
 
-ipcMain.handle("local:workspaces", () =>
+bridge.handle("local:workspaces", () =>
   readWorkspaces().map((dir) => ({ dir, name: path.basename(dir), repo: localFs.isProbablyRepo(dir) })),
 );
 
-ipcMain.handle("local:addWorkspace", async () => {
+bridge.handle("local:addWorkspace", async () => {
   const picked = await dialog.showOpenDialog(boardWindow || setupWindow, {
     title: "Open a folder",
     properties: ["openDirectory"],
@@ -1988,21 +1993,21 @@ ipcMain.handle("local:addWorkspace", async () => {
 
 /** Per-repo opt-in for pushing agent sessions to Masora (C1: `zevet.masoraRepos`,
  *  default none -- nothing is sent for a folder until this returns true for it). */
-ipcMain.handle("local:masoraRepos", () => masora.reposFor());
+bridge.handle("local:masoraRepos", () => masora.reposFor());
 
-ipcMain.handle("local:masoraRepoToggle", (_e, { root, on } = {}) => {
+bridge.handle("local:masoraRepoToggle", (_e, { root, on } = {}) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   return { ok: true, repos: masora.setRepoOpted(dir, Boolean(on)) };
 });
 
-ipcMain.handle("local:tree", (_e, root) => {
+bridge.handle("local:tree", (_e, root) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   return localFs.listTree(dir, {});
 });
 
-ipcMain.handle("local:read", (_e, { root, relPath }) => {
+bridge.handle("local:read", (_e, { root, relPath }) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   return localFs.readTextFile(dir, String(relPath || ""), {});
@@ -2029,7 +2034,7 @@ ipcMain.handle("local:read", (_e, { root, relPath }) => {
  * why it gets a bridge at all; that argument is unchanged and is not revisited
  * here, but it was made about reading, and this is a write.
  */
-ipcMain.handle("local:write", (_e, { root, relPath, text, opts }) => {
+bridge.handle("local:write", (_e, { root, relPath, text, opts }) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   if (typeof text !== "string") return { ok: false, error: "nothing to write" };
@@ -2203,7 +2208,7 @@ async function ensureEmbedder() {
  * and pushing it into the page would make the app's appearance depend on an OS
  * setting the person did not touch, and the toggle they did touch would lose.
  */
-ipcMain.handle("ui:chrome", (_e, arg) => {
+bridge.handle("ui:chrome", (_e, arg) => {
   const theme = arg && arg.theme === "dark" ? "dark" : "light";
   lastChromeTheme = theme;
   const w = boardWindow;
@@ -2237,7 +2242,7 @@ ipcMain.handle("ui:chrome", (_e, arg) => {
   return { ok: true };
 });
 
-ipcMain.handle("local:indexStatus", async (_e, arg) => {
+bridge.handle("local:indexStatus", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
   const cap = indexCapability.assess({});
@@ -2264,7 +2269,7 @@ ipcMain.handle("local:indexStatus", async (_e, arg) => {
  * because the renderer is the one input this process does not trust and a UI
  * that has gone stale must not be able to start an 86MB download.
  */
-ipcMain.handle("local:indexEnable", async (_e, arg) => {
+bridge.handle("local:indexEnable", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
   if (!dir) return { ok: false, error: "not an opened workspace" };
@@ -2311,7 +2316,7 @@ function pathFilter(raw) {
   return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 }
 
-ipcMain.handle("local:indexSearch", async (_e, arg) => {
+bridge.handle("local:indexSearch", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
   if (!dir) return { ok: false, error: "not an opened workspace", hits: [] };
@@ -2342,7 +2347,7 @@ ipcMain.handle("local:indexSearch", async (_e, arg) => {
   }
 });
 
-ipcMain.handle("local:status", async (_e, arg) => {
+bridge.handle("local:status", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
 
@@ -2436,13 +2441,13 @@ function writeAgentSettingsFor(dir, patch) {
   return all[key];
 }
 
-ipcMain.handle("local:agentSettings", (_e, arg) => {
+bridge.handle("local:agentSettings", (_e, arg) => {
   const dir = knownRoot(arg && arg.root);
   if (!dir) return { ok: false, settings: null };
   return { ok: true, settings: agentSettingsFor(dir) };
 });
 
-ipcMain.handle("local:saveAgentSettings", (_e, arg) => {
+bridge.handle("local:saveAgentSettings", (_e, arg) => {
   const dir = knownRoot(arg && arg.root);
   if (!dir) return { ok: false, settings: null };
   return { ok: true, settings: writeAgentSettingsFor(dir, arg && arg.patch) };
@@ -2480,9 +2485,9 @@ function writePrefs(all) {
   }
 }
 
-ipcMain.handle("local:prefs", () => readPrefs());
+bridge.handle("local:prefs", () => readPrefs());
 
-ipcMain.handle("local:setPref", (_e, arg) => {
+bridge.handle("local:setPref", (_e, arg) => {
   const key = String((arg && arg.key) || "");
   if (!key) return { ok: false };
   const all = readPrefs();
@@ -2496,7 +2501,7 @@ ipcMain.handle("local:setPref", (_e, arg) => {
 /** One round trip for many keys at once — prefs-mirror.mjs's
  *  `hydratePrefsMirror` seeding the mirror from an existing user's
  *  localStorage the first time it finds the mirror empty. */
-ipcMain.handle("local:setPrefs", (_e, arg) => {
+bridge.handle("local:setPrefs", (_e, arg) => {
   const entries = arg && arg.entries;
   if (!entries || typeof entries !== "object") return { ok: false };
   const all = readPrefs();
@@ -2641,9 +2646,9 @@ function startMasoraPush() {
   if (typeof masoraPushTimer.unref === "function") masoraPushTimer.unref();
 }
 
-ipcMain.handle("local:schedules", () => ({ ok: true, schedules: readSchedules() }));
+bridge.handle("local:schedules", () => ({ ok: true, schedules: readSchedules() }));
 
-ipcMain.handle("local:scheduleSave", (_e, arg) => {
+bridge.handle("local:scheduleSave", (_e, arg) => {
   const incoming = schedule.sanitise(arg && arg.schedule);
   if (!incoming.prompt) return { ok: false, error: "a schedule needs a prompt" };
   if (!knownRoot(incoming.root)) return { ok: false, error: "not an opened workspace" };
@@ -2655,14 +2660,14 @@ ipcMain.handle("local:scheduleSave", (_e, arg) => {
   return { ok: true, schedules: list };
 });
 
-ipcMain.handle("local:scheduleRemove", (_e, arg) => {
+bridge.handle("local:scheduleRemove", (_e, arg) => {
   const id = String((arg && arg.id) || "");
   const list = readSchedules().filter((s) => s.id !== id);
   writeSchedules(list);
   return { ok: true, schedules: list };
 });
 
-ipcMain.handle("local:scheduleToggle", (_e, arg) => {
+bridge.handle("local:scheduleToggle", (_e, arg) => {
   const id = String((arg && arg.id) || "");
   const list = readSchedules().map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s));
   writeSchedules(list);
@@ -2671,7 +2676,7 @@ ipcMain.handle("local:scheduleToggle", (_e, arg) => {
 
 /** The last few commits in a folder the person has opened. Read only: it
  *  runs `git log` and nothing else, and there is no counterpart that writes. */
-ipcMain.handle("local:commits", async (_e, arg) => {
+bridge.handle("local:commits", async (_e, arg) => {
   const dir = knownRoot(arg && arg.root);
   if (!dir) return { ok: false, commits: [] };
   try {
@@ -2701,7 +2706,7 @@ const APP_STARTED = Date.now();
  * on the panel. An agent that does not write memories has an empty directory,
  * which is not an error.
  */
-ipcMain.handle("local:memories", async (_e, arg) => {
+bridge.handle("local:memories", async (_e, arg) => {
   const dir = knownRoot(arg && arg.root);
   if (!dir) return { ok: false, memories: [] };
   const slug = path.resolve(dir).replace(/[^A-Za-z0-9]/g, "-");
@@ -2742,7 +2747,7 @@ ipcMain.handle("local:memories", async (_e, arg) => {
   return { ok: true, dir: memDir, memories: out.slice(0, 40) };
 });
 
-ipcMain.handle("local:stats", async (_e, { root, relPaths }) => {
+bridge.handle("local:stats", async (_e, { root, relPaths }) => {
   // knownRoot FIRST, exactly as every handler above does it, and for the same
   // reason: without it `C:\` is a valid root and the counter walks the disk.
   const dir = knownRoot(root);
@@ -2773,7 +2778,7 @@ ipcMain.handle("local:stats", async (_e, { root, relPaths }) => {
 
 /** Added-line hunks for one file, so the board can seat an agent's sprite on
  *  the lines it just wrote. knownRoot first, like every sibling handler. */
-ipcMain.handle("local:diffHunks", async (_e, { root, relPath }) => {
+bridge.handle("local:diffHunks", async (_e, { root, relPath }) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, hunks: [], error: "not an opened workspace" };
   if (typeof relPath !== "string" || !relPath || relPath.includes("..")) {
@@ -2796,7 +2801,7 @@ const fileWatch = new FileWatch({
   onChange: (evt) => toBoard("local:fileChanged", evt),
 });
 
-ipcMain.handle("local:watch", (_e, { root, relPath, initialText }) => {
+bridge.handle("local:watch", (_e, { root, relPath, initialText }) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   // The resolved root is passed on, not the renderer's spelling, so the
@@ -2804,7 +2809,7 @@ ipcMain.handle("local:watch", (_e, { root, relPath, initialText }) => {
   return fileWatch.watch(dir, String(relPath || ""), initialText);
 });
 
-ipcMain.handle("local:unwatch", (_e, { root, relPath }) => {
+bridge.handle("local:unwatch", (_e, { root, relPath }) => {
   const dir = knownRoot(root);
   /* ⚠️ AN UNKNOWN ROOT STILL HAS TO BE UNWATCHED. The old line was
      `if (!dir) return { ok: true }`, and the reasoning above it was right —
@@ -2964,7 +2969,7 @@ function docMessage(room, payload) {
   return out;
 }
 
-ipcMain.handle("doc:join", (_e, room) => {
+bridge.handle("doc:join", (_e, room) => {
   const got = ensureDocSync();
   if (got.error) return { ok: false, error: got.error, code: got.code };
   try {
@@ -2977,7 +2982,7 @@ ipcMain.handle("doc:join", (_e, room) => {
   }
 });
 
-ipcMain.handle("doc:send", (_e, { room, bytes, opts }) => {
+bridge.handle("doc:send", (_e, { room, bytes, opts }) => {
   if (!docSync) return { ok: false, error: "not joined", code: "not-joined" };
   const u8 = toBytes(bytes);
   if (!u8) return { ok: false, error: "update must be bytes" };
@@ -2994,7 +2999,7 @@ ipcMain.handle("doc:send", (_e, { room, bytes, opts }) => {
   }
 });
 
-ipcMain.handle("doc:leave", (_e, room) => {
+bridge.handle("doc:leave", (_e, room) => {
   if (docSync) docSync.leave(String(room || ""));
   // Always ok. Leaving a room that was never joined is what a closing tab does
   // and there is nothing to report about it.
@@ -3130,7 +3135,7 @@ function metaAiAppDetail() {
   return fs.existsSync(candidate) ? candidate : null;
 }
 
-ipcMain.handle("local:agents", async () => {
+bridge.handle("local:agents", async () => {
   await runtimeReady;
   const detect = await loadDetect();
   const found = detect ? detect.detectAgents() : [];
@@ -3265,7 +3270,7 @@ function ensureAskServer() {
 }
 
 /** The person's answer to one permit. */
-ipcMain.handle("local:permitAnswer", (_e, arg) => {
+bridge.handle("local:permitAnswer", (_e, arg) => {
   const id = arg && typeof arg.id === "string" ? arg.id : "";
   const resolve = pendingPermits.get(id);
   if (!resolve) return { ok: false, error: "no such request" };
@@ -3275,7 +3280,7 @@ ipcMain.handle("local:permitAnswer", (_e, arg) => {
 });
 
 /** The person's answer to one question. */
-ipcMain.handle("local:askAnswer", (_e, arg) => {
+bridge.handle("local:askAnswer", (_e, arg) => {
   const id = arg && typeof arg.id === "string" ? arg.id : "";
   const resolve = pendingAsks.get(id);
   if (!resolve) return { ok: false, error: "no such request" };
@@ -3459,7 +3464,7 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
   consoleLog.open(started.id, consoleMeta(agent, dir, opts, place, resolved.engine));
   return { ok: true, id: started.id, agent, cwd: dir, engine: resolved.engine };
 }
-ipcMain.handle("local:startAgent", (_e, args) => startAgentCore(args));
+bridge.handle("local:startAgent", (_e, args) => startAgentCore(args));
 
 /** What a reloaded board needs to rebuild a console's rail entry. `root` is
  *  the repo the user picked even when the agent works in a worktree of it.
@@ -3491,7 +3496,7 @@ function consoleMeta(agent, dir, opts, place, engineUsed) {
  * The board keeps the SAME console entry and swaps in the new process id, so
  * the transcript continues rather than starting a second thread beside it.
  */
-ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) => {
+bridge.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) => {
   await runtimeReady;
   if (typeof resumeFrom !== "string" || !resumeFrom.trim()) {
     return { ok: false, error: "no session to resume" };
@@ -3603,7 +3608,7 @@ function sendToAgentCore(id, text) {
     return { ok: false, error: err.message };
   }
 }
-ipcMain.handle("local:sendToAgent", (_e, { id, text }) => sendToAgentCore(id, text));
+bridge.handle("local:sendToAgent", (_e, { id, text }) => sendToAgentCore(id, text));
 
 /**
  * A few generated words for a console's title, from its first prompt. Not
@@ -3640,13 +3645,13 @@ function stopAgentCore(id) {
   consoles.delete(id);
   return { ok: true };
 }
-ipcMain.handle("local:stopAgent", (_e, id) => stopAgentCore(id));
+bridge.handle("local:stopAgent", (_e, id) => stopAgentCore(id));
 
 /** Every console a reloaded board should show again, with what it has said. */
-ipcMain.handle("local:consoles", () => consoleLog.snapshot());
+bridge.handle("local:consoles", () => consoleLog.snapshot());
 
 /** The board closed a thread; a reload should not bring it back. */
-ipcMain.handle("local:forgetAgent", (_e, id) => {
+bridge.handle("local:forgetAgent", (_e, id) => {
   consoleLog.forget(String(id || ""));
   const place = placementOf(String(id || ""));
   if (place) void releasePlacement(place);
@@ -3805,8 +3810,8 @@ async function chatBrief(provider, text) {
   }
 }
 
-ipcMain.handle("chat:list", (_e, arg) => chats.list(arg && arg.query));
-ipcMain.handle("chat:get", (_e, id) => chats.read(String(id || "")));
+bridge.handle("chat:list", (_e, arg) => chats.list(arg && arg.query));
+bridge.handle("chat:get", (_e, id) => chats.read(String(id || "")));
 /** Who a chat belongs to: the hub login this app signs in as. */
 function chatAuthor() {
   const cfg = readConfig();
@@ -3827,24 +3832,24 @@ function chatWant(provider, opts, folder) {
   return [provider.agent, opts.model || "", opts.mode || "", folder].join("|");
 }
 
-ipcMain.handle("chat:create", (_e, arg) => chats.create(chatAuthor(), chatFolder(arg && arg.folder) || ""));
-ipcMain.handle("chat:setFolder", (_e, arg) => {
+bridge.handle("chat:create", (_e, arg) => chats.create(chatAuthor(), chatFolder(arg && arg.folder) || ""));
+bridge.handle("chat:setFolder", (_e, arg) => {
   const folder = chatFolder(arg && arg.folder);
   if (folder === null) return null;
   const id = String((arg && arg.id) || "");
   if (chatRun && chatRun.id === id) stopChatRun(); // a new folder is a new posture
   return chats.setFolder(id, folder);
 });
-ipcMain.handle("chat:rename", (_e, arg) => chats.rename(arg && arg.id, arg && arg.title));
-ipcMain.handle("chat:remove", (_e, id) => {
+bridge.handle("chat:rename", (_e, arg) => chats.rename(arg && arg.id, arg && arg.title));
+bridge.handle("chat:remove", (_e, id) => {
   if (chatRun && chatRun.id === id) stopChatRun();
   return chats.remove(String(id || ""));
 });
-ipcMain.handle("chat:stop", (_e, id) => {
+bridge.handle("chat:stop", (_e, id) => {
   if (chatRun && chatRun.id === id) stopChatRun();
   return { ok: true };
 });
-ipcMain.handle("chat:send", async (_e, arg) => {
+bridge.handle("chat:send", async (_e, arg) => {
   await runtimeReady;
   const id = String((arg && arg.id) || "");
   const text = String((arg && arg.text) || "");
@@ -3881,7 +3886,7 @@ ipcMain.handle("chat:send", async (_e, arg) => {
   return { ok: true, brief: Boolean(brief) };
 });
 
-ipcMain.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(arg && arg.on)));
+bridge.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(arg && arg.on)));
 
 // ---- lifecycle -------------------------------------------------------------
 
@@ -3972,8 +3977,8 @@ app.on("browser-window-focus", () => appUpdater.maybeCheck(UPDATE_RECHECK_MIN_GA
  * Read only; see desktop/agent-sessions.js. `cwd` scopes to one project and
  * is not a path the handler opens — it is matched as a string against the slug
  * and compared, so an unknown one simply matches nothing. */
-ipcMain.handle("local:sessions", (_e, arg) => agentSessions.list(arg || {}));
-ipcMain.handle("local:session", (_e, arg) =>
+bridge.handle("local:sessions", (_e, arg) => agentSessions.list(arg || {}));
+bridge.handle("local:session", (_e, arg) =>
   agentSessions.read(
     (arg && arg.source) || "",
     (arg && arg.slug) || "",
@@ -3984,22 +3989,23 @@ ipcMain.handle("local:session", (_e, arg) =>
 /* The subagents one session spawned. Separate from `local:sessions` because
  * it opens a metadata file per child, and a session can have ninety of them —
  * paid for once, for the session actually opened. */
-ipcMain.handle("local:sessionAgents", (_e, arg) =>
+bridge.handle("local:sessionAgents", (_e, arg) =>
   agentSessions.children((arg && arg.slug) || "", (arg && arg.id) || ""),
 );
-ipcMain.handle("local:sessionLive", (_e, arg) =>
+bridge.handle("local:sessionLive", (_e, arg) =>
   agentSessions.live((arg && arg.source) || "", (arg && arg.id) || ""),
 );
 
-ipcMain.handle("local:defaultMode", (_e, mode) => rememberMode(String(mode || "")));
+bridge.handle("local:defaultMode", (_e, mode) => rememberMode(String(mode || "")));
 
-ipcMain.handle("local:voiceStatus", () => masoraVoice.status());
-ipcMain.handle("local:voiceStart", () => masoraVoice.start());
-ipcMain.handle("local:voiceMic", () => masoraVoice.mic());
+bridge.handle("local:voiceStatus", () => masoraVoice.status());
+bridge.handle("local:voiceStart", () => masoraVoice.start());
+bridge.handle("local:voiceMic", () => masoraVoice.mic());
 
-ipcMain.handle("app:updateStatus", () => appUpdater.status());
-ipcMain.handle("app:updateCheck", () => appUpdater.check());
-ipcMain.handle("app:updateInstall", () => appUpdater.install());
+bridge.handle("app:updateStatus", () => appUpdater.status());
+bridge.handle("app:updateCheck", () => appUpdater.check());
+bridge.handle("app:updateInstall", () => appUpdater.install());
+bridge.assertComplete();
 
 /**
  * The local control API (desktop/agent-api.js) -- started eagerly on app

@@ -27,6 +27,8 @@ jobs:
       # electron (a devDependency) -- with it present the real-Electron suites would try
       # to run here instead of skipping (test/helpers.mjs NO_DRIVE), and hang without a display.
       - run: npm ci --prefix desktop --omit=dev --omit=optional --ignore-scripts
+      # The generated preload and bridge types must be what desktop/ipc-table.js produces.
+      - run: npm run ipc:check
       - run: npm test
       - run: npm run typecheck
       - run: node build.mjs

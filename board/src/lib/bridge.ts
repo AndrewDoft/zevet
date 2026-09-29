@@ -1,6 +1,9 @@
-import type { SessionsResult, SessionResult, SessionAgentsResult } from "./sessions.d.mts";
-import type { LocalWorkspace, LocalEntry, UsableAgent, ColorThemeSpec } from "./types";
 import { mirroredStorage } from "./prefs-mirror.mjs";
+import type { LocalBridge, ZevetBridge } from "./bridge.generated";
+
+// The two bridge shapes are GENERATED from desktop/ipc-table.js (npm run ipc:gen), the same table that
+// generates desktop/preload.js and registers main.js's handlers, so a call cannot exist in one and not the others.
+export type { LocalBridge, ZevetBridge };
 
 export interface ReadResult {
   ok: boolean;
@@ -215,135 +218,6 @@ export interface StoredChat extends ChatSummary {
   messages: Array<{ role: "user" | "assistant"; author?: string; text: string; at?: number }>;
 }
 
-export interface LocalBridge {
-  available: boolean;
-  read: (root: string, relPath: string) => Promise<ReadResult>;
-  write: (root: string, relPath: string, text: string, opts: { bom?: boolean; eol?: string }) => Promise<{ ok: boolean; error?: string }>;
-  agents: () => Promise<UsableAgent[]>;
-  /* C1's per-repo opt-in, keyed by resolved folder path; default none. */
-  masoraRepos?: () => Promise<Record<string, boolean>>;
-  masoraRepoToggle?: (root: string, on: boolean) => Promise<{ ok: boolean; error?: string; repos?: Record<string, boolean> }>;
-  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean }) => Promise<StartAgentResult>;
-  /** A follow-up to a console whose process has exited. All three CLIs can
-   *  resume a session by id (measured 2026-09-21); codex and opencode need a
-   *  new process to do it, which is what this is. Optional: an older desktop
-   *  build has no resume, and the composer falls back to refusing. */
-  resumeAgent?: (
-    name: string,
-    root: string,
-    resumeFrom: string,
-    opts: { model: string; mode: string; continues?: string },
-  ) => Promise<StartAgentResult>;
-  sendToAgent: (id: string, text: string) => Promise<{ ok: boolean; error?: string }>;
-  stopAgent: (id: string) => Promise<unknown>;
-  /** What the app still holds from before a reload. Optional: an older desktop
-   *  build reaps its agents on reload instead. */
-  consoles?: () => Promise<{ seq: number; consoles: HeldConsole[] }>;
-  forgetAgent?: (id: string) => Promise<unknown>;
-  watch: (root: string, relPath: string, lastWritten: string | null) => Promise<{ ok: boolean }>;
-  unwatch: (root: string, relPath: string) => Promise<unknown>;
-  diffHunks?: (root: string, rel: string) => Promise<{ ok: boolean; hunks?: Array<{ start?: number }> }>;
-  onFileChanged: (cb: (p: { root: string; relPath: string; text?: string; bom?: boolean; eol?: string }) => void) => () => void;
-  onSchedulesChanged?: (cb: (list: unknown) => void) => () => void;
-  onAgentEvent: (cb: (evt: AgentEvent) => void) => () => void;
-  /* Zevet Chat (desktop/chat.js). Optional: an older desktop build has none,
-     and the Code | Chat switch is then not offered. */
-  chatList?: (query?: string) => Promise<ChatSummary[]>;
-  chatGet?: (id: string) => Promise<StoredChat | null>;
-  chatCreate?: (folder?: string) => Promise<StoredChat>;
-  chatSetFolder?: (id: string, folder: string) => Promise<ChatSummary | null>;
-  chatRename?: (id: string, title: string) => Promise<ChatSummary | null>;
-  chatRemove?: (id: string) => Promise<boolean>;
-  chatSend?: (
-    id: string,
-    text: string,
-    opts?: { agent?: string; model?: string; effort?: string; mode?: string },
-  ) => Promise<{ ok: boolean; error?: string; brief?: boolean }>;
-  chatStop?: (id: string) => Promise<unknown>;
-  onChatEvent?: (cb: (p: { id: string; evt: { type: string; [k: string]: unknown } }) => void) => () => void;
-  /** An agent is asking permission and is waiting on the answer. Optional: a
-   *  build without computer use never sends one. */
-  onPermitRequest?: (cb: (req: PermitRequest) => void) => () => void;
-  permitAnswer?: (id: string, allow: boolean, reason?: string, always?: boolean) => Promise<{ ok: boolean; error?: string }>;
-  stats: (root: string, paths: string[]) => Promise<StatsResult>;
-  /** The last few commits, newest first. Read only — there is no restore. */
-  commits?: (root: string, limit?: number) => Promise<CommitsResult>;
-  /** Agent runs on a timer. Optional: an older desktop build does not have
-   *  them, and the hub serves this board to whatever version is installed. */
-  schedules?: () => Promise<SchedulesResult>;
-  scheduleSave?: (s: Partial<AgentSchedule>) => Promise<SchedulesResult>;
-  scheduleRemove?: (id: string) => Promise<SchedulesResult>;
-  scheduleToggle?: (id: string) => Promise<SchedulesResult>;
-  status: (root: string | null) => Promise<StatusResult>;
-  chrome: (spec: ColorThemeSpec) => void;
-  addWorkspace: () => Promise<LocalWorkspace | null>;
-  indexStatus: (root: string | null) => Promise<{ ok: boolean } & Record<string, unknown>>;
-  /* A question from an agent, and the answer back. Optional like the permit
-     pair beside them: an older main process simply never sends one. */
-  onAskRequest?: (cb: (req: AskRequest) => void) => () => void;
-  /* Answered ONCE, with the chosen LABELS. Answering twice is harmless on the
-     wire — the main process has already deleted the pending entry — but the
-     UI must not be able to, which is why the card is removed optimistically. */
-  askAnswer?: (id: string, picked: string[]) => Promise<{ ok: boolean; error?: string }>;
-  /* Save this user default permission posture. Returns what is now stored —
-     never assume the write landed, which is the whole reason it answers. */
-  defaultMode: (mode: string) => Promise<{ ok?: boolean; error?: string; mode?: string }>;
-  /** Semantic search over the workspace index. The scores are real cosines —
-   *  `code-index.js` clamps them to [-1, 1] — which is why a retrieval panel
-   *  can print one. Optional: a build without the index capability has none. */
-  /** `filter` narrows by PATH and is matched as a literal, case-insensitively
-   *  — it is not a pattern. See main.js § pathFilter: a regex from here runs
-   *  against every chunk on the main process, where one that backtracks takes
-   *  the whole app with it. */
-  indexSearch?: (root: string | null, query: string, opts?: { k?: number; filter?: string }) => Promise<IndexSearchResult>;
-  /** What the agent has written down about this repo, if it writes memories
-   *  at all. Read only: there is no bridge call that deletes one. */
-  memories?: (root: string) => Promise<MemoriesResult>;
-  /** Every agent session on this machine — claude and codex, terminal, desktop
-   *  app and IDE alike. Read only: there is no bridge call that writes or
-   *  deletes one, and a session the CLI still has open is being appended to.
-   *  Optional: an older desktop build has neither, and the pane that lists
-   *  them renders nothing without them. */
-  sessions?: (opts?: { cwd?: string | null; limit?: number }) => Promise<SessionsResult>;
-  session?: (source: string, slug: string, id: string, child?: string) => Promise<SessionResult>;
-  /** The subagents a claude session spawned. Open one by passing its id as
-   *  `session`'s fourth argument. */
-  sessionAgents?: (slug: string, id: string) => Promise<SessionAgentsResult>;
-  /** A running console's own title and, for codex, its real context — see
-   *  desktop/agent-sessions.js § live. Null until the CLI has written a file. */
-  sessionLive?: (
-    source: string,
-    id: string,
-  ) => Promise<{
-    title: string;
-    context: number | null;
-    cached: number | null;
-    output: number | null;
-    window: number | null;
-  } | null>;
-  /** Standing instructions for this repo, and which optional capabilities an
-   *  agent started here is given. Optional: an older desktop build has none,
-   *  and the panel that edits them renders nothing without it. */
-  agentSettings?: (root: string) => Promise<AgentSettingsResult>;
-  saveAgentSettings?: (root: string, patch: Partial<AgentSettings>) => Promise<AgentSettingsResult>;
-  /** Every "zevet.*" localStorage key, mirrored on this machine. Optional: an
-   *  older desktop build has neither, and `zStorage` below is then exactly
-   *  `window.localStorage`. */
-  prefs?: () => Promise<Record<string, string>>;
-  setPref?: (key: string, value: string | null) => Promise<unknown>;
-  /** Seed the mirror in one batch — see prefs-mirror.mjs's `hydratePrefsMirror`,
-   *  called once for an existing user upgrading from a build without it. */
-  setPrefs?: (entries: Record<string, string>) => Promise<unknown>;
-  indexEnable?: (root: string | null) => Promise<{ ok?: boolean; indexed?: number; skipped?: number; error?: string } | null | undefined>;
-  updateCheck: () => Promise<unknown>;
-  updateStatus: () => Promise<unknown>;
-  updateInstall: () => Promise<{ ok?: boolean; manual?: boolean; error?: string }>;
-  onUpdate: (cb: (s: unknown) => void) => void;
-  onIndexEvent: (cb: (p: { kind?: string; total?: number; loaded?: number; indexed?: number }) => void) => void;
-  workspaces: () => Promise<LocalWorkspace[]>;
-  tree: (dir: string) => Promise<{ ok: boolean; entries?: LocalEntry[]; truncated?: boolean; error?: string }>;
-}
-
 export interface ZevetConfig {
   hub?: string;
   actor?: string;
@@ -361,75 +235,6 @@ export interface ZevetConfig {
      board/src/lib/sentry.ts tags a renderer report with. Absent from a plain
      browser visit to the hub (no desktop bridge, nothing to report). */
   version?: string;
-}
-
-export interface ZevetBridge {
-  config: () => Promise<ZevetConfig | null | undefined>;
-  githubStart: (hub?: string | null, team?: string) => Promise<{ ok?: boolean; error?: string; userCode?: string }>;
-  githubWait: () => Promise<{ ok?: boolean; cancelled?: boolean; error?: string; login?: string }>;
-  githubCancel: () => void;
-  githubLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
-  /* The same three calls for Google. The flow differs — the hub owns the
-     callback, so `googleStart` hands back a URL to open rather than a code to
-     type — but the app's side of it is the same start / wait / cancel. */
-  googleStart?: (hub?: string | null, team?: string) => Promise<{ ok?: boolean; error?: string; url?: string; expiresIn?: number; domain?: string }>;
-  googleWait?: () => Promise<{ ok?: boolean; cancelled?: boolean; error?: string; login?: string; owner?: boolean }>;
-  googleCancel?: () => void;
-  googleLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
-  /** Leave the team on this machine — drops session, secret and hub from
-   *  config.json (backed up first) and returns to first-run setup. */
-  signOutTeam?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
-  /* Linking with Masora (T5, docs/contracts/cross_app_context.md). The link
-     runs in the background in the main process; this reads its status. No call
-     returns a token -- it is written straight to the OS keychain there. */
-  masoraConfig?: () => Promise<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean }>;
-  masoraChatPush?: (on: boolean) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean }>;
-  masoraSaveUrl?: (url: string) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean> }>;
-  masoraLinkStatus?: () => Promise<{ phase: string; paired?: boolean; code?: string; error?: string }>;
-  masoraLinkStart?: () => Promise<{ phase: string; paired?: boolean; code?: string; error?: string }>;
-  masoraLinkApprove?: () => Promise<boolean>;
-  masoraUnpair?: () => Promise<boolean>;
-  /* Family panel (desktop/family.js). */
-  familyStatus?: () => Promise<unknown[]>;
-  familyAct?: (app: string, action: string) => Promise<{ ok?: boolean; download?: string | null; requested?: boolean; pairing?: string } | undefined>;
-  /** Connections panel: linked-source status, and connecting a new one. */
-  masoraSources?: () => Promise<{ sources?: { kind: string; status: string }[]; error?: string }>;
-  masoraConnect?: (arg: { provider: string }) => Promise<{ ok?: boolean; error?: string }>;
-  /** Model credentials (D-0NN): team (hub-held) and personal (this machine
-   *  only, safeStorage-encrypted) merged into one metadata-only list, never
-   *  a secret. `default` is this member's chosen spawn credential, if any —
-   *  {scope:"personal"|"team", id} or {scope:"auto"} to use the ladder. */
-  listCredentials?: () => Promise<{
-    ok?: boolean;
-    credentials?: Array<{
-      id: string;
-      scope: "team" | "personal";
-      label: string;
-      provider: string;
-      kind: string;
-      last4: string;
-      addedBy?: string;
-      createdAt?: string;
-    }>;
-    default?: { scope: "team" | "personal" | "auto"; id?: string } | null;
-    error?: string;
-  }>;
-  addCredential?: (arg: {
-    scope: "team" | "personal";
-    label?: string;
-    provider: string;
-    kind: string;
-    key: string;
-  }) => Promise<{ ok?: boolean; id?: string; error?: string }>;
-  removeCredential?: (arg: { scope: "team" | "personal"; id: string }) => Promise<{ ok?: boolean; error?: string }>;
-  setDefaultCredential?: (
-    arg: { scope: "team" | "personal"; id: string } | { scope: "auto" } | null,
-  ) => Promise<{ ok?: boolean; default?: unknown }>;
-  /** The "Auto" rotation ladder — an ordered list of {credentialId, untilPct}. */
-  credentialLadder?: () => Promise<Array<{ credentialId: string; untilPct: number }>>;
-  setCredentialLadder?: (
-    ladder: Array<{ credentialId: string; untilPct: number }>,
-  ) => Promise<{ ok?: boolean; ladder?: Array<{ credentialId: string; untilPct: number }> }>;
 }
 
 declare global {
