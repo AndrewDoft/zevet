@@ -314,13 +314,39 @@ function copyText(t: string) {
   navigator.clipboard?.writeText(t).catch(() => {});
 }
 
+/** hub/server.mjs's `person()` timestamps, one line each, absolute — the
+ *  tooltip on a row's name, never text on the row itself (Zevet's copy
+ *  style: one compact word on the row, the "why" only on hover). */
+function inviteTooltip(p: {
+  invitedAt?: string | null;
+  emailSentAt?: string | null;
+  emailError?: string | null;
+  acceptedAt?: string | null;
+  lastSeen?: number | null;
+}): string {
+  const lines: string[] = [];
+  if (p.invitedAt) lines.push(`Invited ${new Date(p.invitedAt).toLocaleString()}`);
+  if (p.emailSentAt) {
+    lines.push(p.emailError ? `Email failed ${new Date(p.emailSentAt).toLocaleString()}` : `Emailed ${new Date(p.emailSentAt).toLocaleString()}`);
+  }
+  if (p.acceptedAt) lines.push(`Accepted ${new Date(p.acceptedAt).toLocaleString()}`);
+  if (p.lastSeen) lines.push(`Last seen ${new Date(p.lastSeen).toLocaleString()}`);
+  return lines.join("\n");
+}
+
 /** One pending invite's row. Resend and Copy are the SAME hub call
  *  (/auth/allow — see server.mjs's own comment on why: it rotates the key
  *  every time, so a stale key from an earlier email is never the one
  *  copied) — Resend also tries to email it, Copy just needs the text back.
  *  Andrew, verbatim: "the copy invite is different from what is actually
  *  emailed, since the copy invite doesnt contain the key" — inviteText is
- *  the hub's own mailer.mjs output, so this can never drift from it again. */
+ *  the hub's own mailer.mjs output, so this can never drift from it again.
+ *
+ *  `lifecycle` is hub/server.mjs's `person()` one-word state (invited, sent,
+ *  failed, accepted, installed) — shown on the row, next to the name, with
+ *  every timestamp behind it in a tooltip (`inviteTooltip`). Named
+ *  `lifecycle`, not `state`, because this component already has its own
+ *  local network-call `state` below. */
 function PendingRow({
   login,
   isOwnerRow,
@@ -328,6 +354,12 @@ function PendingRow({
   canManage,
   onRemoved,
   revokeKey,
+  lifecycle,
+  invitedAt,
+  emailSentAt,
+  emailError,
+  acceptedAt,
+  lastSeen,
 }: {
   login: string;
   /** The person's stable login — what `/auth/revoke` takes. `login` is their
@@ -337,6 +369,12 @@ function PendingRow({
   pending: boolean;
   canManage: boolean;
   onRemoved: () => void;
+  lifecycle: string;
+  invitedAt: string | null;
+  emailSentAt: string | null;
+  emailError: string | null;
+  acceptedAt: string | null;
+  lastSeen: number | null;
 }) {
   const [state, setState] = useState<
     | { phase: "idle" }
@@ -405,7 +443,9 @@ function PendingRow({
 
   return (
     <div className="srow" key={login}>
-      <span className="k">{handle(login) + (isOwnerRow ? "  · owner" : pending ? "  · invited" : "")}</span>
+      <span className="k" title={isOwnerRow ? undefined : inviteTooltip({ invitedAt, emailSentAt, emailError, acceptedAt, lastSeen })}>
+        {handle(login) + (isOwnerRow ? "  · owner" : "  · " + lifecycle)}
+      </span>
       <span className="v">
         {state.phase === "sent" ? <span className="hint">Sent</span> : null}
         {state.phase === "failed" ? <span style={{ color: "var(--bad)" }}>{state.message}</span> : null}
@@ -462,6 +502,7 @@ function AccountSection() {
   const [whoErr, setWhoErr] = useState("");
   const [inviteResult, setInviteResult] = useState<{
     login: string;
+    already: boolean;
     emailSent: boolean;
     emailError?: string;
     recipientNeeded?: boolean;
@@ -506,6 +547,8 @@ function AccountSection() {
             email_error?: string;
             recipient_needed?: boolean;
             inviteText?: string;
+            login?: string;
+            already?: boolean;
           },
         })),
       )
@@ -518,10 +561,14 @@ function AccountSection() {
             // email ("octocat andrew@x.com") — the roster's own row is keyed
             // on the GitHub login or the email alone, not this compound
             // string, so this result is shown standalone rather than matched
-            // back to a row.
+            // back to a row. `r.body.login`, when present, is the CANONICAL
+            // row this invite actually landed on — not always what was typed:
+            // dedupe-by-email (hub/accounts.mjs's `allow`) can resend an
+            // existing row keyed on a different identifier than this one.
             if (route === "/auth/allow") {
               setInviteResult({
-                login,
+                login: r.body.login || login,
+                already: Boolean(r.body.already),
                 emailSent: Boolean(r.body.email_sent),
                 emailError: r.body.email_error,
                 recipientNeeded: r.body.recipient_needed,
@@ -585,7 +632,19 @@ function AccountSection() {
   const shared = Boolean(whoState.shared);
   const owner = Boolean(whoState.owner);
   const people = Array.isArray(whoState.people)
-    ? (whoState.people as Array<{ login: string; key?: string; provider?: string; owner?: boolean; pending?: boolean }>)
+    ? (whoState.people as Array<{
+        login: string;
+        key?: string;
+        provider?: string;
+        owner?: boolean;
+        pending?: boolean;
+        state?: string;
+        invitedAt?: string | null;
+        emailSentAt?: string | null;
+        emailError?: string | null;
+        acceptedAt?: string | null;
+        lastSeen?: number | null;
+      }>)
     : [];
   // The SLUG (whoami's `team`), not teamLabel: passed through to
   // githubStart/googleStart below so a reconnect from a NON-default team
@@ -658,6 +717,12 @@ function AccountSection() {
           pending={Boolean(p.pending)}
           canManage={owner && !p.owner}
           onRemoved={() => refreshWhoami()}
+          lifecycle={p.state || (p.pending ? "invited" : "accepted")}
+          invitedAt={p.invitedAt ?? null}
+          emailSentAt={p.emailSentAt ?? null}
+          emailError={p.emailError ?? null}
+          acceptedAt={p.acceptedAt ?? null}
+          lastSeen={p.lastSeen ?? null}
         />,
       );
     });
@@ -722,7 +787,7 @@ function AccountSection() {
                 </button>
               </>
             ) : (
-              "Invited"
+              inviteResult.already ? "Resent" : "Invited"
             )}
           </span>
         </div>,

@@ -340,6 +340,20 @@ describe("/team/join — redeeming an invite key", () => {
     const kaiAfter = after.people.find((p) => p.login === "kai");
     assert.equal(kaiAfter.pending, false);
   });
+
+  // Requirement 2 (invite lifecycle): redeeming a key both claims the row
+  // (accepted) AND mints a session (installed) in the same call, so the
+  // roster's compact state word should jump straight to "installed" — not
+  // stop at "accepted" — the moment the key is used.
+  test("redeeming a key shows as installed, not merely accepted, on the very next whoami", async () => {
+    const { hub, key, ownerToken } = await seededHub();
+    assert.equal((await join(hub.base, SLUG, key)).status, 200);
+    const after = await fetch(`${hub.base}/auth/whoami`, { headers: { "x-zevet-token": ownerToken } }).then((r) => r.json());
+    const kai = after.people.find((p) => p.login === "kai");
+    assert.equal(kai.state, "installed");
+    assert.ok(kai.acceptedAt);
+    assert.ok(kai.lastSeen);
+  });
 });
 
 /**
@@ -457,5 +471,23 @@ describe("/auth/allow — invite keys and the email response shape", () => {
     assert.equal(body.recipient_needed, true);
     assert.equal(body.email_sent, false);
     assert.equal(typeof body.key, "string");
+  });
+
+  // Requirement 1 (dedupe): "i invited michael twice" — a GitHub login typed
+  // with an explicit email the first time, and that SAME address typed bare
+  // the next time, must collapse into the one pending row. No live GitHub
+  // call is needed here — the two-token form ("login email") always uses the
+  // TYPED email as the recipient, never a public-profile lookup.
+  test("inviting the same address under a different identifier resends the one row, and settings.tsx is told so", async () => {
+    const { hub, ownerToken } = await seededHub();
+    const first = await (await allow(hub.base, ownerToken, "octocat kai@example.com")).json();
+    assert.equal(first.already, false);
+    assert.equal(first.people.filter((p) => p.pending).length, 1);
+
+    const second = await (await allow(hub.base, ownerToken, "kai@example.com")).json();
+    assert.equal(second.already, true, "recognised as the SAME pending invite");
+    assert.equal(second.login, "octocat", "the ORIGINAL row, not a new one keyed on the email");
+    assert.equal(second.people.filter((p) => p.pending).length, 1, "still one row, not two");
+    assert.notEqual(second.key, first.key, "resending still rotates the key");
   });
 });
