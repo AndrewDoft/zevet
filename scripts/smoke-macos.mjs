@@ -138,5 +138,5 @@ try {
     if (appProcess.exitCode === null && appProcess.signalCode === null) appProcess.kill("SIGKILL");
   }
   if (mounted) run("hdiutil", ["detach", mount]);
-  fs.rmSync(temp, { recursive: true, force: true });
+  fs.rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 }
