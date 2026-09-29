@@ -23,6 +23,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { psEnvWithoutModulePath } from "./lib/ps-env.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const { readManifest } = createRequire(import.meta.url)("../desktop/app-update.js");
@@ -66,10 +67,13 @@ function verifyArtifactIntegrity(file, key) {
     return `${path.basename(file)} is only ${bytes} bytes (< ${MIN_ARTIFACT_BYTES}) -- looks truncated, not publishing it`;
   }
   if (key === "win32-x64" && process.platform === "win32") {
+    // See scripts/lib/ps-env.mjs: launched from pwsh 7, the inherited
+    // PSModulePath breaks Windows PowerShell's Security module autoload and
+    // this call errors instead of reporting a signature status.
     const ps = spawnSync(
       "powershell.exe",
       ["-NoProfile", "-Command", `(Get-AuthenticodeSignature '${file}').Status.ToString()`],
-      { encoding: "utf8", windowsHide: true },
+      { encoding: "utf8", windowsHide: true, env: psEnvWithoutModulePath() },
     );
     const status = (ps.stdout || "").trim();
     if (status === "NotSigned") {
