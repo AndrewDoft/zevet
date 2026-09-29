@@ -40,6 +40,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
+const agentCatalogs = require("./agent-catalogs.js");
 
 const IS_WINDOWS = process.platform === "win32";
 
@@ -462,7 +463,20 @@ function invocationFor(agent, opts) {
   const extra = [];
   // A model is only passed when one was chosen; the CLI's own default is a
   // better answer than a value zevet guessed.
-  if (typeof o.model === "string" && o.model.trim()) extra.push(agent === "claude" ? "--model" : "-m", o.model.trim());
+  if (typeof o.model === "string" && o.model.trim()) {
+    const model = o.model.trim();
+    // codex forwards -m straight to OpenAI with no local validation of its own,
+    // and the list the picker offers when this machine has never talked to
+    // codex (no ~/.codex/models_cache.json yet) is agent-models.generated.mjs's
+    // shipped snapshot from whoever last ran the sync script -- not proof the
+    // id exists on THIS account's plan. Sending an id codex does not recognize
+    // is a provider 400 with no reply at all (this is how a brand-new install's
+    // very first Codex message can fail before the real cache ever gets
+    // written). Only trust a codex model against its own cache; with none, or
+    // the id missing from it, say nothing and let codex's own default answer.
+    const trusted = agent !== "codex" || (agentCatalogs.codexModels(o.home) || []).some((m) => m.id === model);
+    if (trusted) extra.push(agent === "claude" ? "--model" : "-m", model);
+  }
   extra.push(...modeFlags(agent, o.mode).flags);
 
   const forkFrom =

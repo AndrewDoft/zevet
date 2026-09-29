@@ -21,6 +21,71 @@
 // all of it.
 const { contextBridge, ipcRenderer } = require("electron");
 
+// Error reporting for BOTH renderer realms this preload runs in front of.
+//
+// `@sentry/electron/preload` (required for its side effect) hooks up IPC to
+// the main process and, under contextIsolation, exposes it to the PAGE's own
+// world via contextBridge -- that is what lets board/src's and setup.html's
+// own `Sentry.init()` (a separate realm each, see below) reach the main
+// process at all, remote origin or not.
+//
+// `@sentry/electron/renderer`'s own `init()` HERE, in the preload's realm, is
+// a second, independent thing: contextIsolation gives the preload script its
+// own JS realm, and per Sentry's own Electron guide an uncaught exception in
+// THAT realm is invisible to a Sentry client initialized only in the page --
+// each realm needs its own client to catch its own errors.
+//
+// NO dsn/release/environment HERE: passing them to the renderer init is
+// deprecated in this SDK version (verified against node_modules/@sentry/
+// electron/renderer/sdk.js) precisely because every renderer sends through
+// the MAIN process's own client over IPC -- the main process is what
+// actually holds the DSN (desktop/sentry.js) and what scrubs and tags every
+// event, this one included, via its own beforeSend. Passing a real DSN here
+// would be inert at best, misleading at worst (implying this realm talks to
+// Sentry directly, which it never does).
+require("@sentry/electron/preload");
+let SentryPreload = null;
+try {
+  SentryPreload = require("@sentry/electron/renderer");
+  SentryPreload.init({ sendDefaultPii: false });
+  SentryPreload.setTag("realm", "preload");
+} catch (err) {
+  // Error reporting must never be why the app fails to start.
+  console.error(`zevet: preload Sentry init failed: ${err.message}`);
+}
+
+/**
+ * setup.html has no bundler, so it cannot import `@sentry/electron/renderer`
+ * itself the way board/src does (lib/sentry.ts) -- it forwards through this
+ * instead, to the SAME preload-realm client just initialized above, tagged so
+ * it reads apart from a genuine preload-script error.
+ *
+ * `reportError` rebuilds a plain `Error` on THIS side rather than accepting
+ * one across the bridge: contextBridge structured-clones its arguments, and
+ * an `Error` that crossed that boundary is not reliably still an `Error` --
+ * rebuilding from `{message, stack}` is what makes the shape predictable.
+ */
+contextBridge.exposeInMainWorld("zevetSentry", {
+  reportError: (info) => {
+    if (!SentryPreload) return;
+    try {
+      const err = new Error(String((info && info.message) || "renderer error"));
+      if (info && typeof info.stack === "string") err.stack = info.stack;
+      SentryPreload.captureException(err, { tags: { realm: "renderer-page" } });
+    } catch {
+      // Reporting must never throw back into the page.
+    }
+  },
+  reportMessage: (message) => {
+    if (!SentryPreload) return;
+    try {
+      SentryPreload.captureMessage(String(message || ""), { tags: { realm: "renderer-page" } });
+    } catch {
+      // Reporting must never throw back into the page.
+    }
+  },
+});
+
 /**
  * Subscribe to a main-process push, and hand back the way to stop.
  *

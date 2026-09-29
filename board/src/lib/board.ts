@@ -13,6 +13,7 @@ import { draftAfter } from "./chat-stream.mjs";
 import { classifyEnding, noteModelLimit as noteLimitFromStatus } from "./model-limits.mjs";
 import { learnModels } from "./models.mjs";
 import { usageOf, type UsageReading } from "./usage.mjs";
+import { initBoardSentry } from "./sentry";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
 import type { TranscriptState } from "./transcript.d.mts";
 import { mainSurface, repoToFollow, showConversation, showFile } from "./view.mjs";
@@ -2892,6 +2893,7 @@ export function boot(): void {
       if (MODES.some((m) => m.id === saved)) {
         useBoard.setState({ defaultMode: saved, launchMode: saved as LaunchMode });
       }
+      initBoardSentry({ actor: c.actor, version: c.version });
     });
   }
 
@@ -2987,6 +2989,8 @@ interface ZevetConfigLike {
   machine?: string;
   /** This user's default permission posture; see desktop/main.js storedMode. */
   mode?: string;
+  /** electron-builder's version string; see lib/sentry.ts. */
+  version?: string;
 }
 
 /* ---------------------------------------------------------------------------

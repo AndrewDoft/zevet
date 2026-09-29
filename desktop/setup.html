@@ -174,6 +174,23 @@
   </div>
 
 <script>
+  // Error reporting. This page has no bundler, so it cannot pull in the real
+  // @sentry/electron/renderer SDK the way board/src does (see that file's
+  // lib/sentry.ts) -- instead it forwards to the SAME preload-realm Sentry
+  // client desktop/preload.js already initialized for its own errors, via
+  // the narrow bridge that preload exposes. Reporting itself must never be
+  // why a step here fails, so every hook here is best-effort.
+  (function () {
+    if (!window.zevetSentry || typeof window.zevetSentry.reportError !== "function") return;
+    window.addEventListener("error", function (e) {
+      window.zevetSentry.reportError({ message: String((e && e.message) || "error"), stack: e && e.error && e.error.stack });
+    });
+    window.addEventListener("unhandledrejection", function (e) {
+      var reason = e && e.reason;
+      window.zevetSentry.reportError({ message: String((reason && reason.message) || reason || "unhandled rejection"), stack: reason && reason.stack });
+    });
+  })();
+
   var $ = function (id) { return document.getElementById(id); };
   var verified = false;
   var mode = "create";
@@ -215,6 +232,11 @@
   // Re-opened from the menu: prefill what is already configured.
   var q = new URLSearchParams(location.search);
   if (q.get("actor")) $("actor").value = q.get("actor");
+  // ZEVET_SENTRY_TEST=1: desktop/main.js appends this to setup.html's own
+  // query too, so this window's own report path fires once as well.
+  if (q.get("sentryTest") === "1" && window.zevetSentry && typeof window.zevetSentry.reportMessage === "function") {
+    window.zevetSentry.reportMessage("zevet sentry test");
+  }
   window.zevet.config().then(function (c) {
     if (!c) return;
     if (!$("actor").value) $("actor").value = c.actor || "";

@@ -63,6 +63,8 @@ const masoraConnect = require("./masora-connect.js");
 const chats = require("./chat.js");
 const { createClaudeCli } = require("./chat-claude.js");
 const { createCli: createChatCli } = require("./chat-cli.js");
+const sentry = require("./sentry.js");
+const Sentry = require("@sentry/electron/main");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -83,6 +85,41 @@ const runtimeReady = runtime.preparePath();
 const HOME = zevetHome();
 const CONFIG = path.join(HOME, "config.json");
 const AGENT_API_FILE = path.join(HOME, "agent-api.json");
+
+/**
+ * Error reporting, wired before anything else -- including the two windows --
+ * so a crash during startup is not a crash nobody hears about. What actually
+ * gets scrubbed and tagged lives in desktop/sentry.js; this only supplies the
+ * release name and the tags this MACHINE knows before any window exists.
+ * `member` is corrected the moment a real one is known (writeConfig, below).
+ */
+{
+  const startupCfg = readConfig();
+  sentry.initMain({
+    sentryMain: Sentry,
+    release: sentry.releaseName(app.getVersion()),
+    tags: {
+      platform: process.platform,
+      arch: process.arch,
+      member: (startupCfg && (startupCfg.actor || startupCfg.login)) || "unknown",
+    },
+  });
+}
+// ZEVET_SENTRY_TEST=1: one deliberate event proving the pipe works, distinct
+// from a real failure by its exact, unmistakable text.
+if (process.env.ZEVET_SENTRY_TEST === "1") sentry.sendTestMessage(Sentry);
+
+/**
+ * Every agent launch, Code's and Chat's alike, reports a failed run to Sentry
+ * without each of desktop/main.js's five call sites having to remember to —
+ * see desktop/sentry.js's own comment on `withAgentFailureCapture` for why
+ * this is one wrapper applied once rather than five copies of the same
+ * capture call.
+ */
+const instrumentedStartConsole = sentry.withAgentFailureCapture(agentConsole.startConsole, {
+  sentryMain: Sentry,
+  invocationFor: agentConsole.invocationFor,
+});
 
 /**
  * Test hook: record every `shell.openExternal` call instead of actually
@@ -579,6 +616,10 @@ function writeConfig(cfg) {
   } catch {
     // Windows uses ACLs; there is nothing to do here and nothing to report.
   }
+  // The startup tag (above) is a guess made before anyone had signed in; a
+  // sign-in during THIS run corrects it immediately rather than waiting for
+  // the next launch.
+  Sentry.setTag("member", cfg.actor || cfg.login || "unknown");
 }
 
 /**
@@ -718,11 +759,16 @@ function openBoard(cfg) {
   // is down, and the two have nothing in common. Not an early return — the
   // window's own handlers below, `closed` above all, still have to be wired up
   // or the app is left holding a window it thinks is open.
+  // ZEVET_SENTRY_TEST=1: board/src's own Sentry init reads this off its URL
+  // and fires one captureMessage, since a remote-origin page has no other way
+  // to learn it should.
+  const sentryTestParam = process.env.ZEVET_SENTRY_TEST === "1" ? "&sentryTest=1" : "";
+
   const auth = authFor(cfg);
   if (auth.error) {
     boardWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(credentialPage(auth.error)));
   } else {
-    boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}`);
+    boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
   }
 
   // A fresh network interface (Wi-Fi still associating, a VPN adapter still
@@ -737,7 +783,7 @@ function openBoard(cfg) {
       boardLoadAttempts += 1;
       setTimeout(() => {
         if (!boardWindow || boardWindow.isDestroyed()) return;
-        boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}`);
+        boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
       }, 1500);
       return;
     }
@@ -864,7 +910,10 @@ function openSetup(existing) {
     },
   });
   setupWindow.loadFile(path.join(__dirname, "setup.html"), {
-    query: existing ? { actor: existing.actor || "" } : {},
+    query: {
+      ...(existing ? { actor: existing.actor || "" } : {}),
+      ...(process.env.ZEVET_SENTRY_TEST === "1" ? { sentryTest: "1" } : {}),
+    },
   });
   setupWindow.on("closed", () => {
     setupWindow = null;
@@ -1111,6 +1160,10 @@ ipcMain.handle("zevet:config", () => {
     // nothing to derive a document key from. The editor cannot work there and
     // says so; see doc:join.
     legacy: !hasSecret,
+    // Not a credential -- electron-builder's own version string, read for the
+    // board's own Sentry release tag (board/src/lib/sentry.ts) so a renderer
+    // report reads "zevet@0.2.85" the same as a main-process one.
+    version: app.getVersion(),
   };
 });
 
@@ -2484,7 +2537,7 @@ async function runDueSchedules() {
         // `started` is assigned, so the id it needs is read off a mutable box.
         const handle = { id: null };
         const env = await credentialEnvFor();
-        const started = agentConsole.startConsole({
+        const started = instrumentedStartConsole({
           agent: s.agent,
           cwd: place.cwd,
           model: s.model,
@@ -3351,7 +3404,7 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
     return { ok: false, error: resolved.error };
   }
   const env = resolved.env;
-  const started = agentConsole.startConsole({
+  const started = instrumentedStartConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
     model: opts && typeof opts.model === "string" ? opts.model : "",
@@ -3473,7 +3526,7 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
   const resolved = await agentEnvFor(engineReq);
   if (!resolved.ok) return { ok: false, error: resolved.error };
   const env = resolved.env;
-  const started = agentConsole.startConsole({
+  const started = instrumentedStartConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
     model: opts && typeof opts.model === "string" ? opts.model : "",
@@ -3683,9 +3736,9 @@ async function nameChat(id, text) {
    agent-console.js agent they drive. A chat records which one answered each
    message. */
 const chatProviders = {
-  claude: createClaudeCli({ startConsole: agentConsole.startConsole }),
-  codex: createChatCli({ agent: "codex", id: "codex-cli", startConsole: agentConsole.startConsole }),
-  opencode: createChatCli({ agent: "opencode", id: "opencode-cli", startConsole: agentConsole.startConsole }),
+  claude: createClaudeCli({ startConsole: instrumentedStartConsole }),
+  codex: createChatCli({ agent: "codex", id: "codex-cli", startConsole: instrumentedStartConsole }),
+  opencode: createChatCli({ agent: "opencode", id: "opencode-cli", startConsole: instrumentedStartConsole }),
 };
 const DEFAULT_CHAT_AGENT = "claude";
 
@@ -3841,6 +3894,10 @@ ipcMain.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(a
 // appUpdater.state so a download's percent ticks (also delivered through
 // onStatus) don't rebuild the native menu dozens of times for nothing.
 let menuOffersRestart = false;
+// Reported once per ENTRY into "error", not on every status poll while it
+// stays there — app-update.js re-announces the same state on a timer, and an
+// event per poll would flood one real failure into hundreds of duplicates.
+let lastUpdatePhase = null;
 const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
@@ -3856,6 +3913,10 @@ const appUpdater = new AppUpdater({
   onStatus: (s) => {
     toBoard("app:update", s);
     if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send("app:update", s);
+    if (s.phase === "error" && lastUpdatePhase !== "error") {
+      sentry.captureUpdateFailure(Sentry, { stage: "auto-update", error: s.error || "unknown auto-update error" });
+    }
+    lastUpdatePhase = s.phase;
     const canRestart = s.phase === "ready" && Boolean(s.canInstall);
     if (canRestart !== menuOffersRestart) {
       menuOffersRestart = canRestart;
