@@ -5,7 +5,6 @@ import sys
 import tempfile
 
 root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(root / "desktop/node_modules/dmg-builder/vendor"))
 from ds_store import DSStore
 from mac_alias import Bookmark
 
