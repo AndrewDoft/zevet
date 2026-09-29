@@ -99,6 +99,12 @@ export function ModelChoice({
         // opencode's provider-prefixed ids and claude/codex's short ones share
         // one namespace otherwise, and a limit on one agent's "sonnet" would
         // wrongly gray another's.
+        // `a.models` is this machine's own cache (main.js `local:agents`,
+        // read fresh off ~/.codex/models_cache.json etc.) — a model there is
+        // known to exist for THIS account. Missing it, MODELS[a.name] is the
+        // bundled fallback captured off whoever last ran sync-agent-models.mjs
+        // and says nothing about what this install's account can reach.
+        const verified = Boolean(a.models);
         const rawAliases = a.models?.map((m) => m.id) ?? MODELS[a.name] ?? [];
         const aliases = sortByLimit(
           rawAliases.map((alias) => `${a.name}:${alias}`),
@@ -106,7 +112,7 @@ export function ModelChoice({
         ).map((qualified) => qualified.slice(a.name.length + 1));
         return {
           agent: a,
-          models: aliases.map((alias): ModelOption & { resetLabel?: string } => {
+          models: aliases.map((alias): ModelOption & { resetLabel?: string; verified?: boolean } => {
             const { label, from, note, trains } = describeModel(alias);
             const notes = [from, note, trains ? "may train on prompts" : null].filter(Boolean);
             const resetAt = modelLimitedUntil(zStorage, `${a.name}:${alias}`);
@@ -133,6 +139,7 @@ export function ModelChoice({
               // Connect chip on its group) and cannot be picked.
               disabled: Boolean(resetAt) || !a.ok,
               resetLabel: resetAt ? `Resets ${whenText(resetAt)}` : undefined,
+              verified,
             };
           }),
         };
@@ -142,7 +149,16 @@ export function ModelChoice({
 
   const all = useMemo(() => groups.flatMap((g) => g.models), [groups]);
   const match = all.find((m) => aliasOf(m.id) === launchModel);
-  const selected = match?.id ?? all[0]?.id ?? "";
+  /* ⚠️ ROOT CAUSE of a fresh install's first Codex message failing with
+     "Provider error 400" (no local ~/.codex/models_cache.json yet, so
+     a.models above was undefined and this fell through to MODELS[a.name] —
+     the id zevet shipped with, captured off Andrew's own account, which is
+     not guaranteed to exist for anyone else's plan). all[0] is only trusted
+     here when it is VERIFIED — read off this machine's own CLI cache. With
+     nothing verified, `selected` stays "" and the write-back below skips,
+     so invocationFor never adds a `--model`/`-m` flag and the CLI falls back
+     to its own default, which is always valid for whatever account it is. */
+  const selected = match?.id ?? all.find((m) => m.verified)?.id ?? "";
 
   /* ⚠️ THE FALLBACK WAS DISPLAY-ONLY, so the picker showed one model and the
      run started on another. `launchModel` is what board.ts § startConsole
