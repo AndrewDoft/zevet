@@ -116,14 +116,15 @@ function StartupActivity({ reading }: { reading: boolean }) {
   const points = dailyActivity(events, 14);
   const total = points.reduce((n, p) => n + p.count, 0);
   return (
-    <ActivityGraph
-      className="mx-4 mt-3 mb-1"
-      data={points}
-      start={points[0].date}
-      end={points[points.length - 1].date}
-      title="Recent activity"
-      total={`${total} event${total === 1 ? "" : "s"} · 14d`}
-    />
+    <div className="startup-activity">
+      <ActivityGraph
+        data={points}
+        start={points[0].date}
+        end={points[points.length - 1].date}
+        title="Recent activity"
+        total={`${total} event${total === 1 ? "" : "s"} · 14d`}
+      />
+    </div>
   );
 }
 
