@@ -1266,3 +1266,44 @@ the kit adoption, and the pinned keys must not be replaceable by the thing they 
   copy is preferred. Drop the extraResource once a release has run on the payload path.
 
 > Renumbered from D-029 at merge: D-029 went to the hub build-id reload (hub-build-reload).
+
+## D-031 — Shipped: bootstrap-shell payload release, and the first payload published (0.2.89)
+
+**Decided (Andrew, 2026-09-29, "release Zevet 0.2.89").** First version built on the D-030 shell/payload
+split: `desktop/package.json`'s `main` is `bootstrap.js`, and the release carries the payload as
+`resources/app-core`, the seed. This is also the first release to publish a payload, not just an
+installer — the `p/zevet/stable/{win-x64,mac-arm64}` pulses now exist on `masora-app` for the first time,
+seq 2089, mapping exactly to what this installer carries (per D-030, `seqOf("0.2.89") = 2089`).
+
+- **Verified before tagging.** `npm test`: 2720 tests, 2713 pass, 0 fail, 7 skipped. Both `build.yml` legs
+  green on the tag (`93c83e0`, `v0.2.89`): Windows `Get-AuthenticodeSignature` -> `Valid`, `CN=Andrew Doft`;
+  macOS `spctl` -> `source=Notarized Developer ID`, ticket stapled, native arm64 in all 18 Mach-O files.
+- **`hub/client-manifest.signed.json` re-signed** for the version bump (`scripts/sign-client-manifest.mjs`);
+  `scripts/release-check.mjs` passed before tagging.
+- **Installer feed and payload published together.** `scripts/make-feed.mjs ./release-0.2.89` for the
+  installer feed; `scripts/make-feed.mjs payload --out ./payload-0.2.89 --channel stable` staged
+  `desktop/payload-tree.cjs`'s tree (the same tree this build's installer seeds from) and wrote 67 blobs
+  + 2 manifests (one per platform) + 2 pulses. Uploaded bytes-before-pointer: `p/b/`, `p/m/`, the two
+  payload pulses, then `zevet-latest.json` last.
+- **Published straight to `stable`**, not `canary` first — this is the seeding release, so there is no
+  earlier build for a canary cohort to compare against; `stable`'s seq starts at 2089 and the seed maps
+  exactly, same as the plan's masora 0.3.116 step.
+- **Stable links repointed** (`/download/Zevet.dmg`, `/download/Zevet-Setup.exe`) in place via the `r+`
+  python script (never `sed -i`), confirmed inside `masora-caddy-1` at `/etc/caddy/Caddyfile`, then
+  `caddy reload`.
+- **Hub redeployed** from the `v0.2.89` tag (tarball over `/srv/zevet` in place, `docker restart
+  masora-zevet-hub-1`) since the manifest was re-signed. `board.js`/`editor.js` sources did not change
+  this release, so `BUILD_ID` (`507c4ef3009d`) is unchanged from before the restart — expected per its
+  definition (D-029: a hash of the two `.srchash` files, not of the deploy itself).
+
+**Verification.** Both stable links return `200` with bytes that hash to the exact sha256 the feed
+(and CI) named (`e339912d…` dmg, `69bd66c7…` exe) — a fresh `curl | sha256sum`, not the upload source.
+Both `p/zevet/stable/*/pulse.json` cryptographically verify under the pinned `zevet-2026-09` key via
+desktop-kit's real `verifyFeed`/`PULSE_DOMAIN`, naming build `0.2.89` seq `2089`. `p/m/*` and `p/b/*`
+serve `Cache-Control: public, max-age=31536000, immutable`; the pulses serve `no-store`. Hub `/healthz`
+and `/version` both `200` after redeploy.
+
+**Not done / could not verify from here.** No Windows or macOS machine on hand to click "Check now" and
+watch a live app actually swap onto the new payload (RELEASING.md §6/§7's `test-payload-swap.mjs` covers
+this in CI instead, and ran green on both `build.yml` legs). Disk on `masora-app` was 15G free before and
+after upload (well above the 5G cleanup threshold), so no old installers were removed.
