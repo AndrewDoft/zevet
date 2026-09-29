@@ -898,8 +898,9 @@ class AppUpdater {
    * also what happens whenever nothing ever set bundlePath, i.e. everywhere
    * this shipped before today.
    *
-   * ⚠️ UNVERIFIED ON REAL HARDWARE. There is no Mac available to this change;
-   * see _macReplaceSteps and its tests for what is actually pinned down.
+   * Verified on real Apple Silicon hardware (Codemagic mac_mini_m2,
+   * codemagic.yaml's macos-autoupdate workflow, scripts/test-macos-autoupdate.mjs):
+   * both the silent install-on-quit swap and the "Restart now" relaunch.
    */
   canSelfReplaceMac() {
     if (this.platform !== "darwin" || !this.bundlePath) return false;

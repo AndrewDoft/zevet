@@ -564,10 +564,13 @@ secrets. A fresh CI keychain also lacks Apple's Developer ID intermediate CA, wh
 build whenever `CSC_LINK` is set — without it electron-builder reports a perfectly
 valid imported cert as `CSSMERR_TP_NOT_TRUSTED`.
 
-This is also what unblocks **in-place auto-update on macOS**. macOS will not let an unsigned
-app replace itself, so `desktop/app-update.js` currently opens the disk image and asks the
-person to drag it across. Windows has had one-click update since 0.2.0; macOS cannot until
-this is bought.
+This is also what unblocked **in-place auto-update on macOS**, as of 0.2.86: macOS will not let
+an unsigned app replace itself, and `desktop/app-update.js`'s self-replace path
+(`canSelfReplaceMac`/`_spawnMacReplace`) only runs once `bundlePath` is set on a signed build.
+Verified end to end, including the "Restart now" relaunch, on real Apple Silicon hardware via
+codemagic.yaml's `macos-autoupdate` workflow. A build with no `bundlePath` configured (or an
+unsigned dev build) still falls back to opening the disk image and asking the person to drag
+it across.
 
 **Windows — Azure Trusted Signing, about $10/month. Already on.** Secrets
 `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_SUBSCRIPTION_ID` (OIDC federated

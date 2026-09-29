@@ -1146,3 +1146,41 @@ signing entirely means restoring `readManifest(json, ...)` in `AppUpdater.check(
 `test/app-update.test.mjs` "a signed feed and a signed installer", `test/updater.test.mjs` "a signed
 manifest", `test/hub-client-manifest.test.mjs`, `test/outbox.test.mjs` (plain-http hook). Each guard was
 mutated (removed) and its test went red before restoring.
+
+## D-027 — Shipped: Electron 44, signed update channels, and macOS in-place self-update (0.2.86)
+
+**Decided (Andrew, 2026-09-28, "continue everything and finish it and deploy").** D-025's Electron
+38.1.2 -> 44.4.5 / electron-builder 25.1.8 -> 26.17.0 bump and D-026's signed update channels merged
+to `main` and released as zevet 0.2.86: signed Windows installer (`Get-AuthenticodeSignature` ->
+`Valid`, `CN=Andrew Doft`), notarized macOS `.dmg` (`spctl` -> `source=Notarized Developer ID`,
+ticket stapled), both proven on the real `build.yml` v-tag pipeline (Windows + macOS runners) rather
+than an ad-hoc local build. The already-live 0.2.85 feed (an unrelated identity-linking release,
+`f3dccbb`, that shipped from `main` while this branch was in flight) was re-signed in place first,
+then the hub was redeployed with the signed client manifest, then 0.2.86 was cut — so an installed
+app never saw a feed it would reject, and no app ever saw an unsigned hub manifest.
+
+- **Real bug found by the macOS self-update proof, not by review.** `_macReplaceSteps`'s cleanup
+  step (sweeping stray `zevet*.app` copies) chained every step with `&&`; a `for` loop's exit status
+  is its last command's, and `[ -e "$f" ]` is false whenever there is nothing stray to sweep — the
+  common case. That silently cancelled the `open` (relaunch) chained after it: the bundle swap to
+  X+1 completed but "Restart now" never brought the app back. Fixed by ending the step with `; true`
+  (`desktop/app-update.js`), reproduced and pinned with a real `/bin/sh -c` execution of the exact
+  generated string (`test/app-update.test.mjs`, skipped on win32 — no `/bin/sh` there), and confirmed
+  green on real Apple Silicon (Codemagic `macos-autoupdate`) both before (red, with diagnostics
+  showing no relaunch) and after (green, `PASS`) the fix.
+- **`scripts/make-feed.mjs`'s Authenticode check** inherited the same PSModulePath-poisons-a-nested-
+  Windows-PowerShell trap `scripts/codemagic.mjs` already worked around, discovered while cutting
+  this release from a pwsh shell: a validly signed `.exe` was refused as "looks corrupted" because
+  the nested `powershell.exe` could not autoload `Get-AuthenticodeSignature`. Same fix (strip
+  `PSModulePath` from the child's env) applied there too.
+
+**Verification.** `node scripts/run-tests.mjs` (0 fail), `npm run typecheck`, board build reproduces
+`hub/public` byte-for-byte. `ci.yml` green on the merge commit and on the 0.2.86 release commit.
+Live feed and hub client manifest verified over HTTPS against the pinned key after each deploy step
+(`desktop/app-update.js`'s `readSignedFeed`, `desktop/update-signing.js`'s `verifySigned`). Stable
+download links (`/download/Zevet.dmg`, `/download/Zevet-Setup.exe`) confirmed by exact
+`Content-Length` match, not just a 200. `usemasora.com/zevet` confirmed showing 0.2.86 after its
+5-minute ISR window revalidated.
+
+**Not done.** RELEASING.md's landing-page rebuild step (§5, "only when the page itself changes") was
+not needed and not run — the page picked up the new version from the feed alone, as designed.
