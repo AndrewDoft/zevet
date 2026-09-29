@@ -1213,6 +1213,15 @@
     justify-content: flex-end;
   }
 
+  /* The empty-conversation activity card, centred in the WHOLE pane (both axes,
+     any size) rather than stacked at its top-left. An overlay, so it takes no
+     height and the composer does not move; only the card takes pointer events. */
+  .startup-activity {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    display: grid; place-items: center; padding: 16px;
+  }
+  .startup-activity > * { pointer-events: auto; }
+
   .chat-thread-body { flex: 1 1 auto; min-height: 0; position: relative; }
   .chat-thread-body [data-slot="conversation-map"] {
     position: absolute; top: 12px; right: 4px; bottom: 12px; z-index: 2;
