@@ -14,6 +14,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes, generateKeyPairSync } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -930,6 +931,29 @@ describe("self-replacing a Mac bundle", () => {
       assert.match(steps[7], /for d in .*Applications.* \/Applications; do/);
       assert.match(steps[7], /zevet\*\.app.*zevet\*\.app\.update/);
       assert.match(steps[7], new RegExp(`!= '${bundle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`), "must never delete the bundle it just installed");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("the cleanup step exits 0 even when there is nothing to sweep, so the relaunch after it still runs", { skip: process.platform === "win32" }, () => {
+    const t = tempDir("zevet-mac-cleanup-");
+    try {
+      const bundle = path.join(t.dir, "zevet.app");
+      const u = new AppUpdater({
+        currentVersion: "0.1.2",
+        platform: "darwin",
+        dir: t.dir,
+        platformKey: MAC_KEY,
+        bundlePath: bundle,
+      });
+      const cleanup = u._macReplaceSteps(path.join(t.dir, MAC_FILE), bundle, process.pid)[7];
+      // The bundle's own dir, ~/Applications, and /Applications have nothing
+      // named zevet* to sweep here, so the loop's last `[ -e "$f" ]` is false.
+      // Every step is joined with `&&` (_spawnMacReplace), so a step that
+      // exits non-zero on the harmless "nothing to clean up" case would
+      // silently cancel the `open` (relaunch) chained after it.
+      execFileSync("/bin/sh", ["-c", cleanup]);
     } finally {
       t.cleanup();
     }
