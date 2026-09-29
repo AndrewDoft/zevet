@@ -112,10 +112,14 @@ function verifyArtifactIntegrity(file, key) {
     return `${path.basename(file)} is only ${bytes} bytes (< ${MIN_ARTIFACT_BYTES}) -- looks truncated, not publishing it`;
   }
   if (key === "win32-x64" && process.platform === "win32") {
+    // PSModulePath inherited from a pwsh (7+) parent makes the spawned
+    // Windows PowerShell (5.1) fail to autoload its own Get-AuthenticodeSignature
+    // module -- the same trap scripts/codemagic.mjs's token() already strips.
+    const { PSModulePath, ...env } = process.env;
     const ps = spawnSync(
       "powershell.exe",
       ["-NoProfile", "-Command", `(Get-AuthenticodeSignature '${file}').Status.ToString()`],
-      { encoding: "utf8", windowsHide: true },
+      { encoding: "utf8", windowsHide: true, env },
     );
     const status = (ps.stdout || "").trim();
     if (status === "NotSigned") {
