@@ -6,11 +6,16 @@
 //   node desktop/zevet-agent.mjs spawn --cwd <dir> [--prompt "..." | --prompt-file <path> | < stdin]
 //                                       [--model <model>] [--engine engine1|engine2|auto]
 //                                       [--mode auto|plan|ask|dangerous] [--label <name>] [--agent claude]
-//   node desktop/zevet-agent.mjs status --id <id>
-//   node desktop/zevet-agent.mjs wait   --id <id> [--timeout-ms <n>]
+//                                       [--once]   (end the process after the first result)
+//   node desktop/zevet-agent.mjs send   --id <id> [--prompt "..." | --prompt-file <path> | < stdin]
+//   node desktop/zevet-agent.mjs status --id <id> [--json]
+//   node desktop/zevet-agent.mjs wait   --id <id> [--timeout-ms <n>] [--json]   (returns when the turn's result arrives)
 //   node desktop/zevet-agent.mjs output --id <id> [--tail <n>]
 //   node desktop/zevet-agent.mjs stop   --id <id>
-//   node desktop/zevet-agent.mjs list
+//   node desktop/zevet-agent.mjs list [--json]
+//
+// An agent's STATE is working (a turn is in flight), idle (turn done, the
+// process is waiting for a `send`) or exited.
 //
 // Everything below the dispatch in main() is pure -- parseArgs, the
 // formatters, loadDiscovery -- so the suite covers argv parsing and output
@@ -20,6 +25,9 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { zevetHome } from "../client/zevet-home.mjs";
 
+// Flags that take no value, so they never swallow the next word.
+const BOOLEAN_FLAGS = new Set(["once", "json"]);
+
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
   const opts = {};
@@ -28,7 +36,7 @@ export function parseArgs(argv) {
     if (!a || !a.startsWith("--")) continue;
     const key = a.slice(2);
     const next = rest[i + 1];
-    if (next === undefined || next.startsWith("--")) {
+    if (BOOLEAN_FLAGS.has(key) || next === undefined || next.startsWith("--")) {
       opts[key] = true;
     } else {
       opts[key] = next;
@@ -109,7 +117,7 @@ export function fmtList(consoles) {
     c.agent || "-",
     c.engine || "-",
     c.model || "-",
-    c.running ? "running" : "stopped",
+    c.state || (c.running ? "working" : "exited"),
     fmtElapsed(c.elapsedMs),
     c.lastTool || "-",
   ]);
@@ -130,7 +138,11 @@ export function fmtEvent(evt) {
   if (evt.type === "gap") return `... ${evt.dropped} event(s) dropped ...`;
   if (evt.type === "agent" && evt.payload) {
     const p = evt.payload;
-    if (p.type === "result" && typeof p.result === "string") return p.result;
+    // The answer already printed as the assistant's own text; the result line
+    // is only the turn's outcome, so it is not a second copy of it.
+    if (p.type === "result") return p.is_error ? `[error] ${p.result || ""}` : "[turn done]";
+    // claude's echo of a prompt already shown as `> ...` (older transcripts).
+    if (p.type === "user") return "";
     const content = p.message && p.message.content;
     if (Array.isArray(content)) {
       return content
@@ -150,7 +162,20 @@ export function fmtOutput(events) {
   return (events || []).map(fmtEvent).filter((l) => l.length).join("\n");
 }
 
-const USAGE = `usage: zevet-agent <spawn|status|wait|output|stop|list> [--flags]`;
+/** status as a few lines a person reads; `--json` is the machine form. */
+export function fmtStatus(b) {
+  const head = [b.id, b.state, `${b.turns ?? 0} turn(s)`, fmtElapsed(b.elapsedMs)];
+  if (typeof b.costUsd === "number") head.push("$" + b.costUsd.toFixed(4));
+  return [head.join("  "), b.lastResult].filter(Boolean).join("\n");
+}
+
+const USAGE = `usage: zevet-agent <spawn|send|status|wait|output|stop|list> [--flags]`;
+
+async function promptFrom(opts, stdin) {
+  if (typeof opts.prompt === "string") return opts.prompt;
+  if (typeof opts["prompt-file"] === "string") return readFileSync(opts["prompt-file"], "utf8");
+  return readStdin(stdin);
+}
 
 async function run(argv, { disc, fetchImpl = fetch, stdin = process.stdin, stdout = console.log, stderr = console.error } = {}) {
   const { command, opts } = parseArgs(argv);
@@ -158,9 +183,7 @@ async function run(argv, { disc, fetchImpl = fetch, stdin = process.stdin, stdou
 
   if (command === "spawn") {
     if (!opts.cwd || opts.cwd === true) throw new Error("spawn needs --cwd <directory>");
-    let prompt = typeof opts.prompt === "string" ? opts.prompt : undefined;
-    if (prompt === undefined && typeof opts["prompt-file"] === "string") prompt = readFileSync(opts["prompt-file"], "utf8");
-    if (prompt === undefined) prompt = await readStdin(stdin);
+    const prompt = await promptFrom(opts, stdin);
     const { status, body } = await request(d, "POST", "/spawn", {
       fetchImpl,
       body: {
@@ -171,20 +194,29 @@ async function run(argv, { disc, fetchImpl = fetch, stdin = process.stdin, stdou
         ...(typeof opts.mode === "string" ? { mode: opts.mode } : {}),
         ...(typeof opts.label === "string" ? { label: opts.label } : {}),
         ...(typeof opts.agent === "string" ? { agent: opts.agent } : {}),
+        ...(opts.once ? { once: true } : {}),
       },
     });
     if (status !== 200 || !body.ok) return { ok: false, exitCode: 1, text: body.error || `spawn failed (${status})` };
     return { ok: true, exitCode: 0, text: JSON.stringify(body) };
   }
 
-  if (command === "status" || command === "stop" || command === "wait" || command === "output") {
+  if (command === "send" || command === "status" || command === "stop" || command === "wait" || command === "output") {
     if (!opts.id || opts.id === true) throw new Error(`${command} needs --id <console id>`);
+  }
+
+  if (command === "send") {
+    const prompt = await promptFrom(opts, stdin);
+    if (!prompt) throw new Error("send needs --prompt, --prompt-file or stdin");
+    const { status, body } = await request(d, "POST", "/send", { fetchImpl, query: { id: opts.id }, body: { prompt } });
+    if (status !== 200 || !body.ok) return { ok: false, exitCode: 1, text: body.error || `send failed (${status})` };
+    return { ok: true, exitCode: 0, text: "sent" };
   }
 
   if (command === "status") {
     const { status, body } = await request(d, "GET", "/status", { fetchImpl, query: { id: opts.id } });
     if (status !== 200 || !body.ok) return { ok: false, exitCode: 1, text: body.error || `status failed (${status})` };
-    return { ok: true, exitCode: 0, text: JSON.stringify(body) };
+    return { ok: true, exitCode: 0, text: opts.json ? JSON.stringify(body) : fmtStatus(body) };
   }
 
   if (command === "wait") {
@@ -193,7 +225,7 @@ async function run(argv, { disc, fetchImpl = fetch, stdin = process.stdin, stdou
       query: { id: opts.id, ...(opts["timeout-ms"] ? { timeoutMs: opts["timeout-ms"] } : {}) },
     });
     if (status !== 200 || !body.ok) return { ok: false, exitCode: 1, text: body.error || `wait failed (${status})` };
-    return { ok: true, exitCode: 0, text: body.resultText || "" };
+    return { ok: true, exitCode: 0, text: opts.json ? JSON.stringify(body) : body.resultText || "" };
   }
 
   if (command === "output") {
@@ -214,7 +246,7 @@ async function run(argv, { disc, fetchImpl = fetch, stdin = process.stdin, stdou
   if (command === "list") {
     const { status, body } = await request(d, "GET", "/list", { fetchImpl });
     if (status !== 200 || !body.ok) return { ok: false, exitCode: 1, text: body.error || `list failed (${status})` };
-    return { ok: true, exitCode: 0, text: fmtList(body.consoles) };
+    return { ok: true, exitCode: 0, text: opts.json ? JSON.stringify(body.consoles) : fmtList(body.consoles) };
   }
 
   return { ok: false, exitCode: 1, text: USAGE };

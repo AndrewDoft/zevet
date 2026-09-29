@@ -117,6 +117,13 @@ function resultTextFrom(events) {
   return "";
 }
 
+/** working | idle | exited. consoleLog tracks it per turn (claude stays alive
+ *  between turns, so `running` alone never says one is done); an entry
+ *  without it falls back to running-or-not. */
+function stateOf(entry) {
+  return entry.state || (entry.running ? "working" : "exited");
+}
+
 function summarize(entry) {
   if (!entry) return null;
   return {
@@ -128,6 +135,12 @@ function summarize(entry) {
     engine: entry.engine,
     label: entry.label,
     running: entry.running,
+    state: stateOf(entry),
+    turns: entry.turns ?? 0,
+    lastResult: entry.lastResult || "",
+    isError: Boolean(entry.isError),
+    costUsd: entry.costUsd ?? null,
+    usage: entry.usage ?? null,
     startedAt: entry.startedAt,
     elapsedMs: Date.now() - entry.startedAt,
     title: entry.title || entry.autoTitle || "",
@@ -144,11 +157,12 @@ function summarize(entry) {
  *   - startAgentCore({agent, cwd, opts, trusted}) -> {ok, id, engine, error}
  *   - sendToAgentCore(id, text) -> {ok, error}
  *   - stopAgentCore(id) -> {ok, error}
+ *   - setOnce(id) -> marks a console to end after its first result (optional; `spawn --once`)
  *   - getConsole(id) -> the consoleLog entry, or undefined
  *   - listConsoles() -> every consoleLog entry
  */
 async function start(deps = {}) {
-  const { startAgentCore, sendToAgentCore, stopAgentCore, getConsole, listConsoles } = deps;
+  const { startAgentCore, sendToAgentCore, stopAgentCore, setOnce, getConsole, listConsoles } = deps;
   for (const name of ["startAgentCore", "sendToAgentCore", "stopAgentCore", "getConsole", "listConsoles"]) {
     if (typeof deps[name] !== "function") throw new Error(`agent-api: start() requires a ${name}() function`);
   }
@@ -164,6 +178,7 @@ async function start(deps = {}) {
     const agent = typeof body.agent === "string" && body.agent ? body.agent : "claude";
     const started = await startAgentCore({ agent, cwd: body.cwd, opts, trusted: true });
     if (!started.ok) return { status: 400, body: started };
+    if (body.once === true && setOnce) setOnce(started.id);
     if (typeof body.prompt === "string" && body.prompt) {
       const sent = sendToAgentCore(started.id, body.prompt);
       if (!sent || sent.ok === false) {
@@ -171,6 +186,16 @@ async function start(deps = {}) {
       }
     }
     return { status: 200, body: started };
+  }
+
+  function handleSend(id, body) {
+    if (typeof body.prompt !== "string" || !body.prompt) return { status: 400, body: { ok: false, error: "send needs a prompt" } };
+    const entry = getConsole(id);
+    if (!entry) return { status: 404, body: { ok: false, error: "no such console" } };
+    if (!entry.running) return { status: 409, body: { ok: false, error: "agent has exited" } };
+    const sent = sendToAgentCore(id, body.prompt);
+    if (!sent || sent.ok === false) return { status: 400, body: { ok: false, error: (sent && sent.error) || "could not send the prompt" } };
+    return { status: 200, body: { ok: true, id } };
   }
 
   function handleStatus(id) {
@@ -200,8 +225,11 @@ async function start(deps = {}) {
     for (;;) {
       const entry = getConsole(id);
       if (!entry) return { status: 404, body: { ok: false, error: "no such console" } };
+      // The turn is over when its `result` arrived (idle) or the process
+      // died (exited) -- not only on exit, or a follow-up-capable console
+      // would never finish.
       if (!entry.running) {
-        return { status: 200, body: { ok: true, ...summarize(entry), resultText: resultTextFrom(entry.events) } };
+        return { status: 200, body: { ok: true, ...summarize(entry), resultText: entry.lastResult || resultTextFrom(entry.events) } };
       }
       if (Date.now() >= deadline) return { status: 200, body: { ok: false, error: "timed out waiting", ...summarize(entry) } };
       // ponytail: poll rather than an exit-event subscription; a subagent
@@ -245,6 +273,15 @@ async function start(deps = {}) {
           result = handleOutput(id, Number(url.searchParams.get("tail")));
         } else if (req.method === "GET" && url.pathname === "/list") {
           result = handleList();
+        } else if (req.method === "POST" && url.pathname === "/send") {
+          let body;
+          try {
+            body = JSON.parse((await readBody(req)) || "{}");
+          } catch {
+            json(res, 400, { ok: false, error: "invalid JSON body" });
+            return;
+          }
+          result = handleSend(id, body || {});
         } else if (req.method === "POST" && url.pathname === "/stop") {
           result = handleStop(id);
         } else if (req.method === "POST" && url.pathname === "/wait") {

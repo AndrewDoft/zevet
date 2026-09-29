@@ -313,3 +313,81 @@ describe("pure helpers", () => {
     assert.equal(summarize(undefined), null);
   });
 });
+
+describe("turn state: /wait, /send, --once", () => {
+  const post = (url, token, path, body) =>
+    fetch(url + path, authed(token, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) }));
+  const spawnId = async (url, token) => (await (await post(url, token, "/spawn", { cwd: "/r" })).json()).id;
+
+  test("summarize exposes state, turns, lastResult, cost, usage", () => {
+    const s = summarize({ id: "c", running: true, state: "idle", turns: 2, lastResult: "hi", costUsd: 0.5, usage: { output_tokens: 3 }, startedAt: Date.now(), events: [] });
+    assert.equal(s.state, "idle");
+    assert.equal(s.turns, 2);
+    assert.equal(s.lastResult, "hi");
+    assert.equal(s.costUsd, 0.5);
+    assert.deepEqual(s.usage, { output_tokens: 3 });
+  });
+
+  test("an entry without a tracked state falls back to running-or-exited", () => {
+    assert.equal(summarize({ running: true, startedAt: 0, events: [] }).state, "working");
+    assert.equal(summarize({ running: false, startedAt: 0, events: [] }).state, "exited");
+  });
+
+  test("wait returns on the turn's result while the process is STILL running", async () => {
+    const { url, token, close, backend } = await startApi();
+    const id = await spawnId(url, token);
+    const e = backend.entries.get(id);
+    e.state = "working";
+    setTimeout(() => Object.assign(e, { state: "idle", turns: 1, lastResult: "ZEVET-OK" }), 100);
+    const body = await (await post(url, token, `/wait?id=${id}&timeoutMs=5000`)).json();
+    assert.equal(body.ok, true);
+    assert.equal(body.running, true);
+    assert.equal(body.state, "idle");
+    assert.equal(body.resultText, "ZEVET-OK");
+    await close();
+  });
+
+  test("wait times out while the turn is still working", async () => {
+    const { url, token, close, backend } = await startApi();
+    const id = await spawnId(url, token);
+    backend.entries.get(id).state = "working";
+    const body = await (await post(url, token, `/wait?id=${id}&timeoutMs=400`)).json();
+    assert.equal(body.ok, false);
+    assert.match(body.error, /timed out/);
+    await close();
+  });
+
+  test("wait on an exited agent falls back to the transcript's text", async () => {
+    const { url, token, close, backend } = await startApi();
+    const id = await spawnId(url, token);
+    const e = backend.entries.get(id);
+    e.running = false;
+    e.events.push({ type: "agent", payload: { message: { content: [{ type: "text", text: "codex says hi" }] } } });
+    const body = await (await post(url, token, `/wait?id=${id}&timeoutMs=1000`)).json();
+    assert.equal(body.state, "exited");
+    assert.equal(body.resultText, "codex says hi");
+    await close();
+  });
+
+  test("/send forwards a follow-up prompt; refuses empty, unknown and exited", async () => {
+    const { url, token, close, backend } = await startApi();
+    const id = await spawnId(url, token);
+    assert.equal((await post(url, token, `/send?id=${id}`, { prompt: "next" })).status, 200);
+    assert.deepEqual(backend.entries.get(id).events.at(-1), { type: "prompt", text: "next" });
+    assert.equal((await post(url, token, `/send?id=${id}`, {})).status, 400);
+    assert.equal((await post(url, token, "/send?id=nope", { prompt: "x" })).status, 404);
+    backend.entries.get(id).running = false;
+    assert.equal((await post(url, token, `/send?id=${id}`, { prompt: "x" })).status, 409);
+    await close();
+  });
+
+  test("spawn once:true marks the console; without it nothing is marked", async () => {
+    const marked = [];
+    const { url, token, close } = await startApi({ setOnce: (id) => marked.push(id) });
+    const { id } = await (await post(url, token, "/spawn", { cwd: "/r", prompt: "go", once: true })).json();
+    assert.deepEqual(marked, [id]);
+    await post(url, token, "/spawn", { cwd: "/r", prompt: "go" });
+    assert.deepEqual(marked, [id]);
+    await close();
+  });
+});
