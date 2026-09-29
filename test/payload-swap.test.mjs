@@ -37,6 +37,10 @@ describe("busyReason: a swap never happens under work", () => {
     assert.match(busyReason(idle({ lastInputAt: () => NOW - 2 * MIN + 1000 })), /last 2 minutes/);
     assert.equal(busyReason(idle({ lastInputAt: () => NOW - 2 * MIN })), null);
   });
+  test("the input window is configurable for the packaged proof, and 0 means input never blocks", () => {
+    assert.equal(busyReason(idle({ lastInputAt: () => NOW, inputQuietMs: 0 })), null);
+    assert.match(busyReason(idle({ lastInputAt: () => NOW - 1000, inputQuietMs: 5000 })), /last 2 minutes/);
+  });
   test("no window (a macOS app in the dock) blocks it: a relaunch would open one", () => {
     assert.match(busyReason(idle({ windows: () => 0 })), /no window/);
   });
@@ -167,7 +171,11 @@ describe("main.js hands the gate real state and the swap real teardown", async (
     assert.match(wiring, /lastInputAt: \(\) => lastInputAt/);
   });
   test("keyboard input on any web contents is what the input gate sees", () => {
-    assert.match(main, /web-contents-created[\s\S]{0,300}before-input-event[\s\S]{0,200}lastInputAt = Date\.now\(\)/);
+    assert.match(main, /web-contents-created[\s\S]{0,300}before-input-event[\s\S]{0,400}lastInputAt = now;/);
+  });
+  test("pointer movement alone is not input: a window opening under a still cursor must not read as a person", () => {
+    assert.match(main, /NOT_INPUT = new Set\(\["mouseMove", "mouseEnter", "mouseLeave"\]\)/);
+    assert.match(main, /if \(input && NOT_INPUT\.has\(input\.type\)\) return;/);
   });
   test("quit applies a staged build", () => {
     assert.match(main, /app\.on\("will-quit", \(\) => swapper\.applyOnQuit\(\)\)/);

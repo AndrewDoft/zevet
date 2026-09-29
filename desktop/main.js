@@ -3704,9 +3704,19 @@ app.on("before-quit", () => family.stop());
  * installOnQuit, which would start an installer under the relaunch.
  * ======================================================================== */
 let lastInputAt = 0;
+/** A window opening under a still cursor fires mouseEnter/mouseMove with nobody there (seen on the Windows runner the
+ *  moment a relaunch opened the setup window), so pointer movement alone is not "the person is here". */
+const NOT_INPUT = new Set(["mouseMove", "mouseEnter", "mouseLeave"]);
 app.on("web-contents-created", (_e, wc) => {
-  // before-input-event is keyboard; input-event (newer Electron) adds mouse and wheel. Either is "the person is here".
-  for (const ev of ["before-input-event", "input-event"]) wc.on(ev, () => { lastInputAt = Date.now(); });
+  // before-input-event is keyboard; input-event (newer Electron) adds mouse buttons and wheel.
+  for (const ev of ["before-input-event", "input-event"]) {
+    wc.on(ev, (_e2, input) => {
+      if (input && NOT_INPUT.has(input.type)) return;
+      const now = Date.now();
+      if (now - lastInputAt > 2 * 60 * 1000) bootShell.log(`input (${ev}: ${input && input.type}): a payload swap waits 2 minutes`);
+      lastInputAt = now;
+    });
+  }
 });
 function releaseForRelaunch() {
   stopChatRun();
@@ -3732,6 +3742,7 @@ if (bootShell.payload) {
     activity: () => consoleLog.activity(),
     chatBusy: () => Boolean(chatRun && chatRun.turn),
     lastInputAt: () => lastInputAt,
+    inputQuietMs: process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS ? Number(process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS) : undefined, // the packaged proof only
     windows: () => BrowserWindow.getAllWindows().length,
     release: releaseForRelaunch,
     log: bootShell.log,

@@ -103,10 +103,11 @@ async function waitFor(what, fn, ms = 120_000) {
   }
 }
 
+const walk = (d) => (fs.existsSync(d) ? fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)])) : []);
+
 function dumpLogs() {
   console.log(`----- ${requests.length} requests: ${requests.join(" ")}
 processes still ours: ${ours().join(",") || "none"}; current.json = ${JSON.stringify(current())}`);
-  const walk = (d) => (fs.existsSync(d) ? fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)])) : []);
   for (const f of walk(base).filter((f) => /zevet-boot.*\.log$|std(err|out)\.log$/.test(f))) {
     console.log(`----- ${f}\n${fs.readFileSync(f, "utf8").split("\n").slice(-40).join("\n")}`);
   }
@@ -138,6 +139,8 @@ async function main() {
       ZEVET_PAYLOAD_CHANNEL: "canary",
       ZEVET_PAYLOAD_PULSE: `${origin}/p/zevet/canary/${platform}/pulse.json`,
       ZEVET_PAYLOAD_CHECK_MS: "3000",
+      // The idle gate is unit-tested; a runner's stray pointer events must not decide whether this proof can swap.
+      ZEVET_PAYLOAD_INPUT_QUIET_MS: "0",
       // The pulse is signed with a throwaway key: honoured because the URL is loopback (app-update.js loopbackProofKeys).
       ZEVET_APP_FEED_TRUSTED_KEY: `${keyId}:${pubRaw}`,
       // The installer updater points at nothing, so an installer landing here would be a bug in the proof itself.
@@ -148,7 +151,8 @@ async function main() {
 
   // The seed must be the version package.json says, or B1 is not newer than it and rightly never applies.
   const seedLine = await waitFor("the app's boot log", () => {
-    try { return fs.readFileSync(path.join(userData, "logs", "zevet-boot.log"), "utf8").match(/running payload (\S+) \(seed\)/)?.[1]; } catch { return null; }
+    const log = walk(base).find((f) => /zevet-boot\.log$/.test(f)); // <userData>/logs on Windows, ~/Library/Logs/zevet on macOS
+    return log && fs.readFileSync(log, "utf8").match(/running payload (\S+) \(seed\)/)?.[1];
   }, 60_000);
   assert.equal(seedLine, V, `the packaged app was built at ${seedLine}, not package.json's ${V}: publish a payload newer than what it carries`);
 

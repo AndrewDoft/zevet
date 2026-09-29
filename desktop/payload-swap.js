@@ -19,24 +19,24 @@ const POLL_MS = 30 * 1000;
 const CONFIRM_TIMEOUT_MS = 120 * 1000;
 
 /** Why a swap must wait, or null when it may go. */
-function busyReason({ now, activity, chatBusy, lastInputAt, windows }) {
+function busyReason({ now, activity, chatBusy, lastInputAt, windows, inputQuietMs = INPUT_QUIET_MS }) {
   const a = activity();
   if (a.running > 0) return "an agent is running";
   if (now - a.lastAt < AGENT_QUIET_MS) return "an agent ran in the last 5 minutes";
   if (chatBusy()) return "a chat turn is in flight";
-  if (now - lastInputAt() < INPUT_QUIET_MS) return "a window had input in the last 2 minutes";
+  if (now - lastInputAt() < inputQuietMs) return "a window had input in the last 2 minutes";
   if (windows() === 0) return "no window is open";
   return null;
 }
 
-function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows, release, log, now = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval }) {
+function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows, inputQuietMs, release, log, now = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval }) {
   let swapping = false;
   let timer = null;
   let lastWhy = null;
 
   function tick() {
     if (swapping || !payload.staged()) return "idle";
-    const why = busyReason({ now: now(), activity, chatBusy, lastInputAt, windows });
+    const why = busyReason({ now: now(), activity, chatBusy, lastInputAt, windows, inputQuietMs });
     if (why !== lastWhy) log(`payload ${payload.staged().build} staged; ${why ? `waiting: ${why}` : "idle"}`);
     lastWhy = why;
     if (why) return why;
