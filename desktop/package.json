@@ -168,6 +168,6 @@
     }
   },
   "dependencies": {
-    "@masora/desktop-kit": "github:AndrewDoft/desktop-kit#v0.1.1"
+    "@masora/desktop-kit": "github:AndrewDoft/desktop-kit#v0.1.2"
   }
 }

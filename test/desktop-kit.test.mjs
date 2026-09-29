@@ -37,3 +37,13 @@ test("main.js takes the single-instance lock and the rotating log from the kit",
   assert.match(main, /for \(const level of \["warn", "error"\]\)[\s\S]{0,200}fileLog\[level\]\(\.\.\.a\)/, "warn/error are not teed to the file log");
   assert.match(main, /log: \(m\) => \{[\s\S]{0,200}fileLog\.info/, "the updater's log lines do not reach the file log");
 });
+
+test("family.js reads and writes the family dir through the kit, not with its own file code", () => {
+  const fam = strip(D("family.js"));
+  assert.match(fam, /require\("@masora\/desktop-kit"\)/);
+  for (const call of ["kit.writeHeartbeat(", "kit.takeRequest(", "kit.writeRequest(", "kit.readKey(", "kit.masoraWeb(", "kit.isRunning("]) {
+    assert.ok(fam.includes(call), `family.js no longer uses ${call}`);
+  }
+  assert.doesNotMatch(fam, /writeFileSync|renameSync|rmSync|mkdirSync/, "family.js writes family files itself");
+  assert.doesNotMatch(fam, /function (familyDir|readJson)\b/, "family.js reimplements the kit's familyDir/readJson");
+});

@@ -15,11 +15,12 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const kit = require("@masora/desktop-kit");
 
 const TICK_MS = 60_000;
 const REQUEST_POLL_MS = 3_000;
 const FEED_TTL_MS = 60 * 60 * 1000;
-const STALE_MS = 3 * 60 * 1000; // a heartbeat older than this is not "running"
+const { STALE_MS, familyDir, readJson } = kit; // STALE_MS: a heartbeat older than this is not "running"
 const DOWNLOADS = "https://usemasora.com/download/";
 
 const APPS = {
@@ -37,21 +38,6 @@ const APPS = {
     installed: "Zevet Voice",
   },
 };
-
-function familyDir(env = process.env, platform = process.platform, home = os.homedir()) {
-  if (env.MASORA_FAMILY_DIR) return env.MASORA_FAMILY_DIR;
-  if (platform === "darwin") return path.join(home, "Library", "Application Support", "Masora", "family");
-  return path.join(env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "Masora", "family");
-}
-
-function readJson(file) {
-  try {
-    const v = JSON.parse(fs.readFileSync(file, "utf8"));
-    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
-  } catch {
-    return null;
-  }
-}
 
 /** -1 / 0 / 1 for dotted numeric versions; unparseable parts count as 0. */
 function cmpVersion(a, b) {
@@ -209,8 +195,6 @@ class Family {
   heartbeat(running = true) {
     const m = this.readMasora();
     try {
-      fs.mkdirSync(this.dir, { recursive: true });
-      const file = path.join(this.dir, "zevet.json");
       const body = {
         app: "zevet",
         version: this.version,
@@ -229,8 +213,7 @@ class Family {
         body.team_name = this.roster.team_name;
         body.people = this.roster.people;
       }
-      fs.writeFileSync(`${file}.tmp`, JSON.stringify(body));
-      fs.renameSync(`${file}.tmp`, file);
+      kit.writeHeartbeat(this.dir, "zevet", body);
     } catch {
       /* an unwritable family dir must not hurt Zevet */
     }
@@ -273,8 +256,7 @@ class Family {
     if (this.busy) return this.pairing;
     this.busy = true;
     try {
-      const mj = readJson(path.join(this.dir, "masora.json"));
-      const web = mj && mj.runtime === "masora-desktop" && typeof mj.web === "string" ? mj.web.replace(/\/+$/, "") : "";
+      const web = kit.masoraWeb(this.dir);
       if (!web) return (this.pairing = "unreachable");
       let health = null;
       try {
@@ -284,12 +266,7 @@ class Family {
         /* down */
       }
       if (!health || health.runtime !== "masora-desktop") return (this.pairing = "unreachable");
-      let secret = "";
-      try {
-        secret = fs.readFileSync(path.join(this.dir, "family.key"), "utf8").trim();
-      } catch {
-        /* Masora has not written it yet */
-      }
+      const secret = kit.readKey(this.dir) || ""; // "" until Masora has written it
       if (!secret) return (this.pairing = "unreachable");
       this.pairing = "pairing";
       await this.refreshTeam();
@@ -353,14 +330,8 @@ class Family {
   /* ── requests from siblings ────────────────────────────────────────────── */
 
   async pollRequest() {
-    const file = path.join(this.dir, "zevet.request.json");
-    const req = readJson(file);
+    const req = kit.takeRequest(this.dir, "zevet"); // read, then deleted: run once
     if (!req) return;
-    try {
-      fs.rmSync(file, { force: true });
-    } catch {
-      return; // cannot delete it, so cannot promise to run it only once
-    }
     if (req.action === "connect") await this.connect();
     else if (req.action === "update") await Promise.resolve(this.runUpdate()).catch(() => {});
     else if (req.action === "team.invite" || req.action === "team.revoke") await this.#relayTeamAction(req.action, req.login);
@@ -497,7 +468,7 @@ class Family {
   }
 
   async #row(app) {
-    const hb = readJson(path.join(this.dir, `${app}.json`));
+    const hb = kit.readHeartbeat(this.dir, app);
     let version = hb && typeof hb.version === "string" ? hb.version : null;
     let installed = !!hb;
     if (!installed) {
@@ -511,8 +482,7 @@ class Family {
         version = f.hit.version || null;
       }
     }
-    const beat = hb && Date.parse(hb.updated_at);
-    const running = !!(hb && hb.running !== false && beat && this.now() - beat < STALE_MS);
+    const running = kit.isRunning(hb, this.now(), STALE_MS);
     const feed = await this.#latest(app);
     const mine = this.readMasora();
     const connected = app === "masora" ? !!mine.paired : !!(hb && hb.masora && hb.masora.connected);
@@ -569,8 +539,7 @@ class Family {
 
   #request(app, body) {
     try {
-      fs.mkdirSync(this.dir, { recursive: true });
-      fs.writeFileSync(path.join(this.dir, `${app}.request.json`), JSON.stringify({ ...body, requested_by: "zevet", at: new Date(this.now()).toISOString() }));
+      kit.writeRequest(this.dir, app, { ...body, requested_by: "zevet", at: new Date(this.now()).toISOString() });
       return { requested: true };
     } catch {
       return { requested: false };
