@@ -31,12 +31,26 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { zevetHome, atomicWriteJson } = require("./zevet-home.js");
+const { CLOUD_ORIGIN } = require("./hub-target.js");
 
 const HOME = zevetHome();
 const CONFIG_PATH = path.join(HOME, "masora.json");
 
-// Masora runs on this machine (the Masora desktop app); usemasora.com only hosts downloads.
-const DEFAULT_URL = process.env.ZEVET_MASORA_URL || "http://127.0.0.1:3210";
+// Masora is the cloud app. A Masora desktop on this machine says where it points in the family descriptor
+// (`web`); with none, the cloud origin itself.
+const DEFAULT_URL = process.env.ZEVET_MASORA_URL || CLOUD_ORIGIN;
+
+/** ZEVET_MASORA_URL, else the family descriptor's `web`, else the cloud origin. Read per call: Masora may start later. */
+function defaultUrl() {
+  if (process.env.ZEVET_MASORA_URL) return process.env.ZEVET_MASORA_URL;
+  try {
+    const web = (require("@masora/desktop-kit").readJson(path.join(require("@masora/desktop-kit").familyDir(), "masora.json")) || {}).web;
+    if (typeof web === "string" && /^https?:\/\/[^\s/]+/i.test(web.trim())) return web.trim().replace(/\/+$/, "");
+  } catch {
+    // no kit, no descriptor: the cloud
+  }
+  return CLOUD_ORIGIN;
+}
 
 /** Matches apps/connector/main.go's own `-poll-interval`/`-poll-deadline` defaults. */
 const POLL_INTERVAL_MS = 5000;
@@ -80,7 +94,7 @@ function readConfig() {
   const canonicalEmail = canonical && typeof canonical.email === "string" && canonical.email ? canonical.email : "";
   const legacyMember = typeof raw.member === "string" ? raw.member : "";
   return {
-    url: typeof raw.url === "string" && raw.url ? raw.url : DEFAULT_URL,
+    url: typeof raw.url === "string" && raw.url ? raw.url : defaultUrl(),
     paired: typeof raw.tokenEnc === "string" && raw.tokenEnc.length > 0,
     repos: raw.repos && typeof raw.repos === "object" && !Array.isArray(raw.repos) ? raw.repos : {},
     // Zevet Chat push (C1 `zevet_chat`). Off unless the person turned it on:
@@ -97,7 +111,7 @@ function setChatPush(on) {
 
 function saveUrl(url) {
   const raw = readRaw();
-  writeRaw({ ...raw, url: String(url || "").trim() || DEFAULT_URL });
+  writeRaw({ ...raw, url: String(url || "").trim() || defaultUrl() });
   return readConfig();
 }
 
@@ -288,6 +302,7 @@ function mcpServerEntry(baseUrl) {
 
 module.exports = {
   DEFAULT_URL,
+  defaultUrl,
   CONFIG_PATH,
   readConfig,
   saveUrl,

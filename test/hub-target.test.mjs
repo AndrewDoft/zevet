@@ -2,7 +2,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-const { HOSTED_HUB, LEGACY_HUB, resolveHub } = createRequire(import.meta.url)("../desktop/hub-target.js");
+const { HOSTED_HUB, DOMAIN_HUB, LEGACY_HUB, resolveHub } = createRequire(import.meta.url)("../desktop/hub-target.js");
 
 describe("resolveHub", () => {
   test("a new install goes to the hosted hub", () => {
@@ -31,7 +31,10 @@ describe("resolveHub", () => {
   // names permanently) and is what main.js's migrateHubDomain compares an
   // existing config against to know it is still on the OLD default.
   test("the hosted hub is the domain, and the legacy sslip address is still named", () => {
-    assert.equal(HOSTED_HUB, "https://hub.usemasora.com");
+    assert.equal(HOSTED_HUB, "https://app.usemasora.com/hub", "the hub lives under the cloud origin");
+    assert.equal(DOMAIN_HUB, "https://hub.usemasora.com");
+    assert.equal(resolveHub({ cfg: { hub: DOMAIN_HUB } }), DOMAIN_HUB, "an install on the old hub domain keeps working");
+    assert.equal(resolveHub({ cfg: { hub: "https://app.usemasora.com/hub/" } }), "https://app.usemasora.com/hub", "a hub with a path keeps it");
     assert.equal(LEGACY_HUB, "https://34-74-69-129.sslip.io");
     assert.notEqual(HOSTED_HUB, LEGACY_HUB);
   });

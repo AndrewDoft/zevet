@@ -9,6 +9,7 @@
 // WebSocket at /ws, written out by hand at the bottom of this file rather than
 // installed. The same rule bought the same way twice.
 import { createServer } from "node:http";
+import { basePrefix, htmlUnder, cssUnder } from "./base-path.mjs";
 import { readFile } from "node:fs/promises";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
@@ -714,13 +715,14 @@ setInterval(() => {
 }, AUTH_WINDOW_MS).unref();
 
 function sessionCookie(req, token) {
+  const base = basePrefix(req.headers);
   // `Secure` only when the connection really is HTTPS — setting it on plain
   // http makes the browser drop the cookie and the board silently never
   // authenticates, which looks like a broken hub.
   const https = req.headers["x-forwarded-proto"] === "https";
   const parts = [
     `${COOKIE}=${encodeURIComponent(token)}`,
-    "Path=/",
+    `Path=${base || "/"}`,
     "HttpOnly",
     "SameSite=Strict",
     `Max-Age=${60 * 60 * 24 * 30}`,
@@ -2094,7 +2096,8 @@ async function handleRequest(req, res) {
   if (Object.hasOwn(PUBLIC_FILES, url.pathname.slice(1))) {
     const name = url.pathname.slice(1);
     try {
-      const buf = await readFile(path.join(HERE, "public", name));
+      let buf = await readFile(path.join(HERE, "public", name));
+      if (name === "board.css" && basePrefix(req.headers)) buf = cssUnder(buf.toString("utf8"), basePrefix(req.headers));
       res.writeHead(200, { "content-type": PUBLIC_FILES[name], "cache-control": "no-store" });
       return res.end(buf);
     } catch (err) {
@@ -2119,7 +2122,7 @@ async function handleRequest(req, res) {
         const rest = keep.toString();
         res.writeHead(302, {
           "set-cookie": sessionCookie(req, supplied),
-          location: rest ? `/?${rest}` : "/",
+          location: `${basePrefix(req.headers)}/${rest ? `?${rest}` : ""}`,
           "cache-control": "no-store",
         });
         return res.end();
@@ -2130,7 +2133,7 @@ async function handleRequest(req, res) {
       const html = await readFile(path.join(HERE, "public", "index.html"), "utf8");
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       // The build this page was served at: the board compares it with /version.
-      return res.end(html.replace("<head>", `<head>\n    <meta name="zevet-build" content="${BUILD_ID}" />`));
+      return res.end(htmlUnder(html, basePrefix(req.headers)).replace("<head>", `<head>\n    <meta name="zevet-build" content="${BUILD_ID}" />`));
     } catch (err) {
       return json(res, 500, { error: `dashboard missing: ${err.message}` });
     }

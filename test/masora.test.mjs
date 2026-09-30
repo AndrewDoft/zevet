@@ -4,6 +4,8 @@
 // C2 brief fetch (fail-open), and the C4 http MCP entry shape.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { tempDir, ROOT } from "./helpers.mjs";
@@ -37,6 +39,23 @@ describe("config", () => {
     assert.equal(cfg.url, masora.DEFAULT_URL);
     assert.equal(cfg.paired, false);
     assert.deepEqual(cfg.repos, {});
+  });
+
+  test("the default is the cloud origin, the family descriptor's web when Masora wrote one", () => {
+    assert.equal(masora.DEFAULT_URL, "https://app.usemasora.com");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-fam-"));
+    const prev = process.env.MASORA_FAMILY_DIR;
+    process.env.MASORA_FAMILY_DIR = dir;
+    try {
+      assert.equal(masora.defaultUrl(), "https://app.usemasora.com");
+      fs.writeFileSync(path.join(dir, "masora.json"), JSON.stringify({ web: "https://app-34-74-69-129.sslip.io/" }));
+      assert.equal(masora.defaultUrl(), "https://app-34-74-69-129.sslip.io");
+      fs.writeFileSync(path.join(dir, "masora.json"), JSON.stringify({ web: "javascript:alert(1)" }));
+      assert.equal(masora.defaultUrl(), "https://app.usemasora.com");
+    } finally {
+      if (prev === undefined) delete process.env.MASORA_FAMILY_DIR; else process.env.MASORA_FAMILY_DIR = prev;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("saveUrl persists and trims", () => {

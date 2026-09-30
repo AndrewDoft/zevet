@@ -65,7 +65,7 @@ const askServer = require("./ask-server.js");
 const agentApi = require("./agent-api.js");
 const { createBoardAsk } = require("./board-ask.js");
 const { GithubSignIn } = require("./github-signin.js");
-const { resolveHub, HOSTED_HUB, LEGACY_HUB } = require("./hub-target.js");
+const { resolveHub, HOSTED_HUB, DOMAIN_HUB, LEGACY_HUB } = require("./hub-target.js");
 const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
@@ -668,7 +668,7 @@ function writeConfig(cfg) {
  * untouched; the sslip address keeps working exactly as it always has.
  */
 async function migrateHubDomain(cfg) {
-  if (!cfg || String(cfg.hub || "").replace(/\/+$/, "") !== LEGACY_HUB) return cfg;
+  if (!cfg || ![LEGACY_HUB, DOMAIN_HUB].includes(String(cfg.hub || "").replace(/\/+$/, ""))) return cfg;
   try {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 2000);

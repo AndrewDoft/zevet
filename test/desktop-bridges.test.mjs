@@ -566,7 +566,7 @@ describe("the hub domain migration never blocks or overreaches", () => {
 
   test("only a config still on the legacy default is ever touched", () => {
     const body = stripComments(fnBody("async function migrateHubDomain"));
-    assert.match(body, /!==\s*LEGACY_HUB\)\s*return cfg/, "a hub the user or an admin set on purpose must be an immediate no-op");
+    assert.match(body, /\[LEGACY_HUB, DOMAIN_HUB\]\.includes\(.*\)\)\s*return cfg/, "a hub the user or an admin set on purpose must be an immediate no-op");
   });
 
   test("the probe is short and bounded, and a failure of any kind keeps the old hub", () => {
