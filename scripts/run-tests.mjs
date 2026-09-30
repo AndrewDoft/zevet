@@ -34,7 +34,7 @@ for (const [dir, marker] of [[".", "playwright-core"], ["editor", "yjs"]]) {
 
 const child = spawn(
   process.execPath,
-  ["--test", "test/**/*.test.mjs", "editor/test/**/*.test.mjs"],
+  ["--test", "--test-reporter=tap", "test/**/*.test.mjs", "editor/test/**/*.test.mjs"],
   { cwd: ROOT, stdio: ["inherit", "pipe", "pipe"], windowsHide: true },
 );
 
