@@ -34,12 +34,16 @@ async function utilizationFor(id, credential, { fetchImpl = fetch, now = Date.no
   return value;
 }
 
+/** The 5h/7d windows for a subscription credential, with `at` = when they were
+ *  PROBED (a cached reading keeps its own time, so the board can tell it apart
+ *  from a fresher rate_limit_event). Undefined when there are none. */
 async function windowsFor(id, credential, { fetchImpl = fetch, now = Date.now } = {}) {
   const cached = cache.get(id);
-  if (cached && cached.windows && now() - cached.at < CACHE_MS) return cached.windows;
+  if (cached && cached.windows && now() - cached.at < CACHE_MS) return { windows: cached.windows, at: cached.at };
   const result = await probeWindows(credential, fetchImpl);
-  cache.set(id, { value: result && result.value, windows: result && result.windows, at: now() });
-  return result && result.windows;
+  const at = now();
+  cache.set(id, { value: result && result.value, windows: result && result.windows, at });
+  return result && result.windows && result.windows.length ? { windows: result.windows, at } : undefined;
 }
 
 async function probe({ provider, kind, key } = {}, fetchImpl) {

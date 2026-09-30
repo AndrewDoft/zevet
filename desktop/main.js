@@ -2370,15 +2370,9 @@ bridge.handle("local:status", async (_e, arg) => {
 
   const failedAgo = statusSources.hookFailure(STATUS_PATHS.errorLog);
 
-  let rateLimits;
-  const config = readConfig();
-  const def = config && config.defaultCredential;
-  if (def && def.scope && def.scope !== "auto" && def.id) {
-    const credential = await resolveCredential(def.id, config, def.scope);
-    if (credential && credential.kind === "subscription_token") {
-      rateLimits = await credentialUsage.windowsFor(def.id, credential, { fetchImpl: fetch });
-    }
-  }
+  // The 5h/7d windows from startup, before any agent has reported a
+  // rate_limit_event: this machine's own login, probed at most every 5 min.
+  const probed = await agentEngine.engine1Windows({ probeOpts: { fetchImpl: fetch } }).catch(() => undefined);
   return {
     ok: true,
     cindex,
@@ -2392,8 +2386,8 @@ bridge.handle("local:status", async (_e, arg) => {
     // deciding whether "2h" or "2 hours ago" reads better in a 10px strip.
     hook: { failedAgo },
     burn: burn.read(),
-    rateLimits,
-    rateLimitsAt: rateLimits ? Date.now() : 0,
+    rateLimits: probed ? probed.windows : undefined,
+    rateLimitsAt: probed ? probed.at : 0,
   };
 });
 
@@ -4017,9 +4011,14 @@ let lastUpdatePhase = null;
  *  moving that, so shown raw it read 0.2.89 while 0.2.91 ran. */
 function withRunningBuild(s) {
   if (!s || typeof s !== "object") return s;
-  const staged = typeof shell !== "undefined" && shell.payload && typeof shell.payload.staged === "function" && shell.payload.staged();
-  return { ...s, current: APP_VERSION, running: typeof shell !== "undefined" ? (shell.build || APP_VERSION) : APP_VERSION,
-    ...(staged ? { next: { build: staged.build, when: "on restart" } } : {}) };
+  // `shell` in this file is Electron's; the payload client is bootShell's.
+  let staged = null;
+  try {
+    staged = bootShell && bootShell.payload ? bootShell.payload.staged() : null;
+  } catch (err) {
+    bootShell.log(`payload staged() unreadable: ${err && err.message}`);
+  }
+  return { ...s, running: APP_VERSION, ...(staged && staged.build !== APP_VERSION ? { next: { build: staged.build, when: "on restart" } } : {}) };
 }
 const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),

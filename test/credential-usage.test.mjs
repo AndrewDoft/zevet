@@ -49,10 +49,28 @@ describe("utilizationFor", () => {
   test("reports windows and reads reset headers, leaving absent resets at zero", async () => {
     const fetchImpl = fakeFetch(() => headerRes({ h5: 0.3, h7: 0.6, r5: 1700000000 }));
     const v = await usage.windowsFor("w1", { provider: "anthropic", kind: "subscription_token", key: "token" }, { fetchImpl, now: () => 0 });
-    assert.deepEqual(v, [
-      { key: "five_hour", utilization: 0.3, resetsAt: 1700000000000 },
-      { key: "seven_day", utilization: 0.6, resetsAt: 0 },
-    ]);
+    // Header names checked against a live probe 2026-09-30: -5h-reset / -7d-reset, epoch seconds.
+    assert.deepEqual(v, {
+      at: 0,
+      windows: [
+        { key: "five_hour", utilization: 0.3, resetsAt: 1700000000000 },
+        { key: "seven_day", utilization: 0.6, resetsAt: 0 },
+      ],
+    });
+  });
+
+  test("a cached reading keeps the time it was probed, so a fresher agent report wins", async () => {
+    let t = 1000;
+    let calls = 0;
+    const fetchImpl = fakeFetch(() => { calls++; return headerRes({ h5: 0.1, h7: 0.2 }); });
+    const cred = { provider: "anthropic", kind: "subscription_token", key: "token" };
+    assert.equal((await usage.windowsFor("w2", cred, { fetchImpl, now: () => t })).at, 1000);
+    t = 1000 + 4 * 60 * 1000;
+    assert.equal((await usage.windowsFor("w2", cred, { fetchImpl, now: () => t })).at, 1000);
+    assert.equal(calls, 1);
+    t = 1000 + 6 * 60 * 1000;
+    assert.equal((await usage.windowsFor("w2", cred, { fetchImpl, now: () => t })).at, t);
+    assert.equal(calls, 2);
   });
 
   test("an api_key credential is 0 on a successful probe", async () => {

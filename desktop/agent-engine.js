@@ -60,6 +60,16 @@ function engine1Token(opts) {
   }
 }
 
+/** The 5h/7d windows of this machine's own Claude login — what its agents
+ *  spend against by default. Same cache id as pickAuto, so the strip and the
+ *  ladder share one probe. */
+async function engine1Windows(opts) {
+  const o = withDefaults(opts);
+  const token = engine1Token(o);
+  if (!token) return undefined;
+  return credentialUsage.windowsFor("engine1", { provider: "anthropic", kind: "subscription_token", key: token }, o.probeOpts);
+}
+
 /** DPAPI is per-machine (see engine2.ps1's header), so "available" means
  *  both "this OS has DPAPI" and "this machine has done the one-time setup". */
 function engine2Available(opts) {
@@ -172,6 +182,7 @@ async function resolveEngine(requested, baseEnv, opts) {
 module.exports = {
   resolveEngine,
   engine1Token,
+  engine1Windows,
   engine2Token,
   engine2Available,
   AUTO_LADDER,

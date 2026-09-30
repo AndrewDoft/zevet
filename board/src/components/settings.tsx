@@ -1212,9 +1212,6 @@ function VersionSection() {
       <span className="v">{status}</span>
     </div>,
   );
-  if (s && s.running && s.running !== s.current) {
-    out.push(<SRow key="running" k="Running" v={s.running} />);
-  }
   if (s && s.next && s.next.build) {
     out.push(<SRow key="next" k="Next" v={`${s.next.build} (${s.next.when})`} />);
   }

@@ -216,7 +216,12 @@ export interface LocalFileData {
 export interface UpdateState {
   phase: "checking" | "current" | "downloading" | "ready" | "error";
   version?: string;
+  /** The INSTALLER's version — what the feed is compared against. */
   current?: string;
+  /** The payload build actually running (desktop/main.js withRunningBuild). */
+  running?: string;
+  /** A verified payload build waiting to apply. */
+  next?: { build: string; when: string };
   percent?: number;
   canInstall?: boolean;
   manual?: boolean;

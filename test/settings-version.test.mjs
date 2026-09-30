@@ -1,7 +1,8 @@
-// Settings' Version shows the BUILD that is running, not the installer's.
-// After a payload swap the installer stays at (say) 0.2.89 while 0.2.91 runs;
-// the updater's `current` is the installer's, because that is what the feed is
-// compared against. Both roads to the board must replace it.
+// Settings' Version shows the BUILD that is running, and the installer beside
+// it when they differ: after a payload swap the installer stays at (say)
+// 0.2.89 while 0.2.91 runs. The updater's `current` stays the installer's,
+// because that is what the feed is compared against. A staged build shows as
+// "Next". Both roads to the board carry it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -10,13 +11,31 @@ import vm from "node:vm";
 import { ROOT } from "./helpers.mjs";
 
 const main = fs.readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
+const settings = fs.readFileSync(path.join(ROOT, "board", "src", "components", "settings.tsx"), "utf8");
 
-test("the helper puts the running build in `current` and keeps the rest", () => {
+function helper(bootShell) {
   const src = main.slice(main.indexOf("function withRunningBuild("), main.indexOf("const appUpdater = new AppUpdater({"));
-  const ctx = { APP_VERSION: "0.2.91" };
+  // `shell` is Electron's in main.js; a helper that reached for it would read this, not the payload.
+  const ctx = { APP_VERSION: "0.2.91", bootShell, shell: { build: "WRONG", payload: { staged: () => ({ build: "WRONG" }) } } };
   vm.runInNewContext(src + ";this.f = withRunningBuild;", ctx);
-  assert.equal(ctx.f({ current: "0.2.89", phase: "current" }).current, "0.2.91");
-  assert.equal(ctx.f(null), null);
+  return ctx.f;
+}
+
+test("running is the payload build; current stays the installer's", () => {
+  const f = helper({ payload: { staged: () => null }, log() {} });
+  const out = f({ current: "0.2.89", phase: "current" });
+  assert.equal(out.running, "0.2.91");
+  assert.equal(out.current, "0.2.89");
+  assert.equal(out.next, undefined);
+  assert.equal(f(null), null);
+});
+
+test("a staged build shows as Next, and an unreadable one is logged, not thrown", () => {
+  assert.deepEqual({ ...helper({ payload: { staged: () => ({ build: "0.2.94" }) }, log() {} })({ current: "0.2.89" }).next }, { build: "0.2.94", when: "on restart" });
+  const logged = [];
+  const out = helper({ payload: { staged: () => { throw new Error("bad json"); } }, log: (m) => logged.push(m) })({ current: "0.2.89" });
+  assert.equal(out.next, undefined);
+  assert.match(logged[0], /bad json/);
 });
 
 test("the status poll and the pushed status both carry it", () => {
@@ -24,7 +43,7 @@ test("the status poll and the pushed status both carry it", () => {
   assert.match(main, /onStatus: \(raw\) => \{\s*const s = withRunningBuild\(raw\);/);
 });
 
-test("version status includes running and staged payload builds", () => {
-  assert.match(main, /running: typeof shell !== "undefined"/);
-  assert.match(main, /next: \{ build: staged\.build, when: "on restart" \}/);
+test("Settings shows running with the installer beside it, and Next", () => {
+  assert.match(settings, /s\.running === s\.current \? s\.running : `\$\{s\.running\} \(app \$\{s\.current\}\)`/);
+  assert.match(settings, /k="Next" v=\{`\$\{s\.next\.build\} \(\$\{s\.next\.when\}\)`\}/);
 });
