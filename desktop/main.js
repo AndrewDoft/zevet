@@ -2370,6 +2370,15 @@ bridge.handle("local:status", async (_e, arg) => {
 
   const failedAgo = statusSources.hookFailure(STATUS_PATHS.errorLog);
 
+  let rateLimits;
+  const config = readConfig();
+  const def = config && config.defaultCredential;
+  if (def && def.scope && def.scope !== "auto" && def.id) {
+    const credential = await resolveCredential(def.id, config, def.scope);
+    if (credential && credential.kind === "subscription_token") {
+      rateLimits = await credentialUsage.windowsFor(def.id, credential, { fetchImpl: fetch });
+    }
+  }
   return {
     ok: true,
     cindex,
@@ -2383,6 +2392,8 @@ bridge.handle("local:status", async (_e, arg) => {
     // deciding whether "2h" or "2 hours ago" reads better in a 10px strip.
     hook: { failedAgo },
     burn: burn.read(),
+    rateLimits,
+    rateLimitsAt: rateLimits ? Date.now() : 0,
   };
 });
 
@@ -4005,7 +4016,10 @@ let lastUpdatePhase = null;
  *  (what the feed is compared against); a payload swap moves the code without
  *  moving that, so shown raw it read 0.2.89 while 0.2.91 ran. */
 function withRunningBuild(s) {
-  return s && typeof s === "object" ? { ...s, current: APP_VERSION } : s;
+  if (!s || typeof s !== "object") return s;
+  const staged = typeof shell !== "undefined" && shell.payload && typeof shell.payload.staged === "function" && shell.payload.staged();
+  return { ...s, current: APP_VERSION, running: typeof shell !== "undefined" ? (shell.build || APP_VERSION) : APP_VERSION,
+    ...(staged ? { next: { build: staged.build, when: "on restart" } } : {}) };
 }
 const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),

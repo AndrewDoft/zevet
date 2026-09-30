@@ -1212,6 +1212,12 @@ function VersionSection() {
       <span className="v">{status}</span>
     </div>,
   );
+  if (s && s.running && s.running !== s.current) {
+    out.push(<SRow key="running" k="Running" v={s.running} />);
+  }
+  if (s && s.next && s.next.build) {
+    out.push(<SRow key="next" k="Next" v={`${s.next.build} (${s.next.when})`} />);
+  }
   if (s && s.phase === "downloading") {
     const pct = updatePercent(s);
     out.push(
@@ -1252,7 +1258,7 @@ function VersionSection() {
   }
   out.push(<SRow key="updates" k="Updates" v={<div className="update-actions">{actions}</div>} />);
   return (
-    <SSection title="Version" summary={s && s.current ? s.current : "unknown"}>{out}</SSection>
+    <SSection title="Version" summary={s && s.running ? (s.running === s.current ? s.running : `${s.running} (app ${s.current})`) : (s && s.current ? s.current : "unknown")}>{out}</SSection>
   );
 }
 

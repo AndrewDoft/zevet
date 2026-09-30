@@ -20,7 +20,7 @@ function fakeFetch(handler) {
   return fn;
 }
 
-function headerRes({ ok = true, h5, h7 } = {}) {
+function headerRes({ ok = true, h5, h7, r5, r7 } = {}) {
   return {
     ok,
     headers: {
@@ -28,6 +28,10 @@ function headerRes({ ok = true, h5, h7 } = {}) {
         if (name === "anthropic-ratelimit-unified-5h-utilization") return h5 === undefined ? null : String(h5);
         if (name === "anthropic-ratelimit-unified-7d-utilization") return h7 === undefined ? null : String(h7);
         return null;
+      },
+      entries: function* () {
+        if (r5 !== undefined) yield ["anthropic-ratelimit-unified-5h-reset", String(r5)];
+        if (r7 !== undefined) yield ["anthropic-ratelimit-unified-7d-reset", String(r7)];
       },
     },
   };
@@ -40,6 +44,15 @@ describe("utilizationFor", () => {
     const fetchImpl = fakeFetch(() => headerRes({ h5: 0.3, h7: 0.6 }));
     const v = await usage.utilizationFor("e1", { provider: "anthropic", kind: "subscription_token", key: "sk-ant-oat01-x" }, { fetchImpl, now: () => 0 });
     assert.equal(v, 0.6);
+  });
+
+  test("reports windows and reads reset headers, leaving absent resets at zero", async () => {
+    const fetchImpl = fakeFetch(() => headerRes({ h5: 0.3, h7: 0.6, r5: 1700000000 }));
+    const v = await usage.windowsFor("w1", { provider: "anthropic", kind: "subscription_token", key: "token" }, { fetchImpl, now: () => 0 });
+    assert.deepEqual(v, [
+      { key: "five_hour", utilization: 0.3, resetsAt: 1700000000000 },
+      { key: "seven_day", utilization: 0.6, resetsAt: 0 },
+    ]);
   });
 
   test("an api_key credential is 0 on a successful probe", async () => {
@@ -69,13 +82,13 @@ describe("utilizationFor", () => {
     assert.equal(v, undefined);
   });
 
-  test("a reading is cached for 60s -- a second call inside the window does not re-fetch", async () => {
+  test("a reading is cached for 5m -- a second call inside the window does not re-fetch", async () => {
     const fetchImpl = fakeFetch(() => headerRes({ h5: 0.2, h7: 0.1 }));
     let t = 1000;
     const now = () => t;
     const cred = { provider: "anthropic", kind: "subscription_token", key: "sk-ant-oat01-x" };
     const first = await usage.utilizationFor("e3", cred, { fetchImpl, now });
-    t += 59_000;
+    t += 4 * 60_000;
     const second = await usage.utilizationFor("e3", cred, { fetchImpl, now });
     assert.equal(first, 0.2);
     assert.equal(second, 0.2);
@@ -89,7 +102,7 @@ describe("utilizationFor", () => {
     const now = () => t;
     const cred = { provider: "anthropic", kind: "subscription_token", key: "sk-ant-oat01-x" };
     const first = await usage.utilizationFor("e4", cred, { fetchImpl, now });
-    t += 61_000;
+    t += 6 * 60_000;
     const second = await usage.utilizationFor("e4", cred, { fetchImpl, now });
     assert.equal(first, 0.2);
     assert.equal(second, 0.9);
