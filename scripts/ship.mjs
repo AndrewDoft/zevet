@@ -554,7 +554,7 @@ async function main() {
   try {
     io.git(["fetch", "-q", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
     const feed = JSON.parse((await io.https(`${BASE}/zevet-latest.json`)).body.toString("utf8")).version;
-    const d = decide(io, { feed });
+    const d = decide(io, { feed, soaking: readCanaryAt });
     if (d.action === "none") { log(`ship: nothing to ship — ${d.reason}`); return; }
     const ctx = {
       io, d, version: d.version, tag: d.tag || `v${d.version}`, root: ROOT, notes: flag("--notes"), facts: {},

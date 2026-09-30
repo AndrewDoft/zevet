@@ -10,7 +10,7 @@
 //   release AND the tip's `ci` run is green                -> run ship
 //   anything else                                          -> log why, do nothing
 //
-//   node scripts/ship-watch.mjs [--log FILE] [--dry-run] [--min-hours 24] [--max-new-issues 0] [--allow-unseen]
+//   node scripts/ship-watch.mjs [--log FILE] [--dry-run] [--min-hours 4] [--max-new-issues 0] [--allow-unseen]
 //
 // CI is read with gh, never assumed: a tip whose ci run is red, still pending, or absent is not shipped.
 import { spawn } from "node:child_process";
@@ -25,7 +25,7 @@ const MAX_LOG = 512 * 1024;
 /** One tick. Returns what it did, for the log and the tests. */
 export async function tick({ io, held, runShip, feed, canaryAt = readCanaryAt, soak = {}, now = Date.now }) {
   if (held()) return { did: "skip", why: "a ship is running" };
-  const d = decide(io, { feed: await feed() });
+  const d = decide(io, { feed: await feed(), soaking: canaryAt });
   if (d.action === "none") return { did: "skip", why: d.reason };
   if (d.action === "resume") {
     const at = canaryAt(d.version);

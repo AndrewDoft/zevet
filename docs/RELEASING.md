@@ -19,7 +19,7 @@ version (above every tag AND the live feed), and whether the hub needs a deploy 
 `editor/` changed). It runs the gate, bumps, re-signs the client manifest, rebuilds a stale board bundle, commits,
 tags, pushes, waits for `build.yml` in the foreground, checks the exe's Authenticode, uploads installers (feed last,
 shell only), repoints the Caddy links in place, publishes the payload canary -> reads it back over HTTPS and records the canary
-time, then STOPS. `ship-watch` resumes the tag with `--promote` once the soak gate passes (24 h on canary, no new
+time, then STOPS. `ship-watch` resumes the tag with `--promote` once the soak gate passes (4 h on canary, no new
 Sentry issues for `zevet@<version>` in masora/electron; `--min-hours`, `--max-new-issues`, `--allow-unseen`), or
 `ship --now` skips the soak for an urgent fix. Promotion then reads stable back, deploys the hub and checks `/healthz` + `/version`, hashes the served installers, and
 appends the D-record to `DECISIONS.md`. Docs, tests and scripts alone are not a release.

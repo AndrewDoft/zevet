@@ -88,7 +88,7 @@ export function notesFrom(subjects, version) {
  *   new    — commits past the last finished release that classify() calls a release.
  *   none   — nothing.
  */
-export function decide(io, { ref = "origin/main", feed } = {}) {
+export function decide(io, { ref = "origin/main", feed, soaking = () => null } = {}) {
   const tags = sortVersions(io.git(["tag", "--list", "v*"]).split(/\r?\n/));
   if (!tags.length) throw new Error("no v* tags: ship needs a previous release to diff against");
   const tip = io.git(["rev-parse", ref]);
@@ -99,6 +99,9 @@ export function decide(io, { ref = "origin/main", feed } = {}) {
     if (recordHeader(v).test(decisions)) { base = v; break; }
     const run = io.buildRun(`v${v}`);
     if (run && ["failure", "cancelled", "timed_out"].includes(run.conclusion)) { abandoned.push(v); continue; }
+    // Soaking on canary with shippable work past it: the newer build supersedes it rather
+    // than waiting behind it (a canary that fails its gate must not block every later fix).
+    if (i === 0 && soaking(v) && classifyRange(io, `v${v}`, ref).kind !== "none") { base = v; break; }
     // Unfinished. Its own diff (against the tag before it) says what it was.
     const prev = tags.slice(i + 1).find((t) => !abandoned.includes(t));
     return { action: "resume", version: v, tag: `v${v}`, base: prev, tip, abandoned, ...classifyRange(io, `v${prev}`, `v${v}`) };
@@ -182,7 +185,7 @@ export function renderRecord(n, f) {
 
 // ── the canary soak gate (ported from masora2 scripts/promote-canary.mjs) ───────────────────────────
 export const SENTRY_PROJECT = "masora/electron";
-export const SOAK_DEFAULTS = { minHours: 24, maxNewIssues: 0, allowUnseen: false };
+export const SOAK_DEFAULTS = { minHours: 4, maxNewIssues: 0, allowUnseen: false };
 
 /** The whole promote decision, pure. `facts`: { canaryAt (ISO string | undefined), now (ms), sentry: { seen, newIssues } | null }.
  *  Every reason, not just the first. No canary record is never ok: the clock has not started. */

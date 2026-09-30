@@ -104,6 +104,14 @@ describe("decide", () => {
     const d = decide(fakeGit({ tags: ["v0.2.94", "v0.2.93"], decisions: rec("0.2.93"), files: { "v0.2.93..v0.2.94": ["desktop/bootstrap.js"], default: [] }, builds: { "v0.2.94": { conclusion: "success" } } }));
     assert.deepEqual([d.action, d.version, d.kind, d.base], ["resume", "0.2.94", "shell", "0.2.93"]);
   });
+  test("a canary soaking with shippable work past it is superseded by a new release, not waited on", () => {
+    const soaking = (v) => (v === "0.2.94" ? "2026-09-30T10:00:00Z" : null);
+    const io = fakeGit({ tags: ["v0.2.94", "v0.2.93"], decisions: rec("0.2.93"), files: { "v0.2.94..origin/main": ["desktop/main.js"], default: ["desktop/bootstrap.js"] }, builds: { "v0.2.94": { conclusion: "success" } } });
+    const d = decide(io, { soaking });
+    assert.deepEqual([d.action, d.version, d.base], ["new", "0.2.95", "0.2.94"]);
+    const quiet = fakeGit({ tags: ["v0.2.94", "v0.2.93"], decisions: rec("0.2.93"), files: { "v0.2.94..origin/main": ["DECISIONS.md"], default: ["desktop/bootstrap.js"] }, builds: { "v0.2.94": { conclusion: "success" } } });
+    assert.equal(decide(quiet, { soaking }).action, "resume", "nothing new past it: keep soaking");
+  });
   test("a tag whose build failed is abandoned: the diff is against the last GOOD release, the version above the dead tag", () => {
     const d = decide(fakeGit({ tags: ["v0.2.94", "v0.2.93"], decisions: rec("0.2.93"), files: { default: ["desktop/main.js"] }, builds: { "v0.2.94": { conclusion: "failure" } } }));
     assert.deepEqual([d.action, d.version, d.base, d.abandoned], ["new", "0.2.95", "0.2.93", ["0.2.94"]]);
@@ -204,7 +212,7 @@ describe("decideSoak / readSentry", () => {
   const g = (over, opts) => decideSoak({ canaryAt: "2026-09-29T00:00:00Z", now, sentry: ok, ...over }, opts);
   test("passes only after minHours with no new issues, and says every reason", () => {
     assert.equal(g({}).ok, true);
-    assert.equal(g({ canaryAt: "2026-09-30T00:00:00Z" }).ok, false);
+    assert.equal(g({ canaryAt: "2026-09-30T10:00:00Z" }).ok, false); // 2 h in, under the 4 h default
     assert.equal(g({ canaryAt: undefined }).ok, false);
     assert.equal(g({ sentry: { seen: true, newIssues: 1 } }).ok, false);
     assert.equal(g({ sentry: { seen: true, newIssues: 1 } }, { maxNewIssues: 1 }).ok, true);
