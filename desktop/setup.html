@@ -246,6 +246,33 @@
     if (c.hub && typeof window.zevet.signOutTeam === "function") {
       $("staleNotice").hidden = false;
     }
+    // Setup is a second renderer that can stay open while the hub deploys.
+    // Keep its page current too, but never cut off a typed field or an open
+    // dialog. The board has the same policy in board/src/lib/stale-build.mjs.
+    if (!c.hub) return;
+    var seenBuild = "";
+    var lastInput = Date.now();
+    var stale = false;
+    function holdsSetupWork() {
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]')) return true;
+      return Array.prototype.some.call(document.querySelectorAll("input, textarea"), function (el) {
+        return !["hidden", "checkbox", "radio", "submit", "button", "reset", "file", "range", "color", "image"].includes(el.type) && String(el.value).trim() !== "";
+      });
+    }
+    async function checkHubBuild() {
+      try {
+        var r = await fetch(String(c.hub).replace(/\/+$/, "") + "/version", { cache: "no-store" });
+        var build = (await r.json()).build || "";
+        if (!seenBuild) seenBuild = build;
+        else if (build && build !== seenBuild) stale = true;
+      } catch (_) { return; }
+      if (stale && Date.now() - lastInput >= 120000 && !holdsSetupWork()) location.reload();
+    }
+    ["pointerdown", "keydown", "wheel"].forEach(function (e) {
+      window.addEventListener(e, function () { lastInput = Date.now(); }, { passive: true, capture: true });
+    });
+    setInterval(checkHubBuild, 60000);
+    checkHubBuild();
   });
   var staleSignOutBtn = document.getElementById("staleSignOut");
   if (staleSignOutBtn) {

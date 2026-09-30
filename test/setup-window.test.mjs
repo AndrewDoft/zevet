@@ -13,7 +13,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -23,6 +23,14 @@ const DRIVE = path.join(ROOT, "scripts", "drive", "drive.mjs");
 const SECRET = randomBytes(24).toString("hex");
 /** What a person must never see: a hub, its address, or its host. */
 const HUB_COPY = /\bhub\b|sslip|https?:\/\//i;
+
+test("setup window polls its configured hub build and keeps the same reload guard", () => {
+  const setup = readFileSync(path.join(ROOT, "desktop", "setup.html"), "utf8");
+  assert.match(setup, /fetch\(String\(c\.hub\)[\s\S]{0,120}\/version/);
+  assert.match(setup, /setInterval\(checkHubBuild, 60000\)/);
+  assert.match(setup, /Date\.now\(\) - lastInput >= 120000/);
+  assert.match(setup, /holdsSetupWork\(\)/);
+});
 
 function drive(...args) {
   const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout: 90000 });
