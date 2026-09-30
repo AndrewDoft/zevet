@@ -35,6 +35,7 @@ import { MODELS } from "../lib/constants";
 import { aliasOf, describeModel } from "../lib/models.mjs";
 import { modelLimitedUntil, sortByLimit } from "../lib/model-limits.mjs";
 import { whenText } from "../lib/when.mjs";
+import { ZEVET_MODEL, withZevet } from "../lib/zevet-model.mjs";
 import { useBoard } from "../lib/board";
 import { useChat } from "../lib/chat";
 import { ChatSurface } from "../lib/surface";
@@ -147,7 +148,12 @@ export function ModelChoice({
     [agents],
   );
 
-  const all = useMemo(() => groups.flatMap((g) => g.models), [groups]);
+  /* Zevet leads the list, above every agent's group; Chat has no router. */
+  const all = useMemo(() => {
+    const rest = groups.flatMap((g) => g.models);
+    return inChat ? rest : withZevet(rest, agents);
+  }, [groups, agents, inChat]);
+  const zevetFirst = !inChat && all[0]?.id === ZEVET_MODEL.id;
   const match = all.find((m) => aliasOf(m.id) === launchModel);
   /* ⚠️ ROOT CAUSE of a fresh install's first Codex message failing with
      "Provider error 400" (no local ~/.codex/models_cache.json yet, so
@@ -221,6 +227,11 @@ export function ModelChoice({
             A list that long is searched, not scrolled. */}
         <ModelSelectorSearch placeholder="Search models…" />
         <ModelSelectorList>
+          {zevetFirst && (
+            <ModelSelectorGroup key="zevet">
+              <ModelSelectorItem model={ZEVET_MODEL} />
+            </ModelSelectorGroup>
+          )}
           {groups.map(({ agent, models }) => (
             <ModelSelectorGroup
               key={agent.name}

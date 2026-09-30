@@ -575,9 +575,20 @@ const AssistantMessage: FC = () => {
       >
         <BranchPicker />
         <AssistantActionBar />
+        <ViaLabel />
       </div>
     </MessagePrimitive.Root>
   );
+};
+
+/** Which model a Zevet-routed turn was answered by (lib/transcript.mjs zevet_route). */
+const ViaLabel: FC = () => {
+  const via = useAuiState((s) => (s.message.metadata.custom as { via?: string } | undefined)?.via);
+  return via ? (
+    <span data-slot="aui_assistant-message-via" className="text-muted-foreground/70 ms-2 text-xs">
+      {via}
+    </span>
+  ) : null;
 };
 
 const AssistantActionBar: FC = () => {

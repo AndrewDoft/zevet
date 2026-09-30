@@ -176,6 +176,15 @@ export function appendLine(state, text) {
  */
 export function appendAgentPayload(state, payload, opts = {}) {
   if (!payload || typeof payload !== "object") return state;
+  /* Which model a Zevet-routed turn landed on: kept on the turn's message so
+     the thread can label it. Not content, and it comes from the router
+     (desktop/zevet-router.js), never from a CLI. */
+  if (payload.type === "zevet_route") {
+    const s = openAssistant(state);
+    const messages = s.messages.slice();
+    messages[s.openIndex] = { ...messages[s.openIndex], metadata: { custom: { via: String(payload.label || payload.model || "") } } };
+    return { ...s, messages };
+  }
   const agent = opts.agent || "claude";
   const root = opts.localRoot || null;
 
