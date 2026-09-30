@@ -344,7 +344,10 @@ export function buildSteps(ctx) {
     {
       name: "stable links",
       plan: () => `Caddy: Zevet-Setup.exe / Zevet.dmg -> ${v}, edited in place, container checked, reloaded`,
-      done: async () => Number(io.ssh(`grep -c "zevet-${v}-" /srv/masora/Caddyfile || true`).trim()) >= 2,
+      // Always run: the edit and the reload are idempotent, and "the host file has
+      // the new names" does not mean Caddy reloaded them (a run that died between
+      // the two would otherwise be skipped for ever).
+      done: async () => false,
       run() {
         // In place, never sed -i: the container holds the old inode open (RELEASING.md §4a).
         const out = io.ssh(`set -e
@@ -361,7 +364,8 @@ with open(p, "r+") as f:
     f.truncate()
 PYEOF
 C=$(docker ps -qf name=caddy)
-n=$(docker exec $C grep -c "zevet-${v}-" /srv/masora/Caddyfile || true)
+# Inside the container the bind-mounted file is /etc/caddy/Caddyfile.
+n=$(docker exec $C grep -c "zevet-${v}-" /etc/caddy/Caddyfile || true)
 [ "$n" -ge 2 ] || { echo "the running container sees $n lines for ${v}, not 2"; exit 1; }
 docker exec $C caddy reload --config /etc/caddy/Caddyfile
 echo reloaded

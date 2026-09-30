@@ -338,10 +338,12 @@ describe("step checks decide 'already done'", () => {
     assert.equal(await world(t, { files: both }).check("installers"), true);
     assert.equal(await world(t, { files: new Set([exeName("0.2.94")]) }).check("installers"), false);
   });
-  test("stable links: the Caddyfile must name the version twice", async (t) => {
-    assert.equal(await world(t, { ssh: () => "2\n" }).check("stable links"), true);
-    assert.equal(await world(t, { ssh: () => "0\n" }).check("stable links"), false);
-    assert.equal(await world(t, { ssh: () => "1\n" }).check("stable links"), false);
+  test("stable links always runs: a host file already edited is not a reloaded Caddy", async (t) => {
+    // The first real ship edited the host file, then died on the container check;
+    // a done-check reading the host file would have skipped the reload for ever.
+    assert.equal(await world(t, { ssh: () => "2\n" }).check("stable links"), false);
+    const src = readFileSync(new URL("../scripts/ship.mjs", import.meta.url), "utf8");
+    assert.ok(src.includes('docker exec $C grep -c "zevet-${v}-" /etc/caddy/Caddyfile'), "the container sees the file at /etc/caddy/Caddyfile");
   });
   test("hub: the marker the deploy writes must name the version", async (t) => {
     assert.equal(await world(t, { ssh: () => "0.2.94\n" }).check("hub"), true);
