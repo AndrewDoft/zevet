@@ -29,6 +29,8 @@ function toPublic(e, head) {
     id: e.id,
     ...e.meta,
     running: e.running,
+    // What a restart resumes (console-persistence.js); "" until claude says.
+    sessionId: e.sessionId || "",
     state: e.running ? e.state : "exited",
     turns: e.turns,
     lastResult: e.lastResult,
@@ -91,6 +93,7 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone, now = Date.n
         // console that now answers to it, and drops what matches no console.
         events: prev ? prev.events.map((e) => ({ ...e, id })) : [],
         dropped: prev ? prev.dropped : 0,
+        sessionId: prev ? prev.sessionId : "",
       });
     },
 
@@ -104,6 +107,12 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone, now = Date.n
       // Partial-message deltas (claude --include-partial-messages) are live-only:
       // hundreds per answer, and the complete block that follows is what a reload needs.
       const partial = evt.type === "agent" && evt.payload && evt.payload.type === "stream_event";
+      /* ⚠️ THE SESSION ID WAS NEVER KEPT, so console-persistence.js's
+         resumable() was false for every console and a restart saved nothing
+         (0.2.95-0.2.96; found 2026-09-30 when /list showed no sessionId on
+         two working agents). claude stamps session_id on its stream events. */
+      const sid = evt.type === "agent" && evt.payload && typeof evt.payload.session_id === "string" ? evt.payload.session_id : "";
+      if (e && sid) e.sessionId = sid;
       if (e && !partial && !isPromptEcho(evt)) {
         e.events.push(out);
         if (evt.type === "exit") e.running = false;

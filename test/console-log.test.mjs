@@ -238,3 +238,18 @@ test("a routed turn that ended on codex or opencode goes idle with its answer (t
   assert.equal(c.lastResult, "pineapple");
   assert.equal(c.turns, 1);
 });
+
+test("a console keeps claude's session id, so a restart can resume it", async () => {
+  const { createRequire } = await import("node:module");
+  const req = createRequire(import.meta.url);
+  const { createConsoleLog: make } = req("../desktop/console-log.js");
+  const { resumableEntries } = req("../desktop/console-persistence.js");
+  const log = make();
+  log.open("c1", { agent: "claude", cwd: "/w", root: "/w" });
+  log.record("c1", { type: "agent", payload: { type: "system", subtype: "init", session_id: "s-123" } });
+  const snap = log.snapshot().consoles;
+  assert.equal(snap[0].sessionId, "s-123");
+  assert.deepEqual(resumableEntries(snap).map((e) => e.sessionId), ["s-123"], "and it is saved");
+  log.open("c2", { agent: "claude", cwd: "/w", root: "/w" }, "c1");
+  assert.equal(log.snapshot().consoles[0].sessionId, "s-123", "a follow-up process keeps the thread's id");
+});
