@@ -80,6 +80,7 @@
       "chat-cli.js",
       "chat-zevet.js",
       "sentry.js",
+      "user-report.js",
       "setup.html",
       "fonts/**",
       "build/icon.png"

@@ -179,6 +179,7 @@ type — but the app's side of it is the same start / wait / cancel.` },
     googleLogout: { channel: "zevet:googleLogout", params: [], type: `() => Promise<{ ok?: boolean; error?: string } | null | undefined>`, optional: true, doc: `End this machine's session, hub-side and locally. A session does not
  remember which provider minted it, so this is the same call as
  \`githubLogout\` under the name the Google button expects.` },
+    sendReport: { channel: "zevet:sendReport", params: ["text"], pack: "object", type: `(text: string) => Promise<{ ok: boolean }>`, optional: true, doc: `Send what the person typed plus the scrubbed tail of the app log to Sentry. \`{ ok }\`.` },
     signOutTeam: { channel: "zevet:signOutTeam", params: [], type: `() => Promise<{ ok?: boolean; error?: string } | null | undefined>`, optional: true, doc: `Leave the team entirely: ends the hub session, then drops session,
  secret AND hub from config.json (backed up first) so this machine
  falls back to first-run setup. See main.js's \`signOutTeam\`.
