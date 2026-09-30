@@ -12,6 +12,7 @@
     "install-hooks": "node client/install.mjs",
     "doctor": "node client/doctor.mjs",
     "test": "node scripts/run-tests.mjs",
+    "ship": "node scripts/ship.mjs",
     "ipc:gen": "node desktop/node_modules/@masora/desktop-kit/bin/ipc-gen.js desktop/ipc-table.js --preload desktop/preload.js --dts board/src/lib/bridge.generated.d.ts",
     "ipc:check": "npm run ipc:gen -- --check",
     "typecheck": "npm --prefix board run typecheck"

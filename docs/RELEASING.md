@@ -6,6 +6,42 @@ putting two installers and that file on the download host. Until the file
 changes, nothing updates — a 404 or a stale version is treated as "nothing to
 report", so there is no step here that half-ships.
 
+## Shipping: `npm run ship`
+
+```
+npm run ship -- --dry-run     # the plan, no side effects
+npm run ship                  # the whole release, from origin/main
+```
+
+One command does everything below (§0-§7 and "Deploying the hub") and decides for itself: shell or payload from
+`git diff <last release tag>..origin/main` (`classify` in `scripts/ship-lib.mjs`: the §7 rule, tested), the next
+version (above every tag AND the live feed), and whether the hub needs a deploy (`board/`, `hub/`, `client/`,
+`editor/` changed). It runs the gate, bumps, re-signs the client manifest, rebuilds a stale board bundle, commits,
+tags, pushes, waits for `build.yml` in the foreground, checks the exe's Authenticode, uploads installers (feed last,
+shell only), repoints the Caddy links in place, publishes the payload canary -> reads it back over HTTPS -> promotes
+stable -> reads that back, deploys the hub and checks `/healthz` + `/version`, hashes the served installers, and
+appends the D-record to `DECISIONS.md`. Docs, tests and scripts alone are not a release.
+
+**Resumable.** Every step asks "is this already done?" first (tag on origin, run green, installers on the host,
+Caddyfile names the version, pulse carries the build on both platforms, hub marker, D-record on main) and skips.
+A crash mid-ship is repaired by running it again; a tag with no D-record is resumed, not re-cut. A tag whose
+`build.yml` failed never reached anyone and is superseded by the next version. A lock file
+(`%TEMP%\zevet-ship.lock`) keeps two ships apart. The signing key is read from the DPAPI file, held in memory,
+never printed. ship works in its own worktree (`../zevet-ship`, or `ZEVET_SHIP_DIR`).
+
+**Auto-ship.** `scripts/ship-watch.mjs` runs every 10 minutes: if origin/main has releasable commits past the last
+tag AND the tip's `ci` run is green (read with `gh`) AND no ship is running, it runs ship; an unfinished tag is
+resumed without asking ci. Log: `%LOCALAPPDATA%\Zevet\ship-watch.log`. Register it once, hidden (no window):
+
+```
+pwsh -NoProfile -File scripts/register-ship-watch.ps1 -Checkout <a clone of zevet on main nothing else edits>
+pwsh -NoProfile -File scripts/register-ship-watch.ps1 -Remove
+```
+
+Check it by `LastTaskResult` and the log, not by the task's state (see the vault note on laptop tasks).
+
+The sections below stay as the reference `ship.mjs` implements, and as the manual route when it cannot run.
+
 ## 0. Before anything
 
 ```
@@ -357,8 +393,9 @@ the real one) gives a feed a dev build will take. `codemagic.yaml`'s
 ## What is not automated, and why
 
 **Uploading.** Publishing is the one irreversible step, and it is a `scp` into a
-production box that also serves the Masora app. It stays a command somebody
-runs on purpose.
+production box that also serves the Masora app. It is `npm run ship`'s job now
+(and the watcher's, once registered); by hand it stays a command somebody runs on
+purpose.
 
 **Signing.** Windows is signed as "Andrew Doft" via Azure Trusted Signing/OIDC
 (see §Windows below) and verified in-job with `Get-AuthenticodeSignature`. macOS
