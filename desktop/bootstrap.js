@@ -80,6 +80,18 @@ async function startPayload(platform) {
     log,
   });
   shell.payload = payload;
+  // A cold launch is the safest moment to apply a staged build: nothing is running yet. The idle swapper and
+  // will-quit never fire after a kill, crash, reboot or logoff. activate() writes current.json as a trial, so
+  // resolve() returns it with trial:true and the confirm / 3-strike revert covers a bad build.
+  try {
+    const staged = payload.staged();
+    if (staged) {
+      await payload.activate();
+      log(`payload ${staged.build} staged; applied at launch`);
+    }
+  } catch (err) {
+    log(`applying the staged payload at launch failed, booting current: ${err && err.message || err}`);
+  }
   const cur = payload.resolve();
   shell.build = cur.build;
   shell.source = cur.source;
