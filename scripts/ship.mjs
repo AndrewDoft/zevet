@@ -82,7 +82,21 @@ export function realIo({ log = console.log } = {}) {
       await pipeline(res.body, createWriteStream(file));
       return { status: res.status, ...(await fileDigest(file)) };
     },
-    ssh: (script) => run("gcloud", [...BOX, "--command", "sudo bash -s"], { input: script }).stdout,
+    /* NOT `sudo bash -s` with the script on stdin: on Windows gcloud hands the
+       session to PuTTY, which reads stdin itself (observed: "bash: line 1: y:
+       command not found", the answer to its own host-key prompt). The script
+       goes up by scp and runs by path, as deploy/gce.md in masora2 says. */
+    ssh(script) {
+      const name = `zevet-ship-${process.pid}-${Date.now()}.sh`;
+      const local = path.join(tmpdir(), name);
+      writeFileSync(local, script.replace(/\r\n/g, "\n"));
+      try {
+        io.scp([local], "/tmp/");
+        return run("gcloud", [...BOX, "--command", `sudo bash /tmp/${name}; rc=$?; rm -f /tmp/${name}; exit $rc`]).stdout;
+      } finally {
+        rmSync(local, { force: true });
+      }
+    },
     scp: (files, to = "/tmp/") => run("gcloud", ["compute", "scp", "--project", "masora-production", "--tunnel-through-iap", "--zone", "us-east1-b", ...files, `masora-app:${to}`]),
     key() {
       if (!pem) {
