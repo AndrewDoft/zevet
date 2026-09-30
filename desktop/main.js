@@ -4172,6 +4172,15 @@ bridge.handle("local:voiceMic", () => masoraVoice.mic());
 bridge.handle("app:updateStatus", () => withRunningBuild(appUpdater.status()));
 bridge.handle("app:updateCheck", () => appUpdater.check());
 bridge.handle("app:updateInstall", () => appUpdater.install());
+/** The board window answering the loopback API's `via: "board"` requests (desktop/board-ask.js). */
+const boardAsk = createBoardAsk({
+  send: (reqId, kind, payload) => {
+    if (!boardWindow || boardWindow.isDestroyed()) return false;
+    toBoard("local:boardRequest", { reqId, kind, ...payload });
+    return true;
+  },
+});
+bridge.handle("local:boardReply", (_e, { reqId, result }) => boardAsk.reply(reqId, result));
 bridge.assertComplete();
 
 /**
@@ -4183,14 +4192,6 @@ bridge.assertComplete();
  * trusted -- see `trustedDir` above for what that buys `spawn`.
  */
 let agentApiHandle = null;
-const boardAsk = createBoardAsk({
-  send: (reqId, kind, payload) => {
-    if (!boardWindow || boardWindow.isDestroyed()) return false;
-    toBoard("local:boardRequest", { reqId, kind, ...payload });
-    return true;
-  },
-});
-bridge.handle("local:boardReply", (_e, { reqId, result }) => boardAsk.reply(reqId, result));
 async function askBoard(kind, payload) {
   if (kind !== "start") return boardAsk.ask(kind, payload);
   const dir = trustedDir(payload.cwd);

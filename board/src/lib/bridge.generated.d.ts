@@ -385,6 +385,7 @@ export interface LocalBridge {
   /** Start an agent in a folder. Returns { ok, id }. */
   startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean; engine?: string; label?: string }) => Promise<StartAgentResult>;
   sendToAgent: (id: string, text: string) => Promise<{ ok: boolean; error?: string }>;
+  boardReply?: (reqId: string, result: unknown) => Promise<unknown>;
   stopAgent: (id: string) => Promise<unknown>;
   /**
    * The consoles still held by this app, with every event each has sent —
@@ -452,7 +453,6 @@ export interface LocalBridge {
    * its own actions, as a person's Send would. Answer with boardReply.
    */
   onBoardRequest?: (cb: (req: { reqId: string; kind: string; [k: string]: unknown }) => void) => () => void;
-  boardReply?: (reqId: string, result: unknown) => Promise<unknown>;
   /**
    * An agent is asking to do something and is BLOCKED until the answer comes
    * back — see the computer-use block in main.js. The board is the only place
