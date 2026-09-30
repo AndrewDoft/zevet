@@ -270,7 +270,8 @@ test("routed: every rung limited says so in one line with the earliest reset", a
   const h = harness(ladder2, script, { clock });
   h.console._state.limits.set("codex", at2);
   await h.done(["hi"]);
-  const last = h.events.at(-1);
+  const last = h.events.at(-2);
+  assert.equal(h.events.at(-1).type, "turn_end", "and the turn ends, so Chat stops waiting");
   assert.equal(last.payload.type, "error");
   assert.match(last.payload.error.data.message, /Rate limit exceeded on every model/);
   assert.equal(last.payload.error.data.responseHeaders["x-ratelimit-reset"], String(at2));

@@ -22,15 +22,15 @@ import { commandsFor, matchSlash, type SlashCommand } from "../lib/slash.mjs";
 import { cn } from "@/lib/utils";
 import { useChat } from "../lib/chat";
 
-/** The agent's list for the surface we are on: Chat is always claude and
- *  reads `slash_commands` off its own run's init line (null before any run →
- *  CLAUDE_FALLBACK inside commandsFor); Code uses the active console. */
+/** The agent's list for the surface we are on. Both follow the agent the next
+ *  send goes to; claude's list is what its init line announced (null before
+ *  any run → CLAUDE_FALLBACK inside commandsFor). */
 function useSlashCommands(): SlashCommand[] {
   const isChat = useContext(ChatSurface);
   const active = useBoard(selectActiveConsole);
   const launchAgent = useBoard((s) => s.launchAgent);
   const chatSlash = useChat((s) => (s.activeId ? s.threads[s.activeId]?.slashCommands ?? null : null));
-  const agent = isChat ? "claude" : (active?.agent ?? launchAgent);
+  const agent = isChat ? launchAgent || "claude" : (active?.agent ?? launchAgent);
   const announced = isChat ? chatSlash ?? undefined : active?.slashCommands;
   return useMemo(() => commandsFor(agent, announced), [agent, announced]);
 }

@@ -47,9 +47,9 @@ test("only the surface in front binds ModelChoice to the /model signal", () => {
   assert.ok(!/open=\{modelSelectorOpen\}/.test(src), "bound unconditionally again");
 });
 
-test("Chat's claude-only picker never writes the launch model back", () => {
+test("the picker's write-back is the same in Chat and Code, front surface only", () => {
   const src = readFileSync(path.join(ROOT, "board", "src", "components", "model-choice.tsx"), "utf8");
-  assert.match(src, /if \(inChat \|\| !front \|\| match \|\| !selected\) return;/);
+  assert.match(src, /if \(!front \|\| match \|\| !selected\) return;/);
   const chat = readFileSync(path.join(ROOT, "board", "src", "lib", "chat.ts"), "utf8");
   // Chat runs every provider now, so the pick goes through as it is.
   assert.match(chat, /chatSend\(chatId, text, \{ agent, model: launchModel/);

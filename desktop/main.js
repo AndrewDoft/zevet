@@ -83,6 +83,7 @@ const masoraConnect = require("./masora-connect.js");
 const chats = require("./chat.js");
 const { createClaudeCli } = require("./chat-claude.js");
 const { createCli: createChatCli } = require("./chat-cli.js");
+const { createZevetChat } = require("./chat-zevet.js");
 const sentry = require("./sentry.js");
 const Sentry = require("@sentry/electron/main");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
@@ -3968,13 +3969,15 @@ const chatProviders = {
   codex: createChatCli({ agent: "codex", id: "codex-cli", startConsole: instrumentedStartConsole }),
   opencode: createChatCli({ agent: "opencode", id: "opencode-cli", startConsole: instrumentedStartConsole }),
 };
+// "zevet:auto": the router, answering each turn with whichever of the above can.
+chatProviders.zevet = createZevetChat({ inner: chatProviders, ladder: zevetLadder });
 const DEFAULT_CHAT_AGENT = "claude";
 
 async function spawnChat(chat, provider, opts = {}, folder = "") {
   let mcpConfig = null;
   const cfg = masora.readConfig();
   // --mcp-config is claude's flag; the others get Masora as the C2 brief.
-  if (cfg.paired && provider.agent === "claude") {
+  if (cfg.paired && (provider.agent === "claude" || provider.agent === "zevet")) {
     mcpConfig = path.join(app.getPath("temp"), `zevet-chat-mcp-${process.pid}.json`);
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: masora.mcpServerEntry(cfg.url) }), "utf8");
   }
@@ -3984,14 +3987,22 @@ async function spawnChat(chat, provider, opts = {}, folder = "") {
     mcpConfig,
     model: opts.model,
     mode: opts.mode,
+    effort: agentConsole.extrasFrom(opts).effort,
     folder,
     env: await credentialEnvFor(),
     onEvent: (evt) => {
       const p = evt && evt.type === "agent" ? evt.payload : null;
       if (p && p.type === "system" && p.subtype === "init" && p.model) run.model = String(p.model);
-      const text = p && run.turn ? provider.replyOf(p) : "";
+      // The router says which backend answered; each turn is saved as theirs.
+      if (p && p.type === "zevet_route") {
+        run.model = String(p.model || "");
+        run.provider = `${p.agent}-cli`;
+      }
+      const text = p && run.turn ? provider.replyOf(p, evt) : "";
       if (text) run.turn.reply = run.turn.reply ? [run.turn.reply, text].join(String.fromCharCode(10, 10)) : text;
-      if (p && run.turn && provider.endsTurn(p)) finishChatTurn(run, run.turn.reply, p.is_error);
+      if (p && run.turn && provider.endsTurn(p, evt)) finishChatTurn(run, run.turn.reply, p.is_error);
+      // A routed turn that ended on codex or opencode says so itself (zevet-router.js).
+      if (evt && evt.type === "turn_end" && run.turn) finishChatTurn(run, run.turn.reply, Boolean(evt.error) || !run.turn.reply);
       if (evt && evt.type === "exit") {
         // A one-shot CLI ends its turn by exiting: a reply and a clean exit is
         // an answer; anything else is a failed turn and is not saved.
@@ -4040,7 +4051,7 @@ function chatFolder(dir) {
 
 /** What a live process was started for; a different answer respawns it. */
 function chatWant(provider, opts, folder) {
-  return [provider.agent, opts.model || "", opts.mode || "", folder].join("|");
+  return [provider.agent, opts.model || "", opts.mode || "", opts.effort || "", folder].join("|");
 }
 
 bridge.handle("chat:create", (_e, arg) => chats.create(chatAuthor(), chatFolder(arg && arg.folder) || ""));

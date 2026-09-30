@@ -241,7 +241,7 @@ function addTurn(id, user, assistant, model, author, provider) {
 }
 
 /** argv for one chat process. Pure; see the flag notes at the top. */
-function chatArgs({ sessionId, started, mcpConfig, model, mode, work } = {}) {
+function chatArgs({ sessionId, started, mcpConfig, model, mode, work, effort } = {}) {
   const args = [
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
     "--include-partial-messages",
@@ -252,6 +252,8 @@ function chatArgs({ sessionId, started, mcpConfig, model, mode, work } = {}) {
     "--append-system-prompt", work ? WORK_PROMPT : SYSTEM_PROMPT,
     ...(mcpConfig ? ["--mcp-config", mcpConfig, "--allowedTools", "mcp__masora"] : []),
     ...(model ? ["--model", model] : []),
+    // The composer's effort control, same levels and flag as Code (agent-console.js).
+    ...(effort ? ["--effort", effort] : []),
   ];
   // One mapping for Code and Chat: agent-console.js MODES.
   if (mode) args.push(...require("./agent-console.js").modeFlags("claude", mode).flags);

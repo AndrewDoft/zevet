@@ -23,7 +23,8 @@ test("the selector renders Zevet's group before the agents' groups", () => {
   const zevet = src.indexOf("<ModelSelectorItem model={zevet} />");
   const groups = src.indexOf("groups.map(");
   assert.ok(zevet > 0 && groups > 0 && zevet < groups, "Zevet's row must precede groups.map");
-  assert.match(src, /withZevet\(rest, agents\)/);
+  assert.match(src, /withZevet\(groups\.flatMap/);
+  assert.ok(!/inChat \? rest/.test(src), "Chat must not drop the Zevet row");
   assert.match(src, /\{zevetFirst && \(\s*<ModelSelectorGroup key="zevet">/, "and it is not hidden");
 });
 

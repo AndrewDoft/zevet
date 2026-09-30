@@ -76,6 +76,7 @@
       "chat.js",
       "chat-claude.js",
       "chat-cli.js",
+      "chat-zevet.js",
       "sentry.js",
       "setup.html",
       "fonts/**",

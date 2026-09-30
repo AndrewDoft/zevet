@@ -42,15 +42,6 @@ import { ChatSurface } from "../lib/surface";
 import { zStorage } from "../lib/bridge";
 import type { UsableAgent } from "../lib/types";
 
-/** Chat + Work groups by provider, not by CLI: opencode fronts many. */
-const PROVIDER_LABEL: Record<string, string> = {
-  claude: "Claude",
-  codex: "OpenAI",
-  gemini: "Gemini",
-  opencode: "Open models",
-  meta: "Meta",
-};
-
 /** codex is the one CLI here that takes a reasoning-effort flag. Offering the
  *  control for models that ignore it would be inventing a setting. */
 const HAS_EFFORT = new Set(["codex"]);
@@ -75,7 +66,6 @@ export function ModelChoice({
   const setLaunchEffort = useBoard((s) => s.setLaunchEffort);
   const modelSelectorOpen = useBoard((s) => s.modelSelectorOpen);
   const setModelSelectorOpen = useBoard((s) => s.setModelSelectorOpen);
-  const openSettings = useBoard((s) => s.openSettings);
   /* ⚠️ TWO OF THESE ARE MOUNTED — Code's composer and Chat's, one hidden. Both
      bound to the one store signal, a click opened both and the hidden one's
      outside-click closed them again, so the picker never opened (seen live
@@ -136,9 +126,7 @@ export function ModelChoice({
               // Grayed and unselectable until it clears — a model that would
               // only fail the same way again is not a real choice. The reset
               // time is the tooltip (ModelSelectorItem's `title` below).
-              // Not installed: nothing here can run, so it is listed (with a
-              // Connect chip on its group) and cannot be picked.
-              disabled: Boolean(resetAt) || !a.ok,
+              disabled: Boolean(resetAt),
               resetLabel: resetAt ? `Resets ${whenText(resetAt)}` : undefined,
               verified,
             };
@@ -148,13 +136,14 @@ export function ModelChoice({
     [agents],
   );
 
-  /* Zevet leads the list, above every agent's group; Chat has no router. */
+  /* Zevet leads the list, above every agent's group — in Chat too: a chat
+     turn on it runs through the same router (desktop/chat-zevet.js). */
   const zevet = useMemo(() => ({ ...ZEVET_MODEL, icon: <AgentLogo agent="zevet" className="size-3.5" /> }), []);
-  const all = useMemo(() => {
-    const rest = groups.flatMap((g) => g.models);
-    return inChat ? rest : withZevet(rest, agents).map((m) => (m === ZEVET_MODEL ? zevet : m));
-  }, [groups, agents, inChat, zevet]);
-  const zevetFirst = !inChat && all[0]?.id === ZEVET_MODEL.id;
+  const all = useMemo(
+    () => withZevet(groups.flatMap((g) => g.models), agents).map((m) => (m === ZEVET_MODEL ? zevet : m)),
+    [groups, agents, zevet],
+  );
+  const zevetFirst = all[0]?.id === ZEVET_MODEL.id;
   const selected = defaultPick(all, launchModel, aliasOf);
   const match = all.find((m) => m.id === selected && aliasOf(m.id) === launchModel);
   /* ⚠️ ROOT CAUSE of a fresh install's first Codex message failing with
@@ -179,13 +168,13 @@ export function ModelChoice({
      one. Guarded on there being no match AND a list to pick from, so this
      settles in a single pass and cannot ping-pong. */
   useEffect(() => {
-    // Code only, front only: Chat lists providers Code does not (Gemini), so a
-    // Chat instance "correcting" a pick reset it (seen live 2026-09-23).
-    if (inChat || !front || match || !selected) return;
+    // Front only: the hidden surface's picker must not correct a pick the
+    // visible one is about to make.
+    if (!front || match || !selected) return;
     setLaunchModel(aliasOf(selected));
     const cut = selected.indexOf(":");
     if (cut > 0) setLaunchAgent(selected.slice(0, cut));
-  }, [inChat, front, match, selected, setLaunchModel, setLaunchAgent]);
+  }, [front, match, selected, setLaunchModel, setLaunchAgent]);
 
   /* The model persists across a relaunch and the agent does not, so a stored
      Codex pick came back showing GPT-5.6 while claude was still the agent that
@@ -240,29 +229,9 @@ export function ModelChoice({
                 <span className="flex items-baseline justify-between gap-3">
                   <span className="flex items-center gap-1.5">
                     <AgentLogo agent={agent.name} className="size-3" />
-                    {inChat ? PROVIDER_LABEL[agent.name] ?? agent.name : agent.name}
+                    {agent.name}
                   </span>
-                  {/* Only what you can act on: the sign-in state and turn style on
-                      every group was noise. Chat lists every provider, so a
-                      missing one is a Connect chip rather than a missing group. */}
-                  {inChat ? (
-                    !agent.ok || !agent.signedIn ? (
-                      <button
-                        type="button"
-                        data-slot="connect-chip"
-                        className={cn(mono, "rounded-full bg-foreground/[0.06] px-2 py-0.5 text-foreground/70 hover:text-foreground")}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpen(false);
-                          openSettings();
-                        }}
-                      >
-                        Connect
-                      </button>
-                    ) : null
-                  ) : (
-                    !agent.signedIn && <span className={cn(mono, "text-foreground/35")}>Not signed in</span>
-                  )}
+                  {!agent.signedIn && <span className={cn(mono, "text-foreground/35")}>Not signed in</span>}
                 </span>
               }
             >
