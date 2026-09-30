@@ -35,7 +35,7 @@ function createClaudeCli({ startConsole }) {
         : "";
     },
     endsTurn: (p) => Boolean(p && p.type === "result"),
-    open({ chat, mcpConfig, model, mode, folder, env, onEvent }) {
+    open({ chat, mcpConfig, model, mode, effort, folder, env, onEvent }) {
       // This machine's session for the chat, from where it runs. With history
       // but no session here (a handed-over chat, or a new folder), the first
       // send replays it.
@@ -46,7 +46,7 @@ function createClaudeCli({ startConsole }) {
         agent: "claude",
         cwd,
         env,
-        args: chats.chatArgs({ sessionId: sess.sessionId, started: sess.started, mcpConfig, model, mode, work: Boolean(folder) }),
+        args: chats.chatArgs({ sessionId: sess.sessionId, started: sess.started, mcpConfig, model, mode, effort, work: Boolean(folder) }),
         onEvent: (evt) => {
           const p = evt && evt.type === "agent" ? evt.payload : null;
           if (p && p.type === "system" && p.subtype === "init") chats.markStarted(chat.id, cwd);

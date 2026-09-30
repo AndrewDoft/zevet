@@ -245,7 +245,10 @@ function startRouted(o) {
   const emit = typeof o.onEvent === "function" ? o.onEvent : () => {};
   const limits = new Map(); // key -> resetAt ms
   const sessions = new Map(); // rung.id -> session id
-  const history = []; // { user, answer, rung }
+  // { user, answer, rung }. `o.history` seeds a conversation that began before
+  // this console (a Chat thread respawned): rung "" matches no backend, so
+  // every one is handed all of it on first use.
+  const history = (o.history || []).map((t) => ({ user: t.user, answer: t.answer, rung: "" }));
   const queue = [];
   let busy = false;
   let stopped = false;
@@ -277,7 +280,7 @@ function startRouted(o) {
   }
 
   /** One try of `text` on `r`. Resolves "done" | "limited" | "unavailable" | "stopped". */
-  function attempt(r, text) {
+  function attempt(r, text, extra) {
     return new Promise((resolve) => {
       const sid = sessions.get(r.id);
       // The turns this backend never saw: all of them on a fresh session, the
@@ -367,19 +370,19 @@ function startRouted(o) {
         live = { rung: r, handle };
       }
       sink = onEvent;
-      const sent = handle.send(prompt);
+      const sent = handle.send(prompt, extra);
       if (sent && sent.ok === false) finish("unavailable");
     });
   }
 
-  async function runTurn(text) {
+  async function runTurn({ text, extra }) {
     const tier = classifyTurn(text);
     for (;;) {
       if (stopped) return;
       const order = ((await o.ladder())[tier] || []).filter((r) => !limitedUntil(r));
       const next = order[0];
       if (!next) return allLimited(await o.ladder());
-      const out = await attempt(next, text);
+      const out = await attempt(next, text, extra);
       if (out === "done" || out === "stopped") return;
       // limited / unavailable: the next pass skips it and takes the following rung.
       if (out === "unavailable") limits.set(next.id, now() + DEFAULT_RESET_MS);
@@ -398,6 +401,8 @@ function startRouted(o) {
         error: { message: all.length ? "Rate limit exceeded on every model" : "No model available", data: { message: all.length ? "Rate limit exceeded on every model" : "No model available", responseHeaders: at ? { "x-ratelimit-reset": String(at) } : {} } },
       },
     });
+    // Nothing answered: the turn is over all the same (Chat waits on this).
+    emit({ type: "turn_end", result: "", error: true });
   }
 
   async function drain() {
@@ -413,10 +418,11 @@ function startRouted(o) {
   return {
     ok: true,
     id,
-    send(text) {
+    /** `extra` rides to the backend's own send (Chat's Masora brief). */
+    send(text, extra) {
       if (stopped) return { ok: false, error: "That agent has already exited." };
       if (typeof text !== "string" || !text.length) return { ok: false, error: "Nothing to send." };
-      queue.push(text);
+      queue.push({ text, extra });
       void drain();
       return { ok: true };
     },
