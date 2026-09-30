@@ -8,13 +8,31 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { GithubMark, GoogleMark } from "./logos";
-import { combinePeople, identityLabel, linkAccount, renamePerson, unlinkAccount } from "../lib/identity.mjs";
+import { combinePeople, identityLabel, likelySame, linkAccount, renamePerson, unlinkAccount } from "../lib/identity.mjs";
 import { useBoard } from "../lib/board";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 const BTN = "sbtn";
 
 type Ident = { provider: string; login: string };
+
+/** Suggested pairs the owner dismissed, so each is offered once. */
+const DISMISSED_KEY = "zevet.combine.dismissed";
+function readDismissed(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(DISMISSED_KEY) || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+function writeDismissed(v: string[]) {
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify(v));
+  } catch {
+    // Private window or blocked storage: the suggestion just comes back.
+  }
+}
 
 function LinkButton({ provider, onDone }: { provider: "github" | "google"; onDone: () => void }) {
   const [state, setState] = useState<
@@ -125,9 +143,9 @@ export function IdentityRows({
     });
   }
 
-  function combine() {
-    const f = (from.current && from.current.value.trim()) || "";
-    const t = into || (people[0] && (people[0].key || people[0].login)) || "";
+  function combine(pair?: { from: string; into: string }) {
+    const f = pair ? pair.from : (from.current && from.current.value.trim()) || "";
+    const t = pair ? pair.into : into || (people[0] && (people[0].key || people[0].login)) || "";
     if (!f || !t) return;
     setBusy(true);
     setErr("");
@@ -142,8 +160,43 @@ export function IdentityRows({
 
   const known = [...new Set([...people.map((p) => p.key || p.login), ...roster.map((r) => r.actor)])];
 
+  /* Andrew had "andrew" and "AndrewDoft" and could not find the combine
+     control. The pairs that are plainly one person are offered up front. */
+  const [dismissed, setDismissed] = useState(readDismissed);
+  const candidates = [
+    ...people,
+    ...roster.map((r) => r.actor).filter((a) => a && !people.some((p) => (p.key || p.login) === a || p.login === a)).map((a) => ({ login: a })),
+  ];
+  const suggested = owner
+    ? likelySame(candidates)
+        .map(([f, t]) => ({ from: f.key || f.login, into: t.key || t.login, label: `${f.login} · ${t.login}` }))
+        .filter((s) => !dismissed.includes(`${s.from}>${s.into}`))
+    : [];
+
   return (
     <>
+      {suggested.map((sg) => (
+        <div className="srow" key={`${sg.from}>${sg.into}`}>
+          <span className="k">{sg.label}</span>
+          <span className="v">
+            <button className={BTN} type="button" disabled={busy} onClick={() => combine(sg)}>
+              Combine
+            </button>
+            <button
+              className={BTN}
+              type="button"
+              aria-label="Not the same person"
+              onClick={() => {
+                const next = [...dismissed, `${sg.from}>${sg.into}`];
+                writeDismissed(next);
+                setDismissed(next);
+              }}
+            >
+              ×
+            </button>
+          </span>
+        </div>
+      ))}
       {identities.map((i) => (
         <div className="srow" key={`${i.provider}:${i.login}`}>
           <span className="k">{identityLabel(i)}</span>
