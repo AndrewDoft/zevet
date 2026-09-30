@@ -2,12 +2,12 @@
   "payload": {
     "schema": 1,
     "type": "zevet-client",
-    "version": "0.2.93",
+    "version": "0.2.94",
     "files": [
       {
         "name": "hook.mjs",
-        "bytes": 23079,
-        "sha256": "57c1a426611d041eb07b9c532745b26b156b571bef1a43ffb716365521daa541"
+        "bytes": 24168,
+        "sha256": "6d909588552097de82041a1d99e3e47494436be17b3ebc43916891c1e93e14ba"
       },
       {
         "name": "install.mjs",
@@ -41,8 +41,8 @@
       },
       {
         "name": "opencode-plugin.mjs",
-        "bytes": 15594,
-        "sha256": "6a8ac61f96392e91d6223bd79900f790d6d3011c68dcb74b98ccfa25b4fb277f"
+        "bytes": 16849,
+        "sha256": "26739937735a69a47361063b7759bcecef175fddca36579515f721aa179d458f"
       },
       {
         "name": "uninstall.mjs",
@@ -79,6 +79,6 @@
   "signature": {
     "algorithm": "ed25519",
     "key_id": "zevet-2026-09",
-    "signature": "jA0ZE1QVis6arq0ePs9o08u/R8QtXzFsV0z2Fx1Hs+oiI9lsCIB3kopBYmxZPUeoC1rdX/vzO0qS2nT7avu2Ag=="
+    "signature": "Du7507Qj+29ko7JaDqrEzYqw5aTQcTyRmlKismIf4Yc5199JmtzFnrjB2q1z9RFcxnEvnjXmtXiBsF8muRr3BQ=="
   }
 }
