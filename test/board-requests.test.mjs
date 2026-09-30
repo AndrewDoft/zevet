@@ -200,3 +200,36 @@ describe("wiring (board.ts and main.js cannot run here, so their contract is rea
     assert.match(main, /apiRoots\.add\(dir\);[\s\S]*?finally \{\s*apiRoots\.delete\(dir\);/);
   });
 });
+
+describe("a slow board start is never doubled", () => {
+  const { createBoardAsk } = require(path.join(ROOT, "desktop", "board-ask.js"));
+  const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
+
+  test("an accepted request waits past the fallback window for the real answer", async () => {
+    let id;
+    const ask = createBoardAsk({ send: (reqId) => { id = reqId; return true; }, timeoutMs: 20, finishMs: 500 });
+    const p = ask.ask("start", {});
+    ask.reply(id, { accepted: true });
+    setTimeout(() => ask.reply(id, { ok: true, id: "c1" }), 60); // well past the 20 ms fallback window
+    assert.deepEqual(await p, { ok: true, id: "c1" });
+  });
+
+  test("accepted but never finished is an error, not a fallback (a fallback would start it twice)", async () => {
+    let id;
+    const ask = createBoardAsk({ send: (reqId) => { id = reqId; return true; }, timeoutMs: 20, finishMs: 40 });
+    const p = ask.ask("start", {});
+    ask.reply(id, { accepted: true });
+    const r = await p;
+    assert.notEqual(r, null);
+    assert.equal(r.ok, false);
+  });
+
+  test("nobody accepting falls back (null)", async () => {
+    const ask = createBoardAsk({ send: () => true, timeoutMs: 20 });
+    assert.equal(await ask.ask("start", {}), null);
+  });
+
+  test("the board accepts before any await", () => {
+    assert.match(board, /onBoardRequest\(\(req\) => \{\s*(\/\/[^\n]*\n\s*)*void asked\.boardReply!\(req\.reqId, \{ accepted: true \}\);/);
+  });
+});

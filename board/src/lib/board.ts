@@ -2982,6 +2982,9 @@ export function boot(): void {
   const asked = bridge.local;
   if (asked && typeof asked.onBoardRequest === "function" && typeof asked.boardReply === "function") {
     asked.onBoardRequest((req) => {
+      // Accepted before any await: main falls back to a direct start only for a
+      // request nobody took, never for one this board is still starting.
+      void asked.boardReply!(req.reqId, { accepted: true });
       const s = useBoard.getState();
       void answerBoardRequest(req, {
         startAgent: s.startAgent,
