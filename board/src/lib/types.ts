@@ -65,6 +65,8 @@ export interface ConsoleEntry {
   key: number;
   id: string | null;
   agent: string;
+  /** Zevet-routed consoles: the model that answered the latest turn. */
+  route?: string;
   /** The flat view: what classifyAgentPayloadLine produced, plus the process's
    *  own stderr.
    *

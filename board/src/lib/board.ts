@@ -1896,9 +1896,16 @@ function ingressAgentEvent(evt: AgentEvent): void {
     for (const [k, text] of classifyAgent(payload, localRoot)) {
       pushConsoleLine(c, k as ConsoleLine["kind"], text);
     }
-    c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: c.agent, localRoot, model: c.model });
+    /* A routed console (agent "zevet") speaks several CLIs' dialects; the
+       router tags each event with the one that produced it. */
+    const said = evt as AgentEvent & { agent?: string; model?: string };
+    const zp = evt.payload as { type?: string; label?: string } | undefined;
+    if (zp && zp.type === "zevet_route") c.route = String(zp.label || "");
+    c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: said.agent || c.agent, localRoot, model: said.model || c.model });
     c.draft = draftAfter(c.draft ?? "", evt.payload);
-    noteModelLimit(c, evt.payload);
+    // "zevet:auto" is not a model: a routed run's limit is the router's to
+    // handle, and graying the picker's Zevet row over it would be wrong.
+    if (c.agent !== "zevet") noteModelLimit(c, evt.payload);
   } else if (evt.type === "stdout-line") {
     // Update banners and notices, not the conversation: the raw view only.
     pushConsoleLine(c, "out", evt.text || "");

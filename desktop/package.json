@@ -35,6 +35,7 @@
       "preload.js",
       "local-fs.js",
       "agent-console.js",
+      "zevet-router.js",
       "console-log.js",
       "console-persistence.js",
       "agent-worktree.js",

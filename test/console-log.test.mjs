@@ -226,3 +226,15 @@ test("activity() says how many consoles have a live process and when any last sp
   log.record("b", { type: "exit" });
   assert.deepEqual(log.activity(), { running: 0, lastAt: 9000 });
 });
+
+test("a routed turn that ended on codex or opencode goes idle with its answer (the agent API's /wait returns)", () => {
+  const log = createConsoleLog();
+  log.open("z", { ...META, agent: "zevet" });
+  log.record("z", { type: "prompt", text: "hi" });
+  assert.equal(log.get("z").state, "working");
+  log.record("z", { type: "turn_end", result: "pineapple" });
+  const c = log.get("z");
+  assert.equal(c.state, "idle");
+  assert.equal(c.lastResult, "pineapple");
+  assert.equal(c.turns, 1);
+});

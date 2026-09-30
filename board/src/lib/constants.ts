@@ -50,8 +50,9 @@ export const MODELS: Record<string, string[]> = {
 
 /** claude reads stream-json line by line and stays open for as many prompts as
  *  you send it. codex and opencode take ONE prompt per run and then close their
- *  stdin (agent-console.js, send, facts 4 and 5). */
-export const MULTI_TURN: ReadonlySet<string> = new Set(["claude"]);
+ *  stdin (agent-console.js, send, facts 4 and 5). "zevet" is a routed console
+ *  (desktop/zevet-router.js): it keeps its own process open across turns. */
+export const MULTI_TURN: ReadonlySet<string> = new Set(["claude", "zevet"]);
 
 export const STATUS_EVERY_MS = 4000;
 export const STATS_EVERY_MS = 2500;

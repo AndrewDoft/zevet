@@ -3380,6 +3380,57 @@ async function masoraBriefFor(dir, prompt) {
 
 /** The shared body of `local:startAgent` and the control API's `spawn` --
  *  `trusted` is what tells the two apart (see `trustedDir` above). */
+/* ---- the Zevet model (desktop/zevet-router.js) ---------------------------
+   What is runnable is asked per turn and cached a minute: a CLI can sign in
+   mid-session. `opencode models` is a process spawn, so its list is kept ten. */
+const zevetRouter = require("./zevet-router.js");
+let openModelsCache = { at: 0, list: null };
+function listOpenModels() {
+  const r = agentConsole.resolveAgent("opencode");
+  if (!r.ok) return Promise.resolve(null);
+  const inv = r.kind === "shim"
+    ? agentConsole._internals.buildShimInvocation(r.file, ["models"])
+    : { command: r.file, args: ["models"], options: {} };
+  return new Promise((resolve) => {
+    execFile(inv.command, inv.args, { ...inv.options, windowsHide: true, timeout: 30000, maxBuffer: 4 * 1024 * 1024 }, (err, out) =>
+      resolve(err ? null : String(out).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)));
+  });
+}
+let zevetLadderCache = { at: 0, ladder: null };
+async function zevetLadder() {
+  if (zevetLadderCache.ladder && Date.now() - zevetLadderCache.at < 60_000) return zevetLadderCache.ladder;
+  const detect = await loadDetect();
+  const found = detect ? detect.detectAgents() : [];
+  const usable = (name, id) => agentConsole.resolveAgent(name).ok && Boolean((found.find((a) => a.id === id) || {}).signedIn);
+  if (Date.now() - openModelsCache.at > 10 * 60_000) openModelsCache = { at: Date.now(), list: await listOpenModels() };
+  const ladder = zevetRouter.buildLadder({
+    has: { claude: usable("claude", "claude-code"), codex: usable("codex", "codex"), opencode: agentConsole.resolveAgent("opencode").ok },
+    claude: agentCatalogs.claudeModels(),
+    codex: agentCatalogs.codexModels(),
+    opencode: openModelsCache.list,
+  });
+  zevetLadderCache = { at: Date.now(), ladder };
+  return ladder;
+}
+/** A routed console: the same handle shape as startConsole's, one CLI process per rung in use. */
+function startZevetConsole(spec, claudeOnly) {
+  return zevetRouter.startRouted({
+    id: spec.id,
+    onEvent: spec.onEvent,
+    ladder: zevetLadder,
+    start: (rung, extra) =>
+      instrumentedStartConsole({
+        ...spec,
+        id: undefined,
+        agent: rung.agent,
+        model: rung.model,
+        onEvent: extra.onEvent,
+        ...(extra.resumeFrom ? { resumeFrom: extra.resumeFrom } : {}),
+        ...(rung.agent === "claude" ? claudeOnly : {}),
+      }),
+  });
+}
+
 async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId, restorePlace } = {}) {
   await runtimeReady;
   const dir = trusted ? trustedDir(cwd) : knownRoot(cwd);
@@ -3428,7 +3479,8 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
   // handed one. A failure to set either up must not stop the agent starting
   // — it costs a capability, not the run.
   let mcpConfig = null;
-  if (String(agent || "") === "claude") {
+  const isZevet = String(agent || "") === "zevet";
+  if (String(agent || "") === "claude" || isZevet) {
     try {
       mcpConfig = await mcpConfigFor(dir, opts && typeof opts.mode === "string" ? opts.mode : "auto");
     } catch (err) {
@@ -3449,7 +3501,20 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
     return { ok: false, error: resolved.error };
   }
   const env = resolved.env;
-  const started = instrumentedStartConsole({
+  // What only the claude CLI is handed. A routed console gives it to its claude rungs alone.
+  const claudeOnly = {
+    ...(mcpConfig
+      ? {
+          mcpConfig: mcpConfig.file,
+          // claude names an MCP tool `mcp__<server>__<tool>`; the server is
+          // registered as `zevet` above, only when computer use is actually on.
+          ...(mcpConfig.permissions ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
+        }
+      : {}),
+    // A routed console has no claude of its own; its claude rungs take these.
+    ...(isZevet ? agentConsole.extrasFrom(opts) : {}),
+  };
+  const spec = {
     agent: String(agent || ""),
     cwd: place.cwd,
     repoRoot: place.root,
@@ -3459,19 +3524,12 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
     ...(forcedId ? { id: String(forcedId) } : {}),
     systemPrompt,
     env,
-    ...(mcpConfig
-      ? {
-          mcpConfig: mcpConfig.file,
-          // claude names an MCP tool `mcp__<server>__<tool>`; the server is
-          // registered as `zevet` above, only when computer use is actually on.
-          ...(mcpConfig.permissions ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
-        }
-      : {}),
+    ...(isZevet ? {} : claudeOnly),
     /* ⚠️ ASKED FOR, AND ALLOWED, ARE TWO DIFFERENT THINGS. The renderer may
        ask for a forked run; whether this repo may is decided here, against the
        saved settings, because the renderer is the untrusted side of the
        bridge. Same rule the workspace guard follows above. */
-    forkFrom,
+    forkFrom: isZevet ? "" : forkFrom,
     ...(String(agent || "") === "claude" ? agentConsole.extrasFrom(opts) : {}),
     onEvent: (evt) => {
       // The status strip's rolling windows are fed HERE, in the main process,
@@ -3484,7 +3542,8 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
       if (evt && evt.type === "agent" && evt.payload && evt.payload.session_id) consoleLog.updateMeta(handle.id, { sessionId: String(evt.payload.session_id) });
       toBoard("local:agentEvent", consoleLog.record(handle.id, evt));
     },
-  });
+  };
+  const started = isZevet ? startZevetConsole(spec, claudeOnly) : instrumentedStartConsole(spec);
   if (!started.ok) {
     void releasePlacement(place);
     return { ok: false, error: started.error };
