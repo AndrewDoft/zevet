@@ -195,6 +195,8 @@ interface BoardState {
 
   localRoot: string | null;
   localCheckout: string | null;
+  /** The open folder's origin repo root (a worktree's main checkout), from local:tree. */
+  localOrigin: string | null;
   localEntries: LocalEntry[] | null;
   localError: string | null;
   /** The tree was cut short. NOT an error - see openLocalRoot. */
@@ -543,6 +545,7 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   localRoot: null,
   localCheckout: null,
+  localOrigin: null,
   localEntries: null,
   localError: null,
   localTruncated: null,
@@ -1003,6 +1006,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       stats: { lines: Object.create(null) as Stats["lines"], diff: null, root: null },
       localRoot: dir,
       localCheckout: null,
+      localOrigin: null,
       localEntries: null,
       localFile: null,
       localError: null,
@@ -1010,7 +1014,9 @@ export const useBoard = create<BoardState>((set, get) => ({
       selectedPath: g.selectedPath,
     }));
     checkoutId(dir).then((id) => {
-      if (get().localRoot === dir) set({ localCheckout: id });
+      // Not over a worktree's origin fingerprint, if local:tree answered first.
+      const o = get().localOrigin;
+      if (get().localRoot === dir && (!o || o === dir)) set({ localCheckout: id });
     }).catch(() => {}); // Same-machine checkout events wait for a matching fingerprint.
     bridge.local?.tree(dir).then((r) => {
       if (r && r.ok) {
@@ -1025,7 +1031,15 @@ export const useBoard = create<BoardState>((set, get) => ({
            failures, the tree says its own list is partial, and provenance.tsx
            - which rightly treats BOTH as "the tree cannot confirm this path"
            - reads them together. */
+        // A worktree's events carry its ORIGIN's repo and fingerprint.
+        const origin = typeof r.origin === "string" && r.origin ? r.origin : dir;
+        if (origin !== dir) {
+          void checkoutId(origin).then((id) => {
+            if (get().localRoot === dir) set({ localCheckout: id });
+          });
+        }
         set({
+          localOrigin: origin,
           localEntries: r.entries || null,
           collapsed: collapseForEntries(dir, r.entries || []),
           localError: null,
@@ -1051,7 +1065,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   unsetLocalRoot: () => {
     closeEditor();
     zStorage.removeItem(LAST_ROOT_KEY);
-    set({ localRoot: null, localCheckout: null, localEntries: null, localFile: null, selectedPath: null });
+    set({ localRoot: null, localCheckout: null, localOrigin: null, localEntries: null, localFile: null, selectedPath: null });
   },
 
   addWorkspace: () => {
@@ -1592,7 +1606,8 @@ async function checkoutId(root: string): Promise<string> {
 
 function localActivity(e: HubEvent): boolean {
   const g = useBoard.getState();
-  const repo = g.localRoot?.replaceAll("\\", "/").replace(/\/+$/, "").split("/").pop();
+  // The origin's name: a worktree's events say "masora2", not "masora2-w125".
+  const repo = (g.localOrigin || g.localRoot)?.replaceAll("\\", "/").replace(/\/+$/, "").split("/").pop();
   if (!repo || e.repo !== repo || !e.target || /[\\:]|^\//.test(e.target) ||
     e.target.split("/").some((part) => !part || part === "." || part === "..")) return false;
   // Teammates have different checkout paths. Only this machine's fingerprint

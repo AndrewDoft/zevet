@@ -60,3 +60,21 @@ test("my row is found under ANY of my names, not the one myActor happens to hold
   assert.match(src, /const me = isMe\(r\.actor\);/);
   assert.match(src, /bridge\.cfg && bridge\.cfg\.actor, \.\.\.\(who\?\.me \? myActorNames\(who\.me\) : \[\]\)/);
 });
+
+test("a worktree tree matches its origin's events, so sprites show there", () => {
+  const { originOf } = require("../desktop/agent-sessions.js");
+  const base = mkdtempSync(path.join(tmpdir(), "zv-origin-"));
+  const origin = path.join(base, "zevet");
+  const wtGit = path.join(origin, ".git", "worktrees", "z97");
+  mkdirSync(wtGit, { recursive: true });
+  writeFileSync(path.join(wtGit, "commondir"), "../..\n");
+  const wt = path.join(base, "zevet-z97");
+  mkdirSync(wt, { recursive: true });
+  writeFileSync(path.join(wt, ".git"), `gitdir: ${wtGit}\n`);
+  assert.equal(originOf(wt), origin);
+  const main = readFileSync(new URL("../desktop/main.js", import.meta.url), "utf8");
+  assert.match(main, /origin: agentSessions\.originOf\(dir\) \|\| dir/);
+  const board = readFileSync(new URL("../board/src/lib/board.ts", import.meta.url), "utf8");
+  assert.match(board, /const repo = \(g\.localOrigin \|\| g\.localRoot\)\?/);
+  assert.match(board, /void checkoutId\(origin\)\.then/);
+});

@@ -2017,7 +2017,10 @@ bridge.handle("local:masoraRepoToggle", (_e, { root, on } = {}) => {
 bridge.handle("local:tree", (_e, root) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
-  return localFs.listTree(dir, {});
+  // `origin`: a worktree's events are filed under its origin repo (hook.mjs),
+  // so the tree matches them by the origin's name and fingerprint.
+  const r = localFs.listTree(dir, {});
+  return r && r.ok ? { ...r, origin: agentSessions.originOf(dir) || dir } : r;
 });
 
 bridge.handle("local:read", (_e, { root, relPath }) => {
