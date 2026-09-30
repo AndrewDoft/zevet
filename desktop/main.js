@@ -4172,6 +4172,15 @@ const appUpdater = new AppUpdater({
     // ⚠️ NOT app.quit(): the board's beforeunload and the single-instance
     // lock both get in the way of a quit that has to be certain, and the
     // installer is already running by the time this fires.
+    // Restart now is a relaunch like a payload swap: save the running Claude
+    // consoles so the new build resumes them. Without this, every agent open
+    // across an installer restart was gone (masora2-09, 2026-09-30: w125-fixa
+    // and -fixb, "Zevet restarted and did not restore it").
+    try {
+      releaseForRelaunch();
+    } catch (err) {
+      bootShell.log(`consoles not saved before the installer restart: ${err && err.message}`);
+    }
     app.exit(0);
   },
 });

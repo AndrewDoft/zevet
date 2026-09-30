@@ -67,7 +67,7 @@ import type { SessionAgent, SessionSummary } from "../lib/sessions.d.mts";
 import type { ConsoleEntry } from "../lib/types";
 import { missionOf } from "../lib/text";
 import { agoLabel } from "../lib/fmt";
-import { sessionBlurb, sessionProject } from "../lib/sessions.mjs";
+import { foldRepoGroups, sessionBlurb, sessionProject } from "../lib/sessions.mjs";
 import { plainError } from "../lib/transcript.mjs";
 import { AgentLogo } from "./brand";
 import { SquareIcon, XIcon } from "lucide-react";
@@ -518,7 +518,18 @@ export function PeoplePane({
      already claimed is skipped. */
   const groups: Array<{ repo: string; rows: Row[] }> = [];
   if (bridge.local) {
-    const bucket = new Map<string, Row[]>();
+    /* Keyed by the REPO, not the folder: a worktree (masora2-w125-fixb,
+       .claude/worktrees/x) files under its origin — foldRepoGroups. A console
+       borrows the name its own session file was given, when there is one. */
+    const bucket = new Map<string, { rows: Row[]; resolved: boolean }>();
+    const put = (repo: string, row: Row, resolved: boolean) => {
+      const g = bucket.get(repo);
+      if (g) {
+        g.rows.push(row);
+        g.resolved = g.resolved || resolved;
+      } else bucket.set(repo, { rows: [row], resolved });
+    };
+    const repoByDir = new Map(list.filter((s) => s.repo && s.cwd).map((s) => [s.cwd.toLowerCase(), s.repo as string]));
     const claimed = new Set(myConsoles.filter((c) => c.sessionId).map((c) => `${c.agent}:${c.sessionId}`));
 
     for (const c of myConsoles) {
@@ -528,14 +539,13 @@ export function PeoplePane({
         model: c.model,
         engine: c.engine,
         blurb: consoleBlurb(c),
-        updated: c.startedAt,
+        // Last heard from, not launched: the tree is ordered by activity.
+        updated: c.lastAt ?? c.startedAt,
         console: c,
         session: null,
       };
-      const key = consoleProject(c);
-      const g = bucket.get(key);
-      if (g) g.push(row);
-      else bucket.set(key, [row]);
+      const known = repoByDir.get(c.root.toLowerCase());
+      put(known || consoleProject(c), row, Boolean(known));
     }
 
     for (const s of list) {
@@ -550,13 +560,10 @@ export function PeoplePane({
         console: null,
         session: s,
       };
-      const key = sessionProject(s as unknown as Record<string, unknown>) || "elsewhere";
-      const g = bucket.get(key);
-      if (g) g.push(row);
-      else bucket.set(key, [row]);
+      put(s.repo || sessionProject(s as unknown as Record<string, unknown>) || "elsewhere", row, Boolean(s.repo));
     }
 
-    for (const [repo, rows] of bucket) {
+    for (const [repo, rows] of foldRepoGroups(bucket)) {
       rows.sort((a, b) => b.updated - a.updated);
       groups.push({ repo, rows });
     }
@@ -579,7 +586,7 @@ export function PeoplePane({
 
   return (
     <>
-      {roster.map((r) => {
+      {[...roster].sort((a, b) => b.lastTs - a.lastTs).map((r) => {
         const idle = isIdle(r, now);
         const open = expanded.indexOf(r.actor) >= 0;
         const me = r.actor === myActor;

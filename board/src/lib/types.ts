@@ -103,6 +103,8 @@ export interface ConsoleEntry {
    *  `startedAt` is when the process was launched, `exitCode` how it ended. */
   usage: ConsoleUsage;
   startedAt: number;
+  /** When it last said anything (board.ts § agent events); orders the agents tree. */
+  lastAt?: number;
   exitCode: number | null;
   /** Text streamed so far for the block claude is still writing (claude only,
    *  `--include-partial-messages`). View-only: the complete block replaces it.

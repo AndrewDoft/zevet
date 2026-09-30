@@ -475,3 +475,32 @@ export function sessionMatches(session, query) {
     .join(" ");
   return q.split(/\s+/).every((word) => hay.includes(word));
 }
+
+/**
+ * Fold a repo tree's groups so worktrees sit under their base repo.
+ *
+ * `resolved` groups got their name from agent-sessions.js § repoOf, which reads
+ * the worktree's `.git` and already answers the origin — those are trusted as
+ * they are, so `zevet-crm` (a real repo) never lands under `zevet`. Only an
+ * UNRESOLVED name (its folder is gone, or it was never read off disk) is folded
+ * by name: `masora2-w125-fixb` joins `masora2` when a `masora2` group exists,
+ * the longest such base winning.
+ *
+ * @template T
+ * @param {Map<string, { rows: T[], resolved: boolean }>} bucket
+ * @returns {Map<string, T[]>}
+ */
+export function foldRepoGroups(bucket) {
+  const out = new Map();
+  const names = [...bucket.keys()];
+  for (const [name, g] of bucket) {
+    let into = name;
+    if (!g.resolved) {
+      for (const base of names) {
+        if (base !== name && base.length < name.length && /^[-_.]/.test(name.slice(base.length)) && name.startsWith(base) && (into === name || base.length > into.length)) into = base;
+      }
+    }
+    out.set(into, (out.get(into) || []).concat(g.rows));
+  }
+  return out;
+}

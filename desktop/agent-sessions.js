@@ -489,6 +489,53 @@ function listCodex() {
  * recorded. An unknown one therefore matches nothing rather than reaching the
  * filesystem.
  */
+/**
+ * The repo a folder belongs to, by name, or "" when it is in none (or gone).
+ *
+ * A linked worktree answers its ORIGIN's name: `masora2-w125-fixb`,
+ * `.claude/worktrees/x` and Zevet's own worktrees all file under `masora2`
+ * (Andrew, 2026-09-30: "they should all be under the base repo"). Walks up, so
+ * a session started in `masora2/apps/web` is masora2 too. File reads only, the
+ * same as client/hook.mjs § repoInfo; no git process per session.
+ */
+const repoCache = new Map();
+function repoOf(dir) {
+  if (!dir || !path.isAbsolute(dir)) return "";
+  const key = path.resolve(dir).toLowerCase();
+  if (repoCache.has(key)) return repoCache.get(key);
+  let name = "";
+  let d = path.resolve(dir);
+  for (let i = 0; i < 40; i++) {
+    const dotgit = path.join(d, ".git");
+    let st = null;
+    try {
+      st = fs.statSync(dotgit);
+    } catch {
+      /* not a repo root; keep walking */
+    }
+    if (st) {
+      let root = d;
+      if (st.isFile()) {
+        try {
+          const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotgit, "utf8"));
+          const gitdir = m ? path.resolve(d, m[1].trim()) : "";
+          if (gitdir) root = path.dirname(path.resolve(gitdir, fs.readFileSync(path.join(gitdir, "commondir"), "utf8").trim()));
+        } catch {
+          /* a submodule, or a worktree whose origin is gone: its own name */
+        }
+      }
+      name = path.basename(root);
+      break;
+    }
+    const up = path.dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  // Only a hit is cached: a folder that is not a repo yet may become one.
+  if (name) repoCache.set(key, name);
+  return name;
+}
+
 function list({ cwd = null, limit = MAX_SESSIONS } = {}) {
   // Zevet Chat's own claude sessions (desktop/chat.js) are conversations, not
   // work in a repo: they belong to Chat, never to Code's session lists.
@@ -527,6 +574,7 @@ function list({ cwd = null, limit = MAX_SESSIONS } = {}) {
     if (wantCwd && f.source === "codex" && path.resolve(s.cwd || "").toLowerCase() !== wantCwd) {
       continue;
     }
+    s.repo = repoOf(s.cwd);
     sessions.push(s);
     if (sessions.length >= cap) break;
   }
@@ -779,4 +827,4 @@ function live(source, id) {
   return { title, context: null, cached: null, output: null, window: null };
 }
 
-module.exports = { list, read, children, live, cwdOf, claudeDir, codexDir, _fileFor: fileFor, _firstAsk: firstAsk };
+module.exports = { list, read, children, live, cwdOf, claudeDir, codexDir, repoOf, _fileFor: fileFor, _firstAsk: firstAsk };

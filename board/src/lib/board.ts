@@ -1904,6 +1904,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
       terminal_reason?: string;
       subtype?: string;
     };
+    c.lastAt = Date.now();
     const localRoot = useBoard.getState().localRoot;
     for (const [k, text] of classifyAgent(payload, localRoot)) {
       pushConsoleLine(c, k as ConsoleLine["kind"], text);
