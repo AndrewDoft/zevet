@@ -12,6 +12,7 @@ import path from "node:path";
 import { tempDir, ROOT } from "./helpers.mjs";
 import {
   acquireLock, ciVerdict, classify, cmpVersion, decide, decideSoak, lockHeld, readSentry, nextDNumber, nextVersion, notesFrom, recordHeader, renderRecord, runSteps,
+  shellRequires, shellContractErrors,
 } from "../scripts/ship-lib.mjs";
 import { BASE, PLATFORMS, buildSteps, bumpVersion, ensureWorktree, exeName, dmgName, pulseState, samePath, verifyPayload } from "../scripts/ship.mjs";
 import { tick } from "../scripts/ship-watch.mjs";
@@ -70,7 +71,7 @@ describe("versions", () => {
 });
 
 // ── a fake git: tags, one diff per range, desktop/package.json per ref, DECISIONS.md ──────────────────
-function fakeGit({ tags, files, decisions, builds = {}, tip = "abcdef1234567", commits = 3, pkgs = {} }) {
+function fakeGit({ tags, files, decisions, builds = {}, tip = "abcdef1234567", commits = 3, pkgs = {}, mains = {}, shellVersions = {} }) {
   return {
     buildRun: (t) => builds[t] || null,
     git(args) {
@@ -79,6 +80,8 @@ function fakeGit({ tags, files, decisions, builds = {}, tip = "abcdef1234567", c
       if (a.startsWith("rev-parse")) return tip;
       if (a.startsWith("show") && a.endsWith("DECISIONS.md")) return decisions;
       if (a.startsWith("show") && a.endsWith("desktop/package.json")) return JSON.stringify(pkgs[args[1].split(":")[0]] || PKG);
+      if (a.startsWith("show") && a.endsWith("desktop/main.js")) return mains[args[1].split(":")[0]] ?? "";
+      if (a.startsWith("show") && a.endsWith("desktop/payload-config.js")) return `const SHELL_VERSION = ${shellVersions[args[1].split(":")[0]] ?? 1};`;
       if (a.startsWith("rev-list --count")) return String(commits);
       if (a.startsWith("diff --name-only")) return (files[args[2] + ".." + args[3]] ?? files.default ?? []).join("\n");
       throw new Error(`fake git: ${a}`);
@@ -86,6 +89,22 @@ function fakeGit({ tags, files, decisions, builds = {}, tip = "abcdef1234567", c
   };
 }
 const rec = (v) => `## D-036 — Shipped: ${v}, x (payload-only)\n`;
+
+describe("shell contract", () => {
+  const main = 'const { createRollback } = bootShell.require("./update-rollback.js");\n// bootShell.require("./ghost.js")\n';
+  const oldPkg = { build: { files: ["bootstrap.js", "!out/**"] } };
+  test("a payload that loads a shell module the last installer lacks must bump SHELL_VERSION", () => {
+    assert.deepEqual(shellRequires(main), ["update-rollback.js"]);
+    assert.equal(shellContractErrors({ mainSrc: main, oldPkg, oldShellVersion: 1, newShellVersion: 1 }).length, 1);
+    assert.deepEqual(shellContractErrors({ mainSrc: main, oldPkg, oldShellVersion: 1, newShellVersion: 2 }), []);
+    assert.deepEqual(shellContractErrors({ mainSrc: main, oldPkg: { build: { files: ["update-rollback.js"] } }, oldShellVersion: 1, newShellVersion: 1 }), []);
+  });
+  test("decide refuses the 0.2.100 shape and accepts it with the bump", () => {
+    const base = { tags: ["v0.2.99"], decisions: rec("0.2.99"), files: { default: ["desktop/main.js"] }, mains: { "origin/main": main } };
+    assert.throws(() => decide(fakeGit(base)), /bump SHELL_VERSION/);
+    assert.equal(decide(fakeGit({ ...base, shellVersions: { "origin/main": 2 } })).action, "new");
+  });
+});
 
 describe("decide", () => {
   test("nothing past the last finished release", () => {

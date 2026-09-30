@@ -47,6 +47,25 @@ export function classify(files, { oldPkg, newPkg }) {
   return { kind, hub: hubFiles.length > 0, shell, payload, hubFiles };
 }
 
+const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+/** Shell modules the payload's main.js loads through bootShell.require("./x.js"). */
+export const shellRequires = (mainSrc) => [...stripComments(mainSrc).matchAll(/bootShell\.require\("\.\/([^"]+)"\)/g)].map((m) => m[1]);
+
+/**
+ * A payload that loads a shell module the last release's installer did not carry crashes at load on every
+ * install still on that shell (0.2.100: update-rollback.js, shell 0.2.96). The only safe way to ship it is to
+ * bump payload-config.js SHELL_VERSION, so the pulse's shell_min holds the payload back until the installer lands.
+ * Returns the problems (empty = fine).
+ */
+export function shellContractErrors({ mainSrc, oldPkg, oldShellVersion, newShellVersion }) {
+  const had = new Set((oldPkg?.build?.files ?? []).filter((f) => !f.startsWith("!")));
+  const fresh = shellRequires(mainSrc).filter((f) => !had.has(f));
+  if (!fresh.length || newShellVersion > oldShellVersion) return [];
+  return [`main.js loads ${fresh.join(", ")} from the shell, which the previous release's installer did not carry; bump SHELL_VERSION in desktop/payload-config.js (now ${newShellVersion}) so the payload waits for the installer`];
+}
+const shellVersionOf = (src) => Number(/SHELL_VERSION\s*=\s*(\d+)/.exec(src)?.[1] ?? 0);
+
 const V = /^v?(\d+)\.(\d+)\.(\d+)$/;
 export const isVersion = (s) => V.test(String(s));
 export const cmpVersion = (a, b) => {
@@ -114,6 +133,12 @@ export function decide(io, { ref = "origin/main", feed, soaking = () => null } =
 }
 
 function classifyRange(io, from, to) {
+  const at = (r, f) => io.git(["show", `${r}:${f}`]);
+  const errs = shellContractErrors({
+    mainSrc: at(to, "desktop/main.js"), oldPkg: JSON.parse(at(from, "desktop/package.json")),
+    oldShellVersion: shellVersionOf(at(from, "desktop/payload-config.js")), newShellVersion: shellVersionOf(at(to, "desktop/payload-config.js")),
+  });
+  if (errs.length) throw new Error(`refusing to ship ${to}: ${errs.join("; ")}`);
   const files = io.git(["diff", "--name-only", from, to]).split(/\r?\n/).filter(Boolean);
   const pkg = (r) => JSON.parse(io.git(["show", `${r}:desktop/package.json`]));
   return { files: files.length, ...classify(files, { oldPkg: pkg(from), newPkg: pkg(to) }) };
