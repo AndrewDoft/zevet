@@ -4001,6 +4001,12 @@ let menuOffersRestart = false;
 // stays there — app-update.js re-announces the same state on a timer, and an
 // event per poll would flood one real failure into hundreds of duplicates.
 let lastUpdatePhase = null;
+/** Settings' Version reads `current`. The updater's is the INSTALLER's version
+ *  (what the feed is compared against); a payload swap moves the code without
+ *  moving that, so shown raw it read 0.2.89 while 0.2.91 ran. */
+function withRunningBuild(s) {
+  return s && typeof s === "object" ? { ...s, current: APP_VERSION } : s;
+}
 const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
@@ -4013,7 +4019,8 @@ const appUpdater = new AppUpdater({
   // configured yet, or not signed in — has no board window at all. Sent to
   // setupWindow too, so "0.2.57 is ready" shows up on the screen a first-run
   // person is actually looking at, not just one that may never open.
-  onStatus: (s) => {
+  onStatus: (raw) => {
+    const s = withRunningBuild(raw);
     toBoard("app:update", s);
     if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send("app:update", s);
     if (s.phase === "error" && lastUpdatePhase !== "error") {
@@ -4088,7 +4095,7 @@ bridge.handle("local:voiceStatus", () => masoraVoice.status());
 bridge.handle("local:voiceStart", () => masoraVoice.start());
 bridge.handle("local:voiceMic", () => masoraVoice.mic());
 
-bridge.handle("app:updateStatus", () => appUpdater.status());
+bridge.handle("app:updateStatus", () => withRunningBuild(appUpdater.status()));
 bridge.handle("app:updateCheck", () => appUpdater.check());
 bridge.handle("app:updateInstall", () => appUpdater.install());
 bridge.assertComplete();
