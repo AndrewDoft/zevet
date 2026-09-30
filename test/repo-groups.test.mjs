@@ -52,3 +52,11 @@ test("the tree is ordered by activity: people, repos, agents", () => {
   const sessions = readFileSync(new URL("../desktop/agent-sessions.js", import.meta.url), "utf8");
   assert.match(sessions, /out\.sort\(\(a, b\) => b\.updated - a\.updated\)/, "subagents newest first");
 });
+
+test("my row is found under ANY of my names, not the one myActor happens to hold", () => {
+  const src = readFileSync(new URL("../board/src/components/people.tsx", import.meta.url), "utf8");
+  assert.match(src, /const isMe = \(actor: string\) => actor === myActor \|\| mine\.has\(actor\.toLowerCase\(\)\);/);
+  assert.match(src, /const inRoster = roster\.some\(\(r\) => isMe\(r\.actor\)\);/);
+  assert.match(src, /const me = isMe\(r\.actor\);/);
+  assert.match(src, /bridge\.cfg && bridge\.cfg\.actor, \.\.\.\(who\?\.me \? myActorNames\(who\.me\) : \[\]\)/);
+});

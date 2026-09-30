@@ -477,7 +477,7 @@ export function PeoplePane({
      send, and showing them twice beats hiding a live teammate. */
   const accounts = Array.isArray(who?.people) ? who.people : [];
   const mine = new Set(
-    [who?.login, bridge.cfg && bridge.cfg.login, ...(who?.me ? myActorNames(who.me) : [])]
+    [who?.login, bridge.cfg && bridge.cfg.login, bridge.cfg && bridge.cfg.actor, ...(who?.me ? myActorNames(who.me) : [])]
       .map((x) => String(x || "").toLowerCase())
       .filter(Boolean),
   );
@@ -490,7 +490,12 @@ export function PeoplePane({
       .filter(Boolean);
     return names.length > 0 && !names.some((n) => mine.has(n) || liveActors.has(n));
   });
-  const inRoster = roster.some((r) => r.actor === myActor);
+  /* ⚠️ ANY OF MY NAMES, NOT `myActor` ALONE. The hub files my events under my
+     display name; `myActor` only catches up when whoami answers, so after a
+     rename or a combine the roster said "andrew" while this said "AndrewDoft"
+     and I showed twice (Andrew, 2026-09-30: "separate once more"). */
+  const isMe = (actor: string) => actor === myActor || mine.has(actor.toLowerCase());
+  const inRoster = roster.some((r) => isMe(r.actor));
 
   /* Every session written to inside the live window, newest first, bucketed by
      the repo it ran in — merged with every console zevet itself has running,
@@ -589,7 +594,7 @@ export function PeoplePane({
       {[...roster].sort((a, b) => b.lastTs - a.lastTs).map((r) => {
         const idle = isIdle(r, now);
         const open = expanded.indexOf(r.actor) >= 0;
-        const me = r.actor === myActor;
+        const me = isMe(r.actor);
         return (
           <div className="person-wrap" key={r.actor}>
             {me && editing ? (
@@ -635,7 +640,7 @@ export function PeoplePane({
         <div className="person-wrap">
           <div className="person-row" style={{ "--who": "var(--who-0)" } as CSSProperties} data-idle="false">
             <span className="person-row-dot" aria-hidden="true" />
-            <span className="person-row-name">{myActor}</span>
+            <span className="person-row-name">{who?.me?.name || myActor}</span>
             <span className="person-row-state">you</span>
           </div>
           {myRepos(0)}
