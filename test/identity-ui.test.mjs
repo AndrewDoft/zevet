@@ -64,9 +64,13 @@ describe("renaming yourself in the agents tab", { skip }, () => {
     });
     assert.equal(ing.status, 200);
 
+    // This machine reports "andrew"; the signed-in person is AndrewDoft. The board tells the
+    // hub the actor is theirs, so both are ONE row (it used to stay two until combined by hand).
     const mine = await page(hub.base, me.token, { actor: "andrew", login: "andrewdoft" });
-    const row = mine.p.locator("button.person-row .person-row-name:visible", { hasText: /^andrew$/ }).first();
+    const row = mine.p.locator("button.person-row .person-row-name:visible", { hasText: /^AndrewDoft$/ }).first();
     await row.waitFor({ timeout: 15000 });
+
+    assert.equal(await mine.p.locator("button.person-row .person-row-name:visible", { hasText: /^andrew$/ }).count(), 0, "andrew and AndrewDoft must be one person");
 
     // Escape cancels: nothing changes.
     await row.dblclick();
@@ -75,14 +79,14 @@ describe("renaming yourself in the agents tab", { skip }, () => {
     await input.fill("Nope");
     await input.press("Escape");
     await mine.p.locator("input.person-row-edit:visible").waitFor({ state: "detached" });
-    assert.equal(await mine.p.locator("button.person-row .person-row-name:visible", { hasText: /^andrew$/ }).first().count(), 1);
+    assert.equal(await mine.p.locator("button.person-row .person-row-name:visible", { hasText: /^AndrewDoft$/ }).first().count(), 1);
 
     // A teammate's board first, so the live push is what updates it.
     const theirs = await page(hub.base, kai.token, { actor: "kai", login: "kai" });
-    await theirs.p.locator(".person-row-name:visible", { hasText: /^andrew$/ }).first().waitFor({ timeout: 15000 });
+    await theirs.p.locator(".person-row-name:visible", { hasText: /^AndrewDoft$/ }).first().waitFor({ timeout: 15000 });
 
     // Enter saves.
-    await mine.p.locator("button.person-row .person-row-name:visible", { hasText: /^andrew$/ }).first().dblclick();
+    await mine.p.locator("button.person-row .person-row-name:visible", { hasText: /^AndrewDoft$/ }).first().dblclick();
     await mine.p.locator("input.person-row-edit:visible").fill("Andrew D");
     await mine.p.locator("input.person-row-edit:visible").press("Enter");
     await mine.p.locator("button.person-row .person-row-name:visible", { hasText: /^Andrew D$/ }).first().waitFor({ timeout: 15000 });
@@ -101,3 +105,48 @@ describe("renaming yourself in the agents tab", { skip }, () => {
     await theirs.ctx.close();
   });
 });
+
+describe("the owner's Settings: combine two people, rename anyone", { skip }, () => {
+  test("Combine folds a board name into a person; Rename changes a display name on the hub", async () => {
+    const d = tempDir();
+    dirs.push(d);
+    const file = path.join(d.dir, "accounts.json");
+    const seed = new Accounts({ file });
+    const me = seed.signIn({ provider: "github", login: "AndrewDoft", id: "1", display: "AndrewDoft" });
+    seed.allow("kai");
+    seed.signIn({ provider: "github", login: "kai", id: "7", display: "kai" });
+    const h = await startHub({ ZEVET_ACCOUNTS: file });
+    try {
+      for (const actor of ["andrew", "AndrewDoft"]) {
+        await fetch(`${h.base}/ingest`, {
+          method: "POST",
+          headers: { "x-zevet-token": TOKEN, "content-type": "application/json" },
+          body: JSON.stringify({ actor, kind: "prompt", repo: "r", detail: "hi" }),
+        });
+      }
+      const roster = async () => (await (await fetch(`${h.base}/api/state?token=${me.token}`)).json()).roster.map((r) => r.actor);
+      assert.deepEqual(await roster(), ["andrew", "AndrewDoft"]);
+
+      const { p, ctx } = await page(h.base, me.token, { login: "andrewdoft" });
+      await p.locator('button[aria-label="Settings"]').first().click();
+      await p.locator("#sheet").waitFor();
+      await p.locator("#sheet").getByText("Account & Team", { exact: false }).first().click();
+
+      const combine = p.locator('input[aria-label="Name to combine"]');
+      await combine.waitFor({ timeout: 15000 });
+      await combine.fill("andrew");
+      await combine.press("Enter");
+      await p.waitForFunction(async () => (await (await fetch("/api/state", { credentials: "same-origin" })).json()).roster.length === 1, null, { timeout: 15000 });
+      assert.deepEqual(await roster(), ["AndrewDoft"]);
+
+      await p.locator('input[aria-label="New display name"]').fill("Andrew D");
+      await p.locator('input[aria-label="New display name"]').press("Enter");
+      await p.waitForFunction(async () => (await (await fetch("/api/state", { credentials: "same-origin" })).json()).roster.some((r) => r.actor === "Andrew D"), null, { timeout: 15000 });
+      assert.deepEqual(await roster(), ["Andrew D"], "the alias must keep absorbing both old names after a rename");
+      await ctx.close();
+    } finally {
+      await h.stop();
+    }
+  });
+});
+

@@ -1307,3 +1307,34 @@ and `/version` both `200` after redeploy.
 watch a live app actually swap onto the new payload (RELEASING.md §6/§7's `test-payload-swap.mjs` covers
 this in CI instead, and ran green on both `build.yml` legs). Disk on `masora-app` was 15G free before and
 after upload (well above the 5G cleanup threshold), so no old installers were removed.
+
+## D-032 — API-spawned agents are pushed to the board; the actor a signed-in machine reports joins its person; the owner can rename anyone
+
+**Decided (Andrew, 2026-09-29/30).** Two reports: "I can't see the agents you're running, only when I'm
+in the repo", and "AndrewDoft and andrew are no longer combined".
+
+**Agents.** The board learns of a console from exactly two things: its own launch, and one
+`local:consoles` snapshot at page load. An agent spawned through the loopback API (or a schedule)
+is neither, so it reached the board only as a *disk session*, and that scan is scoped to the open
+repo (`refreshSessions` / `localRoot`). Fix: `announceConsole()` in `desktop/main.js` pushes the new
+console over `local:agentAttached` (API spawn + scheduled run — not board launches, which already
+hold an id-less pending entry); the board attaches it once (`reattachConsoles` now skips an id it
+holds, exact match — `consoleById`'s pending-launch fallback would mis-fold). The People pane already
+groups every `myConsoles` entry by repo, so no second view. `/list` reported `cwd: null` only
+because `summarize` emits `root`; it now also emits `cwd` (worktree when there is one), `worktree`,
+`branch`. New push channel, added to the frozen list in `desktop-bridges.test.mjs`: it carries what
+`local:agentEvent` / `local:consoles` already do.
+
+**People.** Production `accounts.json` was inspected read-only: owner `andrewdoft`, display
+`andrew` (`named`), alias `AndrewDoft` — combined, and it survives restarts (bind-mounted
+`/srv/zevet/var`). The hub's combine/rename and the owner check were correct and are now pinned by a
+restart test. What was missing: (1) Settings had Combine but no way for the owner to rename *another*
+person (the hub route already allowed it) — added; (2) the desktop's sign-in sets its actor to the
+GitHub login while the hook uses the OS user, so one human keeps producing a second actor nobody has
+aliased — a signed-in board now tells the hub its own machine's actor once per actor
+(`renameSelf(me.name)`; the hub adds it as an alias only if no other person holds it).
+Typing a name is still not proof (D-025); this is the person's own authenticated session claiming
+their own machine's string, the same evidence `/auth/rename` already accepted.
+
+**Not done / caveat.** A *different* teammate who shares an OS username with an unclaimed actor can
+still be folded by whoever claims it first; the `machine` field is not part of the alias.
