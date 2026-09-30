@@ -130,6 +130,9 @@ interface LiveStrip {
 interface Strip {
   live: LiveStrip;
   machine: StatusResult | null;
+  /** The account's 5h/7d windows, from the latest `rate_limit_event` any
+   *  console reported. Account-wide, so the strip shows them once. */
+  limits: RateWindow[];
 }
 
 /**
@@ -569,7 +572,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   edView: null,
   docStatus: Object.create(null) as Record<string, { state: string; detail?: string }>,
 
-  strip: { live: { model: null, context: null, cacheHit: null, cost: null }, machine: null },
+  strip: { live: { model: null, context: null, cacheHit: null, cost: null }, machine: null, limits: [] },
 
   who: { state: null, busy: false },
   index: { state: null, barPct: 0, progressText: "ready" },
@@ -1807,6 +1810,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
         signalConsolesChanged();
       }
     }
+    if (limits) useBoard.setState((g) => ({ strip: { ...g.strip, limits } }));
 
     const u = usageOf(payload);
     const cost = typeof payload.total_cost_usd === "number" ? payload.total_cost_usd : null;
