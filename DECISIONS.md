@@ -1395,3 +1395,32 @@ rate-limit windows (percent used, time to reset) instead of Zevet's token tally.
 - **Hub** redeployed from the tag in place; `BUILD_ID` `bb82c3d86e6e` -> `e40eb6443647`; `/healthz` ok.
 
 **Not verified.** No live app was made to swap or reload (would disturb agents running in the installed Zevet).
+
+## D-035 — Shipped: 0.2.92, a cold launch applies a staged payload (shell release)
+
+**Decided (Andrew, 2026-09-30).** 0.2.91 was staged on his PC, Zevet was force-killed and relaunched, and
+`bootstrap.js` booted 0.2.89 again: the only apply paths were the idle swapper and `will-quit`, and a kill,
+crash, reboot or logoff skips both. `startPayload` now calls `payload.activate()` before `payload.resolve()`
+when `payload.staged()` is non-null (log `payload <build> staged; applied at launch`). `activate()` re-checks
+bad-list, shell_min and schemaHead and writes `current.json` as a trial, so the existing confirm / 3-strike
+revert covers a bad build. A throw is logged and boot continues on the current build.
+
+- **Shell release.** `bootstrap.js` is not in the payload tree, so this needs the installer: installers + signed
+  installer feed (`zevet-latest.json` 0.2.89 -> 0.2.92) + payload. Installed shells do not have the fix until
+  they take the installer; the payload alone cannot carry it.
+- **shell_min stays 1 (`SHELL_VERSION` unchanged).** The 0.2.92 payload runs on the old shell (it needs nothing
+  the new shell adds), so raising it would strand every install that has not taken the installer.
+- **Test.** `test/bootstrap-staged.test.mjs` loads the real `bootstrap.js` with electron, desktop-kit and
+  payload-config stubbed: staged -> activate then resolve, runs as trial; nothing staged -> no activate;
+  activate throws -> boots current. **Mutated:** the `await payload.activate()` line removed -> 2 of 3 red;
+  restored -> green.
+- **Verified before tagging.** `npm test` 2735 tests, 2728 pass, 0 fail, 7 skipped; board bundle was not stale;
+  client manifest re-signed. Tag `v0.2.92` on `release/0.2.92`; `build.yml` both legs and `ci` green.
+  sha256: exe `40184fdc…` (153052528 B), dmg `4fa41aca…` (205240842 B); the stable links serve those bytes.
+- **Payload:** canary then stable, seq 2092 (> 2091) on both platforms, 67 blobs each (uploaded all; existing
+  ones are content-addressed). Over HTTPS all 134 blobs brotli-decode to their manifest hashes; pulses `no-store`.
+  Manifests win `ae4cd766…`, mac `e8720fce…`.
+- **Hub not redeployed:** the board did not change. `hub/client-manifest.signed.json` was re-signed for 0.2.92
+  and is committed; the hub keeps serving the 0.2.91 one until its next deploy (still validly signed).
+
+**Not verified.** No live app was launched, restarted or killed (Andrew's installed Zevet was left alone).
