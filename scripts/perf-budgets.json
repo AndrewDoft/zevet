@@ -1,0 +1,7 @@
+{
+  "note": "budgetMs >= 4.8x baselineMs (CI runners are 3.3-4.8x slower than a dev box), rounded up; never tighten below that. Re-baseline with `node scripts/perf-gate.mjs --print`.",
+  "machine": "Windows 11 dev box, node 22, other agents running, 2026-09-30; medians of 5 fresh processes",
+  "moduleLoad": { "baselineMs": 240, "budgetMs": 1200 },
+  "agentApiReady": { "baselineMs": 320, "budgetMs": 1600 },
+  "hubColdBoot": { "baselineMs": 340, "budgetMs": 1700 }
+}
