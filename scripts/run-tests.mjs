@@ -10,6 +10,7 @@
 // not zero, on top of node's own exit code (kept, not replaced: a real
 // failure must still fail this the way it always has).
 import { spawn, spawnSync } from "node:child_process";
+import { failingFiles } from "./run-tests-lib.mjs";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,5 +70,15 @@ child.on("close", (code) => {
     );
     process.exit(1);
   }
-  process.exit(code ?? 1);
+  if (code === 0) process.exit(0);
+  // ⚠️ ONE SERIAL RERUN of the files that failed, never of the suite. The Electron-driven files
+  // (drive.mjs) each launch an app, and under parallel load on a busy box they time out waiting
+  // for CDP (ship gate, 2026-09-30: every drive file red; the same files 46/46 alone). A real
+  // defect fails again on its own; contention does not. A failure with no file to name stays red.
+  const files = failingFiles(out);
+  if (!files) process.exit(code ?? 1);
+  console.error(`\nRERUN (serial) of ${files.length} file(s) that failed in the parallel run:\n  ${files.join("\n  ")}`);
+  const again = spawnSync(process.execPath, ["--test", "--test-concurrency=1", "--test-reporter=tap", ...files], { cwd: ROOT, stdio: "inherit", windowsHide: true });
+  console.error(again.status === 0 ? "RERUN green: the parallel failures were contention." : "RERUN red: a real failure.");
+  process.exit(again.status ?? 1);
 });
