@@ -529,6 +529,12 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    */
   onAgentAttached: (fn) => subscribe("local:agentAttached", fn),
   /**
+   * The loopback agent API asks the board to start or message an agent through
+   * its own actions, as a person's Send would. Answer with boardReply.
+   */
+  onBoardRequest: (fn) => subscribe("local:boardRequest", fn),
+  boardReply: (fn) => subscribe("local:boardReply", fn),
+  /**
    * An agent is asking to do something and is BLOCKED until the answer comes
    * back — see the computer-use block in main.js. The board is the only place
    * a person can be asked, so this is not a notification.

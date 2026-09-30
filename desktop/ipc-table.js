@@ -421,7 +421,7 @@ it. Idempotent — watching an already-watched file is a no-op, not a second
 stream of events.` },
     unwatch: { channel: "local:unwatch", params: ["root","relPath"], pack: "object", type: `(root: string, relPath: string) => Promise<unknown>` },
     agents: { channel: "local:agents", params: [], type: `() => Promise<UsableAgent[]>`, doc: `Which agents are installed on this machine.` },
-    startAgent: { channel: "local:startAgent", params: ["agent","cwd","opts"], pack: "object", type: `(name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean }) => Promise<StartAgentResult>`, doc: `Start an agent in a folder. Returns { ok, id }.` },
+    startAgent: { channel: "local:startAgent", params: ["agent","cwd","opts"], pack: "object", type: `(name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean; engine?: string; label?: string }) => Promise<StartAgentResult>`, doc: `Start an agent in a folder. Returns { ok, id }.` },
     sendToAgent: { channel: "local:sendToAgent", params: ["id","text"], pack: "object", type: `(id: string, text: string) => Promise<{ ok: boolean; error?: string }>` },
     stopAgent: { channel: "local:stopAgent", params: ["id"], type: `(id: string) => Promise<unknown>` },
     consoles: { channel: "local:consoles", params: [], type: `() => Promise<{ seq: number; consoles: HeldConsole[] }>`, optional: true, doc: `The consoles still held by this app, with every event each has sent —
@@ -468,6 +468,9 @@ otherwise only refreshed after a save/toggle/remove round-trip.` },
     onAgentEvent: { channel: "local:agentEvent", payload: "unknown", type: `(cb: (evt: AgentEvent) => void) => () => void`, doc: `Stream of console events; returns an unsubscribe function.` },
     onAgentAttached: { channel: "local:agentAttached", payload: "unknown", type: `(cb: (c: HeldConsole) => void) => () => void`, optional: true, doc: `A console the board did not start itself (the loopback agent API, a schedule)
 just opened. Without it such an agent only reached the board on a page reload.` },
+    onBoardRequest: { channel: "local:boardRequest", payload: "unknown", type: `(cb: (req: { reqId: string; kind: string; [k: string]: unknown }) => void) => () => void`, optional: true, doc: `The loopback agent API asks the board to start or message an agent through
+its own actions, as a person's Send would. Answer with boardReply.` },
+    boardReply: { channel: "local:boardReply", params: ["reqId","result"], pack: "object", type: `(reqId: string, result: unknown) => Promise<unknown>`, optional: true },
     onPermitRequest: { channel: "local:permitRequest", payload: "unknown", type: `(cb: (req: PermitRequest) => void) => () => void`, optional: true, doc: `An agent is asking to do something and is BLOCKED until the answer comes
 back — see the computer-use block in main.js. The board is the only place
 a person can be asked, so this is not a notification.

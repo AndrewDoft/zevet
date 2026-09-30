@@ -10,6 +10,7 @@ import {
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
 import { draftAfter } from "./chat-stream.mjs";
+import { answerBoardRequest } from "./board-requests.mjs";
 import { classifyEnding, noteModelLimit as noteLimitFromStatus } from "./model-limits.mjs";
 import { learnModels } from "./models.mjs";
 import { usageOf, type UsageReading } from "./usage.mjs";
@@ -160,6 +161,12 @@ export interface ForkLaunch {
    *  `forkedFrom`; a fork's own session id is new, so this is the only link
    *  between two answers to the same question. */
   fromKey?: number;
+  /** A start the loopback agent API asked for (lib/board-requests.mjs): it runs in
+   *  `root`, takes none of the launcher's own picks, and does not take the screen. */
+  background?: boolean;
+  root?: string;
+  engine?: string;
+  label?: string;
 }
 
 interface BoardState {
@@ -341,7 +348,7 @@ interface BoardState {
   adoptDefaultAgent: () => void;
   /** Start an agent. `launch` is for a FORK: the session to branch from, the
    *  prompt to ask it, and the model/posture of the run it came from. */
-  startAgent: (name: string, launch?: ForkLaunch) => void;
+  startAgent: (name: string, launch?: ForkLaunch) => Promise<{ ok: boolean; id?: string; engine?: string; error?: string }>;
   closeConsole: (key: number) => void;
   setActiveConsole: (key: number | null) => void;
   openLauncher: () => void;
@@ -730,18 +737,19 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
   setLaunchAgent: (a) => set({ launchAgent: a }),
 
-  startAgent: (name, launch) => {
+  startAgent: (name, launch): Promise<{ ok: boolean; id?: string; engine?: string; error?: string }> => {
     const br = bridge.local;
-    const root = useBoard.getState().localRoot;
-    if (!br || !root) return;
+    const background = Boolean(launch && launch.background);
+    const root: string | null = (background && launch!.root) || get().localRoot;
+    if (!br || !root) return Promise.resolve({ ok: false, error: "no folder open" });
     /* A fork carries the model and posture of the run it came from, not the
        launcher's current pick — otherwise "ask that again" would quietly ask a
        different model, and the two answers would not be comparable. */
     const from = launch && launch.forkFrom ? launch : null;
     // A start with no fork still carries a prompt: that is the composer
     // starting a run because somebody pressed Send with nothing running.
-    const model = from && from.model !== undefined ? from.model : get().launchModel;
-    const mode = from && from.mode !== undefined ? from.mode : get().launchMode;
+    const model = launch && launch.model !== undefined && (from || background) ? launch.model : get().launchModel;
+    const mode = launch && launch.mode !== undefined && (from || background) ? launch.mode : get().launchMode;
     const c: ConsoleEntry = {
       key: ++consoleSeq,
       id: null,
@@ -764,19 +772,19 @@ export const useBoard = create<BoardState>((set, get) => ({
       startedAt: Date.now(),
       exitCode: null,
     };
+    // A background start joins the rail without moving the person off what they are reading.
     set((g) => ({
       myConsoles: [...g.myConsoles, c],
-      activeConsole: c.key,
-      launching: false,
-      ...showConversation(),
+      ...(background ? {} : { activeConsole: c.key, launching: false, ...showConversation() }),
     }));
     // claude-only flags; desktop/agent-console.js extrasFrom re-validates them.
-    const claude = name === "claude";
+    // Effort, dirs and continue are the person's launcher picks, not a background start's.
+    const claude = name === "claude" && !background;
     const st = get();
     const addDirs = st.launchAddDirs.split(/\r?\n/).map((d) => d.trim()).filter(Boolean);
     const continueLatest = claude && st.launchContinue && !(launch && launch.forkFrom);
     if (continueLatest) set({ launchContinue: false });
-    br.startAgent(name, root, {
+    return br.startAgent(name, root, {
       model,
       mode,
       ...(claude && st.launchEffort ? { effort: st.launchEffort } : {}),
@@ -787,13 +795,15 @@ export const useBoard = create<BoardState>((set, get) => ({
       // question), it goes to the main process too, so it can ask Masora for
       // a brief before the CLI starts -- not just be sent to it afterward.
       ...(launch && launch.prompt ? { prompt: launch.prompt } : {}),
+      ...(launch && launch.engine ? { engine: launch.engine } : {}),
+      ...(launch && launch.label ? { label: launch.label } : {}),
     }).then((r) => {
       if (!r || !r.ok) {
         c.running = false;
         c.error = (r && r.error) || "could not start";
         pushConsoleLine(c, "err", c.error);
       } else {
-        if (closedMeanwhile(c, r.id)) return;
+        if (closedMeanwhile(c, r.id)) return { ok: false, error: "closed before it started" };
         c.id = r.id ? String(r.id) : null;
         if (r.engine) c.engine = r.engine;
         // The prompt a fork was started to ask. It goes only after the spawn
@@ -802,6 +812,7 @@ export const useBoard = create<BoardState>((set, get) => ({
         if (launch && launch.prompt) get().sendPrompt(c.key, launch.prompt);
       }
       signalConsolesChanged();
+      return r ? { ok: r.ok, id: r.id, engine: r.engine, error: r.error } : { ok: false, error: "could not start" };
     }).catch((err: unknown) => {
       // Same failure shape as the `!r.ok` branch above -- a rejected IPC call
       // left the optimistic `running: true` console spinning forever with no
@@ -810,6 +821,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       c.error = err instanceof Error ? err.message : "could not start";
       pushConsoleLine(c, "err", c.error);
       signalConsolesChanged();
+      return { ok: false, error: c.error };
     });
   },
 
@@ -2966,6 +2978,20 @@ export function boot(): void {
     } else {
       br.onAgentEvent(ingressAgentEvent);
     }
+  }
+  const asked = bridge.local;
+  if (asked && typeof asked.onBoardRequest === "function" && typeof asked.boardReply === "function") {
+    asked.onBoardRequest((req) => {
+      const s = useBoard.getState();
+      void answerBoardRequest(req, {
+        startAgent: s.startAgent,
+        sendPrompt: s.sendPrompt,
+        findConsole: (id: string) => useBoard.getState().myConsoles.find((x) => x.id === id),
+        agents: () => useBoard.getState().localAgents,
+      })
+        .catch((err: unknown) => ({ ok: false, error: err instanceof Error ? err.message : "board failed" }))
+        .then((r) => asked.boardReply!(req.reqId, r));
+    });
   }
   if (bridge.local && typeof bridge.local.onAgentAttached === "function") {
     bridge.local.onAgentAttached((h) => reattachConsoles([h]));

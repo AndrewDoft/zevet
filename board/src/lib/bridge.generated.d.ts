@@ -383,7 +383,7 @@ export interface LocalBridge {
   /** Which agents are installed on this machine. */
   agents: () => Promise<UsableAgent[]>;
   /** Start an agent in a folder. Returns { ok, id }. */
-  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean }) => Promise<StartAgentResult>;
+  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean; engine?: string; label?: string }) => Promise<StartAgentResult>;
   sendToAgent: (id: string, text: string) => Promise<{ ok: boolean; error?: string }>;
   stopAgent: (id: string) => Promise<unknown>;
   /**
@@ -447,6 +447,12 @@ export interface LocalBridge {
    * just opened. Without it such an agent only reached the board on a page reload.
    */
   onAgentAttached?: (cb: (c: HeldConsole) => void) => () => void;
+  /**
+   * The loopback agent API asks the board to start or message an agent through
+   * its own actions, as a person's Send would. Answer with boardReply.
+   */
+  onBoardRequest?: (cb: (req: { reqId: string; kind: string; [k: string]: unknown }) => void) => () => void;
+  boardReply?: (reqId: string, result: unknown) => Promise<unknown>;
   /**
    * An agent is asking to do something and is BLOCKED until the answer comes
    * back — see the computer-use block in main.js. The board is the only place

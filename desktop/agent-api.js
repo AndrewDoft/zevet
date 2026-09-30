@@ -164,9 +164,11 @@ function summarize(entry) {
  *   - setOnce(id) -> marks a console to end after its first result (optional; `spawn --once`)
  *   - getConsole(id) -> the consoleLog entry, or undefined
  *   - listConsoles() -> every consoleLog entry
+ *   - askBoard(kind, payload) -> the board's answer, or null when no board window
+ *     answered in time (optional; `via: "board"` -- see board-ask.js)
  */
 async function start(deps = {}) {
-  const { startAgentCore, sendToAgentCore, stopAgentCore, setOnce, getConsole, listConsoles } = deps;
+  const { startAgentCore, sendToAgentCore, stopAgentCore, setOnce, getConsole, listConsoles, askBoard } = deps;
   for (const name of ["startAgentCore", "sendToAgentCore", "stopAgentCore", "getConsole", "listConsoles"]) {
     if (typeof deps[name] !== "function") throw new Error(`agent-api: start() requires a ${name}() function`);
   }
@@ -180,26 +182,42 @@ async function start(deps = {}) {
       ...(typeof body.label === "string" && body.label ? { label: body.label } : {}),
     };
     const agent = typeof body.agent === "string" && body.agent ? body.agent : "claude";
+    // Through the board, as a person's Send would: the composer's own start path
+    // runs, so a bug in it shows up for these agents too. No board -> direct.
+    if (body.via === "board" && askBoard) {
+      const r = await askBoard("start", { agent, cwd: body.cwd, prompt: typeof body.prompt === "string" ? body.prompt : "", ...opts });
+      if (r) {
+        if (!r.ok) return { status: 400, body: { ok: false, error: r.error || "board could not start it", via: "board" } };
+        if (body.once === true && setOnce) setOnce(r.id);
+        return { status: 200, body: { ok: true, id: r.id, agent, cwd: r.cwd, engine: r.engine, via: "board" } };
+      }
+    }
     const started = await startAgentCore({ agent, cwd: body.cwd, opts, trusted: true });
     if (!started.ok) return { status: 400, body: started };
     if (body.once === true && setOnce) setOnce(started.id);
+    const via = body.via === "board" ? { via: "direct" } : {};
     if (typeof body.prompt === "string" && body.prompt) {
       const sent = sendToAgentCore(started.id, body.prompt);
       if (!sent || sent.ok === false) {
-        return { status: 200, body: { ...started, promptError: (sent && sent.error) || "could not send the prompt" } };
+        return { status: 200, body: { ...started, ...via, promptError: (sent && sent.error) || "could not send the prompt" } };
       }
     }
-    return { status: 200, body: started };
+    return { status: 200, body: { ...started, ...via } };
   }
 
-  function handleSend(id, body) {
+  async function handleSend(id, body) {
     if (typeof body.prompt !== "string" || !body.prompt) return { status: 400, body: { ok: false, error: "send needs a prompt" } };
     const entry = getConsole(id);
     if (!entry) return { status: 404, body: { ok: false, error: "no such console" } };
+    // The board's follow-up path resumes a finished run itself, so it is asked even then.
+    if (body.via === "board" && askBoard) {
+      const r = await askBoard("send", { id, prompt: body.prompt });
+      if (r && !r.notFound) return r.ok ? { status: 200, body: { ok: true, id, via: "board" } } : { status: 400, body: { ok: false, error: r.error || "board could not send it", via: "board" } };
+    }
     if (!entry.running) return { status: 409, body: { ok: false, error: "agent has exited" } };
     const sent = sendToAgentCore(id, body.prompt);
     if (!sent || sent.ok === false) return { status: 400, body: { ok: false, error: (sent && sent.error) || "could not send the prompt" } };
-    return { status: 200, body: { ok: true, id } };
+    return { status: 200, body: { ok: true, id, ...(body.via === "board" ? { via: "direct" } : {}) } };
   }
 
   function handleStatus(id) {
@@ -285,7 +303,7 @@ async function start(deps = {}) {
             json(res, 400, { ok: false, error: "invalid JSON body" });
             return;
           }
-          result = handleSend(id, body || {});
+          result = await handleSend(id, body || {});
         } else if (req.method === "POST" && url.pathname === "/stop") {
           result = handleStop(id);
         } else if (req.method === "POST" && url.pathname === "/wait") {

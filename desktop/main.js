@@ -60,6 +60,7 @@ const runtime = require("./runtime.js");
 const { createSwapper, confirmWhenHealthy } = require("./payload-swap.js");
 const askServer = require("./ask-server.js");
 const agentApi = require("./agent-api.js");
+const { createBoardAsk } = require("./board-ask.js");
 const { GithubSignIn } = require("./github-signin.js");
 const { resolveHub, HOSTED_HUB, LEGACY_HUB } = require("./hub-target.js");
 const { GoogleSignIn } = require("./google-signin.js");
@@ -3496,7 +3497,11 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
   consoleLog.open(started.id, consoleMeta(agent, dir, opts, place, resolved.engine));
   return { ok: true, id: started.id, agent, cwd: dir, engine: resolved.engine };
 }
-bridge.handle("local:startAgent", (_e, args) => startAgentCore(args));
+/** Directories the control API has asked the board to start an agent in: the
+ *  board's start is untrusted (knownRoot), so these -- set by main alone, for the
+ *  span of one request -- are let through as the API's own `spawn` is. */
+const apiRoots = new Set();
+bridge.handle("local:startAgent", (_e, args) => startAgentCore({ ...args, trusted: apiRoots.has(path.resolve(String((args && args.cwd) || ""))) }));
 
 /** What a reloaded board needs to rebuild a console's rail entry. `root` is
  *  the repo the user picked even when the agent works in a worktree of it.
@@ -4178,8 +4183,29 @@ bridge.assertComplete();
  * trusted -- see `trustedDir` above for what that buys `spawn`.
  */
 let agentApiHandle = null;
+const boardAsk = createBoardAsk({
+  send: (reqId, kind, payload) => {
+    if (!boardWindow || boardWindow.isDestroyed()) return false;
+    toBoard("local:boardRequest", { reqId, kind, ...payload });
+    return true;
+  },
+});
+bridge.handle("local:boardReply", (_e, { reqId, result }) => boardAsk.reply(reqId, result));
+async function askBoard(kind, payload) {
+  if (kind !== "start") return boardAsk.ask(kind, payload);
+  const dir = trustedDir(payload.cwd);
+  if (!dir) return { ok: false, error: "cwd does not exist" };
+  apiRoots.add(dir);
+  try {
+    const r = await boardAsk.ask(kind, { ...payload, cwd: dir });
+    return r && r.ok ? { ...r, cwd: dir } : r;
+  } finally {
+    apiRoots.delete(dir);
+  }
+}
 async function startAgentApi() {
   agentApiHandle = await agentApi.start({
+    askBoard,
     startAgentCore: async (args) => {
       const r = await startAgentCore(args);
       if (r.ok) announceConsole(r.id);
