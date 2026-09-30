@@ -444,6 +444,8 @@ describe("step checks decide 'already done'", () => {
     const n = names({ kind: "shell" });
     assert.ok(n.indexOf("installers") < n.indexOf("installer feed") && n.indexOf("installer feed") < n.indexOf("stable links"));
     assert.ok(n.indexOf("payload canary") < n.indexOf("canary soak") && n.indexOf("canary soak") < n.indexOf("payload stable") && n.at(-1) === "D-record");
+    // A shell release waits for the gate too: the installer feed reaches everyone the moment it moves.
+    assert.ok(n.indexOf("canary soak") < n.indexOf("installer feed"), "installer feed after the soak");
   });
 });
 

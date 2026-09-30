@@ -345,6 +345,35 @@ export function buildSteps(ctx) {
         io.ssh(`set -e\nmv /tmp/zevet-${v}-* ${DL}/\nchmod 644 ${DL}/zevet-${v}-*\nls -la ${DL}/zevet-${v}-*\n`);
       },
     },
+    {
+      name: "payload canary",
+      plan: () => "stage the payload tree, upload new blobs, manifests, then the canary pulses; read back over HTTPS",
+      done: () => channelDone("canary"),
+      async run() {
+        const wt = at(tag);
+        const out = stage();
+        rmSync(out, { recursive: true, force: true });
+        mkdirSync(out, { recursive: true });
+        io.run("node", ["scripts/make-feed.mjs", "payload", "--out", out, "--channel", "canary"], { cwd: wt, env: keyEnv(io), stream: true });
+        const blobs = walk(path.join(out, "p", "b")).map((f) => `p/b/${f}`);
+        const have = await pool(blobs, 8, (f) => okHead(`${BASE}/${f}`));
+        const fresh = blobs.filter((_, i) => !have[i]);
+        ctx.facts.newBlobs = fresh.length;
+        ctx.facts.newBytes = fresh.reduce((n, f) => n + statSync(path.join(out, f)).size, 0);
+        // bytes before pointer: blobs and manifests, then the pulses (RELEASING.md §7)
+        upload("ship-bytes.tgz", out, [...fresh, ...walk(path.join(out, "p", "m")).map((f) => `p/m/${f}`)]);
+        upload("ship-pulses.tgz", out, PLATFORMS.map((p) => `p/zevet/canary/${p}/pulse.json`));
+        ctx.facts.canary = await verifyPayload(io, "canary", { expectBuild: v, verify: verifyPulse });
+      },
+    },
+    {
+      name: "canary soak",
+      plan: () => "record the canary time (the soak clock) in facts.json",
+      done: () => Boolean(ctx.facts.canaryAt),
+      run() { ctx.facts.canaryAt = new Date().toISOString(); },
+    },
+    // After the soak: an installer reaches every user the moment its feed moves, so a shell
+    // release waits for the canary gate like the payload does (update-rollback.js is the net).
     ...(shell ? [{
       name: "installer feed",
       plan: () => `sign zevet-latest.json for ${v}, upload it last`,
@@ -392,33 +421,6 @@ echo reloaded
 `);
         if (!out.includes("reloaded")) throw new Error(`Caddy: ${out}`);
       },
-    },
-    {
-      name: "payload canary",
-      plan: () => "stage the payload tree, upload new blobs, manifests, then the canary pulses; read back over HTTPS",
-      done: () => channelDone("canary"),
-      async run() {
-        const wt = at(tag);
-        const out = stage();
-        rmSync(out, { recursive: true, force: true });
-        mkdirSync(out, { recursive: true });
-        io.run("node", ["scripts/make-feed.mjs", "payload", "--out", out, "--channel", "canary"], { cwd: wt, env: keyEnv(io), stream: true });
-        const blobs = walk(path.join(out, "p", "b")).map((f) => `p/b/${f}`);
-        const have = await pool(blobs, 8, (f) => okHead(`${BASE}/${f}`));
-        const fresh = blobs.filter((_, i) => !have[i]);
-        ctx.facts.newBlobs = fresh.length;
-        ctx.facts.newBytes = fresh.reduce((n, f) => n + statSync(path.join(out, f)).size, 0);
-        // bytes before pointer: blobs and manifests, then the pulses (RELEASING.md §7)
-        upload("ship-bytes.tgz", out, [...fresh, ...walk(path.join(out, "p", "m")).map((f) => `p/m/${f}`)]);
-        upload("ship-pulses.tgz", out, PLATFORMS.map((p) => `p/zevet/canary/${p}/pulse.json`));
-        ctx.facts.canary = await verifyPayload(io, "canary", { expectBuild: v, verify: verifyPulse });
-      },
-    },
-    {
-      name: "canary soak",
-      plan: () => "record the canary time (the soak clock) in facts.json",
-      done: () => Boolean(ctx.facts.canaryAt),
-      run() { ctx.facts.canaryAt = new Date().toISOString(); },
     },
     {
       name: "payload stable",
