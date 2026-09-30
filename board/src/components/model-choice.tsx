@@ -35,7 +35,7 @@ import { MODELS } from "../lib/constants";
 import { aliasOf, describeModel } from "../lib/models.mjs";
 import { modelLimitedUntil, sortByLimit } from "../lib/model-limits.mjs";
 import { whenText } from "../lib/when.mjs";
-import { ZEVET_MODEL, withZevet } from "../lib/zevet-model.mjs";
+import { ZEVET_MODEL, defaultPick, withZevet } from "../lib/zevet-model.mjs";
 import { useBoard } from "../lib/board";
 import { useChat } from "../lib/chat";
 import { ChatSurface } from "../lib/surface";
@@ -149,12 +149,14 @@ export function ModelChoice({
   );
 
   /* Zevet leads the list, above every agent's group; Chat has no router. */
+  const zevet = useMemo(() => ({ ...ZEVET_MODEL, icon: <AgentLogo agent="zevet" className="size-3.5" /> }), []);
   const all = useMemo(() => {
     const rest = groups.flatMap((g) => g.models);
-    return inChat ? rest : withZevet(rest, agents);
-  }, [groups, agents, inChat]);
+    return inChat ? rest : withZevet(rest, agents).map((m) => (m === ZEVET_MODEL ? zevet : m));
+  }, [groups, agents, inChat, zevet]);
   const zevetFirst = !inChat && all[0]?.id === ZEVET_MODEL.id;
-  const match = all.find((m) => aliasOf(m.id) === launchModel);
+  const selected = defaultPick(all, launchModel, aliasOf);
+  const match = all.find((m) => m.id === selected && aliasOf(m.id) === launchModel);
   /* ⚠️ ROOT CAUSE of a fresh install's first Codex message failing with
      "Provider error 400" (no local ~/.codex/models_cache.json yet, so
      a.models above was undefined and this fell through to MODELS[a.name] —
@@ -164,7 +166,6 @@ export function ModelChoice({
      nothing verified, `selected` stays "" and the write-back below skips,
      so invocationFor never adds a `--model`/`-m` flag and the CLI falls back
      to its own default, which is always valid for whatever account it is. */
-  const selected = match?.id ?? all.find((m) => m.verified)?.id ?? "";
 
   /* ⚠️ THE FALLBACK WAS DISPLAY-ONLY, so the picker showed one model and the
      run started on another. `launchModel` is what board.ts § startConsole
@@ -229,7 +230,7 @@ export function ModelChoice({
         <ModelSelectorList>
           {zevetFirst && (
             <ModelSelectorGroup key="zevet">
-              <ModelSelectorItem model={ZEVET_MODEL} />
+              <ModelSelectorItem model={zevet} />
             </ModelSelectorGroup>
           )}
           {groups.map(({ agent, models }) => (

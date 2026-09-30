@@ -20,3 +20,22 @@ export const ZEVET_MODEL = { id: "zevet:auto", name: "Zevet", keywords: ["zevet"
 export function withZevet(models, agents) {
   return agents.some((a) => a.ok) ? [ZEVET_MODEL, ...models] : models;
 }
+
+/**
+ * What the picker starts on: the last pick, unless it can no longer run
+ * (limited, not installed, gone from the catalogue), and then Zevet, which
+ * routes around exactly that. Andrew, 2026-09-30: the first verified row put a
+ * free MiMo model in front of a fresh install. Without Zevet (Chat) it is the
+ * first verified runnable row; with nothing verified, "" — the CLI's default.
+ *
+ * @param {Array<{ id: string, disabled?: boolean, verified?: boolean }>} all
+ * @param {string} last  the stored alias (board.ts launchModel)
+ * @param {(id: string) => string} aliasOf
+ * @returns {string}
+ */
+export function defaultPick(all, last, aliasOf) {
+  const match = all.find((m) => aliasOf(m.id) === last && !m.disabled);
+  if (match) return match.id;
+  if (all[0]?.id === ZEVET_MODEL.id) return ZEVET_MODEL.id;
+  return all.find((m) => m.verified && !m.disabled)?.id ?? "";
+}
