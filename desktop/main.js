@@ -3099,7 +3099,12 @@ function notePlacement(p, evt, id) {
   if (sid && !p.session) p.session = String(sid);
 }
 
+/** Set once a payload swap starts: the consoles it stops are resumed in their
+ *  own worktrees after the relaunch, so nothing may be released under them. */
+let relaunching = false;
+
 async function releasePlacement(p) {
+  if (relaunching) return;
   if (!placements.delete(p) || !p.worktree) return;
   // A fork shares its source's worktree; the last one out removes it.
   if ([...placements].some((q) => q.worktree === p.worktree)) return;
@@ -3375,7 +3380,7 @@ async function masoraBriefFor(dir, prompt) {
 
 /** The shared body of `local:startAgent` and the control API's `spawn` --
  *  `trusted` is what tells the two apart (see `trustedDir` above). */
-async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId } = {}) {
+async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId, restorePlace } = {}) {
   await runtimeReady;
   const dir = trusted ? trustedDir(cwd) : knownRoot(cwd);
   if (!dir) return { ok: false, error: trusted ? "cwd does not exist" : "not an opened workspace" };
@@ -3389,12 +3394,17 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId 
   /* `--continue` finds "the latest session in this folder", so it must start IN
      the folder: a fresh worktree would have no sessions to continue. */
   const inPlace = Boolean(opts && opts.continueLatest === true && String(agent || "") === "claude");
-  const place = source
+  /* A console restored after a payload swap goes back into the folder its
+     session ran in — claude finds a session only from there — and keeps the
+     worktree it had, rather than being placed afresh. */
+  const place = restorePlace
+    ? { id: null, root: restorePlace.root || dir, cwd: dir, worktree: restorePlace.worktree || null, session: String(resumeFrom || ""), title: "" }
+    : source
     ? { ...source, id: null, session: "", title: "" }
     : inPlace
     ? { id: null, root: dir, cwd: dir, worktree: null, session: "", title: "" }
     : await placeAgent(dir);
-  if (source || inPlace) placements.add(place);
+  if (restorePlace || source || inPlace) placements.add(place);
 
   // Standing instructions for this repo, if any were saved. Only claude has a
   // flag for them (agent-console.js § invocationFor); the other two ignore the
@@ -3472,7 +3482,6 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId 
       if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
       notePlacement(place, evt, handle.id);
       if (evt && evt.type === "agent" && evt.payload && evt.payload.session_id) consoleLog.updateMeta(handle.id, { sessionId: String(evt.payload.session_id) });
-      if (evt && evt.type === "agent" && evt.payload && evt.payload.session_id) consoleLog.updateMeta(handle.id, { sessionId: String(evt.payload.session_id) });
       toBoard("local:agentEvent", consoleLog.record(handle.id, evt));
     },
   });
@@ -3518,13 +3527,26 @@ function consoleMeta(agent, dir, opts, place, engineUsed) {
 }
 
 function resumeSnapshotFile() { return path.join(app.getPath("userData"), consolePersistence.FILE); }
-function persistResumableConsoles() { consolePersistence.write(resumeSnapshotFile(), consoleLog.snapshot().consoles); }
+function persistResumableConsoles() {
+  const consoles = consoleLog.snapshot().consoles.map((e) => {
+    const p = placementOf(e.id);
+    return { ...e, cwd: (p && p.cwd) || e.cwd, root: (p && p.root) || e.root, worktreeRecord: (p && p.worktree) || null };
+  });
+  consolePersistence.write(resumeSnapshotFile(), consoles);
+}
+/** Before the worktree prune: a restored console keeps its worktree. */
 async function restoreResumableConsoles() {
-  for (const s of consolePersistence.read(resumeSnapshotFile())) {
-    const r = await startAgentCore({ agent: "claude", cwd: s.cwd, opts: { model: s.model, mode: s.mode, engine: s.engine, label: s.label, sessionId: s.sessionId }, trusted: true, resumeFrom: s.sessionId, forcedId: s.id });
-    if (r.ok && s.inFlight) sendToAgentCore(s.id, "Zevet restarted to apply an update. Continue exactly where you left off.");
+  const saved = consolePersistence.read(resumeSnapshotFile());
+  try { fs.rmSync(resumeSnapshotFile(), { force: true }); } catch (err) { console.warn(`[zevet] resume snapshot not removed: ${err.message}`); }
+  for (const s of saved) {
+    const r = await startAgentCore({
+      agent: "claude", cwd: s.cwd, trusted: true, resumeFrom: s.sessionId, forcedId: s.id,
+      restorePlace: { root: s.root, worktree: s.worktreeRecord || null },
+      opts: { model: s.model, mode: s.mode, engine: s.engine, label: s.label, sessionId: s.sessionId },
+    });
+    if (!r.ok) console.warn(`[zevet] could not resume console ${s.id}: ${r.error}`);
+    else if (s.inFlight) sendToAgentCore(s.id, "Zevet restarted to apply an update. Continue exactly where you left off.");
   }
-  try { fs.rmSync(resumeSnapshotFile(), { force: true }); } catch {}
 }
 
 /**
@@ -3753,6 +3775,16 @@ app.on("web-contents-created", (_e, wc) => {
 });
 function releaseForRelaunch() {
   persistResumableConsoles();
+  // Stop the processes (their sessions are on disk) but keep every worktree:
+  // the relaunch resumes them there.
+  relaunching = true;
+  for (const c of consoles.values()) {
+    try {
+      c.stop();
+    } catch {
+      // Already gone.
+    }
+  }
   stopChatRun();
   fs.rmSync(AGENT_API_FILE, { force: true });
   family.stop();
@@ -4167,9 +4199,11 @@ async function startAgentApi() {
 app.whenReady().then(() => {
   buildMenu();
   void startAgentApi();
-  void restoreResumableConsoles();
-  // No console outlives the app, so neither does a worktree made for one.
-  void worktrees.prune();
+  // No console outlives the app, so neither does a worktree made for one —
+  // except those a payload swap is handing back, restored first.
+  void restoreResumableConsoles().finally(() =>
+    worktrees.prune(new Set([...placements].filter((p) => p.worktree).map((p) => path.resolve(p.worktree.dir)))),
+  );
   startScheduler();
   startMasoraPush();
   // After the window, never before it: an update check that delayed the

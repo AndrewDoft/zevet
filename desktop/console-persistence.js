@@ -12,7 +12,7 @@ function resumableEntries(entries) {
   return entries.filter(resumable).map((e) => ({
     id: e.id, agent: e.agent, cwd: e.cwd || e.root, root: e.root, worktree: e.worktree || null,
     model: e.model || "", mode: e.mode || "auto", engine: e.engine || "", label: e.label || "",
-    sessionId: String(e.sessionId), inFlight: e.state === "working",
+    worktreeRecord: e.worktreeRecord || null, sessionId: String(e.sessionId), inFlight: e.state === "working",
   }));
 }
 
