@@ -288,6 +288,28 @@ function zevetOrigin(dir) {
 }
 
 /**
+ * The main checkout behind ANY linked git worktree, zevet-made or not.
+ *
+ * `zevetOrigin` only resolves a worktree zevet itself created (the sidecar
+ * JSON next to it) -- an agent sitting in a worktree the user or the agent
+ * made by hand (`git worktree add ../repo-fix`) fell through to
+ * `path.basename(dir)`, so its activity showed up under a repo name nobody's
+ * board had open. Every linked worktree, zevet-made or not, carries this
+ * same pointer back to the one shared `.git`: `gitdir` is git's own record of
+ * it, so reading it costs the same two file reads as the branch lookup just
+ * above and needs no sidecar at all.
+ */
+function linkedWorktreeOrigin(gitdir, worktreeDir) {
+  try {
+    const commondir = readFileSync(path.join(gitdir, "commondir"), "utf8").trim();
+    const root = path.dirname(path.resolve(gitdir, commondir));
+    return root !== worktreeDir ? root : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Repo root, name and branch, straight off the filesystem.
  *
  * No `git` subprocess: this runs before every single tool call, on both
@@ -301,13 +323,17 @@ function repoInfo(startDir) {
       const dotgit = path.join(dir, ".git");
       if (existsSync(dotgit)) {
         let branch = "";
+        let gitdir = dotgit;
+        let isWorktree = false;
         try {
-          let gitdir = dotgit;
           if (!existsSync(path.join(dotgit, "HEAD"))) {
             // In a worktree, .git is a file pointing at the real gitdir.
             const link = readFileSync(dotgit, "utf8").trim();
             const m = link.match(/^gitdir:\s*(.+)$/);
-            if (m) gitdir = path.resolve(dir, m[1]);
+            if (m) {
+              gitdir = path.resolve(dir, m[1]);
+              isWorktree = true;
+            }
           }
           const head = readFileSync(path.join(gitdir, "HEAD"), "utf8").trim();
           const ref = head.match(/^ref:\s*refs\/heads\/(.+)$/);
@@ -315,7 +341,7 @@ function repoInfo(startDir) {
         } catch (err) {
           warn(`could not read HEAD: ${err.code || err.message}`);
         }
-        const origin = zevetOrigin(dir);
+        const origin = zevetOrigin(dir) || (isWorktree ? linkedWorktreeOrigin(gitdir, dir) : null);
         // `root` stays the worktree: it is where the agent's files are.
         if (origin) return { ...repoInfo(origin), root: dir, origin };
         return { repo: path.basename(dir), branch, root: dir };

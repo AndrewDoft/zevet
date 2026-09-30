@@ -293,6 +293,38 @@ describe("the plugin at runtime", () => {
     assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
   });
 
+  test("an agent in a PLAIN git worktree (not zevet-made) also reports the origin repo", async (t) => {
+    // Same bug as hook.mjs's: a worktree nobody but git knows about (a bare
+    // `git worktree add`, not desktop/agent-worktree.js's sidecar-tracked
+    // kind) has no JSON for zevetOrigin to read, so it used to fall back to
+    // its own folder name instead of the repo it is actually a worktree of.
+    const home = tempDir("zevet-opencode-plainwt-");
+    t.after(() => home.cleanup());
+    writeFileSync(path.join(home.dir, "config.json"), JSON.stringify({ hub: hub.base, token: TOKEN, actor: "opencode-test" }));
+    const repo = makeRepo(t, "plainorig");
+    writeFileSync(path.join(repo, "a.ts"), "x\n");
+    execFileSync("git", ["add", "-A"], { cwd: repo, stdio: "pipe" });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: repo, stdio: "pipe" });
+    // Sibling of `repo`, inside the same tempdir `makeRepo` already registered
+    // for cleanup -- deleting that tree takes the worktree's `.git` link with
+    // it, so there is nothing here to unregister separately.
+    const wtDir = path.join(path.dirname(repo), `${path.basename(repo)}-plainwt`);
+    execFileSync("git", ["worktree", "add", "-q", "-b", "plain-wt", wtDir], { cwd: repo, stdio: "pipe" });
+
+    const before = (await state(hub.base)).body.events.length;
+    await withEnv({ ZEVET_HOME: home.dir, ZEVET_TIMEOUT_MS: "4000" }, async () => {
+      addOpencodeRepo(repo);
+      const mod = await import(`../client/opencode-plugin.mjs?plainwt=${Date.now()}`);
+      const hooks = await mod.Zevet({ directory: wtDir });
+      await hooks["tool.execute.before"]({ tool: "write" }, { args: { file_path: "a.ts" } });
+    });
+    const [e] = (await state(hub.base)).body.events.slice(before);
+    assert.equal(e.repo, "plainorig", "repo must be the origin's name, not the worktree directory's");
+    assert.equal(e.target, "a.ts");
+    const root = repo.replaceAll("\\", "/");
+    assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
+  });
+
   test("a dead hub never throws into the turn", async (t) => {
     const home = tempDir("zevet-opencode-dead-");
     t.after(() => home.cleanup());

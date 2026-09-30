@@ -230,6 +230,27 @@ describe("what the hook reports", () => {
     }
   });
 
+  test("an agent in a PLAIN git worktree (not zevet-made) also reports the origin repo", async () => {
+    // The zevet-made case above goes through desktop/agent-worktree.js's own
+    // sidecar JSON. An agent can just as easily be sitting in a worktree
+    // nobody but git knows about -- `git worktree add ../repo-fix-x`, run by
+    // hand or by the agent itself -- and the board must still recognise its
+    // activity as the origin repo's, not some unrelated repo named after the
+    // worktree's own folder.
+    const wtDir = path.join(path.dirname(repo.dir), `${path.basename(repo.dir)}-plainwt`);
+    execFileSync("git", ["worktree", "add", "-q", "-b", "plain-wt", wtDir], { cwd: repo.dir, stdio: "pipe" });
+    try {
+      const e = await send({ cwd: wtDir, hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: path.join(wtDir, "src", "db.ts") } });
+      assert.equal(e.repo, path.basename(repo.dir), "repo must be the origin's name, not the worktree directory's");
+      assert.equal(e.branch, "feature/invites");
+      assert.equal(e.target, "src/db.ts");
+      const root = repo.dir.replaceAll("\\", "/");
+      assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
+    } finally {
+      execFileSync("git", ["worktree", "remove", "-f", wtDir], { cwd: repo.dir, stdio: "pipe" });
+    }
+  });
+
   test("relative file paths resolve from the agent working directory", async () => {
     const e = await send({ cwd: path.join(repo.dir, "src"), hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: "db.ts" } });
     assert.equal(e.target, "src/db.ts");
