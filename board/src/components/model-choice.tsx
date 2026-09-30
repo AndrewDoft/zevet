@@ -36,7 +36,7 @@ import { aliasOf, describeModel } from "../lib/models.mjs";
 import { modelLimitedUntil, sortByLimit } from "../lib/model-limits.mjs";
 import { whenText } from "../lib/when.mjs";
 import { ZEVET_MODEL, defaultPick, withZevet } from "../lib/zevet-model.mjs";
-import { useBoard } from "../lib/board";
+import { selectActiveConsole, useBoard } from "../lib/board";
 import { useChat } from "../lib/chat";
 import { ChatSurface } from "../lib/surface";
 import { zStorage } from "../lib/bridge";
@@ -60,6 +60,8 @@ export function ModelChoice({
   running?: { id: string; name: string };
 }) {
   const launchModel = useBoard((s) => s.launchModel);
+  const active = useBoard(selectActiveConsole);
+  const setConsoleModel = useBoard((s) => s.setConsoleModel);
   const setLaunchAgent = useBoard((s) => s.setLaunchAgent);
   const setLaunchModel = useBoard((s) => s.setLaunchModel);
   const launchEffort = useBoard((s) => s.launchEffort);
@@ -196,6 +198,9 @@ export function ModelChoice({
         setLaunchModel(aliasOf(id));
         const cut = id.indexOf(":");
         if (cut > 0) setLaunchAgent(id.slice(0, cut));
+        // Mid-thread in Code: the same CLI resumes on the new model at the next
+        // prompt (board.ts § setConsoleModel), marked "switched from X to Y".
+        if (!inChat && front && active && active.agent !== "zevet" && id.startsWith(`${active.agent}:`)) setConsoleModel(active.key, aliasOf(id));
       }}
       effort={launchEffort || undefined}
       onEffortChange={(e) => setLaunchEffort(e)}

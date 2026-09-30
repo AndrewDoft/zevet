@@ -28,3 +28,15 @@ test("the thread draws it above the prompt, and Code applies a picked model on t
   assert.match(board, /c\.transcript = appendUserText\(c\.transcript, text, consoleModelName\(c\)\);/);
   assert.match(board, /c\.model = c\.nextModel!;/);
 });
+
+test("Chat marks the switch too, and Code's picker applies a same-CLI pick to the thread in front", async () => {
+  const { emptyChatThread, sendUser } = await import("../board/src/lib/chat-stream.mjs");
+  let t = sendUser(emptyChatThread(), "hi", "auto", "zevet");
+  t = { ...t, busy: false };
+  t = sendUser(t, "again", "sonnet", "claude");
+  const users = t.transcript.messages.filter((m) => m.role === "user");
+  assert.equal(users[1].metadata.custom.switched.from, "Zevet");
+  assert.ok(users[1].metadata.custom.switched.to);
+  const picker = readFileSync(new URL("../board/src/components/model-choice.tsx", import.meta.url), "utf8");
+  assert.match(picker, /id\.startsWith\(`\$\{active\.agent\}:`\)\) setConsoleModel\(active\.key, aliasOf\(id\)\)/);
+});

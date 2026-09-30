@@ -12,6 +12,7 @@
  */
 import { appendAgentPayload, appendUserText, closeTranscript, emptyTranscript } from "./transcript.mjs";
 import { usageOf } from "./usage.mjs";
+import { runningModelName } from "./models.mjs";
 
 /** @returns {import("./chat-stream.d.mts").ChatThread} */
 export function emptyChatThread() {
@@ -49,7 +50,10 @@ let turns = 0;
  *  `agent` is the CLI the turn went to (claude|codex|opencode): each speaks its
  *  own JSONL, and it picks the vocabulary transcript.mjs reads it with. */
 export function sendUser(thread, text, model, agent) {
-  const t = appendUserText(thread.transcript, text);
+  // The switch rule (transcript.mjs appendUserText) names the model this
+  // prompt goes to: "Zevet" for the router, else the model's display name.
+  const on = (agent || thread.agent) === "zevet" ? "Zevet" : model ? runningModelName("", model) : "";
+  const t = appendUserText(thread.transcript, text, on);
   const messages = t.messages.concat({ id: `zc-${++turns}`, role: "assistant", content: [], status: { type: "running" } });
   return {
     ...thread,

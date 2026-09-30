@@ -142,7 +142,9 @@ function useComposerSource(): ComposerSource {
   const usable = localAgents.filter((a) => a.ok);
   const model = active ? runningModelName(active.usage.model, active.model) : "";
   const runningModel = active
-    ? active.agent === "zevet"
+    ? active.nextModel
+      ? { id: `${active.agent}:${active.nextModel}`, name: runningModelName("", active.nextModel) }
+      : active.agent === "zevet"
       ? { id: "zevet:auto", name: active.route ? `Zevet · ${active.route}` : "Zevet" }
       : { id: `${active.agent}:${active.usage.model || active.model}`, name: model || "Default" }
     : undefined;
