@@ -1338,3 +1338,34 @@ their own machine's string, the same evidence `/auth/rename` already accepted.
 
 **Not done / caveat.** A *different* teammate who shares an OS username with an unclaimed actor can
 still be folded by whoever claims it first; the `machine` field is not part of the alias.
+
+## D-033 — Shipped: the first payload-only release (0.2.90), canary then stable, with a hub deploy
+
+**Decided (Andrew, 2026-09-29/30, "release Zevet 0.2.90").** Carries D-032 (agent visibility, people
+rename) and an offline-update Sentry fix.
+
+- **Payload-only, not a shell release.** `git diff --stat v0.2.89..HEAD -- desktop/` touched
+  `main.js`, `preload.js`, `agent-api.js`, `ipc-table.js` and `sentry.js`. All five are in `payload.files`
+  (`preload.js` too: `bootstrap.js` `verifyEntry`s it as payload), none is `bootstrap.js`,
+  `payload-config.js`, `update-signing.js`, `app-update.js`, Electron or a native module. `SHELL_VERSION`
+  stays 1 and `shell_min` 1. `zevet-latest.json` was **not** touched (still 0.2.89): installed apps
+  take the payload with no installer bar. Installers for 0.2.90 were still built and published, and the
+  stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads (they seed 0.2.90).
+- **Sentry ELECTRON-5/3.** `captureUpdateFailure` sends offline errors ("fetch failed", aborted check,
+  ENOTFOUND/ECONNREFUSED/...) as one `warning` message (fingerprint `auto-update`,`offline`); bad
+  signature / hash mismatch stay exceptions. Test mutated red twice (offline branch disabled; branch
+  always taken), restored.
+- **Verified before tagging.** `npm test` 2729 tests, 2722 pass, 0 fail, 7 skipped;
+  `client-manifest.signed.json` re-signed. Tag `v0.2.90` on `release/0.2.90` (not merged to main); both
+  `build.yml` legs green (Authenticode `Valid` `CN=Andrew Doft`; macOS `source=Notarized Developer ID`).
+  sha256: exe `d9792f87…e3e9b4` (153052448 B), dmg `383e935e…e31b` (205232739 B); the stable links
+  serve exactly those bytes.
+- **Payload: canary, verified, then promoted.** 67 blobs + 2 manifests (win `41e4422e…`, mac `3b5aff4f…`).
+  Uploaded blobs, manifests, canary pulses; over HTTPS all 67 blobs per platform brotli-decode to their
+  manifest hashes, pulses verify under the pinned `zevet-2026-09` key, `no-store`; blobs `immutable`.
+  Then `publish-payload.mjs promote` canary -> stable: seq 2090 (> 2089) on both platforms.
+- **Delta a 0.2.89 install fetches:** 5 blobs, 91,697 bytes compressed (294,975 raw) per platform.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `507c4ef3009d` -> `bb82c3d86e6e` (board.js changed).
+
+**Not verified.** No live app was made to swap (would restart agents running in the installed Zevet);
+`test-payload-swap.mjs` covered that in CI.
