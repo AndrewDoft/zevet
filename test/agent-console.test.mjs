@@ -781,6 +781,32 @@ describe("the platform workarounds themselves", () => {
     assert.ok(modeFlags("opencode", "dangerous").note, "dangerous fallback is silent");
   });
 
+  test("Claude receives the bundled Zevet hook settings for the origin repo", () => {
+    const args = _internals.invocationFor("claude", {
+      repoRoot: "C:/dev/masora2",
+      clientDir: "C:/dev/zevet/client",
+      hookPath: "C:/dev/zevet/client/hook.mjs",
+      nodePath: "C:/Program Files/nodejs/node.exe",
+    });
+    assert.ok(args.includes("--settings"));
+    const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
+    assert.equal(settings.hooks.PreToolUse[0].matcher, "*");
+    assert.match(settings.hooks.Stop[0].hooks[0].command, /--zevet-repo "C:\/dev\/masora2"/);
+    assert.match(settings.hooks.Stop[0].hooks[0].command, /client\/hook\.mjs/);
+    assert.doesNotMatch(settings.hooks.Stop[0].hooks[0].command, /\.zevet[\\/]client/);
+  });
+
+  test("Claude skips the launch hook when the origin repo already wires Zevet", () => {
+    const args = _internals.invocationFor("claude", {
+      repoRoot: "C:/dev/masora2",
+      repoSettings: JSON.stringify({ hooks: { Stop: [{ hooks: [{ command: 'node hook.mjs --zevet-hook' }] }] } }),
+      clientDir: "C:/dev/zevet/client",
+      hookPath: "C:/dev/zevet/client/hook.mjs",
+      nodePath: "C:/Program Files/nodejs/node.exe",
+    });
+    assert.ok(!args.includes("--settings"));
+  });
+
   describe("codex's -m is trusted against its own cache, never guessed", () => {
     // codex forwards -m straight to OpenAI with no client-side check of its
     // own; an id the account's catalogue does not recognize is a "provider
