@@ -133,6 +133,7 @@ interface Strip {
   /** The account's 5h/7d windows, from the latest `rate_limit_event` any
    *  console reported. Account-wide, so the strip shows them once. */
   limits: RateWindow[];
+  limitsAt: number;
 }
 
 /**
@@ -572,7 +573,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   edView: null,
   docStatus: Object.create(null) as Record<string, { state: string; detail?: string }>,
 
-  strip: { live: { model: null, context: null, cacheHit: null, cost: null }, machine: null, limits: [] },
+  strip: { live: { model: null, context: null, cacheHit: null, cost: null }, machine: null, limits: [], limitsAt: 0 },
 
   who: { state: null, busy: false },
   index: { state: null, barPct: 0, progressText: "ready" },
@@ -1466,7 +1467,9 @@ export const useBoard = create<BoardState>((set, get) => ({
       // so it is read when the sha moves and never on the 4s poll itself.
       if (moved) void refreshCommits();
       return {
-        strip: { ...g.strip, machine: m },
+        strip: { ...g.strip, machine: m,
+          ...(m && Array.isArray((m as any).rateLimits) && (m as any).rateLimitsAt >= g.strip.limitsAt
+            ? { limits: (m as any).rateLimits, limitsAt: (m as any).rateLimitsAt } : {}) },
         checkpoints: moved
           ? [...g.checkpoints, { sha, branch: String((repo && repo.branch) || ""), ts: Date.now() }].slice(-40)
           : g.checkpoints,
@@ -1810,7 +1813,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
         signalConsolesChanged();
       }
     }
-    if (limits) useBoard.setState((g) => ({ strip: { ...g.strip, limits } }));
+    if (limits) useBoard.setState((g) => ({ strip: { ...g.strip, limits, limitsAt: Date.now() } }));
 
     const u = usageOf(payload);
     const cost = typeof payload.total_cost_usd === "number" ? payload.total_cost_usd : null;

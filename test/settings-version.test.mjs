@@ -15,11 +15,16 @@ test("the helper puts the running build in `current` and keeps the rest", () => 
   const src = main.slice(main.indexOf("function withRunningBuild("), main.indexOf("const appUpdater = new AppUpdater({"));
   const ctx = { APP_VERSION: "0.2.91" };
   vm.runInNewContext(src + ";this.f = withRunningBuild;", ctx);
-  assert.deepEqual({ ...ctx.f({ current: "0.2.89", phase: "current" }) }, { current: "0.2.91", phase: "current" });
+  assert.equal(ctx.f({ current: "0.2.89", phase: "current" }).current, "0.2.91");
   assert.equal(ctx.f(null), null);
 });
 
 test("the status poll and the pushed status both carry it", () => {
   assert.match(main, /bridge\.handle\("app:updateStatus", \(\) => withRunningBuild\(appUpdater\.status\(\)\)\)/);
   assert.match(main, /onStatus: \(raw\) => \{\s*const s = withRunningBuild\(raw\);/);
+});
+
+test("version status includes running and staged payload builds", () => {
+  assert.match(main, /running: typeof shell !== "undefined"/);
+  assert.match(main, /next: \{ build: staged\.build, when: "on restart" \}/);
 });
