@@ -233,11 +233,15 @@ export function buildSteps(ctx) {
   const { io, d, version: v, tag } = ctx;
   const shell = d.kind === "shell";
   const exeUrl = `${BASE}/${exeName(v)}`, dmgUrl = `${BASE}/${dmgName(v)}`;
-  const signing = () => require(path.join(ctx.root, "desktop", "update-signing.js"));
+  /* desktop/ modules are loaded from ship's own worktree, which has had `npm ci`:
+     the watcher's runner checkout never installs desktop deps, and the first
+     auto-ship died there on "Cannot find module '@masora/desktop-kit'". */
+  const depsRoot = () => (ctx.wt && existsSync(path.join(ctx.wt, "desktop", "node_modules", "@masora", "desktop-kit")) ? ctx.wt : ctx.root);
+  const signing = () => require(path.join(depsRoot(), "desktop", "update-signing.js"));
   const keyId = () => Object.keys(signing().PINNED_KEYS)[0];
   const verifyPulse = (signed, sig) => {
     const { PINNED_KEYS, verifySigned } = signing();
-    const { PULSE_DOMAIN } = require(path.join(ctx.root, "desktop", "node_modules", "@masora", "desktop-kit", "lib", "payload.js"));
+    const { PULSE_DOMAIN } = require(path.join(depsRoot(), "desktop", "node_modules", "@masora", "desktop-kit", "lib", "payload.js"));
     verifySigned(PULSE_DOMAIN, signed, sig, ctx.keys || PINNED_KEYS);
   };
   const remoteTag = () => io.git(["ls-remote", "--tags", "origin", `refs/tags/${tag}`]).trim() !== "";
