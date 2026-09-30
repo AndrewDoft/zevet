@@ -55,9 +55,12 @@ const indexCapability = require("./index-capability.js");
 const embedder = require("./embedder.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
-const { AppUpdater, loopbackProofKeys } = bootShell.require("./app-update.js");
+const { AppUpdater, loopbackProofKeys, INSTALL_ARGS, winInstallArgs } = bootShell.require("./app-update.js");
+const { createRollback } = bootShell.require("./update-rollback.js");
+const { familyIndexKeys } = bootShell.require("./update-signing.js");
 const runtime = require("./runtime.js");
-const { createSwapper, confirmWhenHealthy } = require("./payload-swap.js");
+const { createSwapper, confirmWhenHealthy, awaitHealthy } = require("./payload-swap.js");
+const { createIdleInstaller, CHECK_MS: IDLE_CHECK_MS } = require("./idle-install.js");
 const askServer = require("./ask-server.js");
 const agentApi = require("./agent-api.js");
 const { createBoardAsk } = require("./board-ask.js");
@@ -92,7 +95,7 @@ const Sentry = require("@sentry/electron/main");
 // exists and the app simply never starts, with the message going to a console
 // nobody is looking at. Required lazily in ensureDocSync() instead, where the
 // failure becomes an error string a person can read in the editor.
-const { execFile } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -1733,6 +1736,13 @@ const family = new Family({
   runUpdate: async () => {
     const s = await appUpdater.check();
     if (s && s.phase === "ready" && s.canInstall) await appUpdater.install();
+  },
+  // The signed family index (family-index.js) names a newer Zevet: look now, never install. The keys are the
+  // shell's (a payload cannot change what it trusts); none pinned yet means the poll stays off.
+  indexKeys: familyIndexKeys(),
+  onIndexNewer: () => {
+    const phase = appUpdater.state.phase;
+    return phase === "ready" || phase === "downloading" || phase === "checking" ? undefined : appUpdater.check();
   },
   readTeam: () => currentTeamName(),
   // D-615: Masora's onboarding relays a {team, key} invite via team.join;
@@ -3841,6 +3851,22 @@ app.on("web-contents-created", (_e, wc) => {
     });
   }
 });
+/** What every "is anyone using Zevet" decision reads: the payload swap and the idle installer share it, so agents,
+ *  a chat turn and recent input gate both identically (payload-swap.js busyReason). */
+const useGate = {
+  activity: () => {
+    const a = consoleLog.activity();
+    const live = consoleLog.snapshot().consoles.filter((e) => e.running);
+    return { ...a, resumable: live.some((e) => e.agent === "claude" && e.sessionId), nonResumable: live.filter((e) => !(e.agent === "claude" && e.sessionId)).length };
+  },
+  chatBusy: () => Boolean(chatRun && chatRun.turn),
+  lastInputAt: () => lastInputAt,
+  windows: () => BrowserWindow.getAllWindows().length,
+};
+/** Resolves when any window has finished a load attempt (load OR fail: an unreachable hub is not the build's fault). */
+const firstWindowLoaded = new Promise((resolve) => {
+  app.on("browser-window-created", (_e, w) => w.webContents.once("did-stop-loading", resolve));
+});
 function releaseForRelaunch() {
   persistResumableConsoles();
   // Stop the processes (their sessions are on disk) but keep every worktree:
@@ -3873,15 +3899,8 @@ if (bootShell.payload) {
   const swapper = createSwapper({
     payload: bootShell.payload,
     app,
-    activity: () => {
-      const a = consoleLog.activity();
-      const live = consoleLog.snapshot().consoles.filter((e) => e.running);
-      return { ...a, resumable: live.some((e) => e.agent === "claude" && e.sessionId), nonResumable: live.filter((e) => !(e.agent === "claude" && e.sessionId)).length };
-    },
-    chatBusy: () => Boolean(chatRun && chatRun.turn),
-    lastInputAt: () => lastInputAt,
+    ...useGate,
     inputQuietMs: process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS ? Number(process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS) : undefined, // the packaged proof only
-    windows: () => BrowserWindow.getAllWindows().length,
     release: releaseForRelaunch,
     log: bootShell.log,
   });
@@ -3893,10 +3912,7 @@ if (bootShell.payload) {
     swapper.applyOnQuit().catch((err) => bootShell.log(`payload apply on quit failed: ${err && err.message}`)).finally(() => { quitApplied = true; app.quit(); });
   });
   if (bootShell.trial) {
-    const loaded = new Promise((resolve) => {
-      app.on("browser-window-created", (_e, w) => w.webContents.once("did-stop-loading", resolve));
-    });
-    void confirmWhenHealthy({ payload: bootShell.trial, loaded, apiAnswers: agentApiAnswers, app, log: bootShell.log });
+    void confirmWhenHealthy({ payload: bootShell.trial, loaded: firstWindowLoaded, apiAnswers: agentApiAnswers, app, log: bootShell.log });
   }
 }
 
@@ -4132,6 +4148,22 @@ bridge.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(ar
  *   - That the renderer is TOLD, and never asked. The board shows a row; the
  *     person clicks it or does not.
  * ======================================================================== */
+/** update-rollback.js: an installer update that does not come up healthy runs the previous installer again and is
+ *  never offered again. Windows only, and never on the payload path (bootstrap.js's 3-strike revert owns that). */
+const updatesDir = path.join(app.getPath("userData"), "updates");
+const rollback = createRollback({
+  dir: updatesDir,
+  running: app.getVersion(),
+  spawn,
+  installArgs: () => winInstallArgs(INSTALL_ARGS, process.execPath),
+  spawnOptions: { windowsVerbatimArguments: true }, // winInstallArgs ends in an unquoted /D=
+  verifyPublisher: async (_platform, file) => (await appUpdater._publisherProblem(file)) === null,
+  verifiedOnDisk: (file, entry) => appUpdater._verified(file, entry),
+  stopRuntime: () => persistResumableConsoles(), // quit() below is appUpdater's quitImpl: releaseForRelaunch
+  quit: () => appUpdater.quitImpl(),
+  log: (m) => { console.log(`[zevet-app-update] ${m}`); fileLog.info(`[zevet-app-update] ${m}`); },
+  report: (err) => sentry.captureUpdateFailure(Sentry, { stage: "auto-update-rollback", error: err }),
+});
 // Whether the menu item currently reads "Restart to update" — tracked outside
 // appUpdater.state so a download's percent ticks (also delivered through
 // onStatus) don't rebuild the native menu dozens of times for nothing.
@@ -4155,10 +4187,11 @@ function withRunningBuild(s) {
   return { ...s, running: APP_VERSION, ...(staged && staged.build !== APP_VERSION ? { next: { build: staged.build, when: "on restart" } } : {}) };
 }
 const appUpdater = new AppUpdater({
+  rollback,
   currentVersion: app.getVersion(),
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
   trustedKeys: loopbackProofKeys(process.env.ZEVET_APP_FEED),
-  dir: path.join(app.getPath("userData"), "updates"),
+  dir: updatesDir,
   // Only meaningful on darwin; see canSelfReplaceMac() in app-update.js.
   // /Applications/zevet.app from .../zevet.app/Contents/MacOS/zevet.
   bundlePath: process.platform === "darwin" ? path.dirname(path.dirname(path.dirname(app.getPath("exe")))) : undefined,
@@ -4207,6 +4240,41 @@ const appUpdater = new AppUpdater({
 app.on("before-quit", () => {
   if (appUpdater.state.phase === "ready") appUpdater.installOnQuit();
 });
+
+/**
+ * After an installer update: the new shell has to prove itself, like a trial payload does. A window that finished
+ * loading and an agent API that answers within the boot budget confirms it (and makes it the next rollback
+ * target); otherwise update-rollback.js takes one strike (a slow first boot is not a verdict) and then runs the
+ * previous installer. Relaunch on the first strike so the second one comes now, not at the next launch.
+ */
+async function watchShellInstall() {
+  if ((await rollback.afterBoot(null)) !== "none" || !rollback.state().pending) return; // a finished rollback, or an installer that never took
+  const ok = await awaitHealthy({ loaded: firstWindowLoaded, apiAnswers: agentApiAnswers });
+  const did = await rollback.afterBoot(ok ? { ok: true } : { ok: false, reason: "timeout" });
+  if (did === "retry") {
+    bootShell.log("installer update not healthy within 120s; relaunching for the second strike");
+    releaseForRelaunch();
+    app.relaunch();
+    app.exit(1);
+  }
+}
+
+/** Put a ready installer on when nobody is here (idle-install.js); the relaunch restores the consoles. */
+function startIdleInstall() {
+  const tick = createIdleInstaller({
+    updater: appUpdater,
+    gate: useGate,
+    canSilent: () => appUpdater.steps.canOnQuit(appUpdater),
+    systemIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+    windowsAway: () => {
+      const all = BrowserWindow.getAllWindows();
+      return all.length > 0 && all.every((w) => w.isMinimized() || !w.isVisible());
+    },
+    persist: persistResumableConsoles, // before the installer spawns; a non-resumable console never gets here (busyReason)
+    log: (m) => bootShell.log(m),
+  });
+  setInterval(() => void tick().catch((err) => bootShell.log(`idle install: ${err && err.message}`)), IDLE_CHECK_MS).unref();
+}
 
 /** The on-focus recheck and the resume-from-sleep recheck share one gate so
  *  neither adds a request on top of the ordinary hourly timer if the other
@@ -4319,6 +4387,8 @@ app.whenReady().then(() => {
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();
   family.start();
+  watchShellInstall();
+  startIdleInstall();
   // Only reliable after 'ready'; see the module's own docs.
   powerMonitor.on("resume", () => appUpdater.maybeCheck(UPDATE_RECHECK_MIN_GAP_MS));
   session.defaultSession.webRequest.onHeadersReceived({ urls: FRAME_URLS, types: ["subFrame"] }, (d, cb) => cb({ responseHeaders: frameable(d.responseHeaders) }));

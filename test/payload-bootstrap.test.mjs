@@ -61,9 +61,15 @@ describe("the shell/payload split", () => {
     }
   });
   test("the pinned keys and the installer updater stay in the shell: a payload cannot change what it trusts", async () => {
-    for (const f of ["update-signing.js", "app-update.js"]) {
+    for (const f of ["update-signing.js", "app-update.js", "update-rollback.js"]) {
       assert.ok(shellFiles.has(f), `${f} left the shell`);
       assert.equal(pkg.payload.files.includes(f), false);
+    }
+  });
+  test("the family index and idle install are payload; they reach keys only through main.js", async () => {
+    for (const f of ["family-index.js", "idle-install.js"]) {
+      assert.ok(pkg.payload.files.includes(f));
+      assert.doesNotMatch(stripComments(fs.readFileSync(path.join(DESKTOP, f), "utf8")), /require\("\.\/update-signing\.js"\)/);
     }
   });
   test("the installer carries the payload tree as resources/app-core", async () => {

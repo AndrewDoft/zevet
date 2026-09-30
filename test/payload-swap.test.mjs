@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { createSwapper, confirmWhenHealthy, busyReason, AGENT_QUIET_MS, INPUT_QUIET_MS } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "payload-swap.js"));
+const { createSwapper, confirmWhenHealthy, awaitHealthy, busyReason, AGENT_QUIET_MS, INPUT_QUIET_MS } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "payload-swap.js"));
 
 const NOW = 10_000_000;
 const MIN = 60_000;
@@ -196,11 +196,27 @@ describe("confirmWhenHealthy", () => {
   });
 });
 
+// The same signal without the payload's consequences: what the installer rollback waits on (main.js watchShellInstall).
+describe("awaitHealthy", () => {
+  const clock = () => { let t = 0; return { now: () => t, sleep: async (ms) => { t += ms; } }; };
+  test("true once a window has loaded and the API answers", async () => {
+    assert.equal(await awaitHealthy({ loaded: Promise.resolve(), apiAnswers: async () => true, ...clock() }), true);
+  });
+  test("false, with no side effect, when the API never answers within the budget", async () => {
+    assert.equal(await awaitHealthy({ loaded: Promise.resolve(), apiAnswers: async () => false, ...clock() }), false);
+  });
+  test("false when no window ever finishes loading, and an API that throws is not answering", async () => {
+    assert.equal(await awaitHealthy({ loaded: new Promise(() => {}), apiAnswers: async () => true, ...clock() }), false);
+    assert.equal(await awaitHealthy({ loaded: Promise.resolve(), apiAnswers: async () => { throw new Error("x"); }, ...clock() }), false);
+  });
+});
+
 // main.js cannot be loaded outside Electron (see desktop-bridges.test.mjs), so its wiring is asserted from source.
 describe("main.js hands the gate real state and the swap real teardown", async () => {
   const { readFileSync } = await import("node:fs");
   const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
-  const wiring = main.slice(main.indexOf("createSwapper({"), main.indexOf("createSwapper({") + 900);
+  // The gate's inputs are one object, useGate, shared by the swapper and the idle installer.
+  const wiring = main.slice(main.indexOf("const useGate = {"), main.indexOf("const useGate = {") + 900);
   const release = main.slice(main.indexOf("function releaseForRelaunch"), main.indexOf("function releaseForRelaunch") + 300);
 
   test("agents come from the console log, chat from the chat run, windows from Electron", () => {
@@ -208,6 +224,10 @@ describe("main.js hands the gate real state and the swap real teardown", async (
     assert.match(wiring, /chatBusy: \(\) => Boolean\(chatRun && chatRun\.turn\)/);
     assert.match(wiring, /windows: \(\) => BrowserWindow\.getAllWindows\(\)\.length/);
     assert.match(wiring, /lastInputAt: \(\) => lastInputAt/);
+  });
+  test("the swapper and the idle installer read the one gate", () => {
+    assert.match(main, /createSwapper\(\{[\s\S]{0,200}\.\.\.useGate/);
+    assert.match(main, /createIdleInstaller\(\{[\s\S]{0,200}gate: useGate/);
   });
   test("keyboard input on any web contents is what the input gate sees", () => {
     assert.match(main, /web-contents-created[\s\S]{0,300}before-input-event[\s\S]{0,400}lastInputAt = now;/);
@@ -220,7 +240,8 @@ describe("main.js hands the gate real state and the swap real teardown", async (
     assert.match(main, /swapper\.applyOnQuit\(\)\.catch/);
   });
   test("a trial build is confirmed through the trial handle, once a window has stopped loading and the agent API answers", () => {
-    assert.match(main, /if \(bootShell\.trial\) \{[\s\S]{0,400}did-stop-loading[\s\S]{0,300}confirmWhenHealthy\(\{ payload: bootShell\.trial, loaded, apiAnswers: agentApiAnswers/);
+    assert.match(main, /const firstWindowLoaded = new Promise[\s\S]{0,200}did-stop-loading/);
+    assert.match(main, /if \(bootShell\.trial\) \{[\s\S]{0,200}confirmWhenHealthy\(\{ payload: bootShell\.trial, loaded: firstWindowLoaded, apiAnswers: agentApiAnswers/);
   });
   test("the relaunch tidies what before-quit would, and never starts an installer", () => {
     assert.match(release, /stopChatRun\(\)/);
