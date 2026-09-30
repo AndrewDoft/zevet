@@ -13,7 +13,7 @@
 // live turn fires there.
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -301,7 +301,9 @@ describe("the plugin at runtime", () => {
     const home = tempDir("zevet-opencode-plainwt-");
     t.after(() => home.cleanup());
     writeFileSync(path.join(home.dir, "config.json"), JSON.stringify({ hub: hub.base, token: TOKEN, actor: "opencode-test" }));
-    const repo = makeRepo(t, "plainorig");
+    // git records the REAL path in commondir (macOS /private/var, Windows 8.3 -> long),
+    // so the opt-in and the expected checkout use that spelling.
+    const repo = realpathSync.native(makeRepo(t, "plainorig"));
     writeFileSync(path.join(repo, "a.ts"), "x\n");
     execFileSync("git", ["add", "-A"], { cwd: repo, stdio: "pipe" });
     execFileSync("git", ["commit", "-qm", "init"], { cwd: repo, stdio: "pipe" });
