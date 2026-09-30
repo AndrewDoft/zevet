@@ -24,7 +24,8 @@
 // that root. See openBoard() for why the board is allowed a bridge at all
 // despite loading a remote origin, and local:write below for why a WRITE over
 // that same bridge is a bigger thing to hand out than a read.
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor, net } = require("electron");
+const { createReconnect } = require("./reconnect.js");
 const { openSafe } = require("./open-safe.js");
 const { createLog, createIpcRegistry } = require("@masora/desktop-kit");
 // bootstrap.js (the asar entry) loaded this file; what only it can hand over is on this object.
@@ -800,26 +801,38 @@ function openBoard(cfg) {
     boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
   }
 
-  // A fresh network interface (Wi-Fi still associating, a VPN adapter still
-  // coming up) can lose the very first request without meaning the hub is
-  // actually unreachable — the same race a browser papers over with its own
-  // retry. One retry before reporting anything to the person; a second
-  // failure is treated as real.
-  let boardLoadAttempts = 0;
-  boardWindow.webContents.on("did-fail-load", (_e, code, desc) => {
-    if (code === -3) return; // aborted by a normal navigation
-    if (!auth.error && boardLoadAttempts < 1) {
-      boardLoadAttempts += 1;
-      setTimeout(() => {
-        if (!boardWindow || boardWindow.isDestroyed()) return;
-        boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
-      }, 1500);
-      return;
-    }
-    boardWindow.loadURL(
-      "data:text/html;charset=utf-8," +
-        encodeURIComponent(unreachablePage(cfg.hub, `${desc} (${code})`)),
-    );
+  // A failed load (Wi-Fi still associating, a VPN coming up, the hub mid-deploy) shows Zevet's own waiting page
+  // at once and retries on a short capped backoff until it works; waking the machine or the network coming back
+  // retries immediately (reconnect.js). No address is shown: there is nothing for the person to do with one.
+  let probing = false;
+  const reconnect = createReconnect({
+    // Probe first: navigating to a dead hub would swap Chromium's own error page in over ours on every attempt.
+    load: async () => {
+      if (probing) return;
+      probing = true;
+      const up = await hubAnswers(cfg.hub);
+      probing = false;
+      if (!boardWindow || boardWindow.isDestroyed()) return reconnect.stop();
+      if (up) boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
+      else reconnect.failed();
+    },
+    showPage: () => boardWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(reconnectingPage())),
+    isOnline: () => net.isOnline(),
+  });
+  boardWindow.webContents.on("did-fail-load", (_e, code, _desc, _url, isMainFrame) => {
+    if (code === -3 || isMainFrame === false || auth.error) return; // aborted by a normal navigation, a subframe, or the credential page
+    reconnect.failed();
+  });
+  boardWindow.webContents.on("did-finish-load", () => {
+    if (!boardWindow.webContents.getURL().startsWith("data:")) reconnect.loaded();
+  });
+  const nudge = () => reconnect.nudge();
+  powerMonitor.on("resume", nudge);
+  powerMonitor.on("unlock-screen", nudge);
+  boardWindow.once("closed", () => {
+    reconnect.stop();
+    powerMonitor.removeListener("resume", nudge);
+    powerMonitor.removeListener("unlock-screen", nudge);
   });
 
   // Anything that wants a new window is a link to the outside world.
@@ -880,24 +893,27 @@ function statusPageStyle() {
 
 const STATUS_BRAND = `<div class="brand"><svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true" fill="currentColor"><circle cx="16" cy="8.2" r="3.5"/><circle cx="7" cy="23.8" r="3.5"/><circle cx="25" cy="23.8" r="3.5"/></svg>Zevet</div>`;
 
-function unreachablePage(hub, why) {
-  let host = String(hub || "");
+/** Does the hub answer at all (any non-5xx: a proxy's 502 is "down")? Never throws. */
+async function hubAnswers(hub) {
   try {
-    host = new URL(hub).host || host;
+    const r = await net.fetch(`${String(hub).replace(/\/+$/, "")}/healthz`, { signal: AbortSignal.timeout(4000) });
+    return r.status < 500;
   } catch {
-    // Not a parseable URL: show whatever was configured, verbatim.
+    return false;
   }
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Offline</title>${statusPageStyle()}
-  <main>${STATUS_BRAND}<h1>Offline</h1>
-  <p>Could not reach <code>${host.replace(/[<&]/g, "")}</code>: ${String(why).replace(/[<&]/g, "")}</p>
-  <p>A VPN, firewall, or a network with strict DNS filtering can block this address without
-  saying so. Try another network, or a quick reload once you're off it.</p></main></html>`;
+}
+
+function reconnectingPage() {
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Reconnecting</title>${statusPageStyle()}
+  <style>@keyframes z{to{transform:rotate(360deg)}}i{display:inline-block;width:14px;height:14px;margin-right:8px;vertical-align:-2px;border:2px solid #cfccc6;border-top-color:${INK};border-radius:50%;animation:z .9s linear infinite}@media(prefers-reduced-motion:reduce){i{animation:none}}</style>
+  <main>${STATUS_BRAND}<h1><i></i>Reconnecting</h1>
+  <p>Your work is safe. Zevet picks up again by itself as soon as it can.</p></main></html>`;
 }
 
 /**
  * The page shown when this machine cannot prove who it is.
  *
- * Separate from `unreachablePage` on purpose: that one says "the hub may be
+ * Separate from `reconnectingPage` on purpose: that one says "the hub may be
  * off, nothing is wrong with your install", which is a comforting and, here,
  * false thing to tell somebody whose config holds a mistyped secret. The
  * remedies are opposite — wait versus re-run setup — so the pages are too.

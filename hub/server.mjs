@@ -1988,7 +1988,7 @@ async function handleRequest(req, res) {
       connection: "keep-alive",
       "x-accel-buffering": "no",
     });
-    res.write(`event: hello\ndata: ${JSON.stringify(board.snapshot(auth.accounts.actorResolver()))}\n\n`);
+    res.write(`retry: 1000\nevent: hello\ndata: ${JSON.stringify(board.snapshot(auth.accounts.actorResolver()))}\n\n`);
     board.listeners.add(res);
     // A proxy that sees nothing for a minute will close the stream. Ping.
     const ping = setInterval(() => {

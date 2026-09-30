@@ -2866,8 +2866,23 @@ function pollStatus(): void {
  * CONNECT (SSE)
  * ------------------------------------------------------------------------- */
 
+let stream: EventSource | null = null;
+let dropTimer: ReturnType<typeof setTimeout> | undefined;
+/** A dropped stream reads "Reconnecting" for this long before it reads "Offline": the board stays up either way. */
+const OFFLINE_AFTER_MS = 8000;
+
+let onlineBound = false;
+
 export function connect(): void {
-  const es = new EventSource("/events");
+  stream?.close();
+  const es = (stream = new EventSource("/events"));
+  // The network coming back, or the window coming forward, is worth a try now rather than at the browser's next retry.
+  if (!onlineBound) {
+    onlineBound = true;
+    const again = () => { if (stream && stream.readyState !== EventSource.OPEN) connect(); };
+    window.addEventListener("online", again);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) again(); });
+  }
   es.addEventListener("hello", (m) => {
     useBoard.getState().setConn("live");
     useBoard.getState().applySnapshot(JSON.parse((m as MessageEvent).data));
@@ -2895,6 +2910,10 @@ export function connect(): void {
     useBoard.getState().setConn("live");
   };
   es.onerror = () => {
+    if (es !== stream) return;
+    if (useBoard.getState().conn === "live") useBoard.getState().setConn("init");
+    clearTimeout(dropTimer);
+    dropTimer = setTimeout(() => { if (es === stream && es.readyState !== EventSource.OPEN) useBoard.getState().setConn("down"); }, OFFLINE_AFTER_MS);
     fetch("/api/state", { credentials: "same-origin" })
       .then((r) => {
         if (r.status === 401) {
@@ -2906,11 +2925,10 @@ export function connect(): void {
           useBoard.getState().setConn("down");
           useBoard.getState().setNeedsToken(false);
         } else {
-          useBoard.getState().setConn("down");
           useBoard.getState().setNeedsToken(false);
         }
       })
-      .catch(() => useBoard.getState().setConn("down"));
+      .catch(() => undefined);
   };
 }
 

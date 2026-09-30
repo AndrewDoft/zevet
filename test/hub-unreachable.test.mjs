@@ -1,5 +1,5 @@
 // The board window's own network-failure path (main.js's openBoard ->
-// did-fail-load -> unreachablePage), driven end-to-end against a hub that
+// did-fail-load -> reconnectingPage), driven end-to-end against a hub that
 // answers nobody: deterministic on every OS this suite runs on, unlike an
 // actually-blocked DNS name, which would make this flaky by depending on
 // whatever the runner's network happens to do that day.
@@ -72,12 +72,10 @@ after(() => {
 });
 
 describe("a hub nobody answers on", { skip: NO_DRIVE }, () => {
-  test("the board names the host and gives an actionable reason, not a bare error code", async () => {
-    // main.js retries once (a fresh network interface can lose the very first
-    // request) before it gives up, so this has to outlast that retry.
-    const text = await waitForBodyText((t) => /Offline/.test(t));
-    assert.match(text, /Offline/);
-    assert.match(text, /127\.0\.0\.1/); // the host is named, not just "Offline"
-    assert.match(text, /firewall|VPN|DNS/i); // an actionable hint, not a bare error code
+  test("the board says Reconnecting in Zevet's words, with no address and no error code, and keeps trying", async () => {
+    const text = await waitForBodyText((t) => /Reconnecting/.test(t));
+    assert.match(text, /Reconnecting/);
+    assert.match(text, /Your work is safe/);
+    assert.doesNotMatch(text, /127\.0\.0\.1|hub|ERR_|\(-\d+\)/i);
   });
 });
