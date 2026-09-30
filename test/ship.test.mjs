@@ -342,6 +342,8 @@ describe("step checks decide 'already done'", () => {
     // The first real ship edited the host file, then died on the container check;
     // a done-check reading the host file would have skipped the reload for ever.
     assert.equal(await world(t, { ssh: () => "2\n" }).check("stable links"), false);
+    // Done only once the run's post-reload marker exists.
+    assert.equal(await world(t, { ssh: () => "yes\n" }).check("stable links"), true);
     const src = readFileSync(new URL("../scripts/ship.mjs", import.meta.url), "utf8");
     assert.ok(src.includes('docker exec $C grep -c "zevet-${v}-" /etc/caddy/Caddyfile'), "the container sees the file at /etc/caddy/Caddyfile");
   });
