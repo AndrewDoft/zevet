@@ -8,7 +8,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { GithubMark, GoogleMark } from "./logos";
-import { combinePeople, identityLabel, linkAccount, unlinkAccount } from "../lib/identity.mjs";
+import { combinePeople, identityLabel, linkAccount, renamePerson, unlinkAccount } from "../lib/identity.mjs";
 import { useBoard } from "../lib/board";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
@@ -97,6 +97,23 @@ export function IdentityRows({
   const [busy, setBusy] = useState(false);
   const from = useRef<HTMLInputElement>(null);
   const [into, setInto] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
+  const [who, setWho] = useState("");
+
+  function rename() {
+    const n = (nameRef.current && nameRef.current.value.trim()) || "";
+    const t = who || (people[0] && (people[0].key || people[0].login)) || "";
+    if (!n || !t) return;
+    setBusy(true);
+    setErr("");
+    void renamePerson((u: string, o: RequestInit) => fetch(u, o), { login: t, name: n }).then((r: { ok: boolean; error?: string }) => {
+      setBusy(false);
+      if (r.ok) {
+        if (nameRef.current) nameRef.current.value = "";
+        onChanged();
+      } else setErr(r.error || "Could not rename them.");
+    });
+  }
 
   function unlink(i: Ident) {
     setBusy(true);
@@ -180,6 +197,32 @@ export function IdentityRows({
           </Select>
           <button className={BTN} type="submit" disabled={busy}>
             Combine
+          </button>
+        </form>
+      ) : null}
+      {owner && people.length > 0 ? (
+        <form
+          className="sinvite"
+          onSubmit={(ev) => {
+            ev.preventDefault();
+            rename();
+          }}
+        >
+          <Select value={who || people[0].key || people[0].login} onValueChange={(v: string | null) => v && setWho(v)}>
+            <SelectTrigger size="sm" className="h-7 shrink-0 rounded-full border-transparent bg-foreground/[0.04] px-2 text-xs" aria-label="Person to rename">
+              <SelectValue>{() => (people.find((p) => (p.key || p.login) === (who || people[0].key || people[0].login)) || people[0]).login}</SelectValue>
+            </SelectTrigger>
+            <SelectContent align="start">
+              {people.map((p) => (
+                <SelectItem key={p.key || p.login} value={p.key || p.login}>
+                  {p.login}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <input className="mono" ref={nameRef} type="text" aria-label="New display name" placeholder="New name" maxLength={40} autoComplete="off" spellCheck={false} />
+          <button className={BTN} type="submit" disabled={busy}>
+            Rename
           </button>
         </form>
       ) : null}

@@ -3,7 +3,7 @@
 // cookie, and how it ends.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { linkAccount, unlinkAccount, combinePeople, identityLabel } from "../board/src/lib/identity.mjs";
+import { linkAccount, unlinkAccount, combinePeople, renamePerson, identityLabel } from "../board/src/lib/identity.mjs";
 
 /** Answers each call from a queue of [status, body], recording what was sent. */
 function script(answers) {
@@ -102,5 +102,29 @@ describe("unlink and combine", () => {
   test("labels name the provider", () => {
     assert.equal(identityLabel({ provider: "github", login: "octo" }), "GitHub · @octo");
     assert.equal(identityLabel({ provider: "google", login: "a@b.example" }), "Google · a@b.example");
+  });
+});
+
+describe("admin rename", () => {
+  test("the owner names the person by stable key; renaming yourself sends no key", async () => {
+    const f = script([[200, { ok: true }], [200, { ok: true }]]);
+    assert.deepEqual(await renamePerson(f, { login: "kai", name: "Kai K" }), { ok: true });
+    assert.deepEqual(f.seen[0].body, { login: "kai", name: "Kai K" });
+    await renamePerson(f, { name: "me" });
+    assert.deepEqual(f.seen[1].body, { name: "me" });
+  });
+
+  test("the hub's refusal is passed through", async () => {
+    const f = script([[400, { error: "Bob is already on the board" }]]);
+    assert.match((await renamePerson(f, { login: "kai", name: "Bob" })).error, /already on the board/);
+  });
+
+  test("Settings offers the owner a rename control for ANY person, and the board claims its own actor", async () => {
+    const { readFileSync } = await import("node:fs");
+    const ui = readFileSync(new URL("../board/src/components/identity.tsx", import.meta.url), "utf8");
+    assert.match(ui, /owner && people\.length > 0[\s\S]{0,900}aria-label="Person to rename"/, "no way for the admin to rename another person");
+    assert.match(ui, /renamePerson\(/);
+    const board = readFileSync(new URL("../board/src/lib/board.ts", import.meta.url), "utf8");
+    assert.match(board, /claimedActors\.add\([^;]*;\s*void renameSelf\(me\.name\)/, "a signed-in machine's actor is never told to the hub, so its events stay a separate person");
   });
 });

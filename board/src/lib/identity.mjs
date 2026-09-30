@@ -91,6 +91,17 @@ export async function combinePeople(fetchImpl, { into, from }) {
   }
 }
 
+/** Owner renames anyone (the hub checks); `login` is the person's stable key, not
+ *  their display name. Yourself needs no owner — leave `login` off. */
+export async function renamePerson(fetchImpl, { login, name }) {
+  try {
+    const r = await post(fetchImpl, "/auth/rename", { ...(login ? { login } : {}), name });
+    return r.ok ? { ok: true } : fail(r, "Could not rename them.");
+  } catch {
+    return { ok: false, error: "Could not connect." };
+  }
+}
+
 /** "GitHub · @octocat" / "Google · a@b.com" */
 export function identityLabel(i) {
   return i.provider === "google" ? `Google · ${i.login}` : `GitHub · @${i.login}`;

@@ -14,4 +14,5 @@ export function linkAccount(
 ): Promise<{ ok: boolean; login?: string; merged?: boolean; error?: string; cancelled?: boolean }>;
 export function unlinkAccount(fetchImpl: Fetch, i: Ident): Promise<{ ok: boolean; error?: string }>;
 export function combinePeople(fetchImpl: Fetch, a: { into: string; from: string }): Promise<{ ok: boolean; merged?: boolean; error?: string }>;
+export function renamePerson(fetchImpl: Fetch, a: { login?: string; name: string }): Promise<{ ok: boolean; error?: string }>;
 export function identityLabel(i: Ident): string;

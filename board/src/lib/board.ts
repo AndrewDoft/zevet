@@ -400,6 +400,8 @@ export function myActorNames(me: { name: string; identities?: Array<{ login: str
   return [me.name, ...(me.aliases || []), ...(me.identities || []).map((i) => i.login)].map((n) => String(n).toLowerCase().replace(/^@/, ""));
 }
 
+const claimedActors = new Set<string>();
+
 /** Change MY display name on the hub. Yourself only (the hub refuses otherwise;
  *  the owner renames others from Settings). `actor` is the string this machine's
  *  hook reports, so the events already in the log follow the new name. */
@@ -1111,6 +1113,14 @@ export const useBoard = create<BoardState>((set, get) => ({
         const me = r && r.ok ? r.me : null;
         const actor = bridge.cfg && bridge.cfg.actor;
         if (me && actor && myActorNames(me).includes(actor.toLowerCase()) && get().myActor !== me.name) set({ myActor: me.name });
+        // A signed-in person's own machine reports this actor string (desktop sign-in
+        // sets it to the login, the hook to the OS user), so the hub is told it is
+        // theirs and the events under it join their row. Once per actor: the hub may
+        // refuse a name somebody else already holds, and asking again would loop.
+        if (me && actor && !myActorNames(me).includes(actor.toLowerCase()) && !claimedActors.has(actor.toLowerCase())) {
+          claimedActors.add(actor.toLowerCase());
+          void renameSelf(me.name);
+        }
       })
       .catch(() => set({ who: { state: { ok: false }, busy: false } }));
   },

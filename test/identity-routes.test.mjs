@@ -24,7 +24,7 @@ after(async () => {
 
 /** A hub whose accounts file already has the fake GitHub account as owner (and
  *  optionally more people), with the session tokens it minted. */
-async function hubWith({ ghEmails = [], extra = [] } = {}) {
+async function hubWith({ ghEmails = [], extra = [], env = {} } = {}) {
   const d = tempDir();
   dirs.push(d);
   const file = path.join(d.dir, "accounts.json");
@@ -39,6 +39,7 @@ async function hubWith({ ghEmails = [], extra = [] } = {}) {
     ZEVET_GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com",
     ZEVET_GOOGLE_CLIENT_SECRET: "test-secret",
     ZEVET_GOOGLE_REDIRECT: "https://hub.invalid/auth/google/callback",
+    ...env,
   });
   hubs.push(hub);
   return { hub, base: hub.base, owner: owner.token, others };
@@ -228,5 +229,39 @@ describe("combining", () => {
     assert.equal(r.status, 200);
     const state = await (await fetch(`${base}/api/state?token=${owner}`)).json();
     assert.deepEqual(state.roster.map((x) => x.actor), ["zevet-e2e-github"]);
+  });
+});
+
+describe("a combined person stays combined", () => {
+  test("across a hub restart, and a machine actor that reports afterwards is absorbed", async () => {
+    const ev = tempDir();
+    dirs.push(ev);
+    const events = path.join(ev.dir, "events.jsonl");
+    const { hub, base, owner } = await hubWith({ env: { ZEVET_EVENTS: events } });
+    const file = path.join(dirs[dirs.length - 1].dir, "accounts.json");
+    // Two names for one human: the OS user the hook reports, and the login.
+    await call(base, "/ingest", { token: TOKEN, body: { actor: "andrew", kind: "prompt", repo: "r", detail: "x" } });
+    await call(base, "/ingest", { token: TOKEN, body: { actor: "AndrewDoft", kind: "prompt", repo: "r", detail: "x" } });
+    const before = await (await fetch(`${base}/api/state?token=${owner}`)).json();
+    assert.equal(before.roster.length, 2, "the two names start as two people");
+
+    for (const from of ["andrew", "AndrewDoft"]) {
+      assert.equal((await call(base, "/auth/merge", { token: owner, body: { into: "zevet-e2e-github", from } })).status, 200);
+    }
+    assert.equal((await call(base, "/auth/rename", { token: owner, body: { login: "zevet-e2e-github", name: "andrew" } })).status, 200);
+
+    // A restart re-reads accounts.json from disk and nothing else.
+    await hub.stop();
+    hubs.splice(hubs.indexOf(hub), 1);
+    const again = await startHub({ ZEVET_ACCOUNTS: file, ZEVET_EVENTS: events, ZEVET_TEST_HOOKS: "1" });
+    hubs.push(again);
+    // …and the old machine and the login both keep reporting.
+    for (const actor of ["andrew", "AndrewDoft", "ANDREW"]) {
+      assert.equal((await call(again.base, "/ingest", { token: TOKEN, body: { actor, kind: "tool", tool: "Edit", repo: "r", target: "a.js", detail: "" } })).status, 200);
+    }
+    const res = await fetch(`${again.base}/api/state?token=${owner}`);
+    assert.equal(res.status, 200, await res.clone().text());
+    const after = await res.json();
+    assert.deepEqual(after.roster.map((x) => x.actor), ["andrew"], JSON.stringify(after.roster.map((x) => x.actor)));
   });
 });
