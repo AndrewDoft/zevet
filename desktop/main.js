@@ -2567,6 +2567,7 @@ async function runDueSchedules() {
         const started = instrumentedStartConsole({
           agent: s.agent,
           cwd: place.cwd,
+          repoRoot: place.root,
           model: s.model,
           mode: s.mode,
           env,
@@ -3435,6 +3436,7 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
   const started = instrumentedStartConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
+    repoRoot: place.root,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt,
@@ -3565,6 +3567,7 @@ bridge.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) 
   const started = instrumentedStartConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
+    repoRoot: place.root,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt: settings.systemPrompt,
