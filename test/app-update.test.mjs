@@ -1196,3 +1196,134 @@ describe("a signed feed and a signed installer", () => {
     assert.equal(loopbackProofKeys(undefined, env), undefined);
   });
 });
+
+describe("rollback wiring (update-rollback.js)", () => {
+  const { createRollback, STATE_FILE } = require(path.join(ROOT, "desktop", "update-rollback.js"));
+  const mkRollback = (dir, spawned = []) => createRollback({
+    dir, running: "0.1.2", spawn: (f) => { spawned.push(f); return { unref() {} }; },
+    verifyPublisher: async () => true, verifiedOnDisk: async () => true, stopRuntime: async () => {}, quit: () => {},
+  });
+
+  test("the Windows installer run records what the next launch must prove, BEFORE it spawns", async () => {
+    const t = tempDir("zevet-rb-");
+    try {
+      const file = path.join(t.dir, "setup.exe");
+      writeFileSync(file, "not really an installer");
+      const rollback = mkRollback(t.dir);
+      let atSpawn = null;
+      const u = new AppUpdater({
+        currentVersion: "0.1.2", platform: "win32", dir: t.dir, platformKey: KEY, rollback,
+        execPath: path.win32.join(t.dir, "zevet", "zevet.exe"),
+        spawnImpl: () => { atSpawn = rollback.state().pending; return { unref() {} }; },
+        quitImpl() {},
+      });
+      u.state.phase = "ready";
+      u.state.version = "0.2.0";
+      u.state.file = file;
+      u._readyEntry = { file: "setup.exe", bytes: statSync(file).size, sha256: sha(readFileSync(file)) };
+      assert.equal((await u.install()).ok, true);
+      assert.equal(atSpawn.to, "0.2.0");
+      assert.equal(atSpawn.entry.file, "setup.exe");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("the silent install on quit is covered too, with QUIT_INSTALL_ARGS and no --force-run", () => {
+    const t = tempDir("zevet-rb-");
+    try {
+      const file = path.join(t.dir, "setup.exe");
+      writeFileSync(file, "not really an installer");
+      const rollback = mkRollback(t.dir);
+      const calls = [];
+      const u = new AppUpdater({
+        currentVersion: "0.1.2", platform: "win32", dir: t.dir, platformKey: KEY, rollback,
+        execPath: path.win32.join(t.dir, "zevet", "zevet.exe"),
+        spawnImpl: (...a) => { calls.push(a); return { unref() {} }; },
+      });
+      u.state.phase = "ready";
+      u.state.version = "0.2.0";
+      u.state.file = file;
+      u._readyEntry = { file: "setup.exe", bytes: statSync(file).size, sha256: sha(readFileSync(file)) };
+      assert.equal(u.installOnQuit().ok, true);
+      assert.equal(rollback.state().pending.to, "0.2.0");
+      assert.deepEqual(calls[0][1].slice(0, QUIT_INSTALL_ARGS.length), QUIT_INSTALL_ARGS);
+      assert.equal(calls[0][1].includes("--force-run"), false);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("the rollback target and its state file survive every prune; other installers do not", async () => {
+    const t = tempDir("zevet-rb-");
+    const body = randomBytes(2048);
+    const host = await fakeHost({
+      manifest: { version: "0.2.2", platforms: { [KEY]: { file: "zevet-0.2.2-windows-x64-setup.exe", sha256: sha(body), bytes: body.length } } },
+      files: { "zevet-0.2.2-windows-x64-setup.exe": body },
+    });
+    try {
+      writeFileSync(path.join(t.dir, STATE_FILE), JSON.stringify({ bad: [], pending: null, lastGood: { version: "0.1.2", file: "zevet-0.1.2-windows-x64-setup.exe", bytes: 1, sha256: "x" } }));
+      writeFileSync(path.join(t.dir, "zevet-0.1.2-windows-x64-setup.exe"), "the installer that produced the running version");
+      writeFileSync(path.join(t.dir, "zevet-0.0.9-windows-x64-setup.exe"), "stale");
+      const u = updaterFor(host, t.dir, { rollback: mkRollback(t.dir) });
+      assert.equal((await u.check()).phase, "ready");
+      assert.deepEqual(readdirSync(t.dir).sort(), [STATE_FILE, "zevet-0.1.2-windows-x64-setup.exe", "zevet-0.2.2-windows-x64-setup.exe"]);
+    } finally {
+      await host.close();
+      t.cleanup();
+    }
+  });
+
+  test("a withdrawn version is not an update: not downloaded, not an error", async () => {
+    const t = tempDir("zevet-rb-");
+    const body = randomBytes(2048);
+    const host = await fakeHost({
+      manifest: { version: "0.2.2", platforms: { [KEY]: { file: "zevet-0.2.2-windows-x64-setup.exe", sha256: sha(body), bytes: body.length } } },
+      files: { "zevet-0.2.2-windows-x64-setup.exe": body },
+    });
+    try {
+      writeFileSync(path.join(t.dir, STATE_FILE), JSON.stringify({ bad: ["0.2.2"], pending: null, lastGood: null }));
+      const u = updaterFor(host, t.dir, { rollback: mkRollback(t.dir) });
+      const s = await u.check();
+      assert.equal(s.phase, "current");
+      assert.equal(s.error, null);
+      assert.equal(s.canInstall, false);
+      assert.equal(host.seen.some((r) => r.endsWith("setup.exe")), false, "a withdrawn installer was downloaded");
+    } finally {
+      await host.close();
+      t.cleanup();
+    }
+  });
+
+  test("an already-downloaded withdrawn installer is deleted, and a NEWER version is still offered", async () => {
+    const t = tempDir("zevet-rb-");
+    const body = randomBytes(2048);
+    const file = "zevet-0.2.2-windows-x64-setup.exe";
+    const host = await fakeHost({
+      manifest: { version: "0.2.2", platforms: { [KEY]: { file, sha256: sha(body), bytes: body.length } } },
+      files: { [file]: body },
+    });
+    try {
+      writeFileSync(path.join(t.dir, file), body);
+      writeFileSync(path.join(t.dir, STATE_FILE), JSON.stringify({ bad: ["0.2.2"], pending: null, lastGood: null }));
+      const u = updaterFor(host, t.dir, { rollback: mkRollback(t.dir) });
+      assert.equal((await u.check()).phase, "current");
+      assert.equal(existsSync(path.join(t.dir, file)), false);
+    } finally {
+      await host.close();
+      t.cleanup();
+    }
+    const host2 = await fakeHost({
+      manifest: { version: "0.2.3", platforms: { [KEY]: { file: "zevet-0.2.3-windows-x64-setup.exe", sha256: sha(body), bytes: body.length } } },
+      files: { "zevet-0.2.3-windows-x64-setup.exe": body },
+    });
+    const t2 = tempDir("zevet-rb-");
+    try {
+      writeFileSync(path.join(t2.dir, STATE_FILE), JSON.stringify({ bad: ["0.2.2"], pending: null, lastGood: null }));
+      assert.equal((await updaterFor(host2, t2.dir, { rollback: mkRollback(t2.dir) }).check()).phase, "ready");
+    } finally {
+      await host2.close();
+      t2.cleanup();
+    }
+  });
+});

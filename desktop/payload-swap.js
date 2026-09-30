@@ -76,24 +76,32 @@ function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows,
   };
 }
 
+/** Resolves true once a window has finished loading AND the agent API answers, false when `timeoutMs` passes first. */
+function awaitHealthy({ loaded, apiAnswers, timeoutMs = CONFIRM_TIMEOUT_MS, retryMs = 1000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }) {
+  return (async () => {
+    const deadline = now() + timeoutMs;
+    let isLoaded = false;
+    loaded.then(() => { isLoaded = true; });
+    while (now() < deadline) {
+      if (isLoaded && (await apiAnswers().catch(() => false))) return true;
+      await sleep(retryMs);
+    }
+    return false;
+  })();
+}
+
 /**
  * A trial build is confirmed once a window has finished its load attempt (load OR
  * fail: a hub that is unreachable is the network's fault, not the payload's) AND the
  * agent API answers. If that has not happened in 120 s the boot counts as failed and
  * the app relaunches: onto the previous build once the third strike lands.
  */
-function confirmWhenHealthy({ payload, loaded, apiAnswers, app, log, timeoutMs = CONFIRM_TIMEOUT_MS, retryMs = 1000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }) {
+function confirmWhenHealthy({ payload, loaded, apiAnswers, app, log, timeoutMs, retryMs, sleep, now }) {
   return (async () => {
-    const deadline = now() + timeoutMs;
-    let isLoaded = false;
-    loaded.then(() => { isLoaded = true; });
-    while (now() < deadline) {
-      if (isLoaded && (await apiAnswers().catch(() => false))) {
-        payload.confirm();
-        log("payload confirmed healthy");
-        return true;
-      }
-      await sleep(retryMs);
+    if (await awaitHealthy({ loaded, apiAnswers, timeoutMs, retryMs, sleep, now })) {
+      payload.confirm();
+      log("payload confirmed healthy");
+      return true;
     }
     const r = payload.bootFailed("no healthy signal within 120s");
     log(`payload unhealthy: ${r.reverted ? "reverted" : "strike counted"}; relaunching`);
@@ -103,4 +111,4 @@ function confirmWhenHealthy({ payload, loaded, apiAnswers, app, log, timeoutMs =
   })();
 }
 
-module.exports = { createSwapper, confirmWhenHealthy, busyReason, AGENT_QUIET_MS, INPUT_QUIET_MS, POLL_MS, CONFIRM_TIMEOUT_MS };
+module.exports = { createSwapper, confirmWhenHealthy, awaitHealthy, busyReason, AGENT_QUIET_MS, INPUT_QUIET_MS, POLL_MS, CONFIRM_TIMEOUT_MS };

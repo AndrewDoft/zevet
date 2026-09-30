@@ -16,10 +16,15 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const kit = require("@masora/desktop-kit");
+const familyIndex = require("./family-index.js");
 
 const TICK_MS = 60_000;
 const REQUEST_POLL_MS = 3_000;
 const FEED_TTL_MS = 60 * 60 * 1000;
+const INDEX_FIRST_MS = 2 * 60 * 1000;
+const INDEX_EVERY_MS = 60 * 60 * 1000;
+/** One Zevet version the index names is acted on once per this long (a check that found nothing is not retried hourly). */
+const INDEX_RENUDGE_MS = 6 * 60 * 60 * 1000;
 const { STALE_MS, familyDir, readJson } = kit; // STALE_MS: a heartbeat older than this is not "running"
 const DOWNLOADS = "https://usemasora.com/download/";
 
@@ -112,6 +117,10 @@ class Family {
     clearToken, // () => void
     openExternal,
     runUpdate, // async () => void : the normal self-update
+    // The signed family index (family-index.js): keys it may be signed with ({} = poll off) and what to do when
+    // it names a newer Zevet -- main.js passes appUpdater.check(), never an install.
+    indexKeys = {},
+    onIndexNewer = () => {},
     fetchImpl,
     detect = osDetect,
     // D-603: this machine's Zevet TEAM name, e.g. main.js's `fetchTeamName`
@@ -141,7 +150,7 @@ class Family {
     tickMs = TICK_MS,
     pollMs = REQUEST_POLL_MS,
   } = {}) {
-    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, detect, readTeam, joinTeam, readHubAuth, readIdentity, version, installPath, host, platform, pid, now, tickMs, pollMs });
+    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, indexKeys, onIndexNewer, detect, readTeam, joinTeam, readHubAuth, readIdentity, version, installPath, host, platform, pid, now, tickMs, pollMs });
     this.fetch = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
     this.pairing = "idle"; // idle | pairing | no_owner | unreachable | error
     this.team = ""; // last-known team name; refreshed each tick, best-effort
@@ -327,6 +336,20 @@ class Family {
     return this.connect();
   }
 
+  /** One index pass: a newer Zevet than this one triggers the normal update check. Never throws. */
+  async checkIndex() {
+    const to = await familyIndex.newerZevet({ fetchImpl: this.fetch, keys: this.indexKeys, version: this.version, log: (m) => console.log(`[family] ${m}`) });
+    if (!to) return null;
+    if (this.indexNudged && this.indexNudged.to === to && this.now() - this.indexNudged.at < INDEX_RENUDGE_MS) return null;
+    this.indexNudged = { to, at: this.now() };
+    try {
+      await Promise.resolve(this.onIndexNewer(to));
+    } catch (err) {
+      console.log(`[family] update check after the index failed: ${err.message}`);
+    }
+    return to;
+  }
+
   /* ── requests from siblings ────────────────────────────────────────────── */
 
   async pollRequest() {
@@ -434,10 +457,14 @@ class Family {
     };
     add(tick, this.tickMs);
     add(() => void this.pollRequest(), this.pollMs);
+    const first = setTimeout(() => void this.checkIndex(), INDEX_FIRST_MS);
+    if (typeof first.unref === "function") first.unref();
+    this.timers.push(first);
+    add(() => void this.checkIndex(), INDEX_EVERY_MS);
   }
 
   stop() {
-    for (const t of this.timers) clearInterval(t);
+    for (const t of this.timers) { clearInterval(t); clearTimeout(t); }
     this.timers = [];
     this.heartbeat(false);
   }
