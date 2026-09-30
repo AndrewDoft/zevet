@@ -79,15 +79,16 @@ describe("newerZevet", () => {
 });
 
 describe("Zevet's own trust for the index", () => {
-  test("no key is pinned by default, and none of Masora's is copied in", () => {
-    assert.deepEqual(FAMILY_INDEX_KEYS, {});
-    assert.deepEqual(familyIndexKeys({}), {});
-    assert.equal(Object.keys(familyIndexKeys({})).some((id) => id.startsWith("masora")), false);
+  // Retargeted 2026-09-30: the family contract signs the index with Masora's PUBLIC key under its own
+  // domain, so it is pinned for the index only. What must never happen is that key signing a Zevet update.
+  test("Masora's public key is pinned for the index only, never for Zevet's own updates", () => {
+    assert.deepEqual(Object.keys(FAMILY_INDEX_KEYS), ["masora-2026-09"]);
     assert.equal(Object.keys(PINNED_KEYS).every((id) => id.startsWith("zevet")), true);
+    assert.equal(Object.values(PINNED_KEYS).includes(FAMILY_INDEX_KEYS["masora-2026-09"]), false);
   });
   test("ZEVET_FAMILY_INDEX_TRUSTED_KEY pins one: <key id>:<raw key, base64>", () => {
-    assert.deepEqual(familyIndexKeys({ ZEVET_FAMILY_INDEX_TRUSTED_KEY: "idx-test:AAAA" }), { "idx-test": "AAAA" });
-    assert.deepEqual(familyIndexKeys({ ZEVET_FAMILY_INDEX_TRUSTED_KEY: "nocolon" }), {});
+    assert.deepEqual(familyIndexKeys({ ZEVET_FAMILY_INDEX_TRUSTED_KEY: "idx-test:AAAA" }), { ...FAMILY_INDEX_KEYS, "idx-test": "AAAA" });
+    assert.deepEqual(familyIndexKeys({ ZEVET_FAMILY_INDEX_TRUSTED_KEY: "nocolon" }), FAMILY_INDEX_KEYS);
   });
 });
 

@@ -26,10 +26,12 @@ const PINNED_KEYS = {
  *  published by Masora's release process under its own domain. Zevet only uses it to decide WHEN to check its
  *  own signed feed, so a forged index costs one request to the download host and nothing else.
  *
- *  ⚠️ No key is pinned here: Zevet never copies another product's keys. Until the publisher's public key is
- *  added to FAMILY_INDEX_KEYS (a Zevet release), or set as ZEVET_FAMILY_INDEX_TRUSTED_KEY=<key id>:<raw
- *  ed25519 key, base64>, every index fails to verify and the poll stays off. */
-const FAMILY_INDEX_KEYS = {};
+ *  The index is signed with Masora's PUBLIC feed key under the family domain only (masora2
+ *  docs/contracts/family_updates.md; masora-family-index-v1), so pinning it here lets Masora vouch for "a newer
+ *  Zevet exists" and nothing else: it is never in PINNED_KEYS, so it can sign no Zevet update. Checked
+ *  2026-09-30 against Masora's live signed feed (0.3.125). ZEVET_FAMILY_INDEX_TRUSTED_KEY=<key id>:<raw ed25519
+ *  key, base64> adds another. */
+const FAMILY_INDEX_KEYS = { "masora-2026-09": "Ji987FREyur9tLKfFlxQNu9AOwjkVzb4F+VPm23VG/4=" };
 
 /** The keys an index may be signed with: the pinned set plus the env-pinned one. */
 function familyIndexKeys(env = process.env) {
