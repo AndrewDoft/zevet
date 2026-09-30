@@ -104,6 +104,39 @@ describe("createSwapper", () => {
     await b.handlers.staged(); await new Promise((r) => setImmediate(r));
     assert.deepEqual(b.calls, []);
   });
+  test("the interval retries promptly after agents stop and input goes quiet", async () => {
+    let now = NOW;
+    let running = 1;
+    let lastInput = NOW;
+    let check;
+    const a = fakes({
+      activity: () => ({ running, lastAt: running ? now : now - AGENT_QUIET_MS }),
+      lastInputAt: () => lastInput,
+      now: () => now,
+      setIntervalImpl: (fn) => { check = fn; return {}; },
+    });
+    a.swapper.start();
+    await check();
+    assert.deepEqual(a.calls, []);
+    now += AGENT_QUIET_MS;
+    running = 0;
+    lastInput = now - INPUT_QUIET_MS;
+    await check();
+    assert.deepEqual(a.calls, ["activate", "release", "relaunch", "exit 0"]);
+  });
+  test("input arriving after the agent stops resets the gate", async () => {
+    let now = NOW;
+    let lastInput = NOW - INPUT_QUIET_MS;
+    let check;
+    const a = fakes({ now: () => now, lastInputAt: () => lastInput, setIntervalImpl: (fn) => { check = fn; return {}; } });
+    a.swapper.start();
+    lastInput = now;
+    await check();
+    assert.deepEqual(a.calls, []);
+    now += INPUT_QUIET_MS;
+    await check();
+    assert.deepEqual(a.calls, ["activate", "release", "relaunch", "exit 0"]);
+  });
   test("quit applies the staged build without relaunching, and does nothing when none is staged", async () => {
     const a = fakes();
     assert.equal(await a.swapper.applyOnQuit(), true);
