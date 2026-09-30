@@ -183,6 +183,25 @@ describe("captureUpdateFailure", () => {
     assert.deepEqual(opts.tags, { kind: "update_failure", stage: "download" });
   });
 
+  test("offline is a warning message, not an exception", () => {
+    for (const msg of ["fetch failed", "This operation was aborted", "getaddrinfo ENOTFOUND usemasora.com"]) {
+      const s = fakeSentry();
+      sentry.captureUpdateFailure(s, { stage: "auto-update", error: msg });
+      assert.equal(s.calls.captureException.length, 0, msg);
+      assert.equal(s.calls.captureMessage[0].opts.level, "warning");
+      assert.deepEqual(s.calls.captureMessage[0].opts.fingerprint, ["auto-update", "offline"]);
+    }
+  });
+
+  test("real failures stay exceptions", () => {
+    for (const msg of ["the feed is not validly signed: bad signature", "sha256 mismatch for zevet-0.2.90.exe"]) {
+      const s = fakeSentry();
+      sentry.captureUpdateFailure(s, { stage: "auto-update", error: msg });
+      assert.equal(s.calls.captureMessage.length, 0, msg);
+      assert.equal(s.calls.captureException.length, 1, msg);
+    }
+  });
+
   test("a real Error is passed through as-is", () => {
     const s = fakeSentry();
     const real = new Error("boom");

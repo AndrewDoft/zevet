@@ -153,9 +153,20 @@ function captureAgentFailure(sentryMain, { agent, model, argv, code, stderr, mes
   });
 }
 
+const OFFLINE = /^(fetch failed|the operation was aborted|this operation was aborted|.*\b(ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b)/i;
+
 /** An auto-update failure: a download, signature check, or install step that
  *  threw or reported an error. */
 function captureUpdateFailure(sentryMain, { stage, error } = {}) {
+  const text = String(error && error.message ? error.message : error);
+  // Being offline (undici's "fetch failed", a timed-out check) is not an outage: a warning, one group.
+  if (OFFLINE.test(text)) {
+    return sentryMain.captureMessage(`auto-update failed: ${text}`, {
+      level: "warning",
+      tags: { kind: "update_failure", stage: String(stage || ""), "update.offline": "true" },
+      fingerprint: ["auto-update", "offline"],
+    });
+  }
   const err = error instanceof Error ? error : new Error(String(error && error.message ? error.message : error));
   return sentryMain.captureException(err, { tags: { kind: "update_failure", stage: String(stage || "") } });
 }
