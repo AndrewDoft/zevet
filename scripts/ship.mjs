@@ -2,7 +2,11 @@
 // `npm run ship` — one command that does a whole zevet release from origin/main. It is
 // docs/RELEASING.md as code, and every trap that document records is a check here.
 //
-//   node scripts/ship.mjs [--dry-run] [--notes "one short sentence"]
+//   node scripts/ship.mjs [--dry-run] [--notes "one short sentence"] [--promote | --now | --skip-soak]
+//
+// Canary before stable: a plain run ships up to the canary and stops. scripts/ship-watch.mjs resumes the tag
+// with --promote once the soak gate passes (ship-lib decideSoak: time on canary + no new Sentry issues).
+// --now / --skip-soak is the urgent-fix escape hatch: the same run goes on to stable.
 //
 // It decides everything itself: shell vs payload from the diff since the last release tag (ship-lib
 // classify), the next version, whether the hub needs a deploy. Then, each step skipping what is already
@@ -14,7 +18,8 @@
 //   installer feed  signed zevet-latest.json, uploaded LAST            (shell release only)
 //   stable links    Caddy: Zevet-Setup.exe / Zevet.dmg -> this version, in place
 //   payload canary  payload to the canary channel, then read back over HTTPS
-//   payload stable  promote canary -> stable, then read back over HTTPS
+//   canary soak     records WHEN the canary went live (facts.json) — and a plain run STOPS here
+//   payload stable  promote canary -> stable, then read back over HTTPS   (only with --promote / --now)
 //   hub         tarball over /srv/zevet, restart, /healthz + /version  (board/hub/client changed)
 //   verify      the served installers hash to the built ones; Authenticode; the feed
 //   D-record    the release record in DECISIONS.md, pushed to main
@@ -24,7 +29,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { brotliDecompressSync } from "node:zlib";
@@ -43,6 +48,11 @@ export const PLATFORMS = ["win-x64", "mac-arm64"];
 const BOX = ["compute", "ssh", "masora-app", "--project", "masora-production", "--tunnel-through-iap", "--zone", "us-east1-b"];
 const DL = "/srv/masora/downloads";
 export const LOCK = path.join(tmpdir(), "zevet-ship.lock");
+export const workDir = (version) => path.join(tmpdir(), "zevet-ship", version);
+/** When the canary went live, from the facts file ship keeps per version ("" until recorded). */
+export function readCanaryAt(version) {
+  try { return JSON.parse(readFileSync(path.join(workDir(version), "facts.json"), "utf8")).canaryAt || ""; } catch { return ""; }
+}
 export const exeName = (v) => `zevet-${v}-windows-x64-setup.exe`;
 export const dmgName = (v) => `zevet-${v}-macos-arm64.dmg`;
 
@@ -105,6 +115,11 @@ export function realIo({ log = console.log } = {}) {
         if (!pem.includes("PRIVATE KEY")) throw new Error("update-signing-key.ps1 did not return a key");
       }
       return pem;
+    },
+    /** `sentry … --json`, parsed (the CLI is logged in on the runner). */
+    sentry(args) {
+      const r = run("sentry", [...args, "--json"], { env: { PATH: `${process.env.PATH}${path.delimiter}${path.join(homedir(), ".local", "bin")}` } });
+      return JSON.parse(r.stdout);
     },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   };
@@ -400,6 +415,12 @@ echo reloaded
       },
     },
     {
+      name: "canary soak",
+      plan: () => "record the canary time (the soak clock) in facts.json",
+      done: () => Boolean(ctx.facts.canaryAt),
+      run() { ctx.facts.canaryAt = new Date().toISOString(); },
+    },
+    {
       name: "payload stable",
       plan: () => "promote canary -> stable with publish-payload.mjs, upload the pulses, read back over HTTPS",
       done: () => channelDone("stable"),
@@ -524,6 +545,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const dryRun = argv.includes("--dry-run");
   const flag = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
+  const promote = ["--promote", "--now", "--skip-soak"].some((f) => argv.includes(f));
   const io = realIo();
   const log = (s) => console.log(s);
 
@@ -544,8 +566,10 @@ async function main() {
     log(`ship ${d.action === "resume" ? "RESUME" : "new"}: ${d.version} (${d.kind}${d.hub ? " + hub" : ""}) — v${d.base}..${d.action === "resume" ? d.tag : `origin/main ${d.tip.slice(0, 7)}`}, ${d.files} file(s)${d.abandoned.length ? `; abandoned: ${d.abandoned.join(", ")}` : ""}`);
     if (d.shell.length) log(`  shell files: ${d.shell.slice(0, 8).join(", ")}${d.shell.length > 8 ? ", …" : ""}`);
     log(`  payload files: ${d.payload.length}, hub files: ${d.hubFiles.length}`);
-    await runSteps(buildSteps(ctx), ctx, { dryRun, log });
-    log(dryRun ? "ship: dry run, nothing changed" : `ship: ${d.version} is out`);
+    const steps = buildSteps(ctx);
+    const soak = steps.findIndex((s) => s.name === "canary soak");
+    await runSteps(promote ? steps : steps.slice(0, soak + 1), ctx, { dryRun, log });
+    log(dryRun ? "ship: dry run, nothing changed" : promote ? `ship: ${d.version} is out` : `ship: ${d.version} is on canary; ship-watch promotes it when the soak gate passes (or run with --now)`);
   } finally { release(); }
 }
 

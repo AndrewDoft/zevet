@@ -179,3 +179,32 @@ export function renderRecord(n, f) {
   lines.push("", "**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).", "");
   return lines.join("\n");
 }
+
+// ── the canary soak gate (ported from masora2 scripts/promote-canary.mjs) ───────────────────────────
+export const SENTRY_PROJECT = "masora/electron";
+export const SOAK_DEFAULTS = { minHours: 24, maxNewIssues: 0, allowUnseen: false };
+
+/** The whole promote decision, pure. `facts`: { canaryAt (ISO string | undefined), now (ms), sentry: { seen, newIssues } | null }.
+ *  Every reason, not just the first. No canary record is never ok: the clock has not started. */
+export function decideSoak(facts, opts = {}) {
+  const { minHours, maxNewIssues, allowUnseen } = { ...SOAK_DEFAULTS, ...opts };
+  const reasons = [];
+  const at = Date.parse(facts.canaryAt);
+  if (!Number.isFinite(at)) reasons.push("no canary time recorded yet");
+  else if (!((facts.now - at) / 3600e3 >= minHours)) reasons.push(`on canary ${((facts.now - at) / 3600e3).toFixed(1)} h, need ${minHours} h`);
+  if (!facts.sentry) reasons.push("Sentry could not be read");
+  else {
+    if (!facts.sentry.seen && !allowUnseen) reasons.push("Sentry has never seen this release (no telemetry is not evidence of health)");
+    if (facts.sentry.newIssues > maxNewIssues) reasons.push(`${facts.sentry.newIssues} new Sentry issue(s) since canary, limit ${maxNewIssues}`);
+  }
+  return { ok: reasons.length === 0, reasons };
+}
+
+/** New issues on `zevet@version` first seen since `since`: { seen, newIssues }. `run(args)` returns parsed `sentry … --json`. */
+export function readSentry(version, since, run) {
+  let seen = true;
+  try { run(["release", "view", `masora/zevet@${version}`]); } catch { seen = false; }
+  const list = run(["issue", "list", SENTRY_PROJECT, "--query", `release:zevet@${version}`, "--period", "14d", "--limit", "200"]);
+  const rows = Array.isArray(list) ? list : list.data || [];
+  return { seen, newIssues: rows.filter((i) => i.firstSeen && new Date(i.firstSeen) >= since).length };
+}

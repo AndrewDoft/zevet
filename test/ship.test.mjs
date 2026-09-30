@@ -11,7 +11,7 @@ import { brotliCompressSync } from "node:zlib";
 import path from "node:path";
 import { tempDir, ROOT } from "./helpers.mjs";
 import {
-  acquireLock, ciVerdict, classify, cmpVersion, decide, lockHeld, nextDNumber, nextVersion, notesFrom, recordHeader, renderRecord, runSteps,
+  acquireLock, ciVerdict, classify, cmpVersion, decide, decideSoak, lockHeld, readSentry, nextDNumber, nextVersion, notesFrom, recordHeader, renderRecord, runSteps,
 } from "../scripts/ship-lib.mjs";
 import { BASE, PLATFORMS, buildSteps, bumpVersion, ensureWorktree, exeName, dmgName, pulseState, samePath, verifyPayload } from "../scripts/ship.mjs";
 import { tick } from "../scripts/ship-watch.mjs";
@@ -152,7 +152,7 @@ describe("the watcher tick", () => {
     ...fakeGit({ tags: ["v0.2.93"], decisions: rec("0.2.93"), files: { default: ["desktop/main.js"] }, ...over }),
     gh: () => JSON.stringify(runs),
   });
-  const run = (i, held = false) => { const shipped = []; return tick({ io: i, held: () => held, feed: async () => "0.2.93", runShip: async () => { shipped.push(1); return 0; } }).then((r) => ({ ...r, shipped: shipped.length })); };
+  const run = (i, held = false, extra = {}) => { const shipped = []; return tick({ io: i, held: () => held, feed: async () => "0.2.93", canaryAt: () => "", runShip: async (a = []) => { shipped.push(a); return 0; }, ...extra }).then((r) => ({ ...r, shipped: shipped.length, args: shipped[0] })); };
   test("ships on releasable commits with a green ci", async () => {
     const r = await run(io([{ status: "completed", conclusion: "success", createdAt: "1" }]));
     assert.deepEqual([r.did, r.shipped], ["ship", 1]);
@@ -167,10 +167,57 @@ describe("the watcher tick", () => {
     const r = await run(io([], { tags: ["v0.2.94", "v0.2.93"], files: { default: [] }, builds: { "v0.2.94": { conclusion: "success" } } }));
     assert.deepEqual([r.did, r.shipped], ["ship", 1]);
   });
+  describe("promote decision for a tag already on canary", () => {
+    const H = 3600e3, T0 = Date.parse("2026-09-30T00:00:00Z");
+    const resumeIo = (sentry) => ({ ...io([], { tags: ["v0.2.94", "v0.2.93"], files: { default: [] }, builds: { "v0.2.94": { conclusion: "success" } } }), sentry, log() {} });
+    const quiet = (a) => (a[0] === "release" ? {} : { data: [{ firstSeen: "2026-09-29T00:00:00Z" }] }); // old issue: not new
+    const at = (hours, sentry = quiet, soak = {}) => run(resumeIo(sentry), false, { canaryAt: () => new Date(T0).toISOString(), now: () => T0 + hours * H, soak });
+    test("soak elapsed and Sentry quiet: ship --promote", async () => {
+      const r = await at(25);
+      assert.deepEqual([r.did, r.args], ["ship", ["--promote"]]);
+    });
+    test("too early, a new issue, unseen release or unreadable Sentry: wait", async () => {
+      assert.equal((await at(2)).shipped, 0);
+      assert.equal((await at(25, (a) => (a[0] === "release" ? {} : [{ firstSeen: new Date(T0 + H).toISOString() }]))).shipped, 0);
+      assert.equal((await at(25, (a) => { if (a[0] === "release") throw new Error("404"); return []; })).shipped, 0);
+      assert.equal((await at(25, () => { throw new Error("offline"); })).shipped, 0);
+    });
+    test("flags loosen the gate", async () => {
+      assert.equal((await at(2, quiet, { minHours: 1 })).shipped, 1);
+      assert.equal((await at(25, (a) => { if (a[0] === "release") throw new Error("404"); return []; }, { allowUnseen: true })).shipped, 1);
+    });
+    test("canary not recorded yet: plain ship (it records and stops), Sentry untouched", async () => {
+      const i = resumeIo(() => { throw new Error("sentry must not be called"); });
+      const r = await run(i);
+      assert.deepEqual([r.shipped, r.args], [1, []]);
+    });
+  });
   test("nothing releasable: no ship, and ci is not even read", async () => {
     const i = io([], { files: { default: ["docs/x.md"] } });
     i.gh = () => { throw new Error("gh must not be called"); };
     assert.equal((await run(i)).shipped, 0);
+  });
+});
+
+describe("decideSoak / readSentry", () => {
+  const ok = { seen: true, newIssues: 0 }, now = Date.parse("2026-09-30T12:00:00Z");
+  const g = (over, opts) => decideSoak({ canaryAt: "2026-09-29T00:00:00Z", now, sentry: ok, ...over }, opts);
+  test("passes only after minHours with no new issues, and says every reason", () => {
+    assert.equal(g({}).ok, true);
+    assert.equal(g({ canaryAt: "2026-09-30T00:00:00Z" }).ok, false);
+    assert.equal(g({ canaryAt: undefined }).ok, false);
+    assert.equal(g({ sentry: { seen: true, newIssues: 1 } }).ok, false);
+    assert.equal(g({ sentry: { seen: true, newIssues: 1 } }, { maxNewIssues: 1 }).ok, true);
+    assert.equal(g({ sentry: { seen: false, newIssues: 0 } }).ok, false);
+    assert.equal(g({ sentry: { seen: false, newIssues: 0 } }, { allowUnseen: true }).ok, true);
+    assert.equal(g({ sentry: null }).ok, false);
+    assert.equal(g({ canaryAt: "2026-09-30T11:00:00Z", sentry: null }).reasons.length, 2);
+  });
+  test("readSentry counts only issues first seen since the canary, on project masora/electron", () => {
+    const calls = [];
+    const run = (a) => { calls.push(a); return a[0] === "release" ? {} : { data: [{ firstSeen: "2026-09-29T10:00:00Z" }, { firstSeen: "2026-09-29T14:00:00Z" }, {}] }; };
+    assert.deepEqual(readSentry("0.2.94", new Date("2026-09-29T12:00:00Z"), run), { seen: true, newIssues: 1 });
+    assert.ok(calls.some((a) => a.includes("masora/electron") && a.includes("release:zevet@0.2.94")));
   });
 });
 
@@ -360,6 +407,18 @@ describe("step checks decide 'already done'", () => {
     assert.equal(await world(t).check("payload canary"), false); // nothing published
     assert.equal(await world(t, { pay: ["stable", "0.2.94", 2094] }).check("payload stable"), true);
   });
+  test("canary soak: done once the canary time is recorded, and run() records it", async (t) => {
+    const w = world(t);
+    assert.equal(await w.check("canary soak"), false);
+    await w.steps.find((s) => s.name === "canary soak").run(w.ctx);
+    assert.equal(await w.check("canary soak"), true);
+    assert.ok(Number.isFinite(Date.parse(w.ctx.facts.canaryAt)));
+    assert.equal(JSON.parse(readFileSync(path.join(w.ctx.work, "facts.json"), "utf8")).canaryAt, w.ctx.facts.canaryAt);
+  });
+  test("ship stops after the canary unless --promote/--now/--skip-soak", () => {
+    const src = readFileSync(new URL("../scripts/ship.mjs", import.meta.url), "utf8");
+    assert.ok(src.includes("steps.slice(0, soak + 1)") && ["--promote", "--now", "--skip-soak"].every((f) => src.includes(`"${f}"`)));
+  });
   test("installer feed: shell releases only, done when the live feed names the version", async (t) => {
     assert.equal(world(t).steps.some((s) => s.name === "installer feed"), false);
     const s = world(t, { kind: "shell", feedVersion: "0.2.94" });
@@ -376,7 +435,7 @@ describe("step checks decide 'already done'", () => {
     assert.ok(!names({ hub: false }).includes("hub"));
     const n = names({ kind: "shell" });
     assert.ok(n.indexOf("installers") < n.indexOf("installer feed") && n.indexOf("installer feed") < n.indexOf("stable links"));
-    assert.ok(n.indexOf("payload canary") < n.indexOf("payload stable") && n.at(-1) === "D-record");
+    assert.ok(n.indexOf("payload canary") < n.indexOf("canary soak") && n.indexOf("canary soak") < n.indexOf("payload stable") && n.at(-1) === "D-record");
   });
 });
 
