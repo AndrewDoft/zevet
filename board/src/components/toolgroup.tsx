@@ -10,15 +10,27 @@
  * WHILE OPEN, IT FOLLOWS THE TURN. A new call (or a running one growing its
  * output) scrolls the trigger back into view. `nearest`, so it does nothing
  * when the end of the list is already on screen.
+ *
+ * AND THE NEXT GROUP OPENS TOO. A line of text between calls ends a group, so
+ * the one you opened stopped growing and the new calls landed below it, shut.
+ * Opening a group now means "watch the calls": a group that starts while a
+ * turn runs opens if the last one you touched was open. Closing one stops it.
  */
 import { useEffect, useRef, useState, type PropsWithChildren } from "react";
 import type { ThreadGroupPart } from "./assistant-ui/elements/thread.aui";
 import { ToolGroupContent, ToolGroupRoot, ToolGroupTrigger } from "./assistant-ui/elements/tool-group.aui";
 
+/** Whether the last group the person opened or closed was left open. */
+let watching = false;
+
 export function TurnToolGroup({ group, children }: PropsWithChildren<{ group: ThreadGroupPart }>) {
-  const [open, setOpen] = useState(false);
-  const count = group.indices.length;
   const running = group.status.type === "running";
+  const [open, setOpenState] = useState(() => watching && running);
+  const setOpen = (v: boolean) => {
+    watching = v;
+    setOpenState(v);
+  };
+  const count = group.indices.length;
   const box = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
 
