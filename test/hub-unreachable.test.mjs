@@ -14,8 +14,10 @@ import { ROOT, NO_DRIVE } from "./helpers.mjs";
 
 const DRIVE = path.join(ROOT, "scripts", "drive", "drive.mjs");
 
+// Launch starts Electron: 30 s ran out on a loaded box (2026-09-30, ship gate ETIMEDOUT
+// while other agents ran), so it gets 120 s — CLAUDE.md §9.1's 3.3-4.8x slow-hardware margin.
 function drive(...args) {
-  const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout: 30000 });
+  const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout: args[0] === "launch" ? 120000 : 30000 });
   return JSON.parse(out);
 }
 
