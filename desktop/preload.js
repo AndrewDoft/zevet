@@ -524,6 +524,11 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   /** Stream of console events; returns an unsubscribe function. */
   onAgentEvent: (fn) => subscribe("local:agentEvent", fn),
   /**
+   * A console the board did not start itself (the loopback agent API, a schedule)
+   * just opened. Without it such an agent only reached the board on a page reload.
+   */
+  onAgentAttached: (fn) => subscribe("local:agentAttached", fn),
+  /**
    * An agent is asking to do something and is BLOCKED until the answer comes
    * back — see the computer-use block in main.js. The board is the only place
    * a person can be asked, so this is not a notification.

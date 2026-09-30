@@ -466,6 +466,8 @@ clobber this exists to prevent. See \`fire()\` in desktop/file-watch.js.` },
 otherwise only refreshed after a save/toggle/remove round-trip.` },
     onChatEvent: { channel: "chat:event", payload: "unknown", type: `(cb: (p: { id: string; evt: { type: string; [k: string]: unknown } }) => void) => () => void`, optional: true },
     onAgentEvent: { channel: "local:agentEvent", payload: "unknown", type: `(cb: (evt: AgentEvent) => void) => () => void`, doc: `Stream of console events; returns an unsubscribe function.` },
+    onAgentAttached: { channel: "local:agentAttached", payload: "unknown", type: `(cb: (c: HeldConsole) => void) => () => void`, optional: true, doc: `A console the board did not start itself (the loopback agent API, a schedule)
+just opened. Without it such an agent only reached the board on a page reload.` },
     onPermitRequest: { channel: "local:permitRequest", payload: "unknown", type: `(cb: (req: PermitRequest) => void) => () => void`, optional: true, doc: `An agent is asking to do something and is BLOCKED until the answer comes
 back — see the computer-use block in main.js. The board is the only place
 a person can be asked, so this is not a notification.

@@ -117,6 +117,9 @@ describe("the bridge surface the renderer is written against", () => {
       // the renderer did not ask for, and the renderer here is a page served by
       // the hub. Adding one is a decision, so it costs an edit to this line and
       // a sentence saying why.
+      //   local:agentAttached — one console the board did not start (API spawn or a
+      //   schedule), same content the agentEvent stream and `local:consoles` already
+      //   carry; it only says the console exists.
       //   local:indexEvent — code-index progress. Model download bytes and
       //   refresh counts, so an 86MB fetch is not a frozen button. Carries no
       //   file contents and no paths outside the workspace the user opened.
@@ -154,7 +157,7 @@ describe("the bridge surface the renderer is written against", () => {
       //   after a save/toggle/remove round-trip it initiated itself. Carries
       //   the same schedule records local:schedules already returns to an
       //   invoke, from a click — no new data crosses the boundary here.
-      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentEvent", "local:askRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
+      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentAttached", "local:agentEvent", "local:askRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {
@@ -583,5 +586,19 @@ describe("the hub domain migration never blocks or overreaches", () => {
     const migrateIdx = main.indexOf("void migrateHubDomain(cfg)");
     assert.ok(openIdx >= 0 && migrateIdx >= 0, "both call sites must exist in app.whenReady");
     assert.ok(openIdx < migrateIdx, "migrateHubDomain must be fired after openBoard, not before it");
+  });
+});
+
+describe("agents the board did not start are pushed to it, not only replayed on reload", () => {
+  test("the API spawn and a scheduled run announce their console; the board attaches it once", () => {
+    assert.match(main, /toBoard\("local:agentAttached", entry\)/, "no push: an API-spawned agent is invisible outside its repo until a reload");
+    const api = main.slice(main.indexOf("async function startAgentApi("));
+    assert.match(api, /announceConsole\(r\.id\)/, "API spawns are never announced");
+    const sched = main.slice(main.indexOf("async function runDueSchedules("), main.indexOf("\nlet scheduleTimer"));
+    assert.match(sched, /announceConsole\(started\.id\)/, "scheduled runs are never announced");
+    assert.match(preload, /onAgentAttached: \(fn\) => subscribe\("local:agentAttached", fn\)/);
+    const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
+    assert.match(board, /bridge\.local\.onAgentAttached\(\(h\) => reattachConsoles\(\[h\]\)\)/);
+    assert.match(board, /myConsoles\.some\(\(x\) => x\.id === h\.id\)\) continue/, "reattach must skip a console the board already holds");
   });
 });

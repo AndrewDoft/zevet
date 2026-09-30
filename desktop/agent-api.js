@@ -130,6 +130,10 @@ function summarize(entry) {
     id: entry.id,
     agent: entry.agent,
     root: entry.root,
+    // `cwd` is where the process runs: the agent's own worktree when it got one.
+    cwd: entry.worktree || entry.root,
+    worktree: entry.worktree || null,
+    branch: entry.branch || null,
     model: entry.model,
     mode: entry.mode,
     engine: entry.engine,

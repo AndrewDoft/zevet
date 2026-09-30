@@ -2587,6 +2587,7 @@ async function runDueSchedules() {
           place.title = s.name;
           consoles.set(started.id, started);
           consoleLog.open(started.id, { ...consoleMeta(s.agent, dir, { model: s.model, mode: s.mode }, place), scheduled: s.id });
+          announceConsole(started.id);
           started.send(s.prompt);
           ok = true;
         }
@@ -3482,6 +3483,14 @@ bridge.handle("local:startAgent", (_e, args) => startAgentCore(args));
  *  agent-engine.js) -- absent, the card shows nothing new, exactly as before
  *  engine selection existed. `opts.label` names an API-spawned console
  *  (desktop/agent-api.js "spawn"); UI-started consoles never set it. */
+/** Show a console the board did not start (API spawn, schedule) in every
+ *  workspace: the board only learns of its own launches and of a reload's
+ *  snapshot, so without this it sees such an agent only via the repo-scoped disk scan. */
+function announceConsole(id) {
+  const entry = consoleLog.get(id);
+  if (entry) toBoard("local:agentAttached", entry);
+}
+
 function consoleMeta(agent, dir, opts, place, engineUsed) {
   return {
     agent: String(agent || ""),
@@ -4095,7 +4104,11 @@ bridge.assertComplete();
 let agentApiHandle = null;
 async function startAgentApi() {
   agentApiHandle = await agentApi.start({
-    startAgentCore,
+    startAgentCore: async (args) => {
+      const r = await startAgentCore(args);
+      if (r.ok) announceConsole(r.id);
+      return r;
+    },
     sendToAgentCore,
     stopAgentCore,
     setOnce: (id) => consoleLog.setOnce(id),

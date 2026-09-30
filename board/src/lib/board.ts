@@ -1699,6 +1699,8 @@ function closedMeanwhile(c: ConsoleEntry, id: string | null | undefined): boolea
  */
 function reattachConsoles(held: HeldConsole[]): void {
   for (const h of held) {
+    // Exact id, not consoleById: that one falls back to a pending launch.
+    if (useBoard.getState().myConsoles.some((x) => x.id === h.id)) continue;
     const c: ConsoleEntry = {
       key: ++consoleSeq,
       id: h.id,
@@ -2947,6 +2949,9 @@ export function boot(): void {
     } else {
       br.onAgentEvent(ingressAgentEvent);
     }
+  }
+  if (bridge.local && typeof bridge.local.onAgentAttached === "function") {
+    bridge.local.onAgentAttached((h) => reattachConsoles([h]));
   }
   void g.refreshLocalWorkspaces().then(restoreLastRoot);
   void g.refreshLocalAgents();

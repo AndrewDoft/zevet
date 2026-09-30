@@ -398,3 +398,10 @@ test("startAgentApi creates the zevet home before writing the discovery file (a 
   const body = main.slice(main.indexOf("async function startAgentApi()"), main.indexOf("app.whenReady()"));
   assert.match(body, /fs\.mkdirSync\(HOME, \{ recursive: true \}\);\s*atomicWriteJson\(AGENT_API_FILE/);
 });
+
+test("/list reports the working dir: cwd is the worktree when there is one, else the repo root (it read null)", () => {
+  assert.equal(summarize({ id: "a", root: "C:/r", running: true, startedAt: 0, events: [] }).cwd, "C:/r");
+  const w = summarize({ id: "b", root: "C:/r", worktree: "C:/r-wt", branch: "zevet/b", running: true, startedAt: 0, events: [] });
+  assert.equal(w.cwd, "C:/r-wt");
+  assert.equal(w.branch, "zevet/b");
+});
