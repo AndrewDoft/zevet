@@ -74,12 +74,14 @@ test("token counts and cost are not shown by default", () => {
   assert.match(quota, /\{used\}% of \{label\} limit/);
 });
 
-test("the spend segment separates its two windows", () => {
-  // "spent 5h 73k 7d 73k" reads as one run-on number; a middle dot between
-  // the windows ("spent 5h 73k · 7d 73k") is what actually tells them apart.
+test("the limits segment separates its two windows", () => {
+  // "5h 42% 3h 7d 18% 4d" reads as one run-on line; a middle dot between the
+  // windows ("5h 42% 3h · 7d 18% 4d") is what actually tells them apart.
+  // (It was the "spent" token tally until that was replaced by the real
+  // rate-limit windows.)
   const strip = src("strip.tsx");
-  const burn = strip.slice(strip.indexOf("const burn ="), strip.indexOf("const cost ="));
-  assert.match(burn, /text="·"/, "no separator pushed between the 5h and 7d windows");
+  const lim = strip.slice(strip.indexOf("const lim:"), strip.indexOf("const burn ="));
+  assert.match(lim, /text="·"/, "no separator pushed between the 5h and 7d windows");
 });
 
 test("the hook-fail age is formatted, not a raw second count", () => {
