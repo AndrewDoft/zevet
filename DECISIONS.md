@@ -1442,3 +1442,28 @@ payload build, not the installer version) and 571e26a (opening a tool-call group
 - **Hub** redeployed from the tag in place; `BUILD_ID` `e40eb6443647` -> `9bda76f5c97c`; `/healthz` and `/version` agree.
 
 **Not verified.** No live app was launched, restarted or killed (Andrew's installed Zevet was left alone).
+
+## D-037 — Shipped: 0.2.94, startup 5h/7d probe, Zevet-launched agents carry the hub hooks, worktree identity (payload-only, hub deploy)
+
+**Decided (Andrew, 2026-09-30, "release Zevet 0.2.94").** Carries the startup 5h/7d probe (`credential-usage.js`,
+`agent-engine.js`, `main.js`), Settings version running/installer/Next, the combine suggestion (board), claude agents
+launched by Zevet getting the hub hooks via `--settings` (`agent-console.js`), and hook worktree identity
+(`client/hook.mjs`, `client/opencode-plugin.mjs`).
+
+- **Payload-only, not a shell release.** `git diff --stat v0.2.93..origin/main` touched payload files (`desktop/main.js`,
+  `agent-console.js`, `agent-engine.js`, `credential-usage.js`, `client/hook.mjs`, `client/opencode-plugin.mjs`), `board/src`,
+  the rebuilt `hub/public/board.js`, tests and DECISIONS.md; no `bootstrap.js`, `payload-config.js`, `update-signing.js`,
+  `app-update.js`, Electron or native module. `SHELL_VERSION` 1, `shell_min` 1, `zevet-latest.json` untouched (still 0.2.92).
+  `client/*.mjs` is payload; installed clients also take it through the hub's signed client manifest (re-signed, committed).
+  Installers were built and published, stable `Zevet-Setup.exe` / `Zevet.dmg` repointed, for new downloads.
+- **First tag failed CI.** The plain-worktree tests compared against the unresolved temp path; git records the real one
+  (macOS `/private/var`, Windows 8.3 -> long), so macOS and Windows failed while Windows-local passed. Test-only fix
+  (`realpathSync.native`); nothing had been published, so `v0.2.94` was deleted and re-cut on the fixed commit.
+- **Verified.** `npm test` 2772 tests, 0 fail, 7 skipped locally; `build.yml` both legs and `ci` green on the final tag.
+  sha256: exe `06659aa6…` (153055576 B), dmg `948086b4…` (205189628 B); the stable links serve exactly those bytes.
+- **Payload:** canary, verified over HTTPS (pulse signature under `zevet-2026-09`, `no-store`, manifest hash, 67/67 blobs
+  brotli-decode to their hashes, both platforms), then stable; seq 2094 (> 2093). Manifests win `40c8c035…`, mac `60e652df…`.
+  **Delta a 0.2.93 install fetches: 6 blobs, 93,021 B brotli** + manifest + pulse.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9bda76f5c97c` -> `ce0b7413b53e`; `/healthz` and `/version` agree.
+
+**Not verified.** No live app was launched, restarted or killed (Andrew's installed Zevet was left alone).

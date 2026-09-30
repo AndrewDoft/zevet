@@ -6,7 +6,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, chmodSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, chmodSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -244,7 +244,8 @@ describe("what the hook reports", () => {
       assert.equal(e.repo, path.basename(repo.dir), "repo must be the origin's name, not the worktree directory's");
       assert.equal(e.branch, "feature/invites");
       assert.equal(e.target, "src/db.ts");
-      const root = repo.dir.replaceAll("\\", "/");
+      // git records the REAL path in commondir (macOS /private/var, Windows 8.3 -> long).
+      const root = realpathSync.native(repo.dir).replaceAll("\\", "/");
       assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
     } finally {
       execFileSync("git", ["worktree", "remove", "-f", wtDir], { cwd: repo.dir, stdio: "pipe" });
