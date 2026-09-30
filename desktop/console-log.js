@@ -108,6 +108,14 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone, now = Date.n
         e.events.push(out);
         if (evt.type === "exit") e.running = false;
         else if (evt.type === "prompt") e.state = "working";
+        else if (evt.type === "turn_end") {
+          // A routed ("Zevet" model) turn that finished on codex or opencode.
+          e.state = "idle";
+          e.turns++;
+          e.lastResult = typeof evt.result === "string" ? evt.result : "";
+          e.isError = false;
+          if (e.once && onceDone) onceDone(id);
+        }
         else if (evt.type === "agent" && evt.payload && evt.payload.type === "result") {
           const r = evt.payload;
           e.state = "idle";

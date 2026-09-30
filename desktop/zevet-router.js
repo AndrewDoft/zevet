@@ -305,7 +305,14 @@ function startRouted(o) {
           commit();
           if (reader.session) sessions.set(r.id, reader.session);
           history.push({ user: text, answer: reader.answer, rung: r.id });
-          if (r.agent !== "claude") live = null;
+          if (r.agent !== "claude") {
+            live = null;
+            // claude's own `result` ends its turn for console-log (and so for the
+            // agent API's /wait); codex and opencode have no such event, so a
+            // routed turn that finished on one of them says so itself. Top-level,
+            // so the board's transcript never renders it.
+            emit({ type: "turn_end", result: reader.answer });
+          }
         } else if (outcome === "limited" || outcome === "unavailable") {
           if (outcome === "limited") markLimited(r, limit);
           if (live && live.rung === r) closeLive();

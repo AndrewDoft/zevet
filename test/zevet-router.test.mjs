@@ -304,3 +304,15 @@ test("main.js starts a routed console for agent zevet, and only claude rungs get
   assert.match(src, /\.\.\.\(isZevet \? \{\} : claudeOnly\)/);
   assert.match(src, /\.\.\.\(rung\.agent === "claude" \? claudeOnly : \{\}\)/);
 });
+
+test("routed: a turn that ends on codex emits turn_end with its answer; a claude turn does not (its result already ends it)", async () => {
+  const codexOnly = R.buildLadder({ ...ALL, has: { codex: true } });
+  const h = harness(codexOnly, { turn: () => codexTurn("pineapple") });
+  await h.done(["which fruit?"]);
+  for (let i = 0; i < 50 && !h.events.some((e) => e.type === "turn_end"); i++) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(h.events.filter((e) => e.type === "turn_end").map((e) => e.result), ["pineapple"]);
+
+  const c = harness(ladder2, { turn: (r, p, n) => claudeTurn(`a${n}`) });
+  await c.done(["one?"]);
+  assert.equal(c.events.filter((e) => e.type === "turn_end").length, 0);
+});
