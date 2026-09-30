@@ -13,7 +13,7 @@ import { tempDir, ROOT } from "./helpers.mjs";
 import {
   acquireLock, ciVerdict, classify, cmpVersion, decide, lockHeld, nextDNumber, nextVersion, notesFrom, recordHeader, renderRecord, runSteps,
 } from "../scripts/ship-lib.mjs";
-import { BASE, PLATFORMS, buildSteps, bumpVersion, ensureWorktree, exeName, dmgName, pulseState, verifyPayload } from "../scripts/ship.mjs";
+import { BASE, PLATFORMS, buildSteps, bumpVersion, ensureWorktree, exeName, dmgName, pulseState, samePath, verifyPayload } from "../scripts/ship.mjs";
 import { tick } from "../scripts/ship-watch.mjs";
 
 const require = createRequire(import.meta.url);
@@ -374,4 +374,11 @@ describe("step checks decide 'already done'", () => {
     assert.ok(n.indexOf("installers") < n.indexOf("installer feed") && n.indexOf("installer feed") < n.indexOf("stable links"));
     assert.ok(n.indexOf("payload canary") < n.indexOf("payload stable") && n.at(-1) === "D-record");
   });
+});
+
+test("ship finds its own worktree however git spelled the path (Windows is case-insensitive)", () => {
+  // Observed 2026-09-30: git listed C:/dev/Github/zevet-ship, ship asked for C:/dev/GitHub/zevet-ship,
+  // and the resumed ship refused the worktree it had made itself.
+  assert.equal(samePath("C:/dev/Github/zevet-ship", "C:/dev/GitHub/zevet-ship", "win32"), true);
+  assert.equal(samePath("/srv/Zevet", "/srv/zevet", "linux"), false);
 });

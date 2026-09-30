@@ -161,12 +161,20 @@ export async function verifyPayload(io, channel, { expectBuild, verify }) {
 // ── the git worktree ship works in ──────────────────────────────────────────────────────────────────
 /** A worktree of THIS repo, owned by ship: reset to `ref` on every use. Refuses anything that is not one of
  *  this repo's registered worktrees, because it will `reset --hard` and `clean` it. */
+/** Windows paths are case-insensitive, and git spells a worktree the way it was
+ *  first reached (C:/dev/Github vs C:/dev/GitHub) — compared raw, ship refused
+ *  the worktree it had made itself on the run before. */
+export function samePath(a, b, platform = process.platform) {
+  const [x, y] = [path.resolve(a), path.resolve(b)];
+  return platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
 export function ensureWorktree(ctx, ref) {
   const { io, wt } = ctx;
-  if (path.resolve(wt) === path.resolve(ROOT)) throw new Error(`ZEVET_SHIP_DIR ${wt} is the checkout ship runs from — give it its own directory`);
+  if (samePath(wt, ROOT)) throw new Error(`ZEVET_SHIP_DIR ${wt} is the checkout ship runs from — give it its own directory`);
   if (!existsSync(wt)) io.git(["worktree", "add", "--detach", wt, ref]);
   else {
-    const listed = io.git(["worktree", "list", "--porcelain"]).split(/\r?\n/).some((l) => l.startsWith("worktree ") && path.resolve(l.slice(9)) === path.resolve(wt));
+    const listed = io.git(["worktree", "list", "--porcelain"]).split(/\r?\n/).some((l) => l.startsWith("worktree ") && samePath(l.slice(9), wt));
     if (!listed) throw new Error(`${wt} exists but is not a worktree of this repo; not touching it`);
     io.git(["reset", "--hard", "-q"], { cwd: wt });
     io.git(["clean", "-fdq"], { cwd: wt });
