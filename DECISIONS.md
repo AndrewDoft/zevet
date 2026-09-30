@@ -1369,3 +1369,29 @@ rename) and an offline-update Sentry fix.
 
 **Not verified.** No live app was made to swap (would restart agents running in the installed Zevet);
 `test-payload-swap.mjs` covered that in CI.
+
+## D-034 — Shipped: 0.2.91, the status strip shows the real 5h/7d limits (payload-only, hub deploy)
+
+**Decided (Andrew, 2026-09-29/30, "release Zevet 0.2.91").** Carries ed4743e + 7bd4706: the strip shows the
+rate-limit windows (percent used, time to reset) instead of Zevet's token tally.
+
+- **Payload-only, not a shell release.** `git diff --stat v0.2.90..HEAD` touched `board/src` and tests
+  only; nothing under `desktop/` or `client/`. `SHELL_VERSION` stays 1, `shell_min` 1, `zevet-latest.json`
+  untouched (still 0.2.89). Installers for 0.2.91 were built and published, and the stable `Zevet-Setup.exe` /
+  `Zevet.dmg` links repointed, for new downloads.
+- **The committed board bundle was stale.** ed4743e changed `board/src` without rebuilding
+  `hub/public/board.js`, so `test/board-bundle.test.mjs` failed (and main's `ci` run went red). The release
+  commit rebuilds it (`npm ci && npm run build` in `board/`); the hub's `BUILD_ID` only moves because of that.
+- **Verified before tagging.** `npm test` 2732 tests, 2725 pass, 0 fail, 7 skipped; client manifest re-signed.
+  Tag `v0.2.91` on `release/0.2.91`; both `build.yml` legs green (Authenticode `Valid` `CN=Andrew Doft`;
+  macOS `source=Notarized Developer ID`). sha256: exe `36381c86…7437` (153052224 B), dmg `8a6010c7…d6df`
+  (205230656 B); the stable links serve exactly those bytes.
+- **Payload: canary, verified, then promoted.** The board is not in the payload, so the tree hashes to the
+  same 67 blobs as 0.2.90: **0 new blobs**, 2 new manifests (win `f35b144b…`, mac `d61272b1…`), pulses
+  only. Pulses verify under the pinned `zevet-2026-09` key over HTTPS, `no-store`. Promoted canary -> stable:
+  seq 2091 (> 2090) on both platforms.
+- **Delta a 0.2.90 install fetches:** 0 blobs, 0 bytes (manifest + pulse only). The strip change reaches
+  installs through the hub's board bundle, not the payload.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `bb82c3d86e6e` -> `e40eb6443647`; `/healthz` ok.
+
+**Not verified.** No live app was made to swap or reload (would disturb agents running in the installed Zevet).
