@@ -149,6 +149,8 @@ function summarize(entry) {
     elapsedMs: Date.now() - entry.startedAt,
     title: entry.title || entry.autoTitle || "",
     lastTool: lastToolFrom(entry.events),
+    // What a restart resumes it from (console-log.js); "" until claude says.
+    sessionId: entry.sessionId || "",
   };
 }
 
