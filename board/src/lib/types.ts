@@ -91,6 +91,9 @@ export interface ConsoleEntry {
    *  process — the first moment a new process is free. Null (the normal
    *  case) means the next turn runs with the same posture as this one. */
   nextMode?: LaunchMode | null;
+  /** A model picked while this console was in front, same agent: applied by
+   *  `sendPrompt` exactly as `nextMode` is (resume on the new model). */
+  nextModel?: string | null;
   model: string;
   root: string;
   hue: number;

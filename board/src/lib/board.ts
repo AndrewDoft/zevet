@@ -12,7 +12,7 @@ import { sessionTranscript } from "./sessions.mjs";
 import { draftAfter } from "./chat-stream.mjs";
 import { answerBoardRequest } from "./board-requests.mjs";
 import { classifyEnding, noteModelLimit as noteLimitFromStatus } from "./model-limits.mjs";
-import { learnModels } from "./models.mjs";
+import { learnModels, runningModelName } from "./models.mjs";
 import { usageOf, type UsageReading } from "./usage.mjs";
 import { initBoardSentry } from "./sentry";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
@@ -358,6 +358,8 @@ interface BoardState {
    *  mid-turn (see `ConsoleEntry.nextMode`), so this only ever writes
    *  `mode` directly for a console that is not running. */
   setConsoleMode: (key: number, mode: string) => void;
+  /** Change a console's model mid-thread; takes effect on the next prompt. */
+  setConsoleModel: (key: number, model: string) => void;
 
   openLocalRoot: (dir: string) => void;
   unsetLocalRoot: () => void;
@@ -894,6 +896,12 @@ export const useBoard = create<BoardState>((set, get) => ({
     }));
   },
 
+  setConsoleModel: (key, model) => {
+    set((g) => ({
+      myConsoles: g.myConsoles.map((x) => (x.key !== key ? x : { ...x, nextModel: model === x.model ? null : model })),
+    }));
+  },
+
   sendPrompt: (key, text) => {
     const before = get().myConsoles.find((x) => x.key === key);
     if (!before) return;
@@ -912,17 +920,24 @@ export const useBoard = create<BoardState>((set, get) => ({
        than mutating the old one — so `c` below is re-read AFTER calling it,
        not the `before` reference the swap condition was computed from, which
        is stale the instant `stopConsole` runs. */
-    const swapping =
-      before.running && Boolean(before.nextMode) && before.nextMode !== before.mode && Boolean(before.sessionId);
+    const modeChange = Boolean(before.nextMode) && before.nextMode !== before.mode;
+    const modelChange = before.nextModel != null && before.nextModel !== before.model;
+    const swapping = before.running && (modeChange || modelChange) && Boolean(before.sessionId);
     if (swapping) get().stopConsole(key);
     const c = swapping ? get().myConsoles.find((x) => x.key === key)! : before;
-    if (swapping) {
+    if (modeChange && (swapping || !c.running)) {
       c.mode = c.nextMode!;
       c.nextMode = null;
     }
+    // A model change on a live process with no session to resume waits; an
+    // idle console just takes it, and the resume below starts on it.
+    if (modelChange && (swapping || !c.running)) {
+      c.model = c.nextModel!;
+      c.nextModel = null;
+    }
 
     pushConsoleLine(c, "you", text);
-    c.transcript = appendUserText(c.transcript, text);
+    c.transcript = appendUserText(c.transcript, text, consoleModelName(c));
 
     /* ⚠️ A FOLLOW-UP TO A FINISHED RUN IS A NEW PROCESS, NOT A WRITE TO A DEAD
        PIPE. codex and opencode close stdin after one prompt, so their console
@@ -1647,6 +1662,11 @@ export function collisionSet(): Record<string, boolean> {
  * PAIRWISE HELPERS USED BY CONSOLES
  * ------------------------------------------------------------------------- */
 
+
+/** What the switch rule calls a console's model: "Zevet" for a routed one. */
+function consoleModelName(c: ConsoleEntry): string {
+  return c.agent === "zevet" ? "Zevet" : c.model ? runningModelName("", c.model) : "";
+}
 
 function pushConsoleLine(c: ConsoleEntry, kind: ConsoleLine["kind"], text: string): void {
   c.lines.push({ kind, text: String(text) });

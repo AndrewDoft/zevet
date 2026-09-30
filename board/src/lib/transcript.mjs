@@ -121,17 +121,23 @@ function appendStreamed(state, kind, text) {
  * A reminder that trails a real prompt is cut out of it instead, because the
  * words in front of it are somebody's ask.
  */
-export function appendUserText(state, text) {
+export function appendUserText(state, text, model) {
   if (typeof text !== "string" || !text.length) return state;
   const env = readEnvelope(text);
   if (env && env.kind === "noise") return state;
   const said = env ? text : withoutNoise(text);
   if (!said) return state;
-  const closed = { ...state, openIndex: -1 };
+  // `model`: the display name this prompt is sent on. A change from the last
+  // prompt's is kept on the message, and the thread draws it as a quiet rule
+  // ("switched from X to Y"). Pure data, no call: it costs nothing.
+  const to = typeof model === "string" ? model : "";
+  const from = state.model || "";
+  const closed = { ...state, openIndex: -1, ...(to ? { model: to } : {}) };
   return pushMessage(closed, {
     id: nextId(),
     role: "user",
     content: [{ type: "text", text: said }],
+    ...(to && from && to !== from ? { metadata: { custom: { switched: { from, to } } } } : {}),
   });
 }
 
