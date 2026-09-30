@@ -77,7 +77,7 @@ test("openLocalRoot surfaces an error instead of leaving the tree null forever o
 });
 
 test("startAgent's console stops spinning and shows an error on a rejected spawn", () => {
-  const fn = boardSlice("  startAgent: (name, launch) => {", "  setActiveConsole: (key) =>");
+  const fn = boardSlice("  startAgent: (name, launch)", "  setActiveConsole: (key) =>");
   const rejection = fn.slice(fn.indexOf(".catch("));
   assert.match(rejection, /c\.running = false/, "the optimistic running:true console never resets");
   assert.match(rejection, /pushConsoleLine\(c, "err"/, "no error line reaches the console");
