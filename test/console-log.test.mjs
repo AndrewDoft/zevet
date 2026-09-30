@@ -126,7 +126,7 @@ test("a console closed while starting stops the process it was waiting for", () 
   assert.match(board, /function closedMeanwhile\([^)]*\)[^{]*\{[^}]*myConsoles\.some\(\(x\) => x\.key === c\.key\)/);
   assert.match(board, /stopAgent\(String\(id\)\);\s*void bridge\.local\?\.forgetAgent\?\.\(String\(id\)\)/);
   // startAgent and both resume paths: every place a new process id lands.
-  assert.equal(board.match(/if \(closedMeanwhile\(c, r\.id\)\) return;\s*(\/\/[^\n]*\s*)*c\.id = r\.id/g)?.length, 3);
+  assert.equal(board.match(/if \(closedMeanwhile\(c, r\.id\)\) return[^;]*;\s*(\/\/[^\n]*\s*)*c\.id = r\.id/g)?.length, 3);
 });
 
 test("a generated title is kept with the metadata and follows a continued thread", () => {

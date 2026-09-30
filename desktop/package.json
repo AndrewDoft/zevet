@@ -37,6 +37,7 @@
       "agent-console.js",
       "zevet-router.js",
       "console-log.js",
+      "board-ask.js",
       "console-persistence.js",
       "agent-worktree.js",
       "auto-title.js",

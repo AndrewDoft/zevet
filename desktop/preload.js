@@ -470,6 +470,7 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   /** Start an agent in a folder. Returns { ok, id }. */
   startAgent: (agent, cwd, opts) => ipcRenderer.invoke("local:startAgent", { agent, cwd, opts }),
   sendToAgent: (id, text) => ipcRenderer.invoke("local:sendToAgent", { id, text }),
+  boardReply: (reqId, result) => ipcRenderer.invoke("local:boardReply", { reqId, result }),
   stopAgent: (id) => ipcRenderer.invoke("local:stopAgent", id),
   /**
    * The consoles still held by this app, with every event each has sent —
@@ -528,6 +529,11 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * just opened. Without it such an agent only reached the board on a page reload.
    */
   onAgentAttached: (fn) => subscribe("local:agentAttached", fn),
+  /**
+   * The loopback agent API asks the board to start or message an agent through
+   * its own actions, as a person's Send would. Answer with boardReply.
+   */
+  onBoardRequest: (fn) => subscribe("local:boardRequest", fn),
   /**
    * An agent is asking to do something and is BLOCKED until the answer comes
    * back — see the computer-use block in main.js. The board is the only place

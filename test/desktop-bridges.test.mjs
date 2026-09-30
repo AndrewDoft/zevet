@@ -120,6 +120,11 @@ describe("the bridge surface the renderer is written against", () => {
       //   local:agentAttached — one console the board did not start (API spawn or a
       //   schedule), same content the agentEvent stream and `local:consoles` already
       //   carry; it only says the console exists.
+      //   local:boardRequest — the loopback agent API (desktop/agent-api.js,
+      //   `via: "board"`) asking the board to start or message an agent through
+      //   its own actions. Carries what the API caller sent (agent, folder,
+      //   prompt, model), which only a holder of the 0600 token file can
+      //   send; the answer is an invoke (boardReply) carrying a console id.
       //   local:indexEvent — code-index progress. Model download bytes and
       //   refresh counts, so an 86MB fetch is not a frozen button. Carries no
       //   file contents and no paths outside the workspace the user opened.
@@ -157,7 +162,7 @@ describe("the bridge surface the renderer is written against", () => {
       //   after a save/toggle/remove round-trip it initiated itself. Carries
       //   the same schedule records local:schedules already returns to an
       //   invoke, from a click — no new data crosses the boundary here.
-      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentAttached", "local:agentEvent", "local:askRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
+      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentAttached", "local:agentEvent", "local:askRequest", "local:boardRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {
