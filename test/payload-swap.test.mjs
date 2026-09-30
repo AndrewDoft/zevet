@@ -26,6 +26,12 @@ describe("busyReason: a swap never happens under work", () => {
   test("a running agent blocks it, however long ago it last spoke", () => {
     assert.match(busyReason(idle({ activity: () => ({ running: 1, lastAt: 0 }) })), /agent is running/);
   });
+  test("resumable running consoles do not block a quiet swap", () => {
+    assert.equal(busyReason(idle({ activity: () => ({ running: 1, resumable: true, nonResumable: 0, lastAt: NOW }) })), null);
+  });
+  test("one non-resumable running console still blocks", () => {
+    assert.match(busyReason(idle({ activity: () => ({ running: 2, resumable: true, nonResumable: 1, lastAt: NOW }) })), /non-resumable/);
+  });
   test("an agent that spoke 4m59s ago blocks it; at 5m it is over", () => {
     assert.match(busyReason(idle({ activity: () => ({ running: 0, lastAt: NOW - 5 * MIN + 1000 }) })), /last 5 minutes/);
     assert.equal(busyReason(idle({ activity: () => ({ running: 0, lastAt: NOW - 5 * MIN }) })), null);
@@ -198,7 +204,7 @@ describe("main.js hands the gate real state and the swap real teardown", async (
   const release = main.slice(main.indexOf("function releaseForRelaunch"), main.indexOf("function releaseForRelaunch") + 300);
 
   test("agents come from the console log, chat from the chat run, windows from Electron", () => {
-    assert.match(wiring, /activity: \(\) => consoleLog\.activity\(\)/);
+    assert.match(wiring, /activity: \(\) => \{[\s\S]{0,240}consoleLog\.activity\(\)/);
     assert.match(wiring, /chatBusy: \(\) => Boolean\(chatRun && chatRun\.turn\)/);
     assert.match(wiring, /windows: \(\) => BrowserWindow\.getAllWindows\(\)\.length/);
     assert.match(wiring, /lastInputAt: \(\) => lastInputAt/);

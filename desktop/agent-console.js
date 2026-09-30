@@ -857,7 +857,7 @@ function startConsole(opts) {
     return { ok: false, error: `Could not start ${agent}: spawn returned nothing.` };
   }
 
-  const id = randomUUID();
+  const id = options.id || randomUUID();
   let exited = false;
   let stopped = false;
   // Set before the kill, not after: taskkill /F ends the process with code 1,

@@ -67,6 +67,7 @@ const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
 const agentCatalogs = require("./agent-catalogs.js");
 const { createConsoleLog } = require("./console-log.js");
+const consolePersistence = require("./console-persistence.js");
 const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
@@ -3374,7 +3375,7 @@ async function masoraBriefFor(dir, prompt) {
 
 /** The shared body of `local:startAgent` and the control API's `spawn` --
  *  `trusted` is what tells the two apart (see `trustedDir` above). */
-async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
+async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId } = {}) {
   await runtimeReady;
   const dir = trusted ? trustedDir(cwd) : knownRoot(cwd);
   if (!dir) return { ok: false, error: trusted ? "cwd does not exist" : "not an opened workspace" };
@@ -3444,6 +3445,8 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
     repoRoot: place.root,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
+    ...(resumeFrom ? { resumeFrom: String(resumeFrom) } : {}),
+    ...(forcedId ? { id: String(forcedId) } : {}),
     systemPrompt,
     env,
     ...(mcpConfig
@@ -3468,6 +3471,8 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
       // accumulate is this side of the bridge.
       if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
       notePlacement(place, evt, handle.id);
+      if (evt && evt.type === "agent" && evt.payload && evt.payload.session_id) consoleLog.updateMeta(handle.id, { sessionId: String(evt.payload.session_id) });
+      if (evt && evt.type === "agent" && evt.payload && evt.payload.session_id) consoleLog.updateMeta(handle.id, { sessionId: String(evt.payload.session_id) });
       toBoard("local:agentEvent", consoleLog.record(handle.id, evt));
     },
   });
@@ -3508,7 +3513,18 @@ function consoleMeta(agent, dir, opts, place, engineUsed) {
     ...(engineUsed ? { engine: engineUsed } : {}),
     ...(opts && typeof opts.label === "string" && opts.label ? { label: opts.label } : {}),
     ...(place && place.worktree ? { worktree: place.worktree.dir, branch: place.worktree.branch } : {}),
+    ...(opts && opts.sessionId ? { sessionId: String(opts.sessionId) } : {}),
   };
+}
+
+function resumeSnapshotFile() { return path.join(app.getPath("userData"), consolePersistence.FILE); }
+function persistResumableConsoles() { consolePersistence.write(resumeSnapshotFile(), consoleLog.snapshot().consoles); }
+async function restoreResumableConsoles() {
+  for (const s of consolePersistence.read(resumeSnapshotFile())) {
+    const r = await startAgentCore({ agent: "claude", cwd: s.cwd, opts: { model: s.model, mode: s.mode, engine: s.engine, label: s.label, sessionId: s.sessionId }, trusted: true, resumeFrom: s.sessionId, forcedId: s.id });
+    if (r.ok && s.inFlight) sendToAgentCore(s.id, "Zevet restarted to apply an update. Continue exactly where you left off.");
+  }
+  try { fs.rmSync(resumeSnapshotFile(), { force: true }); } catch {}
 }
 
 /**
@@ -3736,6 +3752,7 @@ app.on("web-contents-created", (_e, wc) => {
   }
 });
 function releaseForRelaunch() {
+  persistResumableConsoles();
   stopChatRun();
   fs.rmSync(AGENT_API_FILE, { force: true });
   family.stop();
@@ -3756,7 +3773,11 @@ if (bootShell.payload) {
   const swapper = createSwapper({
     payload: bootShell.payload,
     app,
-    activity: () => consoleLog.activity(),
+    activity: () => {
+      const a = consoleLog.activity();
+      const live = consoleLog.snapshot().consoles.filter((e) => e.running);
+      return { ...a, resumable: live.some((e) => e.agent === "claude" && e.sessionId), nonResumable: live.filter((e) => !(e.agent === "claude" && e.sessionId)).length };
+    },
     chatBusy: () => Boolean(chatRun && chatRun.turn),
     lastInputAt: () => lastInputAt,
     inputQuietMs: process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS ? Number(process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS) : undefined, // the packaged proof only
@@ -4146,6 +4167,7 @@ async function startAgentApi() {
 app.whenReady().then(() => {
   buildMenu();
   void startAgentApi();
+  void restoreResumableConsoles();
   // No console outlives the app, so neither does a worktree made for one.
   void worktrees.prune();
   startScheduler();
