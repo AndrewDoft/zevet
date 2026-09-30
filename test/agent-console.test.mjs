@@ -880,3 +880,14 @@ describe("the platform workarounds themselves", () => {
     assert.notEqual(a.handle.id, b.handle.id);
   });
 });
+
+describe("agent-console loads in the packaged app", () => {
+  // In the payload client/ sits INSIDE the desktop directory (payload-tree.cjs),
+  // so a require that climbs out ("../") resolves in a checkout and throws at
+  // load in the installed app — taking every agent launch down with it.
+  test("it requires nothing from outside its own directory", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../desktop/agent-console.js", import.meta.url), "utf8");
+    assert.deepEqual(src.match(/require\(\s*["']\.\.\/[^"']*["']\s*\)/g) || [], []);
+  });
+});

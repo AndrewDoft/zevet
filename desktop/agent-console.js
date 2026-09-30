@@ -40,7 +40,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { clientFile } = require("./runtime.js");
-const { hookCommand, hasHookMarker } = require("../client/hook-command.cjs");
 const { randomUUID } = require("node:crypto");
 const agentCatalogs = require("./agent-catalogs.js");
 
@@ -560,6 +559,22 @@ function invocationFor(agent, opts) {
   if (forkFrom) return ["exec", "fork", forkFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
   if (resumeFrom) return ["exec", "resume", resumeFrom, "--skip-git-repo-check", "--json", ...resumeSafe(extra), "-"];
   return ["exec", "--skip-git-repo-check", "--json", ...extra, "-"];
+}
+
+/* The command client/install.mjs writes for a wired repo, spelled here rather
+   than required: in the packaged app client/ sits INSIDE this directory
+   (payload-tree.cjs), so requiring client/ by a parent-relative path works in a checkout but
+   throws at load there and takes every agent launch with it. */
+function quoteArg(p, platform = process.platform) {
+  if (platform !== "win32") return `"${String(p).replace(/[\\"$`]/g, "\\$&")}"`;
+  if (String(p).includes('"')) throw new Error(`path contains a quote: ${p}`);
+  return `"${p}"`;
+}
+function hookCommand({ node, hook, repo, platform = process.platform }) {
+  return `${quoteArg(node, platform)} ${quoteArg(hook, platform)} --zevet-hook --zevet-agent claude-code --zevet-repo ${quoteArg(repo, platform)}`;
+}
+function hasHookMarker(settings) {
+  return JSON.stringify((settings && settings.hooks) || {}).includes("--zevet-hook");
 }
 
 function claudeHookSettings(options) {
