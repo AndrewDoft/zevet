@@ -1424,3 +1424,21 @@ revert covers a bad build. A throw is logged and boot continues on the current b
   and is committed; the hub keeps serving the 0.2.91 one until its next deploy (still validly signed).
 
 **Not verified.** No live app was launched, restarted or killed (Andrew's installed Zevet was left alone).
+
+## D-036 — Shipped: 0.2.93, Settings → Version shows the running payload build; tool-call groups keep following (payload-only, hub deploy)
+
+**Decided (Andrew, 2026-09-30, "release Zevet 0.2.93").** Carries 3caa07c (Settings → Version shows the running
+payload build, not the installer version) and 571e26a (opening a tool-call group keeps later groups open and following).
+
+- **Payload-only, not a shell release.** `git diff --stat v0.2.92..origin/main` touched `desktop/main.js` (a payload
+  file), `board/src`, the rebuilt `hub/public/board.js`, tests and DECISIONS.md; no `bootstrap.js`, Electron or native
+  module. `SHELL_VERSION` 1, `shell_min` 1, `zevet-latest.json` untouched (still 0.2.92). Installers for 0.2.93 were
+  built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Tag `v0.2.93`; `build.yml` both legs and `ci` green; exe Authenticode `Valid` `CN=Andrew Doft`.
+  sha256: exe `8bde55e2…` (153052792 B), dmg `3404867e…` (205220403 B); the stable links serve those bytes.
+- **Payload:** canary, verified over HTTPS, then stable; seq 2093 (> 2092) on both platforms. Manifests win `91497595…`,
+  mac `16531ba2…`. **Delta a 0.2.92 install fetches: 1 blob (`desktop/main.js`, 57030 B brotli)** + manifest + pulse.
+  All 67 blobs brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`, `no-store`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `e40eb6443647` -> `9bda76f5c97c`; `/healthz` and `/version` agree.
+
+**Not verified.** No live app was launched, restarted or killed (Andrew's installed Zevet was left alone).
