@@ -187,6 +187,8 @@ contextBridge.exposeInMainWorld("zevet", {
    *  `githubLogout` under the name the Google button expects.
    */
   googleLogout: () => ipcRenderer.invoke("zevet:googleLogout"),
+  /** Send what the person typed plus the scrubbed tail of the app log to Sentry. `{ ok }`. */
+  sendReport: (text) => ipcRenderer.invoke("zevet:sendReport", { text }),
   /**
    * Leave the team entirely: ends the hub session, then drops session,
    *  secret AND hub from config.json (backed up first) so this machine

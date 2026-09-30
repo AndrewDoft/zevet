@@ -85,6 +85,7 @@ const { createClaudeCli } = require("./chat-claude.js");
 const { createCli: createChatCli } = require("./chat-cli.js");
 const { createZevetChat } = require("./chat-zevet.js");
 const sentry = require("./sentry.js");
+const userReport = require("./user-report.js");
 const Sentry = require("@sentry/electron/main");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
@@ -1605,6 +1606,14 @@ const signOut = async () => {
 // Signing out ends a SESSION, and a session does not remember which provider
 // minted it — so this is one function, under the name each button expects.
 bridge.handle("zevet:githubLogout", signOut);
+
+// Setup's "Send": the text is the person's; the log is read, bounded and scrubbed here (user-report.js).
+bridge.handle("zevet:sendReport", (_e, { text } = {}) =>
+  userReport.send(Sentry, {
+    text,
+    version: APP_VERSION,
+    log: userReport.readTail(path.join(app.getPath("logs"), "zevet.log")),
+  }));
 
 /* ── Sign out of the TEAM, from Settings (or the setup screen) ────────────
  *

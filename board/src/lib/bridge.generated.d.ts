@@ -76,6 +76,8 @@ export interface ZevetBridge {
    *  `githubLogout` under the name the Google button expects.
    */
   googleLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
+  /** Send what the person typed plus the scrubbed tail of the app log to Sentry. `{ ok }`. */
+  sendReport?: (text: string) => Promise<{ ok: boolean }>;
   /**
    * Leave the team entirely: ends the hub session, then drops session,
    *  secret AND hub from config.json (backed up first) so this machine
