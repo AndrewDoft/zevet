@@ -147,6 +147,12 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone, now = Date.n
       e.meta = { ...e.meta, title };
       return true;
     },
+    updateMeta(id, patch) {
+      const e = entries.get(id);
+      if (!e) return false;
+      e.meta = { ...e.meta, ...patch };
+      return true;
+    },
 
     /** The board closed the thread. A finished console is otherwise kept, so a
      *  run that ended during a reload still comes back, as finished. */

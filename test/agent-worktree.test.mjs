@@ -101,6 +101,15 @@ describe("agent worktrees", () => {
     assert.equal(git(repo.dir, "branch", "--list", "zevet/*", "--format=%(refname:short)"), dirty.branch);
   });
 
+  test("prune keeps the worktrees of consoles a payload swap restored", async () => {
+    const kept = await wts.create(repo.dir);
+    const gone = await wts.create(repo.dir);
+    await createAgentWorktrees({ home: home.dir }).prune(new Set([path.resolve(kept.dir)]));
+    assert.ok(existsSync(kept.dir), "a restored console's worktree was pruned from under it");
+    assert.ok(!existsSync(gone.dir));
+    await wts.release(kept);
+  });
+
   test("anything it did not make is refused", async () => {
     assert.equal(await wts.release({ dir: repo.dir, branch: "main", base: "HEAD", repo: repo.dir }), false);
     assert.equal(await wts.release({ dir: path.join(home.dir, "worktrees", "x"), branch: "main", repo: repo.dir }), false);

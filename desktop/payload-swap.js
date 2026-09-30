@@ -21,8 +21,9 @@ const CONFIRM_TIMEOUT_MS = 120 * 1000;
 /** Why a swap must wait, or null when it may go. */
 function busyReason({ now, activity, chatBusy, lastInputAt, windows, inputQuietMs = INPUT_QUIET_MS }) {
   const a = activity();
-  if (a.running > 0) return "an agent is running";
-  if (now - a.lastAt < AGENT_QUIET_MS) return "an agent ran in the last 5 minutes";
+  if (a.nonResumable > 0) return "a non-resumable agent is running";
+  if (a.running > 0 && !a.resumable) return "an agent is running";
+  if (!a.resumable && now - a.lastAt < AGENT_QUIET_MS) return "an agent ran in the last 5 minutes";
   if (chatBusy()) return "a chat turn is in flight";
   if (now - lastInputAt() < inputQuietMs) return "a window had input in the last 2 minutes";
   if (windows() === 0) return "no window is open";
