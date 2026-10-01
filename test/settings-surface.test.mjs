@@ -65,8 +65,10 @@ describe("Disconnect GitHub/Google appears for an actually signed-in person (P1)
 // SAME /auth/allow call the mailer runs on, so Copy can only ever hand back
 // exactly what would be (or was) emailed.
 describe("email invitations: Resend/Copy are the mailer's own call, for every provider", () => {
-  const settings = src("board/src/components/settings.tsx");
-  const row = settings.slice(settings.indexOf("function PendingRow"), settings.indexOf("function AccountSection"));
+  // The invite UI lives in invite.tsx, shared by Settings and the rail's "+".
+  const invite = src("board/src/components/invite.tsx");
+  const settings = src("board/src/components/settings.tsx") + invite;
+  const row = invite.slice(invite.indexOf("function PendingRow"), invite.indexOf("export function handle"));
 
   test("no per-provider gate: Resend is offered on any pending row, not just a google identity", () => {
     assert.doesNotMatch(row, /provider === "google"/);
@@ -96,11 +98,10 @@ describe("email invitations: Resend/Copy are the mailer's own call, for every pr
 });
 
 describe("creating a team via Google Workspace: the owner's domain toggle", () => {
-  const settings = src("board/src/components/settings.tsx");
-  const account = settings.slice(settings.indexOf("function AccountSection"));
+  const account = src("board/src/components/invite.tsx");
 
   test("the toggle only ever appears for the owner, and only once Google has offered a domain", () => {
-    assert.match(account, /if \(owner && availableDomain\) \{/);
+    assert.match(account, /owner && availableDomain \? \(/);
   });
 
   test("checked reflects the ACTIVE rule (googleDomain), not merely that one is available", () => {

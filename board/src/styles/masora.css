@@ -355,7 +355,7 @@
   }
   .agent-sub-note { cursor: default; font-style: italic; }
 
-  /* The launcher, as a plus in the People header rather than a row of its own. */
+  /* A plus in a pane header (Team: invite; Conversation: start an agent) rather than a row of its own. */
   .rail-new {
     margin-left: auto; margin-right: 8px;
     width: 18px; height: 18px; flex: none;
@@ -602,8 +602,9 @@
      open the conversation, while selecting a file restores the detail pane. */
   body[data-view="ide"][data-surface="conversation"] .chatcol { display: flex; border-right: 0; }
   body[data-view="ide"][data-surface="conversation"] .detail { display: none; }
-  /* The tree stays in both views now that the changed-file list is gone:
-     hiding it in agent view would leave no way to reach a file. */
+  /* The tree is the Files view's: it opens there and starts shut here (see
+     treeHiddenFor in lib/board.ts). Shut is not gone - Strip's "Open tree" and
+     Ctrl+B bring it back, and the agent's own file links open the editor. */
   /* ΓÜá∩╕Å THESE TRACKS ARE MATCHED TO DOM ORDER, WHICH IS treecol, chatcol,
      detail. There is no `grid-area` here, so the second track is whichever
      element comes second in the markup. Moving an element inside .middle
@@ -780,6 +781,8 @@
   .srow .k { color: var(--ink-muted); flex: 0 0 140px; }
   .srow .v { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
   .srow .v.mono { font-family: var(--font-mono); font-size: 11.5px; }
+  /* The Team popup has no label column to line up with: the name takes the row instead of wrapping in 140px. */
+  #inviteDialog .srow .k { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .snote { font-size: 11.5px; color: var(--ink-muted); line-height: 1.65; margin-top: 8px; max-width: 52ch; }
   .sbtn {
     font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 2px;
