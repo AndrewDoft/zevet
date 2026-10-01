@@ -268,6 +268,8 @@ test("limitOf: opencode event and stderr", () => {
   assert.deepEqual(R.limitOf("opencode", ev), { resetAt: 1789972800000, wide: true });
   assert.deepEqual(R.limitOf("opencode", { type: "error", error: { data: { message: "Upstream request failed: [429]" } } }), { resetAt: null, wide: false });
   assert.equal(R.limitOf("opencode", { type: "error", error: { data: { message: "[404] not found" } } }), null);
+  // measured 2026-10-01: a paid OpenRouter model on a key that is out of credit. It is a limit, not an empty answer.
+  assert.deepEqual(R.limitOf("opencode", { type: "error", error: { name: "APIError", data: { message: "Key limit exceeded (total limit). Manage it using https://openrouter.ai/workspaces/default/keys/x" } } }), { resetAt: null, wide: true });
   assert.ok(R.limitOfStderr("Error: Upstream request failed: [429]"));
   assert.ok(R.limitOfStderr("Rate limit exceeded: free-models-per-day"));
   assert.equal(R.limitOfStderr("Error: [Nvidia] Provider returned error"), null);

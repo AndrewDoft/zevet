@@ -288,7 +288,7 @@ function composeHandoff(turns, prompt, budget = HANDOFF_BUDGET) {
 //            "responseHeaders":{"x-ratelimit-reset":<ms>}}}}   (measured 2026-09-22)
 //           stderr: "Error: Upstream request failed: [429]"        (measured 2026-09-23)
 // ---------------------------------------------------------------------------
-const LIMIT_RE = /free-models-per-day|rate.?limit|\b429\b|too many requests|usage limit|quota/i;
+const LIMIT_RE = /free-models-per-day|rate.?limit|\b429\b|too many requests|usage limit|quota|key limit exceeded|insufficient (?:credits|funds)|\b402\b/i;
 
 /**
  * @param {"claude"|"codex"|"opencode"} agent
@@ -320,7 +320,7 @@ function limitOf(agent, payload) {
   if (!LIMIT_RE.test(text)) return null;
   const h = e.data && e.data.responseHeaders;
   const reset = Number(h && (h["x-ratelimit-reset"] ?? h["X-RateLimit-Reset"]));
-  return { resetAt: Number.isFinite(reset) && reset > 0 ? reset : null, wide: /free-models-per-day/i.test(text) };
+  return { resetAt: Number.isFinite(reset) && reset > 0 ? reset : null, wide: /free-models-per-day|key limit/i.test(text) };
 }
 
 /** opencode prints its own CLI-level failures to stderr, one line each. */
