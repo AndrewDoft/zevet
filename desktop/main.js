@@ -66,7 +66,7 @@ const askServer = require("./ask-server.js");
 const agentApi = require("./agent-api.js");
 const { createBoardAsk } = require("./board-ask.js");
 const { GithubSignIn } = require("./github-signin.js");
-const { resolveHub, HOSTED_HUB, DOMAIN_HUB, LEGACY_HUB } = require("./hub-target.js");
+const { resolveHub, hostedHub, pickCloudOrigin, DOMAIN_HUB, LEGACY_HUB } = require("./hub-target.js");
 const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
@@ -675,7 +675,7 @@ async function migrateHubDomain(cfg) {
     const timer = setTimeout(() => ac.abort(), 2000);
     let res;
     try {
-      res = await fetch(`${HOSTED_HUB}/healthz`, { signal: ac.signal, redirect: "error" });
+      res = await fetch(`${hostedHub()}/healthz`, { signal: ac.signal, redirect: "error" });
     } finally {
       clearTimeout(timer);
     }
@@ -683,7 +683,7 @@ async function migrateHubDomain(cfg) {
   } catch {
     return cfg;
   }
-  const migrated = { ...cfg, hub: HOSTED_HUB };
+  const migrated = { ...cfg, hub: hostedHub() };
   writeConfig(migrated);
   return migrated;
 }
@@ -4398,7 +4398,8 @@ async function startAgentApi() {
   atomicWriteJson(AGENT_API_FILE, { url: agentApiHandle.url, token: agentApiHandle.token, pid: process.pid }, { mode: 0o600 });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await pickCloudOrigin(); // before anything reads the hub or Masora origin; a cached pick is one file read
   buildMenu();
   void startAgentApi();
   // No console outlives the app, so neither does a worktree made for one —

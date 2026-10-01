@@ -576,10 +576,10 @@ describe("the hub domain migration never blocks or overreaches", () => {
     assert.match(body, /if \(!res\.ok\) return cfg/, "a non-200 from the new host must not be treated as success");
   });
 
-  test("success rewrites cfg.hub to HOSTED_HUB and persists it", () => {
+  test("success rewrites cfg.hub to hostedHub() and persists it", () => {
     const body = stripComments(fnBody("async function migrateHubDomain"));
     assert.match(body, /writeConfig\(migrated\)/);
-    assert.match(body, /hub:\s*HOSTED_HUB/);
+    assert.match(body, /hub:\s*hostedHub\(\)/);
   });
 
   test("openBoard runs before the migration check, never after it", () => {

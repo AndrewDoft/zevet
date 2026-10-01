@@ -31,25 +31,23 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { zevetHome, atomicWriteJson } = require("./zevet-home.js");
-const { CLOUD_ORIGIN } = require("./hub-target.js");
+const { cloudOrigin } = require("./hub-target.js");
 
 const HOME = zevetHome();
 const CONFIG_PATH = path.join(HOME, "masora.json");
 
-// Masora is the cloud app. A Masora desktop on this machine says where it points in the family descriptor
-// (`web`); with none, the cloud origin itself.
-const DEFAULT_URL = process.env.ZEVET_MASORA_URL || CLOUD_ORIGIN;
-
-/** ZEVET_MASORA_URL, else the family descriptor's `web`, else the cloud origin. Read per call: Masora may start later. */
+// Masora is the cloud app. ZEVET_MASORA_URL overrides; else the family descriptor's `cloud` (https only), else the
+// cloud origin. Read per call: Masora may write the descriptor later.
 function defaultUrl() {
   if (process.env.ZEVET_MASORA_URL) return process.env.ZEVET_MASORA_URL;
   try {
-    const web = (require("@masora/desktop-kit").readJson(path.join(require("@masora/desktop-kit").familyDir(), "masora.json")) || {}).web;
-    if (typeof web === "string" && /^https?:\/\/[^\s/]+/i.test(web.trim())) return web.trim().replace(/\/+$/, "");
+    const kit = require("@masora/desktop-kit");
+    const cloud = (kit.readJson(path.join(kit.familyDir(), "masora.json")) || {}).cloud;
+    if (typeof cloud === "string" && /^https:\/\/[^\s/]+/i.test(cloud.trim())) return cloud.trim().replace(/\/+$/, "");
   } catch {
     // no kit, no descriptor: the cloud
   }
-  return CLOUD_ORIGIN;
+  return cloudOrigin();
 }
 
 /** Matches apps/connector/main.go's own `-poll-interval`/`-poll-deadline` defaults. */
@@ -301,7 +299,6 @@ function mcpServerEntry(baseUrl) {
 }
 
 module.exports = {
-  DEFAULT_URL,
   defaultUrl,
   CONFIG_PATH,
   readConfig,
