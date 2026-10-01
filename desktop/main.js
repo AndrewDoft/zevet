@@ -3476,7 +3476,7 @@ function startZevetConsole(spec, claudeOnly) {
 async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId, restorePlace } = {}) {
   await runtimeReady;
   const dir = trusted ? trustedDir(cwd) : knownRoot(cwd);
-  if (!dir) return { ok: false, error: trusted ? "cwd does not exist" : NOT_OPEN };
+  if (!dir) return { ok: false, error: trusted ? "cwd does not exist" : "not an opened workspace" };
 
   // A claude fork has to start where its source session ran — claude finds a
   // session only from that folder — so it joins its source's worktree rather
