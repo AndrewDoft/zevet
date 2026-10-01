@@ -10,6 +10,8 @@ const path = require("path");
  * else: the renderer is untrusted, so an unrelated folder stays refused.
  */
 function resolveKnown(root, workspaces, originOf) {
+  // An empty root resolves to the process cwd: never a workspace by accident.
+  if (typeof root !== "string" || !root.trim()) return null;
   const want = path.resolve(String(root || ""));
   const open = workspaces.map((d) => path.resolve(d));
   if (open.some((d) => d === want)) return want;

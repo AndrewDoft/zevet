@@ -61,6 +61,9 @@ describe("resolveKnown: what a renderer may name as a root", () => {
     assert.equal(known(""), null);
     assert.equal(known(null), null);
     assert.equal(known(A, []), null);
+    // path.resolve("") is the process cwd: an empty root must not pass because the app happens to run in a workspace.
+    const cwdOpen = [process.cwd()];
+    for (const r of ["", "   ", null, undefined]) assert.equal(resolveKnown(r, cwdOpen, () => ""), null, JSON.stringify(r));
   });
 });
 
