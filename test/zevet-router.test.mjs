@@ -31,6 +31,9 @@ const GEMINI_LIST = [
   "openrouter/google/gemini-3.5-flash-lite",
   "openrouter/google/gemini-3.1-flash-image",
   "openrouter/~google/gemini-pro-latest",
+  // Not listed free today (2026-10-01); the free twins stand for the day Google offers one.
+  "openrouter/google/gemini-3.5-flash:free",
+  "openrouter/google/gemini-3.1-pro-preview:free",
   "opencode/muse-spark-1.2-contributor-free",
   "opencode/muse-spark-1.3-contributor-free",
 ];
@@ -42,10 +45,20 @@ test("ladder: every backend's rungs are looked up in its own catalogue", () => {
   const f = byFamily(l);
   assert.deepEqual(f.claude, ["claude-haiku-4-5-20251001", "claude-sonnet-5-5", "claude-opus-5-5"]);
   assert.deepEqual(f.codex, ["gpt-6-luna", "gpt-6-astra"]);
-  assert.deepEqual(f.gemini, ["openrouter/google/gemini-3.5-flash", "openrouter/google/gemini-3.1-pro-preview"], "newest flash and pro; no image, lite, customtools, latest alias");
+  assert.deepEqual(f.gemini, ["openrouter/google/gemini-3.5-flash:free", "openrouter/google/gemini-3.1-pro-preview:free"], "newest FREE flash and pro; no image, lite, customtools, latest alias");
   assert.deepEqual(f.muse, ["opencode/muse-spark-1.3-contributor-free"]);
   assert.equal(l.rungs.find((r) => r.family === "muse").trains, true);
   assert.deepEqual(f.open, R.OPEN_MODELS.map((m) => m[0]).filter((id) => OPEN_LIST.includes(id)));
+});
+
+test("free only: a paid OpenRouter model is never a rung, whatever the catalogue lists", () => {
+  const paid = GEMINI_LIST.filter((id) => !R.isFreeModel(id));
+  assert.ok(paid.length >= 5);
+  const l = R.buildLadder({ has: { opencode: true }, opencode: [...OPEN_LIST, ...GEMINI_LIST] });
+  for (const r of l.rungs) assert.ok(R.isFreeModel(r.model), `paid rung: ${r.model}`);
+  // Today's real catalogue has no free Gemini: no gemini rung at all, and routing falls through.
+  const today = R.buildLadder({ has: { opencode: true }, opencode: [...OPEN_LIST, ...paid] });
+  assert.ok(!today.rungs.some((r) => r.family === "gemini"));
 });
 
 test("ladder: a backend that is absent or has no models is simply not a candidate", () => {

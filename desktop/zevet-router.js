@@ -62,6 +62,9 @@ function pickCodexFull(models) {
 }
 
 /** The highest-versioned id matching `re` (capture 1 = version), or null. */
+/** An opencode id that costs nothing: OpenRouter marks it `:free`, opencode's own catalogue `-free`. */
+const isFreeModel = (id) => /:free$|-free$/.test(String(id));
+
 function newest(list, re, skip) {
   let best = null;
   let bestV = -1;
@@ -111,7 +114,9 @@ function buildLadder(src) {
     if (full && (!cheap || full.id !== cheap.id)) rungs.push(rung("codex", full.id, full.name, "codex", "codex", ["codex-full"]));
   }
   if (has.opencode && Array.isArray(src.opencode)) {
-    const list = src.opencode;
+    // Free models only (Andrew, 2026-10-01: "i am never going to pay for openrouter"). Zevet is free
+    // models plus the person's own Claude and ChatGPT subscriptions; a paid OpenRouter id is never a rung.
+    const list = src.opencode.filter(isFreeModel);
     for (const [id, name, roles] of OPEN_MODELS) {
       if (list.includes(id)) rungs.push(rung("opencode", id, name, id.split("/")[0], "open", roles));
     }
@@ -615,4 +620,5 @@ function startRouted(o) {
   };
 }
 
-module.exports = { startRouted, buildLadder, classifyTurn, routeTurn, POLICY, LONG_CHARS, pickCodexFull, composeHandoff, limitOf, limitOfStderr, TurnReader, pickCodexModel, OPEN_MODELS, DEFAULT_RESET_MS };
+module.exports = {
+  isFreeModel, startRouted, buildLadder, classifyTurn, routeTurn, POLICY, LONG_CHARS, pickCodexFull, composeHandoff, limitOf, limitOfStderr, TurnReader, pickCodexModel, OPEN_MODELS, DEFAULT_RESET_MS };
