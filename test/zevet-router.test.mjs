@@ -182,12 +182,12 @@ test("policy: a turn stays on its rung while the class holds, and moves when the
   assert.equal(lim.sticky, false);
 });
 
-test("privacy: open models and muse are never candidates in a private folder, in any class, at any seed", () => {
+test("privacy: open models, muse and gemini (via OpenRouter) are never candidates in a private folder, in any class, at any seed", () => {
   for (const c of Object.keys(R.POLICY)) {
     for (let i = 0; i < 300; i++) {
       for (const priv of [undefined, true]) {
         const d = R.routeTurn({ ladder: FULLL, cls: c, seed: `masora2:${i}`, private: priv });
-        assert.ok(d && !["open", "muse"].includes(d.rung.family), `${c}/${i}: ${d && d.rung.id}`);
+        assert.ok(d && !["open", "muse", "gemini"].includes(d.rung.family), `${c}/${i}: ${d && d.rung.id}`);
       }
     }
   }

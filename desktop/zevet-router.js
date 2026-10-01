@@ -40,9 +40,10 @@ const OPEN_MODELS = [
   ["openrouter/nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super", ["open"]],
 ];
 
-/** Families whose prompts leave the machine for a model Zevet cannot vouch for:
+/** Families whose prompts leave the machine for a model or router Zevet cannot vouch for (gemini
+ *  rides OpenRouter here, a third party between us and Google):
  *  never candidates in a private repo. */
-const PUBLIC_ONLY = new Set(["open", "muse"]);
+const PUBLIC_ONLY = new Set(["open", "muse", "gemini"]);
 
 /** codex's own catalogue marks its cheap model in the description ("Fast and
  *  affordable model for easier tasks" on gpt-6-luna, 2026-09-30). Older
