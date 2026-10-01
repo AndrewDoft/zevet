@@ -32,8 +32,8 @@ describe("payload client + publisher + Zevet's tree", { skip: haveKit ? false : 
   const client = (name) => {
     const { createPayloadClient } = require(kitPayload);
     return createPayloadClient({
-      app: "zevet", channel: "canary", platform, root: path.join(tmp, name), seedDir, seedBuild: version, seedSeq,
-      pulseUrl: `${base}/p/zevet/canary/${platform}/pulse.json`, keys, shellVersion: cfg.SHELL_VERSION,
+      app: "zevet", channel: "stable", platform, root: path.join(tmp, name), seedDir, seedBuild: version, seedSeq,
+      pulseUrl: `${base}/p/zevet/stable/${platform}/pulse.json`, keys, shellVersion: cfg.SHELL_VERSION,
       schemaHead: async () => null, installId: "test-install", log: () => {},
     });
   };
@@ -102,8 +102,8 @@ describe("payload client + publisher + Zevet's tree", { skip: haveKit ? false : 
 
   test("the pulse is checked against the pinned key: a client that pins another key refuses it", async () => {
     const c = createRequire(import.meta.url)(kitPayload).createPayloadClient({
-      app: "zevet", channel: "canary", platform, root: path.join(tmp, "root-c"), seedDir, seedBuild: version, seedSeq,
-      pulseUrl: `${base}/p/zevet/canary/${platform}/pulse.json`, keys: { "someone-else": Buffer.alloc(32, 7).toString("base64") },
+      app: "zevet", channel: "stable", platform, root: path.join(tmp, "root-c"), seedDir, seedBuild: version, seedSeq,
+      pulseUrl: `${base}/p/zevet/stable/${platform}/pulse.json`, keys: { "someone-else": Buffer.alloc(32, 7).toString("base64") },
       shellVersion: cfg.SHELL_VERSION, schemaHead: async () => null, installId: "x", log: () => {},
     });
     c.resolve();

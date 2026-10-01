@@ -11,7 +11,7 @@ import { brotliCompressSync } from "node:zlib";
 import path from "node:path";
 import { tempDir, ROOT } from "./helpers.mjs";
 import {
-  acquireLock, ciVerdict, classify, cmpVersion, decide, decideSoak, lockHeld, readSentry, nextDNumber, nextVersion, notesFrom, recordHeader, renderRecord, runSteps,
+  acquireLock, ciVerdict, classify, cmpVersion, decide, lockHeld, nextDNumber, nextVersion, notesFrom, recordHeader, renderRecord, runSteps,
   shellRequires, shellContractErrors,
 } from "../scripts/ship-lib.mjs";
 import { BASE, PLATFORMS, buildSteps, bumpVersion, ensureWorktree, exeName, dmgName, pulseState, samePath, verifyPayload } from "../scripts/ship.mjs";
@@ -123,14 +123,6 @@ describe("decide", () => {
     const d = decide(fakeGit({ tags: ["v0.2.94", "v0.2.93"], decisions: rec("0.2.93"), files: { "v0.2.93..v0.2.94": ["desktop/bootstrap.js"], default: [] }, builds: { "v0.2.94": { conclusion: "success" } } }));
     assert.deepEqual([d.action, d.version, d.kind, d.base], ["resume", "0.2.94", "shell", "0.2.93"]);
   });
-  test("a canary soaking with shippable work past it is superseded by a new release, not waited on", () => {
-    const soaking = (v) => (v === "0.2.94" ? "2026-09-30T10:00:00Z" : null);
-    const io = fakeGit({ tags: ["v0.2.94", "v0.2.93"], decisions: rec("0.2.93"), files: { "v0.2.94..origin/main": ["desktop/main.js"], default: ["desktop/bootstrap.js"] }, builds: { "v0.2.94": { conclusion: "success" } } });
-    const d = decide(io, { soaking });
-    assert.deepEqual([d.action, d.version, d.base], ["new", "0.2.95", "0.2.94"]);
-    const quiet = fakeGit({ tags: ["v0.2.94", "v0.2.93"], decisions: rec("0.2.93"), files: { "v0.2.94..origin/main": ["DECISIONS.md"], default: ["desktop/bootstrap.js"] }, builds: { "v0.2.94": { conclusion: "success" } } });
-    assert.equal(decide(quiet, { soaking }).action, "resume", "nothing new past it: keep soaking");
-  });
   test("a tag whose build failed is abandoned: the diff is against the last GOOD release, the version above the dead tag", () => {
     const d = decide(fakeGit({ tags: ["v0.2.94", "v0.2.93"], decisions: rec("0.2.93"), files: { default: ["desktop/main.js"] }, builds: { "v0.2.94": { conclusion: "failure" } } }));
     assert.deepEqual([d.action, d.version, d.base, d.abandoned], ["new", "0.2.95", "0.2.93", ["0.2.94"]]);
@@ -179,7 +171,7 @@ describe("the watcher tick", () => {
     ...fakeGit({ tags: ["v0.2.93"], decisions: rec("0.2.93"), files: { default: ["desktop/main.js"] }, ...over }),
     gh: () => JSON.stringify(runs),
   });
-  const run = (i, held = false, extra = {}) => { const shipped = []; return tick({ io: i, held: () => held, feed: async () => "0.2.93", canaryAt: () => "", runShip: async (a = []) => { shipped.push(a); return 0; }, ...extra }).then((r) => ({ ...r, shipped: shipped.length, args: shipped[0] })); };
+  const run = (i, held = false, extra = {}) => { const shipped = []; return tick({ io: i, held: () => held, feed: async () => "0.2.93", runShip: async (a = []) => { shipped.push(a); return 0; }, ...extra }).then((r) => ({ ...r, shipped: shipped.length, args: shipped[0] })); };
   test("ships on releasable commits with a green ci", async () => {
     const r = await run(io([{ status: "completed", conclusion: "success", createdAt: "1" }]));
     assert.deepEqual([r.did, r.shipped], ["ship", 1]);
@@ -194,57 +186,17 @@ describe("the watcher tick", () => {
     const r = await run(io([], { tags: ["v0.2.94", "v0.2.93"], files: { default: [] }, builds: { "v0.2.94": { conclusion: "success" } } }));
     assert.deepEqual([r.did, r.shipped], ["ship", 1]);
   });
-  describe("promote decision for a tag already on canary", () => {
-    const H = 3600e3, T0 = Date.parse("2026-09-30T00:00:00Z");
-    const resumeIo = (sentry) => ({ ...io([], { tags: ["v0.2.94", "v0.2.93"], files: { default: [] }, builds: { "v0.2.94": { conclusion: "success" } } }), sentry, log() {} });
-    const quiet = (a) => (a[0] === "release" ? {} : { data: [{ firstSeen: "2026-09-29T00:00:00Z" }] }); // old issue: not new
-    const at = (hours, sentry = quiet, soak = {}) => run(resumeIo(sentry), false, { canaryAt: () => new Date(T0).toISOString(), now: () => T0 + hours * H, soak });
-    test("soak elapsed and Sentry quiet: ship --promote", async () => {
-      const r = await at(25);
-      assert.deepEqual([r.did, r.args], ["ship", ["--promote"]]);
-    });
-    test("too early, a new issue, unseen release or unreadable Sentry: wait", async () => {
-      assert.equal((await at(2)).shipped, 0);
-      assert.equal((await at(25, (a) => (a[0] === "release" ? {} : [{ firstSeen: new Date(T0 + H).toISOString() }]))).shipped, 0);
-      assert.equal((await at(25, (a) => { if (a[0] === "release") throw new Error("404"); return []; })).shipped, 0);
-      assert.equal((await at(25, () => { throw new Error("offline"); })).shipped, 0);
-    });
-    test("flags loosen the gate", async () => {
-      assert.equal((await at(2, quiet, { minHours: 1 })).shipped, 1);
-      assert.equal((await at(25, (a) => { if (a[0] === "release") throw new Error("404"); return []; }, { allowUnseen: true })).shipped, 1);
-    });
-    test("canary not recorded yet: plain ship (it records and stops), Sentry untouched", async () => {
-      const i = resumeIo(() => { throw new Error("sentry must not be called"); });
-      const r = await run(i);
-      assert.deepEqual([r.shipped, r.args], [1, []]);
-    });
+  test("there is no promote path: a resumed tag is a plain ship, whatever the clock or Sentry say", async () => {
+    const i = { ...io([], { tags: ["v0.2.94", "v0.2.93"], files: { default: [] }, builds: { "v0.2.94": { conclusion: "success" } } }), sentry: () => { throw new Error("sentry must not be called"); } };
+    const r = await run(i);
+    assert.deepEqual([r.did, r.shipped, r.args], ["ship", 1, []]);
+    const src = readFileSync(new URL("../scripts/ship-watch.mjs", import.meta.url), "utf8");
+    assert.ok(!/--promote|soak|canary/i.test(src.replace(/^\s*\/\/.*$/gm, "")));
   });
   test("nothing releasable: no ship, and ci is not even read", async () => {
     const i = io([], { files: { default: ["docs/x.md"] } });
     i.gh = () => { throw new Error("gh must not be called"); };
     assert.equal((await run(i)).shipped, 0);
-  });
-});
-
-describe("decideSoak / readSentry", () => {
-  const ok = { seen: true, newIssues: 0 }, now = Date.parse("2026-09-30T12:00:00Z");
-  const g = (over, opts) => decideSoak({ canaryAt: "2026-09-29T00:00:00Z", now, sentry: ok, ...over }, opts);
-  test("passes only after minHours with no new issues, and says every reason", () => {
-    assert.equal(g({}).ok, true);
-    assert.equal(g({ canaryAt: "2026-09-30T10:00:00Z" }).ok, false); // 2 h in, under the 4 h default
-    assert.equal(g({ canaryAt: undefined }).ok, false);
-    assert.equal(g({ sentry: { seen: true, newIssues: 1 } }).ok, false);
-    assert.equal(g({ sentry: { seen: true, newIssues: 1 } }, { maxNewIssues: 1 }).ok, true);
-    assert.equal(g({ sentry: { seen: false, newIssues: 0 } }).ok, false);
-    assert.equal(g({ sentry: { seen: false, newIssues: 0 } }, { allowUnseen: true }).ok, true);
-    assert.equal(g({ sentry: null }).ok, false);
-    assert.equal(g({ canaryAt: "2026-09-30T11:00:00Z", sentry: null }).reasons.length, 2);
-  });
-  test("readSentry counts only issues first seen since the canary, on project masora/electron", () => {
-    const calls = [];
-    const run = (a) => { calls.push(a); return a[0] === "release" ? {} : { data: [{ firstSeen: "2026-09-29T10:00:00Z" }, { firstSeen: "2026-09-29T14:00:00Z" }, {}] }; };
-    assert.deepEqual(readSentry("0.2.94", new Date("2026-09-29T12:00:00Z"), run), { seen: true, newIssues: 1 });
-    assert.ok(calls.some((a) => a.includes("masora/electron") && a.includes("release:zevet@0.2.94")));
   });
 });
 
@@ -333,30 +285,30 @@ describe("verifyPayload / pulseState (real publisher output)", () => {
 
   test("passes on what the publisher wrote, and reports seq/build/blob count", async (t) => {
     const d = tempDir("zevet-ship-pay-"); t.after(() => d.cleanup());
-    publish(t, "canary", "0.2.94", 2094, d.dir, signer);
-    const facts = await verifyPayload(host(d.dir), "canary", { expectBuild: "0.2.94", verify });
+    publish(t, "stable", "0.2.94", 2094, d.dir, signer);
+    const facts = await verifyPayload(host(d.dir), "stable", { expectBuild: "0.2.94", verify });
     assert.deepEqual([facts["win-x64"].seq, facts["mac-arm64"].build, facts["win-x64"].blobs], [2094, "0.2.94", 2]);
   });
   test("a blob whose bytes are not what the manifest says is caught", async (t) => {
     const d = tempDir("zevet-ship-pay-"); t.after(() => d.cleanup());
-    publish(t, "canary", "0.2.94", 2094, d.dir, signer);
+    publish(t, "stable", "0.2.94", 2094, d.dir, signer);
     const h = host(d.dir, { https: (url) => (url.includes("/p/b/") ? { status: 200, headers: { "cache-control": "immutable" }, body: Buffer.from("garbage") } : null) });
-    await assert.rejects(verifyPayload(h, "canary", { expectBuild: "0.2.94", verify }), /does not brotli-decode/);
+    await assert.rejects(verifyPayload(h, "stable", { expectBuild: "0.2.94", verify }), /does not brotli-decode/);
     const valid = host(d.dir, { https: (url) => (url.includes("/p/b/") ? { status: 200, headers: { "cache-control": "immutable" }, body: brotliCompressSync(Buffer.from("other bytes")) } : null) });
-    await assert.rejects(verifyPayload(valid, "canary", { expectBuild: "0.2.94", verify }), /does not decode to its hash/);
+    await assert.rejects(verifyPayload(valid, "stable", { expectBuild: "0.2.94", verify }), /does not decode to its hash/);
   });
   test("the wrong build, a signature under another key, or a cacheable pulse each fail", async (t) => {
     const d = tempDir("zevet-ship-pay-"); t.after(() => d.cleanup());
-    publish(t, "canary", "0.2.94", 2094, d.dir, signer);
-    await assert.rejects(verifyPayload(host(d.dir), "canary", { expectBuild: "0.2.95", verify }), /want 0\.2\.95/);
+    publish(t, "stable", "0.2.94", 2094, d.dir, signer);
+    await assert.rejects(verifyPayload(host(d.dir), "stable", { expectBuild: "0.2.95", verify }), /want 0\.2\.95/);
     const other = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64");
-    await assert.rejects(verifyPayload(host(d.dir), "canary", { expectBuild: "0.2.94", verify: (s, g) => verifySigned(PULSE_DOMAIN, s, g, { "zevet-test": other }) }));
+    await assert.rejects(verifyPayload(host(d.dir), "stable", { expectBuild: "0.2.94", verify: (s, g) => verifySigned(PULSE_DOMAIN, s, g, { "zevet-test": other }) }));
     const cacheable = host(d.dir, { https: (url) => (url.endsWith("pulse.json") ? { status: 200, headers: { "cache-control": "max-age=60" }, body: readFileSync(path.join(d.dir, url.replace(`${BASE}/`, ""))) } : null) });
-    await assert.rejects(verifyPayload(cacheable, "canary", { expectBuild: "0.2.94", verify }), /no-store/);
+    await assert.rejects(verifyPayload(cacheable, "stable", { expectBuild: "0.2.94", verify }), /no-store/);
   });
-  test("pulseState is null where the host has no pulse (a first ever canary)", async (t) => {
+  test("pulseState is null where the host has no pulse (a first ever publish)", async (t) => {
     const d = tempDir("zevet-ship-pay-"); t.after(() => d.cleanup());
-    const s = await pulseState(host(d.dir), "canary", verify);
+    const s = await pulseState(host(d.dir), "stable", verify);
     assert.deepEqual(s, { "win-x64": null, "mac-arm64": null });
   });
 });
@@ -426,25 +378,14 @@ describe("step checks decide 'already done'", () => {
     assert.equal(await world(t, { ssh: () => "0.2.93\n" }).check("hub"), false);
     assert.equal(await world(t, { ssh: () => "" }).check("hub"), false);
   });
-  test("payload canary / stable: done when BOTH platforms' verified pulse carries the build", async (t) => {
-    const pay = ["canary", "0.2.94", 2094];
-    assert.equal(await world(t, { pay }).check("payload canary"), true);
-    assert.equal(await world(t, { pay }).check("payload stable"), false); // canary only
-    assert.equal(await world(t, { pay: ["canary", "0.2.93", 2093] }).check("payload canary"), false); // an older build
-    assert.equal(await world(t).check("payload canary"), false); // nothing published
-    assert.equal(await world(t, { pay: ["stable", "0.2.94", 2094] }).check("payload stable"), true);
+  test("payload: done when BOTH platforms' verified stable pulse carries the build", async (t) => {
+    assert.equal(await world(t, { pay: ["stable", "0.2.94", 2094] }).check("payload"), true);
+    assert.equal(await world(t, { pay: ["stable", "0.2.93", 2093] }).check("payload"), false); // an older build
+    assert.equal(await world(t).check("payload"), false); // nothing published
   });
-  test("canary soak: done once the canary time is recorded, and run() records it", async (t) => {
-    const w = world(t);
-    assert.equal(await w.check("canary soak"), false);
-    await w.steps.find((s) => s.name === "canary soak").run(w.ctx);
-    assert.equal(await w.check("canary soak"), true);
-    assert.ok(Number.isFinite(Date.parse(w.ctx.facts.canaryAt)));
-    assert.equal(JSON.parse(readFileSync(path.join(w.ctx.work, "facts.json"), "utf8")).canaryAt, w.ctx.facts.canaryAt);
-  });
-  test("ship stops after the canary unless --promote/--now/--skip-soak", () => {
-    const src = readFileSync(new URL("../scripts/ship.mjs", import.meta.url), "utf8");
-    assert.ok(src.includes("steps.slice(0, soak + 1)") && ["--promote", "--now", "--skip-soak"].every((f) => src.includes(`"${f}"`)));
+  test("there is no canary, soak or promote step or flag in ship", () => {
+    const src = readFileSync(new URL("../scripts/ship.mjs", import.meta.url), "utf8").replace(/^\s*\/\/.*$/gm, "");
+    assert.ok(!/canary|soak|--promote|--skip-soak/i.test(src));
   });
   test("installer feed: shell releases only, done when the live feed names the version", async (t) => {
     assert.equal(world(t).steps.some((s) => s.name === "installer feed"), false);
@@ -462,9 +403,7 @@ describe("step checks decide 'already done'", () => {
     assert.ok(!names({ hub: false }).includes("hub"));
     const n = names({ kind: "shell" });
     assert.ok(n.indexOf("installers") < n.indexOf("installer feed") && n.indexOf("installer feed") < n.indexOf("stable links"));
-    assert.ok(n.indexOf("payload canary") < n.indexOf("canary soak") && n.indexOf("canary soak") < n.indexOf("payload stable") && n.at(-1) === "D-record");
-    // A shell release waits for the gate too: the installer feed reaches everyone the moment it moves.
-    assert.ok(n.indexOf("canary soak") < n.indexOf("installer feed"), "installer feed after the soak");
+    assert.ok(n.indexOf("stable links") < n.indexOf("payload") && n.at(-1) === "D-record");
   });
 });
 
