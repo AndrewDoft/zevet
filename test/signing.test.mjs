@@ -49,7 +49,7 @@ const WIN_ENV = {
   AZURE_CODE_SIGNING_ENDPOINT: "https://eus.codesigning.azure.net",
   AZURE_CODE_SIGNING_ACCOUNT: "masora",
   AZURE_CERT_PROFILE: "zevet",
-  AZURE_PUBLISHER_NAME: "Masora Inc",
+  AZURE_PUBLISHER_NAME: "Masora, LLC",
 };
 
 /** Load the config fresh under a given environment. `require` caches by path,
@@ -188,7 +188,7 @@ describe("with every windows secret set", () => {
   test("azure trusted signing turns on with all four fields", () => {
     assert.equal(signing.win, true);
     assert.deepEqual(c.win.azureSignOptions, {
-      publisherName: "Masora Inc",
+      publisherName: "Masora, LLC",
       endpoint: "https://eus.codesigning.azure.net",
       codeSigningAccountName: "masora",
       certificateProfileName: "zevet",
