@@ -8,13 +8,10 @@ import { emptyChatThread, sendUser, chatEvent } from "../board/src/lib/chat-stre
 const require = createRequire(import.meta.url);
 const { createZevetChat, turnsOf } = require("../desktop/chat-zevet.js");
 
-const RUNGS = {
-  easy: [
-    { id: "claude:haiku", agent: "claude", model: "haiku", label: "Haiku", wideKey: "claude" },
-    { id: "codex:luna", agent: "codex", model: "luna", label: "Luna", wideKey: "codex" },
-  ],
-};
-RUNGS.hard = RUNGS.easy;
+const HAIKU = { id: "claude:haiku", agent: "claude", model: "haiku", label: "Haiku", wideKey: "claude", family: "claude", roles: ["haiku"], trains: false };
+const LUNA = { id: "codex:luna", agent: "codex", model: "luna", label: "Luna", wideKey: "codex", family: "codex", roles: ["codex-cheap"], trains: false };
+const RUNGS = { rungs: [HAIKU] };
+const BOTH = { rungs: [HAIKU, LUNA] };
 
 /** Stand-ins for chat-claude.js / chat-cli.js: same open() contract, scripted replies. */
 function fakeInner(log, limited = new Set()) {
@@ -94,7 +91,7 @@ test("a chat turn on Zevet runs the first rung, tags its events, and ends on cla
 
 test("a rate-limited rung falls to the next; only claude gets the MCP config; codex's turn ends with turn_end", async () => {
   const log = [];
-  const z = createZevetChat({ inner: fakeInner(log, new Set(["claude"])), ladder: () => RUNGS });
+  const z = createZevetChat({ inner: fakeInner(log, new Set(["claude"])), ladder: () => BOTH });
   const events = [];
   const o = z.open({ chat: { id: "c2", messages: [] }, mcpConfig: "mcp.json", mode: "auto", folder: "", env: {}, onEvent: (e) => events.push(e) });
   o.send("hi");
@@ -137,7 +134,7 @@ test("the board: a routed thread reads each event in the CLI that produced it, a
 
 test("wiring: main.js registers the zevet provider, reads its replies with the evt, and ends on turn_end", () => {
   const m = readFileSync(new URL("../desktop/main.js", import.meta.url), "utf8");
-  assert.match(m, /chatProviders\.zevet = createZevetChat\(\{ inner: chatProviders, ladder: zevetLadder \}\)/);
+  assert.match(m, /chatProviders\.zevet = createZevetChat\(\{ inner: chatProviders, ladder: zevetLadder, isPrivate: repoPrivacy\.isPrivate \}\)/);
   assert.match(m, /provider\.replyOf\(p, evt\)/);
   assert.match(m, /evt\.type === "turn_end" && run\.turn/);
   const c = readFileSync(new URL("../board/src/lib/chat.ts", import.meta.url), "utf8");

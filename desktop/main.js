@@ -3424,6 +3424,7 @@ async function masoraBriefFor(dir, prompt) {
    What is runnable is asked per turn and cached a minute: a CLI can sign in
    mid-session. `opencode models` is a process spawn, so its list is kept ten. */
 const zevetRouter = require("./zevet-router.js");
+const repoPrivacy = require("./repo-privacy.js");
 let openModelsCache = { at: 0, list: null };
 function listOpenModels() {
   const r = agentConsole.resolveAgent("opencode");
@@ -3458,6 +3459,7 @@ function startZevetConsole(spec, claudeOnly) {
     id: spec.id,
     onEvent: spec.onEvent,
     ladder: zevetLadder,
+    isPrivate: () => repoPrivacy.isPrivate(spec.cwd),
     start: (rung, extra) =>
       instrumentedStartConsole({
         ...spec,
@@ -4014,7 +4016,7 @@ const chatProviders = {
   opencode: createChatCli({ agent: "opencode", id: "opencode-cli", startConsole: instrumentedStartConsole }),
 };
 // "zevet:auto": the router, answering each turn with whichever of the above can.
-chatProviders.zevet = createZevetChat({ inner: chatProviders, ladder: zevetLadder });
+chatProviders.zevet = createZevetChat({ inner: chatProviders, ladder: zevetLadder, isPrivate: repoPrivacy.isPrivate });
 const DEFAULT_CHAT_AGENT = "claude";
 
 async function spawnChat(chat, provider, opts = {}, folder = "") {

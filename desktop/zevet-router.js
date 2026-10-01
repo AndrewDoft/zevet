@@ -1,35 +1,49 @@
-// The "Zevet" model: one console that answers each turn with the cheapest
-// backend able to, keeps ONE conversation across all of them, and moves to the
-// next backend by itself when one is rate limited.
+// The "Zevet" model: one console that answers each turn with the backend best
+// suited to it, keeps ONE conversation across all of them, and moves on by
+// itself when one is rate limited.
 //
-// Pure pieces (buildLadder, classifyTurn, composeHandoff, limitOf, TurnReader)
-// are exported and tested on their own; startRouted is the stateful console
-// and takes its process starter as a parameter, so the suite drives it with
-// fakes and never spends a token.
+// Pure pieces (buildLadder, classifyTurn, routeTurn, composeHandoff, limitOf,
+// TurnReader) are exported and tested on their own; startRouted is the
+// stateful console and takes its process starter as a parameter, so the suite
+// drives it with fakes and never spends a token.
 //
-// Ladder (the order is code, not config):
-//   easy turn   claude haiku -> codex's plainest model -> free open models
-//   hard turn   claude sonnet first, then the easy ladder
-// A rung exists only when its CLI is here and (for codex/opencode) its model
-// is in that CLI's own catalogue -- an id is looked up, never assumed.
+// Before a prompt reaches any model, classifyTurn (a pure function: no LLM, no
+// network) puts it in one class, and routeTurn picks a rung from POLICY: the
+// first tier with a usable rung, a small seeded weighted choice inside it. The
+// seed is (console id, turn number), so one turn always routes the same way
+// while load spreads across consoles. Rungs are the models this machine can
+// run, each looked up in its CLI's own catalogue, never assumed:
+//   claude    haiku / sonnet / opus            claude's catalogue
+//   codex     cheap and frontier models        codex's catalogue
+//   gemini    flash- and pro-class             through opencode (no gemini CLI adapter exists)
+//   muse      Muse Spark                       through opencode (no muse CLI adapter exists)
+//   open      OPEN_MODELS                      through opencode
 const { randomUUID } = require("node:crypto");
 
 const DEFAULT_RESET_MS = 15 * 60 * 1000;
 /** Characters of earlier conversation a handoff may carry, and the cap on one side of one turn. */
 const HANDOFF_BUDGET = 8000;
 const HANDOFF_SIDE = 1500;
+/** Past this many characters (prompt plus attachments) a turn is `long`. */
+const LONG_CHARS = 60_000;
 
-/** Free open models, best coding one first. Muse Spark's contributor builds
- *  are left out on purpose: they may train on prompts. Test pins every id here
- *  against board/src/lib/models.generated.mjs so a retired model shows up. */
+/** Free open models, best coding one first, each with the roles POLICY names.
+ *  Muse Spark is NOT here: its contributor builds may train on prompts, so it
+ *  is its own family. Test pins every id here against
+ *  board/src/lib/models.generated.mjs so a retired model shows up. */
 const OPEN_MODELS = [
-  ["openrouter/poolside/laguna-s-2.1:free", "Laguna S 2.1"],
-  ["opencode/nemotron-3-ultra-free", "Nemotron 3 Ultra"],
-  ["openrouter/thinkingmachines/inkling:free", "Inkling"],
-  ["openrouter/z-ai/glm-5.2:free", "GLM 5.2"],
-  ["openrouter/cohere/north-mini-code:free", "North Mini Code"],
-  ["openrouter/nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super"],
+  ["openrouter/poolside/laguna-s-2.1:free", "Laguna S 2.1", ["open", "coder", "open-coder"]],
+  ["opencode/nemotron-3-ultra-free", "Nemotron 3 Ultra", ["open", "ultra"]],
+  ["openrouter/thinkingmachines/inkling:free", "Inkling", ["open"]],
+  ["openrouter/z-ai/glm-5.2:free", "GLM 5.2", ["open"]],
+  ["openrouter/cohere/north-mini-code:free", "North Mini Code", ["open", "coder"]],
+  ["openrouter/nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super", ["open"]],
 ];
+
+/** Families whose prompts leave the machine for a model or router Zevet cannot vouch for (gemini
+ *  rides OpenRouter here, a third party between us and Google):
+ *  never candidates in a private repo. */
+const PUBLIC_ONLY = new Set(["open", "muse", "gemini"]);
 
 /** codex's own catalogue marks its cheap model in the description ("Fast and
  *  affordable model for easier tasks" on gpt-6-luna, 2026-09-30). Older
@@ -41,51 +55,196 @@ function pickCodexModel(models) {
   );
 }
 
+/** ... and its frontier model ("Frontier intelligence for the most demanding work" on gpt-6-astra). */
+function pickCodexFull(models) {
+  if (!Array.isArray(models)) return null;
+  return models.find((m) => m && /frontier|most demanding/i.test(m.note || "") && !/older|legacy/i.test(m.note || "")) || null;
+}
+
+/** The highest-versioned id matching `re` (capture 1 = version), or null. */
+/** An opencode id that costs nothing: OpenRouter marks it `:free`, opencode's own catalogue `-free`. */
+const isFreeModel = (id) => /:free$|-free$/.test(String(id));
+
+function newest(list, re, skip) {
+  let best = null;
+  let bestV = -1;
+  for (const id of list) {
+    const m = re.exec(id);
+    if (!m || (skip && skip.test(id))) continue;
+    const v = parseFloat(m[1]);
+    if (v > bestV || (v === bestV && best && /preview/.test(best) && !/preview/.test(id))) {
+      best = id;
+      bestV = v;
+    }
+  }
+  return best ? { id: best, version: String(bestV) } : null;
+}
+
+/** @typedef {{ id:string, agent:string, model:string, label:string, wideKey:string, family:string, roles:string[], trains:boolean }} Rung */
+function rung(agent, model, label, wideKey, family, roles, trains = false) {
+  return { id: `${agent}:${model}`, agent, model, label, wideKey, family, roles, trains };
+}
+
 /**
- * The rungs this machine can run, in the order to try them.
+ * The rungs this machine can run. `agent` is the CLI that executes one (claude,
+ * codex, opencode); `family` is whose model it is.
  * @param {{ has: {claude?:boolean, codex?:boolean, opencode?:boolean},
  *           claude?: Array<{id:string,name:string}>|null,
  *           codex?: Array<{id:string,name:string,note?:string}>|null,
  *           opencode?: string[]|null }} src
- * @returns {{ easy: Rung[], hard: Rung[] }}
+ * @returns {{ rungs: Rung[] }}
  */
 function buildLadder(src) {
   const has = src.has || {};
-  const easy = [];
-  let sonnet = null;
+  const rungs = [];
   if (has.claude) {
-    const haiku = (src.claude || []).find((m) => /haiku/i.test(m.id));
-    easy.push(rung("claude", haiku ? haiku.id : "haiku", haiku ? haiku.name : "Haiku", "claude"));
-    sonnet = rung("claude", "sonnet", "Sonnet", "claude");
-  }
-  if (has.codex) {
-    const m = pickCodexModel(src.codex);
-    if (m) easy.push(rung("codex", m.id, m.name, "codex"));
-  }
-  if (has.opencode && Array.isArray(src.opencode)) {
-    for (const [id, name] of OPEN_MODELS) {
-      if (src.opencode.includes(id)) easy.push(rung("opencode", id, name, id.split("/")[0]));
+    const cat = src.claude || [];
+    for (const [alias, label] of [["haiku", "Haiku"], ["sonnet", "Sonnet"], ["opus", "Opus"]]) {
+      const m = cat.find((x) => x && new RegExp(alias, "i").test(x.id));
+      // claude takes its own aliases, so a missing catalogue still has haiku
+      // and sonnet; opus is only offered when a catalogue says it exists.
+      if (!m && (alias === "opus" || cat.length)) continue;
+      rungs.push(rung("claude", m ? m.id : alias, m ? m.name : label, "claude", "claude", [alias]));
     }
   }
-  return { easy, hard: sonnet ? [sonnet, ...easy] : easy };
+  if (has.codex) {
+    const cheap = pickCodexModel(src.codex);
+    const full = pickCodexFull(src.codex);
+    if (cheap) rungs.push(rung("codex", cheap.id, cheap.name, "codex", "codex", ["codex-cheap"]));
+    if (full && (!cheap || full.id !== cheap.id)) rungs.push(rung("codex", full.id, full.name, "codex", "codex", ["codex-full"]));
+  }
+  if (has.opencode && Array.isArray(src.opencode)) {
+    // Free models only (Andrew, 2026-10-01: "i am never going to pay for openrouter"). Zevet is free
+    // models plus the person's own Claude and ChatGPT subscriptions; a paid OpenRouter id is never a rung.
+    const list = src.opencode.filter(isFreeModel);
+    for (const [id, name, roles] of OPEN_MODELS) {
+      if (list.includes(id)) rungs.push(rung("opencode", id, name, id.split("/")[0], "open", roles));
+    }
+    const skip = /image|customtools|lite|tts|live|audio|latest/;
+    const pro = newest(list, /^openrouter\/google\/gemini-(\d+(?:\.\d+)?)-pro/, skip);
+    const flash = newest(list, /^openrouter\/google\/gemini-(\d+(?:\.\d+)?)-flash/, skip);
+    if (flash) rungs.push(rung("opencode", flash.id, `Gemini ${flash.version} Flash`, "gemini", "gemini", ["gemini", "flash"]));
+    if (pro) rungs.push(rung("opencode", pro.id, `Gemini ${pro.version} Pro`, "gemini", "gemini", ["gemini", "pro"]));
+    const muse = newest(list, /^opencode\/muse-spark-(\d+(?:\.\d+)?)-contributor-free$/);
+    if (muse) rungs.push(rung("opencode", muse.id, `Muse Spark ${muse.version}`, "opencode", "muse", ["muse"], true));
+  }
+  return { rungs };
 }
 
-/** @typedef {{ id:string, agent:string, model:string, label:string, wideKey:string }} Rung */
-function rung(agent, model, label, wideKey) {
-  return { id: `${agent}:${model}`, agent, model, label, wideKey };
-}
-
-const HARD_WORDS =
-  /\b(plan|design|architect\w*|refactor\w*|migrat\w*|investigat\w*|implement\w*|rewrite|audit|review|debug\w*|across|multi-?file|every file|whole (repo|codebase)|entire (repo|codebase))\b/i;
+// ---------------------------------------------------------------------------
+// Classifying a turn, before any model sees it. Pure, no network, microseconds.
+// ---------------------------------------------------------------------------
+const REASON_WORDS =
+  /\b(plan|design|architect\w*|review|audit|investigat\w*|root cause|trade-?offs?|debug\w*|diagnos\w*|compare|pros and cons|why (?:is|does|did|are|isn'?t|doesn'?t|won'?t|can'?t)\b[^.?\n]{0,80}\b(?:fail\w*|break\w*|broken|crash\w*|error\w*|slow|hang\w*|leak\w*|wrong|not work\w*))\b/i;
+const BUILD_WORDS =
+  /\b(implement\w*|refactor\w*|migrat\w*|rewrite|build (?:a|an|the|out|me|this|us)|scaffold|across|multi-?file|every file|all files|whole (?:repo|codebase|project)|entire (?:repo|codebase|project)|end[- ]to[- ]end|from scratch)\b/i;
+const EDIT_WORDS = /\b(fix|rename|change|update|tweak|replace|remove|delete|add|insert|typo|bump|patch)\b/i;
 const PATHISH = /[\w.-]+\/[\w./-]+|\b[\w-]+\.(?:[cm]?[jt]sx?|py|rs|go|java|md|json|css|html|ya?ml|toml|cs|cpp|c|h)\b/g;
 
-/** "hard" (long, planning-shaped, or touching several files) or "easy". */
-function classifyTurn(prompt) {
+/**
+ * One class for a prompt, plus the features that decided it.
+ *   long    more than LONG_CHARS of prompt and attachments
+ *   build   multi-file, agentic, implementation, refactor (wins over reason:
+ *           "design and implement X" is a request to build)
+ *   reason  plan, design, debug-why, review, architecture
+ *   edit    a small change: a code fence, one or two paths, or an edit verb
+ *   quick   short question or chat, no code or paths
+ * @param {string} prompt
+ * @param {{ attachmentChars?: number }} [ctx]
+ * @returns {{ class: "quick"|"edit"|"build"|"reason"|"long", features: object }}
+ */
+function classifyTurn(prompt, ctx) {
   const p = String(prompt || "");
-  if (p.length > 700 || p.split("\n").length > 12) return "hard";
-  if (HARD_WORDS.test(p)) return "hard";
-  if (new Set(p.match(PATHISH) || []).size >= 3) return "hard";
-  return "easy";
+  const chars = p.length;
+  const attachChars = Math.max(0, Number(ctx && ctx.attachmentChars) || 0);
+  const features = { chars, attachChars };
+  if (chars + attachChars > LONG_CHARS) return { class: "long", features };
+  const lines = p.split("\n").length;
+  const fences = Math.floor((p.match(/```/g) || []).length / 2);
+  const paths = new Set(p.match(PATHISH) || []).size;
+  const reason = REASON_WORDS.test(p);
+  const build = BUILD_WORDS.test(p);
+  const edit = EDIT_WORDS.test(p);
+  Object.assign(features, { lines, fences, paths, reason, build, edit });
+  let cls;
+  if (build || paths >= 3) cls = "build";
+  else if (reason) cls = "reason";
+  else if (fences || paths || edit) cls = chars > 4000 || lines > 80 ? "build" : "edit";
+  else cls = chars > 700 || lines > 12 ? "reason" : "quick";
+  return { class: cls, features };
+}
+
+/**
+ * Class -> ordered tiers -> [role, weight]. The order is code, not config.
+ * Within a tier the weight of an entry is split evenly over its rungs.
+ */
+const POLICY = {
+  quick: [[["open", 2], ["flash", 1], ["muse", 1]], [["haiku", 1], ["codex-cheap", 1]]],
+  edit: [[["codex-cheap", 1], ["haiku", 1], ["coder", 1]], [["gemini", 1], ["sonnet", 1]]],
+  build: [[["sonnet", 1], ["codex-full", 1]], [["pro", 1], ["opus", 1]], [["open-coder", 1]]],
+  reason: [[["sonnet", 1], ["codex-full", 1], ["pro", 1]], [["opus", 1]]],
+  long: [[["gemini", 1], ["muse", 1], ["ultra", 1]], [["sonnet", 1]]],
+};
+
+/** FNV-1a, then a murmur-style finaliser: a stable float in [0,1) from a string. */
+function unitHash(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * Which rung answers a turn. Deterministic: the same inputs give the same rung.
+ * @param {object} o
+ * @param {{ rungs: Rung[] }} o.ladder
+ * @param {string} o.cls
+ * @param {string} o.seed          console id + turn number
+ * @param {(r: Rung) => boolean} [o.limited]
+ * @param {boolean} [o.private]    true (the default): open and muse rungs are not candidates
+ * @param {{ rung: Rung, cls: string } | null} [o.prev]   the last turn's route, for stickiness
+ * @returns {{ rung: Rung, tier: number, index: number, count: number, sticky: boolean, reason: string } | null}
+ */
+function routeTurn(o) {
+  const priv = o.private !== false;
+  const rungs = o.ladder.rungs.filter((r) => !(priv && PUBLIC_ONLY.has(r.family)) && !(o.limited && o.limited(r)));
+  const tiers = POLICY[o.cls] || [];
+  const made = (r, tier, index, count, sticky) => ({
+    rung: r,
+    tier,
+    index,
+    count,
+    sticky,
+    reason: sticky ? `${o.cls} → ${r.label} (sticky)` : `${o.cls} → ${r.label} (tier ${tier}, seed ${index}/${count})`,
+  });
+  // Stickiness: the same class keeps the rung it had, so no handoff is paid
+  // for nothing. It lapses when the class changes or the rung is limited (or,
+  // in a private repo, no longer allowed): `rungs` has already dropped those.
+  if (o.prev && o.prev.cls === o.cls && rungs.some((r) => r.id === o.prev.rung.id)) {
+    const t = tiers.findIndex((tier) => tier.some(([role]) => o.prev.rung.roles.includes(role)));
+    if (t >= 0) return made(o.prev.rung, t + 1, 1, 1, true);
+  }
+  for (let t = 0; t < tiers.length; t++) {
+    const cand = [];
+    for (const [role, weight] of tiers[t]) {
+      const have = rungs.filter((r) => r.roles.includes(role) && !cand.some((c) => c.rung.id === r.id));
+      for (const r of have) cand.push({ rung: r, w: weight / have.length });
+    }
+    if (!cand.length) continue;
+    let x = unitHash(o.seed) * cand.reduce((a, c) => a + c.w, 0);
+    let i = 0;
+    while (i < cand.length - 1 && x >= cand[i].w) x -= cand[i++].w;
+    return made(cand[i].rung, t + 1, i + 1, cand.length, false);
+  }
+  // Nothing the policy names is usable: any rung that is, in ladder order.
+  return rungs.length ? made(rungs[0], tiers.length + 1, 1, rungs.length, false) : null;
 }
 
 function clip(s, n) {
@@ -135,7 +294,7 @@ function composeHandoff(turns, prompt, budget = HANDOFF_BUDGET) {
 //            "responseHeaders":{"x-ratelimit-reset":<ms>}}}}   (measured 2026-09-22)
 //           stderr: "Error: Upstream request failed: [429]"        (measured 2026-09-23)
 // ---------------------------------------------------------------------------
-const LIMIT_RE = /free-models-per-day|rate.?limit|\b429\b|too many requests|usage limit|quota/i;
+const LIMIT_RE = /free-models-per-day|rate.?limit|\b429\b|too many requests|usage limit|quota|key limit exceeded|insufficient (?:credits|funds)|\b402\b/i;
 
 /**
  * @param {"claude"|"codex"|"opencode"} agent
@@ -167,7 +326,7 @@ function limitOf(agent, payload) {
   if (!LIMIT_RE.test(text)) return null;
   const h = e.data && e.data.responseHeaders;
   const reset = Number(h && (h["x-ratelimit-reset"] ?? h["X-RateLimit-Reset"]));
-  return { resetAt: Number.isFinite(reset) && reset > 0 ? reset : null, wide: /free-models-per-day/i.test(text) };
+  return { resetAt: Number.isFinite(reset) && reset > 0 ? reset : null, wide: /free-models-per-day|key limit/i.test(text) };
 }
 
 /** opencode prints its own CLI-level failures to stderr, one line each. */
@@ -236,7 +395,8 @@ class TurnReader {
 /**
  * @param {object} o
  * @param {(rung: Rung, extra: {resumeFrom?: string, onEvent: Function}) => {ok:boolean, error?:string, send?:Function, stop?:Function}} o.start
- * @param {() => {easy: Rung[], hard: Rung[]} | Promise<{easy: Rung[], hard: Rung[]}>} o.ladder   read per turn: a CLI may sign in mid-session
+ * @param {() => {rungs: Rung[]} | Promise<{rungs: Rung[]}>} o.ladder   read per turn: a CLI may sign in mid-session
+ * @param {() => boolean | Promise<boolean>} [o.isPrivate]   whether this console's folder is private. Unset or throwing means private: open and muse rungs are then never candidates.
  * @param {(evt: object) => void} o.onEvent
  */
 function startRouted(o) {
@@ -250,6 +410,8 @@ function startRouted(o) {
   // every one is handed all of it on first use.
   const history = (o.history || []).map((t) => ({ user: t.user, answer: t.answer, rung: "" }));
   const queue = [];
+  let turnNo = history.length; // the seed's second half: a respawned Chat thread carries on from its turns
+  let prev = null; // { rung, cls } of the last answered turn, for stickiness
   let busy = false;
   let stopped = false;
   let live = null; // { rung, handle }: the process of the turn in flight, or claude's idle one
@@ -280,7 +442,9 @@ function startRouted(o) {
   }
 
   /** One try of `text` on `r`. Resolves "done" | "limited" | "unavailable" | "stopped". */
-  function attempt(r, text, extra) {
+  function attempt(r, text, extra, d) {
+    // A model that may train on prompts never gets Chat's Masora brief.
+    if (r.trains && extra && extra.brief) extra = { ...extra, brief: undefined };
     return new Promise((resolve) => {
       const sid = sessions.get(r.id);
       // The turns this backend never saw: all of them on a fresh session, the
@@ -294,7 +458,7 @@ function startRouted(o) {
       const pending = [];
       const tag = (evt) => ({ ...evt, agent: r.agent, model: r.model });
       const route = () =>
-        emit({ type: "agent", agent: "zevet", payload: { type: "zevet_route", agent: r.agent, model: r.model, label: r.label } });
+        emit({ type: "agent", agent: "zevet", payload: { type: "zevet_route", agent: r.agent, model: r.model, label: r.label, class: d.cls, tier: d.tier, reason: d.reason } });
       const commit = () => {
         if (committed) return;
         committed = true;
@@ -376,21 +540,29 @@ function startRouted(o) {
   }
 
   async function runTurn({ text, extra }) {
-    const tier = classifyTurn(text);
+    const { class: cls } = classifyTurn(text, { attachmentChars: extra && extra.attachmentChars });
+    const seed = `${id}:${turnNo++}`;
+    let priv = true;
+    try {
+      if (o.isPrivate) priv = (await o.isPrivate()) !== false;
+    } catch {
+      // Unknown is private.
+    }
     for (;;) {
       if (stopped) return;
-      const order = ((await o.ladder())[tier] || []).filter((r) => !limitedUntil(r));
-      const next = order[0];
-      if (!next) return allLimited(await o.ladder());
-      const out = await attempt(next, text, extra);
+      const lad = await o.ladder();
+      const d = routeTurn({ ladder: lad, cls, seed, limited: limitedUntil, private: priv, prev });
+      if (!d) return allLimited(lad);
+      const out = await attempt(d.rung, text, extra, { ...d, cls });
+      if (out === "done") prev = { rung: d.rung, cls };
       if (out === "done" || out === "stopped") return;
       // limited / unavailable: the next pass skips it and takes the following rung.
-      if (out === "unavailable") limits.set(next.id, now() + DEFAULT_RESET_MS);
+      if (out === "unavailable") limits.set(d.rung.id, now() + DEFAULT_RESET_MS);
     }
   }
 
   function allLimited(lad) {
-    const all = [...new Set([...(lad.hard || []), ...(lad.easy || [])])];
+    const all = lad.rungs || [];
     const untils = all.map(limitedUntil).filter(Boolean);
     const at = untils.length ? Math.min(...untils) : 0;
     emit({
@@ -448,4 +620,5 @@ function startRouted(o) {
   };
 }
 
-module.exports = { startRouted, buildLadder, classifyTurn, composeHandoff, limitOf, limitOfStderr, TurnReader, pickCodexModel, OPEN_MODELS, DEFAULT_RESET_MS };
+module.exports = {
+  isFreeModel, startRouted, buildLadder, classifyTurn, routeTurn, POLICY, LONG_CHARS, pickCodexFull, composeHandoff, limitOf, limitOfStderr, TurnReader, pickCodexModel, OPEN_MODELS, DEFAULT_RESET_MS };

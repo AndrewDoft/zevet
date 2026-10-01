@@ -90,7 +90,7 @@ const compactModelChoice = cn(
 interface ComposerSource {
   usage: RunUsage | null;
   model: string;
-  runningModel: { id: string; name: string } | undefined;
+  runningModel: { id: string; name: string; title?: string } | undefined;
   agents: UsableAgent[];
   launchMode: LaunchMode;
   setLaunchMode: (m: LaunchMode) => void;
@@ -116,7 +116,7 @@ function useComposerSource(): ComposerSource {
     const runningModel = !thread?.busy
       ? undefined
       : thread.agent === "zevet"
-        ? { id: "zevet:auto", name: thread.route ? `Zevet · ${thread.route}` : "Zevet" }
+        ? { id: "zevet:auto", name: thread.route ? `Zevet · ${thread.route}` : "Zevet", title: thread.routeWhy }
         : usage?.model
           ? { id: `${thread.agent}:${usage.model}`, name: model || "Default" }
           : undefined;
@@ -145,7 +145,7 @@ function useComposerSource(): ComposerSource {
     ? active.nextModel
       ? { id: `${active.agent}:${active.nextModel}`, name: runningModelName("", active.nextModel) }
       : active.agent === "zevet"
-      ? { id: "zevet:auto", name: active.route ? `Zevet · ${active.route}` : "Zevet" }
+      ? { id: "zevet:auto", name: active.route ? `Zevet · ${active.route}` : "Zevet", title: active.routeWhy }
       : { id: `${active.agent}:${active.usage.model || active.model}`, name: model || "Default" }
     : undefined;
   return {

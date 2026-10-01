@@ -29,6 +29,7 @@ export interface ChatThread {
   agent: string;
   /** For a zevet turn: the model the router landed it on; "" otherwise. */
   route: string;
+  routeWhy?: string;
 }
 
 export interface StoredMessage {
