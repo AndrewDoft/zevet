@@ -24,8 +24,9 @@
 // that root. See openBoard() for why the board is allowed a bridge at all
 // despite loading a remote origin, and local:write below for why a WRITE over
 // that same bridge is a bigger thing to hand out than a read.
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor, net } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor, net, screen } = require("electron");
 const { createReconnect } = require("./reconnect.js");
+const windowState = require("./window-state.js");
 const { openSafe } = require("./open-safe.js");
 const { createLog, createIpcRegistry } = require("@masora/desktop-kit");
 // bootstrap.js (the asar entry) loaded this file; what only it can hand over is on this object.
@@ -117,6 +118,7 @@ const runtimeReady = runtime.preparePath();
 
 const HOME = zevetHome();
 const CONFIG = path.join(HOME, "config.json");
+const WINDOW_STATE = path.join(HOME, "window-state.json");
 const AGENT_API_FILE = path.join(HOME, "agent-api.json");
 
 /**
@@ -746,11 +748,13 @@ function openBoard(cfg) {
   }
   // Background, after onboarding: never awaited, so it cannot gate the window.
   masoraLink.start();
+  const winState = windowState.clamp(windowState.load(WINDOW_STATE), (r) => screen.getDisplayMatching(r).workArea);
   boardWindow = new BrowserWindow(windowOptions("board", {
-    width: 1240,
-    height: 820,
-    minWidth: 720,
-    minHeight: 420,
+    width: winState.width,
+    height: winState.height,
+    ...(winState.x === undefined ? {} : { x: winState.x, y: winState.y }),
+    minWidth: windowState.MIN.width,
+    minHeight: windowState.MIN.height,
     backgroundColor: PAPER, // no white flash before the page paints
     title: "zevet",
     ...iconOption,
@@ -785,6 +789,9 @@ function openBoard(cfg) {
     },
   }));
   trackWindow("board", boardWindow);
+
+  if (winState.maximized) boardWindow.maximize();
+  windowState.track(boardWindow, WINDOW_STATE, atomicWriteJson);
 
   // Restore the remembered zoom. It has to be set per load, not once: a reload
   // or a navigation resets zoomLevel to 0, and a board that silently springs

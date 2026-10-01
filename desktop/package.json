@@ -71,6 +71,7 @@
       "github-signin.js",
       "hub-target.js",
       "reconnect.js",
+      "window-state.js",
       "google-signin.js",
       "masora.js",
       "masora-link.js",
