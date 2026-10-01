@@ -781,6 +781,8 @@
   .srow .k { color: var(--ink-muted); flex: 0 0 140px; }
   .srow .v { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
   .srow .v.mono { font-family: var(--font-mono); font-size: 11.5px; }
+  /* The Team popup has no label column to line up with: the name takes the row instead of wrapping in 140px. */
+  #inviteDialog .srow .k { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .snote { font-size: 11.5px; color: var(--ink-muted); line-height: 1.65; margin-top: 8px; max-width: 52ch; }
   .sbtn {
     font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 2px;
