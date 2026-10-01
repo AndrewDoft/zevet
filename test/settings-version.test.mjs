@@ -43,7 +43,9 @@ test("the status poll and the pushed status both carry it", () => {
   assert.match(main, /onStatus: \(raw\) => \{\s*const s = withRunningBuild\(raw\);/);
 });
 
-test("Settings shows running with the installer beside it, and Next", () => {
-  assert.match(settings, /s\.running === s\.current \? s\.running : `\$\{s\.running\} \(app \$\{s\.current\}\)`/);
+test("Settings shows only the running build, never the installer beside it, and Next", () => {
+  // Andrew, 2026-10-01: "settings should only show 2.105 or whatever the new version is, not the app thing".
+  assert.match(settings, /summary=\{\(s && \(s\.running \|\| s\.current\)\) \|\| "unknown"\}/);
+  assert.doesNotMatch(settings, /\(app \$\{s\.current\}\)/);
   assert.match(settings, /k="Next" v=\{`\$\{s\.next\.build\} \(\$\{s\.next\.when\}\)`\}/);
 });
