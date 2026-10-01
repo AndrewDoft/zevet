@@ -492,6 +492,13 @@ function pref(key: string, fallback: string): string {
 function setPref(key: string, value: string): void {
   zStorage.setItem("zevet." + key, value);
 }
+/* The file tree belongs to the view: Files has it open, Agent has it shut
+   (the conversation is the page; Strip's "Open tree" brings it back). Each
+   view remembers its own fold, so switching never drags one's choice into the
+   other. */
+function treeHiddenFor(v: ViewMode): boolean {
+  return pref("treeHidden." + v, v === "agent" ? "1" : "0") === "1";
+}
 
 let ed: EditorSession | null = null;
 let pendingAgentLine: { repo: string; target: string } | null = null;
@@ -540,7 +547,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   })(),
   // New users land on Agent — IDE is for people who already asked for it.
   viewMode: (pref("view", "agent") === "ide" ? "ide" : "agent") as ViewMode,
-  treeHidden: pref("treeHidden", "0") === "1",
+  treeHidden: treeHiddenFor((pref("view", "agent") === "ide" ? "ide" : "agent") as ViewMode),
   theme: (pref("theme", "light") === "dark" ? "dark" : "light") as Theme,
 
   localRoot: null,
@@ -697,13 +704,13 @@ export const useBoard = create<BoardState>((set, get) => ({
      so unfolding it puts it back exactly as it was. */
   toggleTree: () => get().setTreeHidden(!get().treeHidden),
   setTreeHidden: (hidden) => {
-    setPref("treeHidden", hidden ? "1" : "0");
+    setPref("treeHidden." + get().viewMode, hidden ? "1" : "0");
     set({ treeHidden: hidden });
     requestMeasureEditor();
   },
   setView: (v) => {
     setPref("view", v);
-    set({ viewMode: v });
+    set({ viewMode: v, treeHidden: treeHiddenFor(v) });
     requestMeasureEditor();
   },
   setTheme: (t) => {

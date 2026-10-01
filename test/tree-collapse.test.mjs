@@ -72,7 +72,7 @@ describe("setTreeHidden persists like every other board pref", () => {
   test("it writes the same zevet.* pref toggleTree used to, not just in-memory state", () => {
     assert.match(
       board,
-      /setTreeHidden:\s*\(hidden\)\s*=>\s*\{\s*setPref\("treeHidden",\s*hidden \? "1" : "0"\);\s*set\(\{\s*treeHidden:\s*hidden\s*\}\);/,
+      /setTreeHidden:\s*\(hidden\)\s*=>\s*\{\s*setPref\("treeHidden\."\s*\+\s*get\(\)\.viewMode,\s*hidden \? "1" : "0"\);\s*set\(\{\s*treeHidden:\s*hidden\s*\}\);/,
     );
   });
 

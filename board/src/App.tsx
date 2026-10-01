@@ -1,6 +1,7 @@
 import { SettingsIcon } from "lucide-react";
 import { useEffect } from "react";
 import { PeoplePane } from "./components/people";
+import { InvitePlus } from "./components/invite";
 import { WorkspacesPane } from "./components/workspaces";
 import { Strip } from "./components/strip";
 import { ConnBanner } from "./components/conn";
@@ -93,7 +94,6 @@ function App() {
   const mode = useChat((s) => s.mode);
 
   const roster = useBoard(selectRoster);
-  const launching = useBoard((s) => s.launching);
   const openLauncher = useBoard((s) => s.openLauncher);
   const local = Boolean(bridge.local);
   const blanked = !roster.length && !(local && localRoot);
@@ -187,34 +187,22 @@ function App() {
               of its column. It is a People control by meaning as well as by
               position: mine/all/off says whose work to watch. */}
           <div className="pane-title row">
-            {/* ⚠️ THE LABEL IS "Agents"; THE ID IS STILL `#people`. What this
-                pane lists is a person and the agents running under them, and
-                Andrew asked for it to say so. The id stays because it is the
-                hook a dozen CSS rules and two tests reach for, and renaming a
-                selector to match a word is churn with a chance of a miss. */}
-            <span>Agents</span>
-            {/* ⚠️ THE PLUS IS THE LAUNCHER. It used to be a full text row at
-                the bottom of the You list reading "Start an agent…", which is
-                a whole line of a 250px rail spent on a verb. Andrew: "there is
-                also no need for like the new agent thing, you can put a plus
-                sign somewhere else." Here it costs nothing: the title row was
-                already this tall for the follow control beside it.
-                Gated on an open folder for the same reason the row was — with
-                no repo there is nothing to start an agent IN, and a launcher
-                that opens onto that is a dead end. */}
-            {bridge.local && localRoot ? (
-              <button
-                type="button"
-                className="rail-new"
-                aria-expanded={launching}
-                aria-haspopup="dialog"
-                aria-label="Start an agent"
-                title="Start an agent"
-                onClick={openLauncher}
-              >
-                +
-              </button>
-            ) : null}
+            {/* ⚠️ THE LABEL IS "Team"; THE ID IS STILL `#people`. What this
+                pane lists is the people on the team and the agents running
+                under them, and Andrew asked for the word to say so. The id
+                stays because it is the hook a dozen CSS rules and two tests
+                reach for, and renaming a selector to match a word is churn
+                with a chance of a miss. */}
+            <span>Team</span>
+            {/* ⚠️ THE PLUS IS THE INVITE, not the launcher. Andrew: "make the
+                plus sign next to it work. it has to generate an iframe popup
+                with an invite, you can import this from settings." It is the
+                same TeamInvite Settings renders, in a dialog, and it shows
+                for whoever can invite. Starting an agent did not go away: the
+                composer starts the run (lib/runtime.tsx onNew), the Conversation
+                header's "+" below puts a blank one in front, and the palette
+                still has "Start an agent". */}
+            <InvitePlus />
             <FollowControl blanked={blanked} />
             {/* ⚠️ NO FOLD BUTTON HERE ANY MORE. It was `#treeToggle`, and at a
                 narrow rail width (180px, see masora.css's max-width: 1100px
@@ -280,7 +268,14 @@ function App() {
         <div className="middle">
           <TreeFill blanked={blanked} />
           <div className="chatcol">
-            <div className="pane-title">Conversation</div>
+            <div className="pane-title row">
+              <span>Conversation</span>
+              {bridge.local && localRoot ? (
+                <button type="button" className="rail-new" aria-label="Start an agent" title="Start an agent" onClick={openLauncher}>
+                  +
+                </button>
+              ) : null}
+            </div>
             <div className="pane-body" id="chat">
               <Conversation />
             </div>
