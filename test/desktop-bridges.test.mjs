@@ -585,12 +585,20 @@ describe("the hub domain migration never blocks or overreaches", () => {
   test("openBoard runs before the migration check, never after it", () => {
     // The same reasoning as the updater a few lines above it in main.js: a
     // network check — even a bounded, 2-second one — has no business
-    // delaying a window that could have opened already. migrateHubDomain
-    // only ever changes what the NEXT launch reads.
+    // delaying a window that could have opened already.
     const openIdx = main.indexOf("if (cfg) openBoard(cfg);");
     const migrateIdx = main.indexOf("void migrateHubDomain(cfg)");
     assert.ok(openIdx >= 0 && migrateIdx >= 0, "both call sites must exist in app.whenReady");
     assert.ok(openIdx < migrateIdx, "migrateHubDomain must be fired after openBoard, not before it");
+  });
+
+  test("a migration moves the open board to the new hub (the IPC guard reads config.json live)", () => {
+    // 0.2.103: the board opened on hub.usemasora.com, the migration wrote app.usemasora.com/hub 2 s later, and
+    // every bridge call from the still-open board was refused as a foreign sender until a restart.
+    const at = main.indexOf("void migrateHubDomain(cfg)");
+    const tail = stripComments(main.slice(at, at + 700));
+    assert.match(tail, /cfg\.hub = m\.hub/, "openBoard's reconnect closure must follow the new hub");
+    assert.match(tail, /boardWindow\.loadURL\(`\$\{m\.hub/, "the open board must be navigated to the migrated hub");
   });
 });
 

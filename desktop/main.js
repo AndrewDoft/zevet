@@ -4422,9 +4422,19 @@ app.whenReady().then(async () => {
   else openSetup(null);
   // Same reasoning as the updater above: never delay the board for this.
   // The probe is quick (2s, bounded), but "quick" is still slower than a
-  // window that could have opened already — this runs alongside it and only
-  // ever changes what NEXT launch reads, never this one.
-  if (cfg) void migrateHubDomain(cfg);
+  // window that could have opened already — this runs alongside it.
+  // The IPC guard reads config.json on every call, so the moment the new hub is
+  // written a board still on the old origin loses its whole bridge (0.2.103:
+  // update checks, sessions, everything refused until a restart). Move it too;
+  // openBoard's reconnect closure reads cfg.hub, so it follows.
+  if (cfg) void migrateHubDomain(cfg).then((m) => {
+    if (m === cfg) return;
+    cfg.hub = m.hub;
+    if (!boardWindow || boardWindow.isDestroyed()) return;
+    let at;
+    try { at = new URL(boardWindow.webContents.getURL()); } catch { return; }
+    if (at.protocol === "https:" || at.protocol === "http:") boardWindow.loadURL(`${m.hub.replace(/\/+$/, "")}/${at.search}`);
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
