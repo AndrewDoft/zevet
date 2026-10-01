@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-const { PRIMARY_ORIGIN, FALLBACK_ORIGIN, cloudOrigin, hostedHub, pickCloudOrigin, DOMAIN_HUB, LEGACY_HUB, resolveHub } = createRequire(import.meta.url)("../desktop/hub-target.js");
+const { PRIMARY_ORIGIN, cloudOrigin, hostedHub, DOMAIN_HUB, LEGACY_HUB, resolveHub } = createRequire(import.meta.url)("../desktop/hub-target.js");
 
 describe("resolveHub", () => {
   test("a new install goes to the hosted hub", () => {
@@ -50,40 +50,14 @@ describe("resolveHub", () => {
   });
 });
 
-describe("pickCloudOrigin", () => {
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "zevet-co-")), "cloud-origin.json");
-  const up = async () => ({ address: "1.2.3.4" });
-  const down = async () => { throw new Error("ENOTFOUND"); };
-  const hang = () => new Promise(() => {});
-  const cached = () => JSON.parse(fs.readFileSync(file, "utf8")).origin;
-
-  test("app.usemasora.com when it resolves, cached so the next launch does no lookup", async () => {
-    assert.equal(await pickCloudOrigin({ lookup: up, file }), PRIMARY_ORIGIN);
-    assert.equal(cached(), PRIMARY_ORIGIN);
-    assert.equal(await pickCloudOrigin({ lookup: () => { throw new Error("looked up"); }, file }), PRIMARY_ORIGIN);
-    assert.equal(cloudOrigin(), PRIMARY_ORIGIN);
+describe("cloudOrigin", () => {
+  test("is app.usemasora.com; ZEVET_CLOUD_ORIGIN overrides it", () => {
+    delete process.env.ZEVET_CLOUD_ORIGIN;
+    assert.equal(cloudOrigin(), "https://app.usemasora.com");
     assert.equal(hostedHub(), PRIMARY_ORIGIN + "/hub");
-  });
-
-  test("the sslip origin when it does not resolve, and when the lookup hangs past the budget", async () => {
-    fs.rmSync(file);
-    assert.equal(await pickCloudOrigin({ lookup: down, file }), FALLBACK_ORIGIN);
-    assert.equal(cached(), FALLBACK_ORIGIN);
-    const t = Date.now();
-    assert.equal(await pickCloudOrigin({ lookup: hang, file, timeoutMs: 50 }), FALLBACK_ORIGIN);
-    assert.ok(Date.now() - t < 1000);
-  });
-
-  test("a cached fallback is re-checked: DNS appears later", async () => {
-    fs.writeFileSync(file, JSON.stringify({ origin: FALLBACK_ORIGIN }));
-    assert.equal(await pickCloudOrigin({ lookup: up, file }), PRIMARY_ORIGIN);
-  });
-
-  test("ZEVET_CLOUD_ORIGIN overrides everything", async () => {
     process.env.ZEVET_CLOUD_ORIGIN = "https://cloud.example.com/";
     try {
-      assert.equal(await pickCloudOrigin({ lookup: down, file }), "https://cloud.example.com");
-      assert.equal(hostedHub(), "https://cloud.example.com/hub");
+      assert.equal(cloudOrigin(), "https://cloud.example.com");
     } finally {
       delete process.env.ZEVET_CLOUD_ORIGIN;
     }

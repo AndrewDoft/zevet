@@ -66,7 +66,7 @@ const askServer = require("./ask-server.js");
 const agentApi = require("./agent-api.js");
 const { createBoardAsk } = require("./board-ask.js");
 const { GithubSignIn } = require("./github-signin.js");
-const { resolveHub, hostedHub, pickCloudOrigin, DOMAIN_HUB, LEGACY_HUB } = require("./hub-target.js");
+const { resolveHub, hostedHub, DOMAIN_HUB, LEGACY_HUB } = require("./hub-target.js");
 const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
@@ -4399,7 +4399,6 @@ async function startAgentApi() {
 }
 
 app.whenReady().then(async () => {
-  await pickCloudOrigin(); // before anything reads the hub or Masora origin; a cached pick is one file read
   buildMenu();
   void startAgentApi();
   // No console outlives the app, so neither does a worktree made for one —
