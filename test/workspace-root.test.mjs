@@ -69,8 +69,9 @@ describe("main.js", () => {
   test("knownRoot delegates to resolveKnown over the opened workspaces and agentSessions.originOf", () => {
     assert.match(main, /function knownRoot\(root\) \{\s*return resolveKnown\(root, readWorkspaces\(\), agentSessions\.originOf\);\s*\}/);
   });
-  test("the refusal text is one constant, shared with the board", () => {
-    assert.ok(!main.includes('"not an opened workspace"'));
+  test("the refusal text main replies with is the one the board matches", () => {
+    assert.ok(main.includes('error: "not an opened workspace"'));
+    assert.equal(NOT_OPEN, "not an opened workspace");
     assert.equal(NOT_OPEN, board.NOT_OPEN);
   });
   test("workspace-root.js ships in the package", () => {
