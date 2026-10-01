@@ -11,6 +11,7 @@ import {
 import { sessionTranscript } from "./sessions.mjs";
 import { draftAfter } from "./chat-stream.mjs";
 import { answerBoardRequest } from "./board-requests.mjs";
+import { isNotOpen, shownError } from "./workspace-root.mjs";
 import { classifyEnding, noteModelLimit as noteLimitFromStatus } from "./model-limits.mjs";
 import { learnModels, runningModelName } from "./models.mjs";
 import { usageOf, type UsageReading } from "./usage.mjs";
@@ -812,7 +813,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     }).then((r) => {
       if (!r || !r.ok) {
         c.running = false;
-        c.error = (r && r.error) || "could not start";
+        c.error = shownError(r && r.error, "could not start");
         pushConsoleLine(c, "err", c.error);
       } else {
         if (closedMeanwhile(c, r.id)) return { ok: false, error: "closed before it started" };
@@ -966,7 +967,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       bridge.local.resumeAgent(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode, ...(c.id ? { continues: c.id } : {}) }).then((r) => {
         if (!r || !r.ok) {
           c.running = false;
-          pushConsoleLine(c, "err", (r && r.error) || "could not continue");
+          pushConsoleLine(c, "err", shownError(r && r.error, "could not continue"));
           signalConsolesChanged();
           return;
         }
@@ -1054,6 +1055,12 @@ export const useBoard = create<BoardState>((set, get) => ({
             ? `showing the first ${(r.entries || []).length} entries`
             : null,
         });
+      } else if (isNotOpen(r)) {
+        /* A root that is no longer an opened workspace (removed since, or a
+           remembered one) is not a fault to print: fall back to the no-folder
+           state. Main now accepts worktrees and subfolders of an opened
+           workspace, so this is only a folder the person really has not opened. */
+        if (get().localRoot === dir) get().unsetLocalRoot();
       } else {
         set({
           localEntries: [],
@@ -1462,8 +1469,8 @@ export const useBoard = create<BoardState>((set, get) => ({
     br.resumeAgent(c.agent, c.root, resumeId, { model: c.model, mode: c.mode }).then((r) => {
       if (!r || !r.ok) {
         c.running = false;
-        c.error = (r && r.error) || "could not continue";
-        pushConsoleLine(c, "err", (r && r.error) || "could not continue");
+        c.error = shownError(r && r.error, "could not continue");
+        pushConsoleLine(c, "err", c.error);
         signalConsolesChanged();
         return;
       }

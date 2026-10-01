@@ -55,6 +55,7 @@
       "code-index.js",
       "zevet-voice.js",
       "agent-sessions.js",
+      "workspace-root.js",
       "agent-catalogs.js",
       "github-signin.js",
       "hub-target.js",

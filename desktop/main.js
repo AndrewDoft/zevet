@@ -70,6 +70,7 @@ const { resolveHub, hostedHub, DOMAIN_HUB, LEGACY_HUB } = require("./hub-target.
 const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
+const { resolveKnown, NOT_OPEN } = require("./workspace-root.js");
 const agentCatalogs = require("./agent-catalogs.js");
 const { createConsoleLog } = require("./console-log.js");
 const consolePersistence = require("./console-persistence.js");
@@ -2001,8 +2002,7 @@ function writeWorkspaces(list) {
  * is the only place a new root can come from.
  */
 function knownRoot(root) {
-  const want = path.resolve(String(root || ""));
-  return readWorkspaces().some((d) => path.resolve(d) === want) ? want : null;
+  return resolveKnown(root, readWorkspaces(), agentSessions.originOf);
 }
 
 /**
@@ -2045,13 +2045,13 @@ bridge.handle("local:masoraRepos", () => masora.reposFor());
 
 bridge.handle("local:masoraRepoToggle", (_e, { root, on } = {}) => {
   const dir = knownRoot(root);
-  if (!dir) return { ok: false, error: "not an opened workspace" };
+  if (!dir) return { ok: false, error: NOT_OPEN };
   return { ok: true, repos: masora.setRepoOpted(dir, Boolean(on)) };
 });
 
 bridge.handle("local:tree", (_e, root) => {
   const dir = knownRoot(root);
-  if (!dir) return { ok: false, error: "not an opened workspace" };
+  if (!dir) return { ok: false, error: NOT_OPEN };
   // `origin`: a worktree's events are filed under its origin repo (hook.mjs),
   // so the tree matches them by the origin's name and fingerprint.
   const r = localFs.listTree(dir, {});
@@ -2060,7 +2060,7 @@ bridge.handle("local:tree", (_e, root) => {
 
 bridge.handle("local:read", (_e, { root, relPath }) => {
   const dir = knownRoot(root);
-  if (!dir) return { ok: false, error: "not an opened workspace" };
+  if (!dir) return { ok: false, error: NOT_OPEN };
   return localFs.readTextFile(dir, String(relPath || ""), {});
 });
 
@@ -2087,7 +2087,7 @@ bridge.handle("local:read", (_e, { root, relPath }) => {
  */
 bridge.handle("local:write", (_e, { root, relPath, text, opts }) => {
   const dir = knownRoot(root);
-  if (!dir) return { ok: false, error: "not an opened workspace" };
+  if (!dir) return { ok: false, error: NOT_OPEN };
   if (typeof text !== "string") return { ok: false, error: "nothing to write" };
   const given = opts && typeof opts === "object" ? opts : {};
   return localFs.writeTextFile(dir, String(relPath || ""), text, {
@@ -2323,7 +2323,7 @@ bridge.handle("local:indexStatus", async (_e, arg) => {
 bridge.handle("local:indexEnable", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
-  if (!dir) return { ok: false, error: "not an opened workspace" };
+  if (!dir) return { ok: false, error: NOT_OPEN };
 
   const cap = indexCapability.assess({});
   if (!cap.capable) {
@@ -2370,7 +2370,7 @@ function pathFilter(raw) {
 bridge.handle("local:indexSearch", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
-  if (!dir) return { ok: false, error: "not an opened workspace", hits: [] };
+  if (!dir) return { ok: false, error: NOT_OPEN, hits: [] };
   const idx = openIndexes.get(path.resolve(dir));
   if (!idx) return { ok: false, error: "no index for this workspace yet", hits: [] };
   const q = arg && typeof arg.query === "string" ? arg.query.trim() : "";
@@ -2709,7 +2709,7 @@ bridge.handle("local:schedules", () => ({ ok: true, schedules: readSchedules() }
 bridge.handle("local:scheduleSave", (_e, arg) => {
   const incoming = schedule.sanitise(arg && arg.schedule);
   if (!incoming.prompt) return { ok: false, error: "a schedule needs a prompt" };
-  if (!knownRoot(incoming.root)) return { ok: false, error: "not an opened workspace" };
+  if (!knownRoot(incoming.root)) return { ok: false, error: NOT_OPEN };
   const list = readSchedules();
   const i = list.findIndex((s) => s.id === incoming.id);
   if (i >= 0) list[i] = incoming;
@@ -2809,7 +2809,7 @@ bridge.handle("local:stats", async (_e, { root, relPaths }) => {
   // knownRoot FIRST, exactly as every handler above does it, and for the same
   // reason: without it `C:\` is a valid root and the counter walks the disk.
   const dir = knownRoot(root);
-  if (!dir) return { ok: false, lines: {}, diff: null, error: "not an opened workspace" };
+  if (!dir) return { ok: false, lines: {}, diff: null, error: NOT_OPEN };
 
   const asked = Array.isArray(relPaths) ? relPaths.filter((p) => typeof p === "string") : [];
   const list = asked.slice(0, MAX_STAT_PATHS);
@@ -2838,7 +2838,7 @@ bridge.handle("local:stats", async (_e, { root, relPaths }) => {
  *  the lines it just wrote. knownRoot first, like every sibling handler. */
 bridge.handle("local:diffHunks", async (_e, { root, relPath }) => {
   const dir = knownRoot(root);
-  if (!dir) return { ok: false, hunks: [], error: "not an opened workspace" };
+  if (!dir) return { ok: false, hunks: [], error: NOT_OPEN };
   if (typeof relPath !== "string" || !relPath || relPath.includes("..")) {
     return { ok: false, hunks: [], error: "not a file in this workspace" };
   }
@@ -2861,7 +2861,7 @@ const fileWatch = new FileWatch({
 
 bridge.handle("local:watch", (_e, { root, relPath, initialText }) => {
   const dir = knownRoot(root);
-  if (!dir) return { ok: false, error: "not an opened workspace" };
+  if (!dir) return { ok: false, error: NOT_OPEN };
   // The resolved root is passed on, not the renderer's spelling, so the
   // echoed `root` in every change event is the one the allowlist approved.
   return fileWatch.watch(dir, String(relPath || ""), initialText);
@@ -3476,7 +3476,7 @@ function startZevetConsole(spec, claudeOnly) {
 async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId, restorePlace } = {}) {
   await runtimeReady;
   const dir = trusted ? trustedDir(cwd) : knownRoot(cwd);
-  if (!dir) return { ok: false, error: trusted ? "cwd does not exist" : "not an opened workspace" };
+  if (!dir) return { ok: false, error: trusted ? "cwd does not exist" : NOT_OPEN };
 
   // A claude fork has to start where its source session ran — claude finds a
   // session only from that folder — so it joins its source's worktree rather
@@ -3686,7 +3686,7 @@ bridge.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) 
       }
     }
   }
-  if (!dir) return { ok: false, error: "not an opened workspace" };
+  if (!dir) return { ok: false, error: NOT_OPEN };
   const settings = agentSettingsFor(dir);
   let mcpConfig = null;
   if (String(agent || "") === "claude") {
