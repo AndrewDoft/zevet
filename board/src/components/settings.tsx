@@ -1270,7 +1270,7 @@ type MasoraLinkState = { phase: string; paired?: boolean; code?: string; error?:
 
 const LINK_SUMMARY: Record<string, string> = {
   waiting: "waiting for approval",
-  unreachable: "not running",
+  unreachable: "offline",
   error: "error",
 };
 
