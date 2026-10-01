@@ -804,15 +804,20 @@ function sweepUnclaimedTeams() {
     if (slug === DEFAULT_TEAM) continue; // the default team has no "created" moment to expire
     if (acc.owner) continue; // claimed, regardless of age
     if (now - acc.createdAt <= TEAM_EXPIRY_MS) continue;
-    teamAccounts.delete(slug);
-    boards.delete(slug);
-    for (const f of [path.join(TEAMS_DIR, `accounts-${slug}.json`), path.join(TEAMS_DIR, `events-${slug}.jsonl`)]) {
-      try {
-        rmSync(f);
-      } catch {
-        // Already gone, or never flushed to disk. Either way there is nothing
-        // left to clean up for this file.
-      }
+    dropTeam(slug);
+  }
+}
+
+/** Forget a team and delete its files. Callers only ever pass one nobody has claimed. */
+function dropTeam(slug) {
+  teamAccounts.delete(slug);
+  boards.delete(slug);
+  for (const f of [path.join(TEAMS_DIR, `accounts-${slug}.json`), path.join(TEAMS_DIR, `events-${slug}.jsonl`)]) {
+    try {
+      rmSync(f);
+    } catch {
+      // Already gone, or never flushed to disk. Either way there is nothing
+      // left to clean up for this file.
     }
   }
 }
@@ -856,6 +861,28 @@ loadTeams();
  * its own — the env var is an operator setting from before per-team domains
  * existed, never a second way to grant one to a team that never asked.
  */
+/**
+ * ⚠️ ONE TEAM PER GOOGLE WORKSPACE. A Workspace's team is the one whose `hd` it
+ * claims: the default team claims ZEVET_TEAM_DOMAINS (and its owner's hd), any
+ * other team claims its OWNER's hd. Anyone signing in from a claimed Workspace
+ * is routed there, whatever team they named — so a second team for a claimed
+ * Workspace cannot be had, and an unclaimed team made for one is dropped on the
+ * spot. A personal Google account has no `hd` and claims nothing.
+ *
+ * Routing only picks the team; admission still needs `hd` AND a verified email on it (the door).
+ */
+function claimedDomains(team, acc) {
+  const own = acc.ownerHd.toLowerCase();
+  return [...(team === DEFAULT_TEAM ? TEAM_DOMAINS : []), ...(own ? [own] : [])];
+}
+
+function teamForWorkspace(who) {
+  const hd = String(who.hd || "").toLowerCase();
+  if (!hd) return null;
+  for (const [slug, acc] of teamAccounts) if (claimedDomains(slug, acc).includes(hd)) return slug;
+  return null;
+}
+
 function domainFor(team, acc) {
   return acc.domain || (team === DEFAULT_TEAM ? GOOGLE_DOMAIN : "");
 }
@@ -1439,10 +1466,20 @@ async function handleRequest(req, res) {
       return googlePage(res, 502, ex.error);
     }
 
-    const acc = teamAccounts.get(pair.team || DEFAULT_TEAM);
+    let acc = teamAccounts.get(pair.team || DEFAULT_TEAM);
     if (!acc) {
       pair.error = "that team no longer exists";
       return googlePage(res, 404, pair.error);
+    }
+    if (!pair.link) {
+      // Route by Workspace BEFORE the team's own domain gate: the identity is read ungated first.
+      const peek = readIdToken(ex.idToken, { clientId: GOOGLE_CLIENT_ID });
+      const home = peek.ok ? teamForWorkspace(peek) : null;
+      if (home && home !== (pair.team || DEFAULT_TEAM)) {
+        if (!acc.owner) dropTeam(pair.team || DEFAULT_TEAM);
+        pair.team = home;
+        acc = teamAccounts.get(home);
+      }
     }
     const domain = pair.link ? "" : domainFor(pair.team || DEFAULT_TEAM, acc);
 
@@ -1473,7 +1510,7 @@ async function handleRequest(req, res) {
     const may = acc.mayEnter(who, {
       requiredOwner: domain ? GOOGLE_OWNER : "",
       domain,
-      domains: (pair.team || DEFAULT_TEAM) === DEFAULT_TEAM ? TEAM_DOMAINS : [],
+      domains: claimedDomains(pair.team || DEFAULT_TEAM, acc),
     });
     if (!may.ok) {
       pair.error = may.error;

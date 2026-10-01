@@ -27,10 +27,10 @@ async function domainHub(extra = {}) {
   return h;
 }
 
-/** A full browser-less Google sign-in as `claims`, with NO team named. Resolves the finish body + status. */
-async function signIn(hub, claims) {
+/** A full browser-less Google sign-in as `claims`, naming `team` (none by default). Resolves the finish body + status. */
+async function signIn(hub, claims, team) {
   const post = (route, body) => fetch(`${hub.base}${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const start = await (await post("/auth/google/start", {})).json();
+  const start = await (await post("/auth/google/start", team ? { team } : {})).json();
   const code = `claims:${Buffer.from(JSON.stringify(claims)).toString("base64url")}`;
   await fetch(`${hub.base}/auth/google/callback?state=${start.pairCode}&code=${code}`);
   const r = await post("/auth/google/finish", { pairCode: start.pairCode });
@@ -80,5 +80,50 @@ describe("mapped Workspace domains join the default team", () => {
 
   test("a hub with both ZEVET_GOOGLE_DOMAIN and ZEVET_TEAM_DOMAINS refuses to start", async () => {
     await assert.rejects(domainHub({ ZEVET_GOOGLE_DOMAIN: "usemasora.com" }), /ZEVET_TEAM_DOMAINS alone/);
+  });
+});
+
+const whoami = async (hub, token) => (await fetch(`${hub.base}/auth/whoami`, { headers: { "x-zevet-token": token } })).json();
+const create = async (hub, name) => (await (await fetch(`${hub.base}/team/create`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) })).json()).team;
+const exists = async (hub, name) => (await (await fetch(`${hub.base}/team/resolve?name=${name}`)).json()).exists;
+
+describe("one team per Google Workspace", () => {
+  test("the first Workspace owner claims the domain; everyone else on it lands there, whatever they asked for", async () => {
+    const hub = await domainHub();
+    await signIn(hub, claim("owner@elsewhere.example", { hd: "elsewhere.example" })); // Masoretes' owner
+
+    const acme = await create(hub, "acme");
+    const boss = await signIn(hub, claim("boss@acme.example", { hd: "acme.example" }), acme);
+    assert.equal(boss.body.owner, true, "the first sign-in claims the team");
+
+    // Joins with no team named at all (the default), and with another team named.
+    const kai = await signIn(hub, claim("kai@acme.example", { hd: "acme.example" }));
+    assert.equal(kai.status, 200);
+    assert.equal((await whoami(hub, kai.body.token)).teamName, "acme");
+
+    const second = await create(hub, "acme-two");
+    const lee = await signIn(hub, claim("lee@acme.example", { hd: "acme.example" }), second);
+    assert.equal((await whoami(hub, lee.body.token)).teamName, "acme");
+    assert.equal(await exists(hub, "acme-two"), false, "the unclaimed second team is dropped, not left to expire");
+
+    // A mapped Workspace is routed to the default team even when it named someone else's.
+    const mo = await signIn(hub, claim("mo@usemasora.com", { hd: "usemasora.com" }), acme);
+    assert.equal((await whoami(hub, mo.body.token)).teamName, "Main team");
+  });
+
+  test("a personal Google account cannot claim or enter a Workspace's team", async () => {
+    const hub = await domainHub();
+    await signIn(hub, claim("owner@elsewhere.example", { hd: "elsewhere.example" }));
+    const acme = await create(hub, "acme");
+    await signIn(hub, claim("boss@acme.example", { hd: "acme.example" }), acme);
+
+    const impostor = await signIn(hub, claim("fake@acme.example"), acme); // verified address, no hd
+    assert.equal(impostor.status, 403);
+    // And it did not claim a domain by creating a team of its own.
+    const mine = await create(hub, "mine");
+    const gm = await signIn(hub, claim("fake@acme.example"), mine);
+    assert.equal(gm.body.owner, true);
+    const boss2 = await signIn(hub, claim("late@acme.example", { hd: "acme.example" }), mine);
+    assert.equal((await whoami(hub, boss2.body.token)).teamName, "acme", "the Workspace's team still wins");
   });
 });

@@ -476,12 +476,12 @@ export class Accounts {
 
     /* ⚠️ THE MAPPED-DOMAINS DOOR (ZEVET_TEAM_DOMAINS): the same door for a LIST
      * of domains, and stricter because nothing upstream gated on `hd`. BOTH the
-     * `hd` claim (a Workspace Google administers) AND a verified email on a
-     * mapped domain must hold — a personal gmail has no `hd`, and an unverified
+     * `hd` claim (a Workspace Google administers) AND a verified email on that
+     * same domain must hold — a personal gmail has no `hd`, and an unverified
      * address is dropped by `verifiedEmails`. */
     if (me.provider === "google" && domains.length) {
-      const onList = (d) => Boolean(d) && domains.includes(d);
-      if (onList(String(user.hd || "").toLowerCase()) && me.emails.some((e) => onList(e.split("@")[1]))) {
+      const hd = String(user.hd || "").toLowerCase();
+      if (hd && domains.includes(hd) && me.emails.some((e) => e.split("@")[1] === hd)) {
         return { ok: true, first: false, byDomain: true };
       }
     }
