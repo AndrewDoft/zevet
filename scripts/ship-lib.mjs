@@ -107,7 +107,7 @@ export function notesFrom(subjects, version) {
  *   new    — commits past the last finished release that classify() calls a release.
  *   none   — nothing.
  */
-export function decide(io, { ref = "origin/main", feed, soaking = () => null } = {}) {
+export function decide(io, { ref = "origin/main", feed } = {}) {
   const tags = sortVersions(io.git(["tag", "--list", "v*"]).split(/\r?\n/));
   if (!tags.length) throw new Error("no v* tags: ship needs a previous release to diff against");
   const tip = io.git(["rev-parse", ref]);
@@ -118,9 +118,6 @@ export function decide(io, { ref = "origin/main", feed, soaking = () => null } =
     if (recordHeader(v).test(decisions)) { base = v; break; }
     const run = io.buildRun(`v${v}`);
     if (run && ["failure", "cancelled", "timed_out"].includes(run.conclusion)) { abandoned.push(v); continue; }
-    // Soaking on canary with shippable work past it: the newer build supersedes it rather
-    // than waiting behind it (a canary that fails its gate must not block every later fix).
-    if (i === 0 && soaking(v) && classifyRange(io, `v${v}`, ref).kind !== "none") { base = v; break; }
     // Unfinished. Its own diff (against the tag before it) says what it was.
     const prev = tags.slice(i + 1).find((t) => !abandoned.includes(t));
     return { action: "resume", version: v, tag: `v${v}`, base: prev, tip, abandoned, ...classifyRange(io, `v${prev}`, `v${v}`) };
@@ -201,38 +198,9 @@ export function renderRecord(n, f) {
       ? `- **Shell release.** ${f.shell.slice(0, 6).join(", ")}${f.shell.length > 6 ? ", …" : ""} changed: installers + signed installer feed (\`zevet-latest.json\` -> ${f.version}) + payload.`
       : `- **Payload-only, not a shell release.** No shell file changed; \`zevet-latest.json\` untouched. Installers for ${f.version} were built and published, and the stable \`Zevet-Setup.exe\` / \`Zevet.dmg\` links repointed, for new downloads.`,
     `- **Verified.** Gate \`node scripts/run-tests.mjs\` green on the release tree; tag \`v${f.version}\`; \`build.yml\` both legs green; exe Authenticode \`${f.authenticode || "?"}\`. sha256: exe \`${short(f.exeSha)}\` (${f.exeBytes ?? "?"} B), dmg \`${short(f.dmgSha)}\` (${f.dmgBytes ?? "?"} B); the stable links serve those bytes.`,
-    `- **Payload:** canary, verified over HTTPS, then stable; seq ${f.seq ?? "?"} on both platforms. Manifests win \`${short(f.manifestWin)}\`, mac \`${short(f.manifestMac)}\`. Delta: ${f.newBlobs ?? "?"} new blob(s) uploaded. ${f.blobs ?? "?"} blobs per platform brotli-decode to their manifest hashes; pulses verify under \`zevet-2026-09\`.`,
+    `- **Payload:** stable, verified over HTTPS; seq ${f.seq ?? "?"} on both platforms. Manifests win \`${short(f.manifestWin)}\`, mac \`${short(f.manifestMac)}\`. Delta: ${f.newBlobs ?? "?"} new blob(s) uploaded. ${f.blobs ?? "?"} blobs per platform brotli-decode to their manifest hashes; pulses verify under \`zevet-2026-09\`.`,
   ];
   if (f.hub) lines.push(`- **Hub** redeployed from the tag in place; \`BUILD_ID\` \`${f.hubBefore || "?"}\` -> \`${f.hubAfter || "?"}\`; \`/healthz\` ok.`);
   lines.push("", "**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).", "");
   return lines.join("\n");
-}
-
-// ── the canary soak gate (ported from masora2 scripts/promote-canary.mjs) ───────────────────────────
-export const SENTRY_PROJECT = "masora/electron";
-export const SOAK_DEFAULTS = { minHours: 4, maxNewIssues: 0, allowUnseen: false };
-
-/** The whole promote decision, pure. `facts`: { canaryAt (ISO string | undefined), now (ms), sentry: { seen, newIssues } | null }.
- *  Every reason, not just the first. No canary record is never ok: the clock has not started. */
-export function decideSoak(facts, opts = {}) {
-  const { minHours, maxNewIssues, allowUnseen } = { ...SOAK_DEFAULTS, ...opts };
-  const reasons = [];
-  const at = Date.parse(facts.canaryAt);
-  if (!Number.isFinite(at)) reasons.push("no canary time recorded yet");
-  else if (!((facts.now - at) / 3600e3 >= minHours)) reasons.push(`on canary ${((facts.now - at) / 3600e3).toFixed(1)} h, need ${minHours} h`);
-  if (!facts.sentry) reasons.push("Sentry could not be read");
-  else {
-    if (!facts.sentry.seen && !allowUnseen) reasons.push("Sentry has never seen this release (no telemetry is not evidence of health)");
-    if (facts.sentry.newIssues > maxNewIssues) reasons.push(`${facts.sentry.newIssues} new Sentry issue(s) since canary, limit ${maxNewIssues}`);
-  }
-  return { ok: reasons.length === 0, reasons };
-}
-
-/** New issues on `zevet@version` first seen since `since`: { seen, newIssues }. `run(args)` returns parsed `sentry … --json`. */
-export function readSentry(version, since, run) {
-  let seen = true;
-  try { run(["release", "view", `masora/zevet@${version}`]); } catch { seen = false; }
-  const list = run(["issue", "list", SENTRY_PROJECT, "--query", `release:zevet@${version}`, "--period", "14d", "--limit", "200"]);
-  const rows = Array.isArray(list) ? list : list.data || [];
-  return { seen, newIssues: rows.filter((i) => i.firstSeen && new Date(i.firstSeen) >= since).length };
 }

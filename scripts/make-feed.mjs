@@ -155,7 +155,7 @@ if (process.argv[2] === "--sign-only") {
 // that changed only desktop/'s payload files is published as a payload instead: every running app takes
 // it without an installer (desktop/payload-swap.js says when).
 //
-//   node scripts/make-feed.mjs payload --out <staging> [--channel canary] [--have FILE]
+//   node scripts/make-feed.mjs payload --out <staging> [--channel stable] [--have FILE]
 //        [--test-key FILE] [--tree DIR --build X.Y.Z]
 //
 // Stages desktop/'s payload tree (or --tree), then runs desktop-kit's publish-payload.mjs once per platform.
@@ -167,7 +167,7 @@ if (process.argv[2] === "payload") {
   const build = arg("--build", JSON.parse(readFileSync(path.join(ROOT, "desktop", "package.json"), "utf8")).version);
   const out = arg("--out");
   if (!out) {
-    console.error("usage: node scripts/make-feed.mjs payload --out <staging dir> [--channel canary] [--have FILE] [--test-key FILE] [--tree DIR --build X.Y.Z]");
+    console.error("usage: node scripts/make-feed.mjs payload --out <staging dir> [--channel stable] [--have FILE] [--test-key FILE] [--tree DIR --build X.Y.Z]");
     process.exit(2);
   }
   const { pem, keyId } = signer();
@@ -176,7 +176,7 @@ if (process.argv[2] === "payload") {
   const publisher = path.join(ROOT, "desktop", "node_modules", "@masora", "desktop-kit", "bin", "publish-payload.mjs");
   for (const platform of ["win-x64", "mac-arm64"]) {
     const r = spawnSync(process.execPath, [
-      publisher, "--app", "zevet", "--channel", arg("--channel", "canary"), "--platform", platform,
+      publisher, "--app", "zevet", "--channel", arg("--channel", "stable"), "--platform", platform,
       "--build", build, "--seq", String(config.seqOf(build)), "--schema-head", "0", "--shell-min", String(config.SHELL_VERSION),
       "--tree", tree, "--out", out, "--key-env", "ZEVET_PAYLOAD_SIGNING_KEY", "--key-id", keyId, ...(arg("--have") ? ["--have", arg("--have")] : []),
     ], { encoding: "utf8", windowsHide: true, env });

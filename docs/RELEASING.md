@@ -18,11 +18,12 @@ One command does everything below (§0-§7 and "Deploying the hub") and decides 
 version (above every tag AND the live feed), and whether the hub needs a deploy (`board/`, `hub/`, `client/`,
 `editor/` changed). It runs the gate, bumps, re-signs the client manifest, rebuilds a stale board bundle, commits,
 tags, pushes, waits for `build.yml` in the foreground, checks the exe's Authenticode, uploads installers (feed last,
-shell only), repoints the Caddy links in place, publishes the payload canary -> reads it back over HTTPS and records the canary
-time, then STOPS. `ship-watch` resumes the tag with `--promote` once the soak gate passes (4 h on canary, no new
-Sentry issues for `zevet@<version>` in masora/electron; `--min-hours`, `--max-new-issues`, `--allow-unseen`), or
-`ship --now` skips the soak for an urgent fix. Promotion then reads stable back, deploys the hub and checks `/healthz` + `/version`, hashes the served installers, and
+shell only), repoints the Caddy links in place, publishes the payload to the one feed every install reads (stable),
+reads it back over HTTPS, deploys the hub and checks `/healthz` + `/version`, hashes the served installers, and
 appends the D-record to `DECISIONS.md`. Docs, tests and scripts alone are not a release.
+
+**One channel.** There is no canary, no soak and no promote step: a release goes straight to the feed every install
+reads, Andrew's included, so the gate in the release step is the only check before everyone gets it.
 
 **Resumable.** Every step asks "is this already done?" first (tag on origin, run green, installers on the host,
 Caddyfile names the version, pulse carries the build on both platforms, hub marker, D-record on main) and skips.
@@ -331,12 +332,10 @@ Installers are still built for every tag (new downloads); only the feed decides 
 ```
 npm run icon --prefix desktop                    # the tree includes build/icon.png
 export ZEVET_UPDATE_SIGNING_KEY=...              # the same key as the feed (step 3)
-node scripts/make-feed.mjs payload --out ./payload-0.2.89 [--channel canary] [--have hashes.txt]
+node scripts/make-feed.mjs payload --out ./payload-0.2.89 [--channel stable] [--have hashes.txt]
 ```
 
-Default channel is `canary`; an install follows it when `<payload root>/channel` says `canary`
-(or `ZEVET_PAYLOAD_CHANNEL=canary`), otherwise it follows `stable`. Promote by re-running the same
-build with `--channel stable` after a day without a revert event. The command stages the tree,
+There is one channel, `stable`, which every install follows. `npm run ship` runs this itself. The command stages the tree,
 publishes it for `win-x64` and `mac-arm64` with desktop-kit's `bin/publish-payload.mjs`, and writes the
 `p/` layout: `p/b/<aa>/<sha>` (brotli blobs), `p/m/<sha>.json` (manifests), and one
 `p/zevet/<channel>/<platform>/pulse.json` per platform. `--have` lists blob hashes already on the host

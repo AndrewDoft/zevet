@@ -2,11 +2,10 @@
 // `npm run ship` — one command that does a whole zevet release from origin/main. It is
 // docs/RELEASING.md as code, and every trap that document records is a check here.
 //
-//   node scripts/ship.mjs [--dry-run] [--notes "one short sentence"] [--promote | --now | --skip-soak]
+//   node scripts/ship.mjs [--dry-run] [--notes "one short sentence"]
 //
-// Canary before stable: a plain run ships up to the canary and stops. scripts/ship-watch.mjs resumes the tag
-// with --promote once the soak gate passes (ship-lib decideSoak: time on canary + no new Sentry issues).
-// --now / --skip-soak is the urgent-fix escape hatch: the same run goes on to stable.
+// One channel: a release goes straight to the feed every install reads. There is no canary, no soak and no
+// promote step; the gate in the release step is the only check before everyone gets it.
 //
 // It decides everything itself: shell vs payload from the diff since the last release tag (ship-lib
 // classify), the next version, whether the hub needs a deploy. Then, each step skipping what is already
@@ -17,9 +16,7 @@
 //   installers  signature check, upload the installers                 (every release: new downloads)
 //   installer feed  signed zevet-latest.json, uploaded LAST            (shell release only)
 //   stable links    Caddy: Zevet-Setup.exe / Zevet.dmg -> this version, in place
-//   payload canary  payload to the canary channel, then read back over HTTPS
-//   canary soak     records WHEN the canary went live (facts.json) — and a plain run STOPS here
-//   payload stable  promote canary -> stable, then read back over HTTPS   (only with --promote / --now)
+//   payload     the payload to the stable channel, then read back over HTTPS
 //   hub         tarball over /srv/zevet, restart, /healthz + /version  (board/hub/client changed)
 //   verify      the served installers hash to the built ones; Authenticode; the feed
 //   D-record    the release record in DECISIONS.md, pushed to main
@@ -29,7 +26,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { brotliDecompressSync } from "node:zlib";
@@ -49,10 +46,6 @@ const BOX = ["compute", "ssh", "masora-app", "--project", "masora-production", "
 const DL = "/srv/masora/downloads";
 export const LOCK = path.join(tmpdir(), "zevet-ship.lock");
 export const workDir = (version) => path.join(tmpdir(), "zevet-ship", version);
-/** When the canary went live, from the facts file ship keeps per version ("" until recorded). */
-export function readCanaryAt(version) {
-  try { return JSON.parse(readFileSync(path.join(workDir(version), "facts.json"), "utf8")).canaryAt || ""; } catch { return ""; }
-}
 export const exeName = (v) => `zevet-${v}-windows-x64-setup.exe`;
 export const dmgName = (v) => `zevet-${v}-macos-arm64.dmg`;
 
@@ -115,11 +108,6 @@ export function realIo({ log = console.log } = {}) {
         if (!pem.includes("PRIVATE KEY")) throw new Error("update-signing-key.ps1 did not return a key");
       }
       return pem;
-    },
-    /** `sentry … --json`, parsed (the CLI is logged in on the runner). */
-    sentry(args) {
-      const r = run("sentry", [...args, "--json"], { env: { PATH: `${process.env.PATH}${path.delimiter}${path.join(homedir(), ".local", "bin")}` } });
-      return JSON.parse(r.stdout);
     },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   };
@@ -345,35 +333,6 @@ export function buildSteps(ctx) {
         io.ssh(`set -e\nmv /tmp/zevet-${v}-* ${DL}/\nchmod 644 ${DL}/zevet-${v}-*\nls -la ${DL}/zevet-${v}-*\n`);
       },
     },
-    {
-      name: "payload canary",
-      plan: () => "stage the payload tree, upload new blobs, manifests, then the canary pulses; read back over HTTPS",
-      done: () => channelDone("canary"),
-      async run() {
-        const wt = at(tag);
-        const out = stage();
-        rmSync(out, { recursive: true, force: true });
-        mkdirSync(out, { recursive: true });
-        io.run("node", ["scripts/make-feed.mjs", "payload", "--out", out, "--channel", "canary"], { cwd: wt, env: keyEnv(io), stream: true });
-        const blobs = walk(path.join(out, "p", "b")).map((f) => `p/b/${f}`);
-        const have = await pool(blobs, 8, (f) => okHead(`${BASE}/${f}`));
-        const fresh = blobs.filter((_, i) => !have[i]);
-        ctx.facts.newBlobs = fresh.length;
-        ctx.facts.newBytes = fresh.reduce((n, f) => n + statSync(path.join(out, f)).size, 0);
-        // bytes before pointer: blobs and manifests, then the pulses (RELEASING.md §7)
-        upload("ship-bytes.tgz", out, [...fresh, ...walk(path.join(out, "p", "m")).map((f) => `p/m/${f}`)]);
-        upload("ship-pulses.tgz", out, PLATFORMS.map((p) => `p/zevet/canary/${p}/pulse.json`));
-        ctx.facts.canary = await verifyPayload(io, "canary", { expectBuild: v, verify: verifyPulse });
-      },
-    },
-    {
-      name: "canary soak",
-      plan: () => "record the canary time (the soak clock) in facts.json",
-      done: () => Boolean(ctx.facts.canaryAt),
-      run() { ctx.facts.canaryAt = new Date().toISOString(); },
-    },
-    // After the soak: an installer reaches every user the moment its feed moves, so a shell
-    // release waits for the canary gate like the payload does (update-rollback.js is the net).
     ...(shell ? [{
       name: "installer feed",
       plan: () => `sign zevet-latest.json for ${v}, upload it last`,
@@ -423,27 +382,23 @@ echo reloaded
       },
     },
     {
-      name: "payload stable",
-      plan: () => "promote canary -> stable with publish-payload.mjs, upload the pulses, read back over HTTPS",
+      name: "payload",
+      plan: () => "stage the payload tree, upload new blobs, manifests, then the stable pulses; read back over HTTPS",
       done: () => channelDone("stable"),
       async run() {
         const wt = at(tag);
         const out = stage();
-        // A resume has no staging directory: rebuild the canary half of it from what the host serves.
-        const canary = await pulseState(io, "canary", verifyPulse);
-        for (const plat of PLATFORMS) {
-          const pulse = path.join(out, "p", "zevet", "canary", plat, "pulse.json");
-          mkdirSync(path.dirname(pulse), { recursive: true });
-          writeFileSync(pulse, canary[plat].raw);
-          const m = await io.https(`${BASE}/p/m/${canary[plat].manifest}.json`);
-          mkdirSync(path.join(out, "p", "m"), { recursive: true });
-          writeFileSync(path.join(out, "p", "m", `${canary[plat].manifest}.json`), m.body);
-        }
-        const kit = path.join(wt, "desktop", "node_modules", "@masora", "desktop-kit", "bin", "publish-payload.mjs");
-        for (const plat of PLATFORMS) {
-          io.run("node", [kit, "promote", "--app", "zevet", "--platform", plat, "--from", "canary", "--to", "stable", "--out", out, "--key-env", "ZEVET_PAYLOAD_SIGNING_KEY", "--key-id", keyId()], { cwd: wt, env: keyEnv(io), stream: true });
-        }
-        upload("ship-stable.tgz", out, PLATFORMS.map((p) => `p/zevet/stable/${p}/pulse.json`));
+        rmSync(out, { recursive: true, force: true });
+        mkdirSync(out, { recursive: true });
+        io.run("node", ["scripts/make-feed.mjs", "payload", "--out", out, "--channel", "stable"], { cwd: wt, env: keyEnv(io), stream: true });
+        const blobs = walk(path.join(out, "p", "b")).map((f) => `p/b/${f}`);
+        const have = await pool(blobs, 8, (f) => okHead(`${BASE}/${f}`));
+        const fresh = blobs.filter((_, i) => !have[i]);
+        ctx.facts.newBlobs = fresh.length;
+        ctx.facts.newBytes = fresh.reduce((n, f) => n + statSync(path.join(out, f)).size, 0);
+        // bytes before pointer: blobs and manifests, then the pulses (RELEASING.md §7)
+        upload("ship-bytes.tgz", out, [...fresh, ...walk(path.join(out, "p", "m")).map((f) => `p/m/${f}`)]);
+        upload("ship-pulses.tgz", out, PLATFORMS.map((p) => `p/zevet/stable/${p}/pulse.json`));
         ctx.facts.stable = await verifyPayload(io, "stable", { expectBuild: v, verify: verifyPulse });
       },
     },
@@ -547,7 +502,6 @@ async function main() {
   const argv = process.argv.slice(2);
   const dryRun = argv.includes("--dry-run");
   const flag = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
-  const promote = ["--promote", "--now", "--skip-soak"].some((f) => argv.includes(f));
   const io = realIo();
   const log = (s) => console.log(s);
 
@@ -556,7 +510,7 @@ async function main() {
   try {
     io.git(["fetch", "-q", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
     const feed = JSON.parse((await io.https(`${BASE}/zevet-latest.json`)).body.toString("utf8")).version;
-    const d = decide(io, { feed, soaking: readCanaryAt });
+    const d = decide(io, { feed });
     if (d.action === "none") { log(`ship: nothing to ship — ${d.reason}`); return; }
     const ctx = {
       io, d, version: d.version, tag: d.tag || `v${d.version}`, root: ROOT, notes: flag("--notes"), facts: {},
@@ -569,9 +523,8 @@ async function main() {
     if (d.shell.length) log(`  shell files: ${d.shell.slice(0, 8).join(", ")}${d.shell.length > 8 ? ", …" : ""}`);
     log(`  payload files: ${d.payload.length}, hub files: ${d.hubFiles.length}`);
     const steps = buildSteps(ctx);
-    const soak = steps.findIndex((s) => s.name === "canary soak");
-    await runSteps(promote ? steps : steps.slice(0, soak + 1), ctx, { dryRun, log });
-    log(dryRun ? "ship: dry run, nothing changed" : promote ? `ship: ${d.version} is out` : `ship: ${d.version} is on canary; ship-watch promotes it when the soak gate passes (or run with --now)`);
+    await runSteps(steps, ctx, { dryRun, log });
+    log(dryRun ? "ship: dry run, nothing changed" : `ship: ${d.version} is out`);
   } finally { release(); }
 }
 
