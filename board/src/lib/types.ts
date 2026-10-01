@@ -67,6 +67,8 @@ export interface ConsoleEntry {
   agent: string;
   /** Zevet-routed consoles: the model that answered the latest turn. */
   route?: string;
+  /** ...and why the router chose it ("edit → Codex Luna (tier 1, seed 3/4)"). */
+  routeWhy?: string;
   /** The flat view: what classifyAgentPayloadLine produced, plus the process's
    *  own stderr.
    *

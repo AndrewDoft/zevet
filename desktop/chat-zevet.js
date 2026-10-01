@@ -22,12 +22,12 @@ function turnsOf(messages) {
   return out;
 }
 
-function createZevetChat({ inner, ladder }) {
+function createZevetChat({ inner, ladder, isPrivate }) {
   const via = (evt) => inner[evt && evt.agent];
   return {
     id: "zevet-router",
     agent: "zevet",
-    trainsOnPrompts: false, // OPEN_MODELS leaves the ones that may train out
+    trainsOnPrompts: false, // the router keeps Muse (which may train) out of private folders and drops the brief for it
     replyOf: (p, evt) => (via(evt) ? via(evt).replyOf(p) : ""),
     endsTurn: (p, evt) => Boolean(via(evt) && via(evt).endsTurn(p)),
     open({ chat, mcpConfig, mode, effort, folder, env, onEvent }) {
@@ -35,6 +35,7 @@ function createZevetChat({ inner, ladder }) {
         id: chat.id,
         onEvent,
         ladder,
+        isPrivate: isPrivate ? () => isPrivate(folder) : undefined,
         history: turnsOf(chat.messages),
         start: (rung, extra) =>
           inner[rung.agent].open({

@@ -57,7 +57,7 @@ export function ModelChoice({
   running,
 }: {
   agents: UsableAgent[];
-  running?: { id: string; name: string };
+  running?: { id: string; name: string; title?: string };
 }) {
   const launchModel = useBoard((s) => s.launchModel);
   const active = useBoard(selectActiveConsole);
@@ -209,7 +209,7 @@ export function ModelChoice({
     >
       <ModelSelectorTrigger className="w-full justify-between" variant="outline">
         {running ? (
-          <span data-slot="model-selector-value" className="truncate">
+          <span data-slot="model-selector-value" className="truncate" title={running.title || undefined}>
             {running.name}
           </span>
         ) : (

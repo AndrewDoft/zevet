@@ -80,6 +80,7 @@
       "chat-claude.js",
       "chat-cli.js",
       "chat-zevet.js",
+      "repo-privacy.js",
       "sentry.js",
       "user-report.js",
       "setup.html",

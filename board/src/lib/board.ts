@@ -1948,7 +1948,10 @@ function ingressAgentEvent(evt: AgentEvent): void {
        router tags each event with the one that produced it. */
     const said = evt as AgentEvent & { agent?: string; model?: string };
     const zp = evt.payload as { type?: string; label?: string } | undefined;
-    if (zp && zp.type === "zevet_route") c.route = String(zp.label || "");
+    if (zp && zp.type === "zevet_route") {
+      c.route = String(zp.label || "");
+      c.routeWhy = String((zp as { reason?: string }).reason || "");
+    }
     c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: said.agent || c.agent, localRoot, model: said.model || c.model });
     c.draft = draftAfter(c.draft ?? "", evt.payload);
     // "zevet:auto" is not a model: a routed run's limit is the router's to

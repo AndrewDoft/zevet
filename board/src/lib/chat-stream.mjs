@@ -103,15 +103,16 @@ export function chatEvent(thread, evt) {
   /* A routed thread (agent "zevet") speaks several CLIs' dialects; the router
      tags each event with the one that produced it, as board.ts does for Code. */
   const route = p.type === "zevet_route" ? String(p.label || "") : thread.route;
+  const routeWhy = p.type === "zevet_route" ? String(p.reason || "") : thread.routeWhy;
   const transcript = appendAgentPayload(thread.transcript, p, { agent: evt.agent || thread.agent, model: evt.model || thread.model || "" });
   let usage = thread.usage;
   const u = usageOf(p);
   if (u) usage = u;
-  if (p.type === "result") return { ...thread, transcript, draft: "", busy: false, usage, route };
-  if (p.type === "assistant") return { ...thread, transcript, draft: "", usage, route };
+  if (p.type === "result") return { ...thread, transcript, draft: "", busy: false, usage, route, routeWhy };
+  if (p.type === "assistant") return { ...thread, transcript, draft: "", usage, route, routeWhy };
   /* `/clear` lands as `conversation_reset`: the transcript empties (transcript.mjs)
      and any streamed draft must go with it, or the screen keeps old tokens. */
-  return transcript === thread.transcript && route === thread.route ? thread : { ...thread, transcript, usage, draft: "", route };
+  return transcript === thread.transcript && route === thread.route && routeWhy === thread.routeWhy ? thread : { ...thread, transcript, usage, draft: "", route, routeWhy };
 }
 
 /** A failure to even start the turn, drawn where the reply would be. */

@@ -188,8 +188,18 @@ export function appendAgentPayload(state, payload, opts = {}) {
   if (payload.type === "zevet_route") {
     const s = openAssistant(state);
     const messages = s.messages.slice();
-    messages[s.openIndex] = { ...messages[s.openIndex], metadata: { custom: { via: String(payload.label || payload.model || "") } } };
-    return { ...s, messages };
+    const to = String(payload.label || payload.model || "");
+    messages[s.openIndex] = { ...messages[s.openIndex], metadata: { custom: { via: to } } };
+    /* The router moves between models by itself, so the "switched from X to Y"
+       rule (appendUserText, which only sees "Zevet") cannot see it: it is drawn
+       here, on the prompt this turn answered, when the routed model changed. */
+    const from = s.routed || "";
+    const at = s.openIndex - 1;
+    if (from && to && from !== to && at >= 0 && messages[at].role === "user") {
+      const meta = messages[at].metadata || {};
+      messages[at] = { ...messages[at], metadata: { ...meta, custom: { ...(meta.custom || {}), switched: { from, to } } } };
+    }
+    return { ...s, messages, routed: to || from };
   }
   const agent = opts.agent || "claude";
   const root = opts.localRoot || null;
