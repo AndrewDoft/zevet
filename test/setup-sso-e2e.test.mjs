@@ -90,6 +90,7 @@ describe("GitHub sign-in, real Electron app + real hub + faked GitHub", { skip: 
   test("Create + GitHub: browser URL captured, poll completes, board is reachable as owner", async () => {
     drive("launch");
     try {
+      drive("eval", `showOther(true)`);
       drive("type", "#teamName", "Acme SSO Co");
       assert.deepEqual(drive("opened"), [], "no browser before anything is clicked");
 
@@ -129,6 +130,7 @@ describe("Google sign-in, real Electron app + real hub + faked Google", { skip: 
     // comment), which is exactly "a second machine" for this purpose.
     drive("launch");
     try {
+      drive("eval", `showOther(true)`);
       drive("type", "#teamName", "Acme SSO Google Co");
 
       drive("click", "#google");

@@ -573,6 +573,11 @@ why revoking somebody now writes them to a block list rather than only deleting 
 Deleting alone would let the domain rule re-admit them on their next sign-in. Leave the
 variable unset and only invited accounts get in.
 
+**`ZEVET_TEAM_DOMAINS=usemasora.com,metrodora.ai`** maps Workspace domains to the default team: a Google sign-in whose `hd`
+claim AND verified email are both on the list joins with no invite, team name or key (the setup window's Google button names
+no team). Other domains keep invite/key. A door, not a gate — set it instead of `ZEVET_GOOGLE_DOMAIN`, not with it (the hub
+refuses to start with both).
+
 `ZEVET_GOOGLE_OWNER=<login>` reserves first claim of the hub, exactly as
 `ZEVET_GITHUB_OWNER` does. The first successful sign-in by *either* provider becomes the
 owner if there is not one already.

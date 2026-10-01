@@ -399,7 +399,7 @@ export class Accounts {
    * `ZEVET_GITHUB_OWNER` closes it: set it, and only that login can claim the
    * hub, no matter who reaches it first.
    */
-  mayEnter(user, { requiredOwner = "", domain = "" } = {}) {
+  mayEnter(user, { requiredOwner = "", domain = "", domains = [] } = {}) {
     const me = {
       provider: provider(user),
       login: String(user.login || "").toLowerCase(),
@@ -472,6 +472,18 @@ export class Accounts {
      */
     if (me.provider === "google" && domain && String(user.hd || "").toLowerCase() === String(domain).toLowerCase()) {
       return { ok: true, first: false, byDomain: true };
+    }
+
+    /* ⚠️ THE MAPPED-DOMAINS DOOR (ZEVET_TEAM_DOMAINS): the same door for a LIST
+     * of domains, and stricter because nothing upstream gated on `hd`. BOTH the
+     * `hd` claim (a Workspace Google administers) AND a verified email on a
+     * mapped domain must hold — a personal gmail has no `hd`, and an unverified
+     * address is dropped by `verifiedEmails`. */
+    if (me.provider === "google" && domains.length) {
+      const onList = (d) => Boolean(d) && domains.includes(d);
+      if (onList(String(user.hd || "").toLowerCase()) && me.emails.some((e) => onList(e.split("@")[1]))) {
+        return { ok: true, first: false, byDomain: true };
+      }
     }
 
     // `display(this.state.owner)`, not `this.owner` — the latter is the bare

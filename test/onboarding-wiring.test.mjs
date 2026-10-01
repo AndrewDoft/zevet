@@ -132,3 +132,15 @@ describe("Settings copy is provider-neutral", () => {
     assert.doesNotMatch(s, /"GitHub sign-in" \+ \(c\.hasSecret/);
   });
 });
+
+describe("Google first: a mapped-domain person never sees a team or a key", () => {
+  test("the team/key/GitHub form starts closed and Google then names no team", () => {
+    assert.match(setup, /<div id="other" hidden>/);
+    assert.match(setup, /var direct = \$\("other"\)\.hidden;\s*var team = direct \? "" : await teamFor\(\);/);
+  });
+
+  test("a refusal opens the form; a success closes it", () => {
+    assert.match(setup, /if \(direct\) showOther\(true\);/);
+    assert.match(setup, /function signedIn\(done\) \{[^}]*showOther\(false\);/);
+  });
+});

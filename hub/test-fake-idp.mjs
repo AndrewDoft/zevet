@@ -32,7 +32,9 @@ export function makeFakeIdpFetch({ googleClientId }) {
   // (see its own header comment on why that is safe) — this fake stands in
   // for that TLS fetch, not for the signature, so an unsigned payload is
   // exactly as trusted as the real thing would be at this call site.
-  function fakeIdToken() {
+  // A code of `claims:<base64url JSON>` overrides claims, so a test can be any Google account it likes.
+  function fakeIdToken(code = "") {
+    const extra = code.startsWith("claims:") ? JSON.parse(Buffer.from(code.slice(7), "base64url").toString()) : {};
     const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
     const payload = Buffer.from(
       JSON.stringify({
@@ -42,6 +44,7 @@ export function makeFakeIdpFetch({ googleClientId }) {
         email: "zevet-e2e-google@example.com",
         email_verified: true,
         exp: Math.floor(Date.now() / 1000) + 3600,
+        ...extra,
       }),
     ).toString("base64url");
     return `${header}.${payload}.fake-signature`;
@@ -80,7 +83,7 @@ export function makeFakeIdpFetch({ googleClientId }) {
       return jsonRes(200, list.map((email, i) => ({ email, primary: i === 0, verified: true, visibility: null })));
     }
     if (u === "https://oauth2.googleapis.com/token") {
-      return jsonRes(200, { id_token: fakeIdToken() });
+      return jsonRes(200, { id_token: fakeIdToken(new URLSearchParams(String(init.body)).get("code") || "") });
     }
 
     return fetch(url, init);

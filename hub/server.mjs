@@ -85,6 +85,9 @@ const GOOGLE_CLIENT_SECRET = process.env.ZEVET_GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT = process.env.ZEVET_GOOGLE_REDIRECT || "";
 const GOOGLE_DOMAIN = process.env.ZEVET_GOOGLE_DOMAIN || "";
 const GOOGLE_OWNER = process.env.ZEVET_GOOGLE_OWNER || "";
+/** ZEVET_TEAM_DOMAINS=usemasora.com,metrodora.ai — Workspace domains whose people join the DEFAULT team on a Google
+ *  sign-in with no invite and no team name. A door, not a gate: invited people on any other domain still get in. */
+const TEAM_DOMAINS = [...new Set((process.env.ZEVET_TEAM_DOMAINS || "").toLowerCase().split(/[\s,]+/).map((d) => d.replace(/^@/, "")).filter(Boolean))];
 
 /** See hub/test-fake-idp.mjs's own header: undefined (real `fetch`, always)
  *  unless ZEVET_TEST_HOOKS=1, which no real deployment or install ever sets. */
@@ -196,7 +199,13 @@ if (GOOGLE_CLIENT_ID && !GOOGLE_ON) {
   process.exit(1);
 }
 
-if (GOOGLE_ON && !GOOGLE_DOMAIN) {
+if (GOOGLE_DOMAIN && TEAM_DOMAINS.length) {
+  // GOOGLE_DOMAIN gates EVERY sign-in on one hd, which would refuse the second mapped domain at the door.
+  console.error("zevet: ZEVET_GOOGLE_DOMAIN and ZEVET_TEAM_DOMAINS are both set. Use ZEVET_TEAM_DOMAINS alone.");
+  process.exit(1);
+}
+
+if (GOOGLE_ON && !GOOGLE_DOMAIN && !TEAM_DOMAINS.length) {
   // Not fatal — a hub CAN run Google sign-in off the allowlist alone — but it
   // is almost never what was meant, and the symptom is a teammate being
   // refused with "not on this hub's list" after a flawless sign-in.
@@ -1461,7 +1470,11 @@ async function handleRequest(req, res) {
       return googlePage(res, 200, `Linked ${who.login}. You can close this tab and go back to zevet.`);
     }
 
-    const may = acc.mayEnter(who, { requiredOwner: domain ? GOOGLE_OWNER : "", domain });
+    const may = acc.mayEnter(who, {
+      requiredOwner: domain ? GOOGLE_OWNER : "",
+      domain,
+      domains: (pair.team || DEFAULT_TEAM) === DEFAULT_TEAM ? TEAM_DOMAINS : [],
+    });
     if (!may.ok) {
       pair.error = may.error;
       authFailed(req, url);
@@ -1470,7 +1483,7 @@ async function handleRequest(req, res) {
 
     const sess = acc.signIn(who);
     console.log(
-      `zevet: ${sess.owner ? "OWNER " : ""}sign-in by ${sess.login}${may.byDomain ? ` (${domain} Workspace)` : ""}${pair.team && pair.team !== DEFAULT_TEAM ? ` (team ${pair.team})` : ""}`,
+      `zevet: ${sess.owner ? "OWNER " : ""}sign-in by ${sess.login}${may.byDomain ? ` (${who.hd} Workspace)` : ""}${pair.team && pair.team !== DEFAULT_TEAM ? ` (team ${pair.team})` : ""}`,
     );
     notifyPeopleChanged(pair.team || DEFAULT_TEAM);
 
