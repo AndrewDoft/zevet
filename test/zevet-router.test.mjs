@@ -199,11 +199,14 @@ test("privacy: open models and muse are never candidates in a private folder, in
 
 test("privacy: what makes a folder private", async () => {
   const P = require("../desktop/repo-privacy.js");
-  const no = () => assert.fail("must not ask GitHub");
+  let asked = 0;
+  const no = async () => { asked++; return { ok: false }; };
   const git = (url) => ({ remote: async () => url, fetch: no });
   // masora2 anywhere in the path: private without asking git or GitHub.
   assert.equal(await P.isPrivate("C:/dev/GitHub/masora2/app", git("https://github.com/o/public.git")), true);
   assert.equal(await P.isPrivate("/home/x/Masora2", git("")), true);
+  assert.equal(await P.isPrivate("C:/dev/masora2", { remote: async () => { asked++; return ""; }, fetch: no }), true);
+  assert.equal(asked, 0, "a masora2 path is decided before git or GitHub is asked");
   // no remote, a non-GitHub remote, no dir: private.
   assert.equal(await P.isPrivate("/tmp/a", git("")), true);
   assert.equal(await P.isPrivate("/tmp/b", git("https://gitlab.com/o/r.git")), true);
@@ -214,6 +217,7 @@ test("privacy: what makes a folder private", async () => {
     return { ok: status === 200, status, json: async () => body };
   };
   assert.equal(await P.isPrivate("/tmp/c", { remote: async () => "git@github.com:o/pub.git", fetch: api(200, { private: false }) }), false);
+  assert.equal(await P.isPrivate("/tmp/pr", { remote: async () => "https://github.com/o/pub.git", fetch: api(200, { private: true }) }), true, "a 200 that says private is private");
   assert.equal(await P.isPrivate("/tmp/d", { remote: async () => "https://github.com/o/pub", fetch: api(404, {}) }), true, "an anonymous 404 is how GitHub says private");
   assert.equal(await P.isPrivate("/tmp/e", { remote: async () => "https://github.com/o/pub.git", fetch: async () => { throw new Error("offline"); } }), true, "unknown is private");
   assert.equal(P.githubRepo("https://github.com/AndrewDoft/zevet.git"), "AndrewDoft/zevet");
