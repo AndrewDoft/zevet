@@ -404,6 +404,9 @@ describe("step checks decide 'already done'", () => {
     const n = names({ kind: "shell" });
     assert.ok(n.indexOf("installers") < n.indexOf("installer feed") && n.indexOf("installer feed") < n.indexOf("stable links"));
     assert.ok(n.indexOf("stable links") < n.indexOf("payload") && n.at(-1) === "D-record");
+    // 0.2.105: the payload swapped and reloaded the board a minute before the hub served the new one.
+    const h = names({ hub: true });
+    assert.ok(h.indexOf("hub") < h.indexOf("payload"), "the hub must serve the new board before any client swaps to the payload");
   });
 });
 

@@ -381,27 +381,8 @@ echo reloaded
         if (!out.includes("reloaded")) throw new Error(`Caddy: ${out}`);
       },
     },
-    {
-      name: "payload",
-      plan: () => "stage the payload tree, upload new blobs, manifests, then the stable pulses; read back over HTTPS",
-      done: () => channelDone("stable"),
-      async run() {
-        const wt = at(tag);
-        const out = stage();
-        rmSync(out, { recursive: true, force: true });
-        mkdirSync(out, { recursive: true });
-        io.run("node", ["scripts/make-feed.mjs", "payload", "--out", out, "--channel", "stable"], { cwd: wt, env: keyEnv(io), stream: true });
-        const blobs = walk(path.join(out, "p", "b")).map((f) => `p/b/${f}`);
-        const have = await pool(blobs, 8, (f) => okHead(`${BASE}/${f}`));
-        const fresh = blobs.filter((_, i) => !have[i]);
-        ctx.facts.newBlobs = fresh.length;
-        ctx.facts.newBytes = fresh.reduce((n, f) => n + statSync(path.join(out, f)).size, 0);
-        // bytes before pointer: blobs and manifests, then the pulses (RELEASING.md §7)
-        upload("ship-bytes.tgz", out, [...fresh, ...walk(path.join(out, "p", "m")).map((f) => `p/m/${f}`)]);
-        upload("ship-pulses.tgz", out, PLATFORMS.map((p) => `p/zevet/stable/${p}/pulse.json`));
-        ctx.facts.stable = await verifyPayload(io, "stable", { expectBuild: v, verify: verifyPulse });
-      },
-    },
+    // The hub before the payload: a client swaps to the new payload within minutes and reloads its board from the hub;
+    // a hub still on the old board then shows the old UI under the new build until a manual reload (0.2.105).
     ...(d.hub ? [{
       name: "hub",
       plan: () => `git archive ${tag}, extract over /srv/zevet in place, restart, check /healthz and /version`,
@@ -432,6 +413,27 @@ docker restart masora-zevet-hub-1
         ctx.facts.hubAfter = got;
       },
     }] : []),
+    {
+      name: "payload",
+      plan: () => "stage the payload tree, upload new blobs, manifests, then the stable pulses; read back over HTTPS",
+      done: () => channelDone("stable"),
+      async run() {
+        const wt = at(tag);
+        const out = stage();
+        rmSync(out, { recursive: true, force: true });
+        mkdirSync(out, { recursive: true });
+        io.run("node", ["scripts/make-feed.mjs", "payload", "--out", out, "--channel", "stable"], { cwd: wt, env: keyEnv(io), stream: true });
+        const blobs = walk(path.join(out, "p", "b")).map((f) => `p/b/${f}`);
+        const have = await pool(blobs, 8, (f) => okHead(`${BASE}/${f}`));
+        const fresh = blobs.filter((_, i) => !have[i]);
+        ctx.facts.newBlobs = fresh.length;
+        ctx.facts.newBytes = fresh.reduce((n, f) => n + statSync(path.join(out, f)).size, 0);
+        // bytes before pointer: blobs and manifests, then the pulses (RELEASING.md §7)
+        upload("ship-bytes.tgz", out, [...fresh, ...walk(path.join(out, "p", "m")).map((f) => `p/m/${f}`)]);
+        upload("ship-pulses.tgz", out, PLATFORMS.map((p) => `p/zevet/stable/${p}/pulse.json`));
+        ctx.facts.stable = await verifyPayload(io, "stable", { expectBuild: v, verify: verifyPulse });
+      },
+    },
     {
       name: "verify",
       recheck: false,
