@@ -1552,3 +1552,14 @@ launched by Zevet getting the hub hooks via `--settings` (`agent-console.js`), a
 - **Payload:** stable, verified over HTTPS; seq 2102 on both platforms. Manifests win `fc82582f…`, mac `624e91b0…`. Delta: 2 new blob(s) uploaded. 75 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-046 — Shipped: 0.2.103, Masora link says offline (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-01).** ? commit(s) past v0.2.102.
+
+- **Shell release.** desktop/package-lock.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.103) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.103`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `05dccc37…` (153079944 B), dmg `5dbcc7f2…` (205193107 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2103 on both platforms. Manifests win `6a795eea…`, mac `969debff…`. Delta: 0 new blob(s) uploaded. 75 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9c3446cdcdbf` -> `12f071c4e39e`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
