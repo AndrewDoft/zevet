@@ -175,7 +175,7 @@
   /* The window controls float over the top-right of the page: the rightmost
      header (the detail pane's) gets out from under them. (This used to live
      on the removed teammates column.) */
-  .detail > .pane-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
+  .detail > .pane-title { padding-right: calc(16px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)); }
   .scope { color: var(--ink-muted); font-size: 12.5px; letter-spacing: 0.02em; }
   .spacer { flex: 1 1 auto; }
 
@@ -200,7 +200,17 @@
   .shell {
     display: grid;
     grid-template-columns: var(--rail) 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
+  }
+  /* Left-side native controls (Mac traffic lights) get a row above the app.
+     Overlay bounds follow page zoom; browser tabs, fullscreen and right-side
+     controls reserve no space. Keep this row even when the rail is hidden. */
+  .shell::before {
+    content: "";
+    grid-column: 1 / -1;
+    height: min(env(titlebar-area-x, 0px), env(titlebar-area-height, 0px));
+    -webkit-app-region: drag;
   }
   .middle { display: grid; grid-template-columns: var(--tree) 1fr; min-height: 0; min-width: 0; }
   .treecol { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
@@ -1483,7 +1493,7 @@
   body[data-mode="chat"] .split[data-pane="tree"] { display: none !important; }
   body[data-mode="chat"] .chatrail { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   body[data-mode="chat"] .chatmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .chatmain-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
+  .chatmain-title { padding-right: calc(16px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)); }
   .chatmain-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chatsearch {
     display: flex; align-items: center; gap: 7px;

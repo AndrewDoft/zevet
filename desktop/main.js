@@ -709,12 +709,11 @@ function openBoard(cfg) {
     backgroundColor: PAPER, // no white flash before the page paints
     title: "zevet",
     ...iconOption,
-    // macOS gets hiddenInset, which it has always had: the traffic lights stay
-    // where a Mac user expects them and the board's own title bar absorbs the
-    // inset. Windows and Linux get a hidden bar plus an overlay we colour.
+    // Expose the native controls' bounds on Mac too, so the board can reserve
+    // their space as zoom and fullscreen change. Windows/Linux colour the overlay.
     titleBarStyle: "hidden",
     ...(process.platform === "darwin"
-      ? { titleBarStyle: "hiddenInset" }
+      ? { titleBarStyle: "hiddenInset", titleBarOverlay: true }
       : { titleBarOverlay: chromeFor("light", storedZoom()) }),
     autoHideMenuBar: true,
     webPreferences: {
