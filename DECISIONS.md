@@ -1617,3 +1617,14 @@ launched by Zevet getting the hub hooks via `--settings` (`agent-console.js`), a
 - **Hub** redeployed from the tag in place; `BUILD_ID` `9200e4e21d0e` -> `9200e4e21d0e`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-052 — Shipped: 0.2.110, Fix Mac window controls overlapping Zevet navigation (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-02).** 2 commit(s) past v0.2.109.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.110 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.110`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `84ff75e3…` (153085904 B), dmg `41f6aee3…` (205223813 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2110 on both platforms. Manifests win `9e43c99c…`, mac `b3979d1c…`. Delta: 1 new blob(s) uploaded. 77 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9200e4e21d0e` -> `81f2f9bda1ab`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
