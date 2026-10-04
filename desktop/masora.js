@@ -99,6 +99,8 @@ function readConfig() {
     // the per-repo opt-in above says nothing about chats, which have no repo.
     chat: raw.chat === true,
     member: canonicalName || canonicalEmail || legacyMember,
+    // The true account email of the stored credential (heartbeat `masora.account_email`).
+    account_email: canonicalEmail || (legacyMember.includes("@") ? legacyMember : ""),
   };
 }
 
