@@ -108,7 +108,7 @@ function hashInviteKey(key) {
  */
 const DEFAULT_PROVIDER = "github";
 
-const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null, credentials: [] });
+const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorkspace: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null, credentials: [] });
 
 /** A stored credential record, minus its `key` — what everything except
  *  /team/credentials/:id/secret itself is allowed to see. */
@@ -263,6 +263,32 @@ export class Accounts {
   setName(name) {
     this.state.name = name;
     this.#save();
+  }
+
+  /** The Masora workspace this team was opened for ("" when none): the key hub/masora-auth.mjs maps a
+   *  sign-in from Masora to a team by. */
+  get masoraWorkspace() {
+    return this.state.masoraWorkspace || "";
+  }
+
+  bindMasoraWorkspace(wid) {
+    this.state.masoraWorkspace = String(wid);
+    this.#save();
+  }
+
+  /**
+   * A person Masora vouches for (docs/contracts/cross_app_context.md "Hub sign-in"). Stored as a Google-style
+   * record keyed by email, so the same person signing in with Google later auto-links through `#byEmail`
+   * instead of becoming a second row. A person removed from THIS team stays removed (`#blocked`), and an
+   * ownerless team opens only for a Masora admin, so a member cannot become its owner by arriving first.
+   */
+  signInMasora({ sub, email, name, admin }) {
+    const login = String(email).toLowerCase();
+    const user = { provider: "google", login, id: `masora:${sub}`, display: String(name || login), emails: [login] };
+    if (this.#blocked(user)) return { ok: false, error: `${login} was removed from this team` };
+    if (!this.state.owner && !admin) return { ok: false, error: "a workspace admin has to open this team first" };
+    const r = this.signIn(user);
+    return { ok: true, token: r.token, owner: r.owner, login };
   }
 
   /** The login that set this hub up, or null if nobody has yet. */
@@ -1145,6 +1171,7 @@ export class Accounts {
         secret: typeof raw.secret === "string" ? raw.secret : "",
         name: typeof raw.name === "string" ? raw.name : "",
         domain: typeof raw.domain === "string" ? raw.domain : "",
+        masoraWorkspace: typeof raw.masoraWorkspace === "string" ? raw.masoraWorkspace : "",
         owner: raw.owner && raw.owner.login ? tag(raw.owner) : null,
         allowed: Array.isArray(raw.allowed) ? raw.allowed.filter((a) => a && a.login).map(tag) : [],
         // A block with no id blocks nobody — `samePerson` needs one — so a

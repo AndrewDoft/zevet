@@ -183,7 +183,7 @@ describe("heartbeat and requests", () => {
     assert.equal(hb.pid, process.pid);
     assert.equal(hb.install_path, "C:/zevet");
     assert.equal(hb.running, true);
-    assert.deepEqual(hb.masora, { connected: true, member_email: "a@b.co", account_email: null });
+    assert.deepEqual(hb.masora, { connected: true, member_email: "a@b.co", account_email: null, hub_email: null });
     assert.ok(Date.parse(hb.updated_at));
     r.f.stop();
     assert.equal(JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).running, false);
@@ -561,7 +561,7 @@ describe("cloud credentials file (zevet.credentials.json)", () => {
     assert.equal(r.s.url, CLOUD);
     assert.equal(r.s.member, "me@x.co");
     assert.equal(existsSync(r.credPath), false);
-    assert.deepEqual(r.hb(), { connected: true, member_email: "me@x.co", account_email: "me@x.co" });
+    assert.deepEqual(r.hb(), { connected: true, member_email: "me@x.co", account_email: "me@x.co", hub_email: null });
   });
 
   test("a trailing slash on either cloud is normalised", () => {
@@ -678,6 +678,64 @@ describe("cloud credentials file (zevet.credentials.json)", () => {
     r.f.consumeCredentials();
     assert.equal(r.hb().connected, true);
     await r.f.repair();
-    assert.deepEqual(r.hb(), { connected: false, member_email: null, account_email: null });
+    assert.deepEqual(r.hb(), { connected: false, member_email: null, account_email: null, hub_email: null });
+  });
+});
+
+describe("one login: the credentials file's hub block", () => {
+  const CLOUD = "https://app.usemasora.com";
+  const HUB = { url: `${CLOUD}/hub/`, assertion: "HUBJWT" };
+  const iso = (ms = 0) => new Date(Date.now() - ms).toISOString();
+  const hubRig = (over = {}) => {
+    const joins = [];
+    const r = rig({ joinHub: async (u, a) => (joins.push([u, a]), { ok: true }), ...over });
+    r.joins = joins;
+    writeFileSync(path.join(r.dir, "masora.json"), JSON.stringify({ runtime: "masora-cloud", cloud: CLOUD, updated_at: iso() }));
+    r.cred = (hub) => writeFileSync(path.join(r.dir, "zevet.credentials.json"), JSON.stringify({ cloud: CLOUD, token: "palct_S", kind: "connector_device", member_email: "me@x.co", issued_at: iso(1000), ...(hub ? { hub } : {}) }));
+    return r;
+  };
+  const settle = () => new Promise((res) => setTimeout(res, 20));
+
+  test("redeemed at the hub on the cloud's own origin, the trailing slash trimmed", async () => {
+    const r = hubRig();
+    r.cred(HUB);
+    assert.equal(r.f.consumeCredentials(), "connected");
+    await settle();
+    assert.deepEqual(r.joins, [[`${CLOUD}/hub`, "HUBJWT"]]);
+  });
+
+  test("a hub on another origin, over http, or with no assertion is never called", async () => {
+    for (const hub of [{ url: "https://evil.example/hub", assertion: "x" }, { url: "http://app.usemasora.com/hub", assertion: "x" }, { url: `${CLOUD}/hub`, assertion: "" }, { url: "nope", assertion: "x" }]) {
+      const r = hubRig();
+      r.cred(hub);
+      assert.equal(r.f.consumeCredentials(), "connected");
+      await settle();
+      assert.deepEqual(r.joins, [], JSON.stringify(hub));
+    }
+  });
+
+  test("no hub block: no hub call; a failing hub does not undo the connection", async () => {
+    const r = hubRig();
+    r.cred();
+    assert.equal(r.f.consumeCredentials(), "connected");
+    await settle();
+    assert.deepEqual(r.joins, []);
+    const bad = hubRig({ joinHub: async () => { throw new Error("down"); } });
+    bad.cred(HUB);
+    assert.equal(bad.f.consumeCredentials(), "connected");
+    await settle();
+    assert.equal(bad.s.token, "palct_S");
+  });
+
+  test("the heartbeat reports hub_email only once a whoami resolved a team", async () => {
+    const hb = (r) => JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).masora.hub_email;
+    const r = hubRig({ readIdentity: () => ({ email: "me@x.co" }), readHubAuth: () => ({ hub: CLOUD + "/hub", token: "t" }),
+      fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true, team: "t", teamName: "Acme", people: [] }) }) });
+    r.f.heartbeat();
+    assert.equal(hb(r), null);
+    r.cred(HUB);
+    r.f.consumeCredentials();
+    await settle();
+    assert.equal(hb(r), "me@x.co");
   });
 });
