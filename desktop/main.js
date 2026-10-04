@@ -71,6 +71,7 @@ const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
 const { resolveKnown } = require("./workspace-root.js");
+const { createApiRootLease } = require("./api-root-lease.js");
 const agentCatalogs = require("./agent-catalogs.js");
 const { createConsoleLog } = require("./console-log.js");
 const consolePersistence = require("./console-persistence.js");
@@ -3599,7 +3600,7 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
 /** Directories the control API has asked the board to start an agent in: the
  *  board's start is untrusted (knownRoot), so these -- set by main alone, for the
  *  span of one request -- are let through as the API's own `spawn` is. */
-const apiRoots = new Set();
+const apiRoots = createApiRootLease();
 bridge.handle("local:startAgent", (_e, args) => startAgentCore({ ...args, trusted: apiRoots.has(path.resolve(String((args && args.cwd) || ""))) }));
 
 /** What a reloaded board needs to rebuild a console's rail entry. `root` is
