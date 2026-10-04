@@ -20,6 +20,7 @@ import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedE
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
 import { initSentry } from "./sentry.mjs";
+import { verifyAssertion, replayGuard, parseTeamMap } from "./masora-auth.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -973,6 +974,39 @@ function createTeam(name) {
   return { ok: true, team: slug };
 }
 
+/* ── Sign in with Masora (hub/masora-auth.mjs) ───────────────────────────── */
+const MASORA_SECRET = process.env.ZEVET_MASORA_SECRET || "";
+const MASORA_TEAMS = parseTeamMap(process.env.ZEVET_MASORA_TEAMS);
+const masoraJti = replayGuard();
+
+/** {team} | {team: null} (none yet) | {error}. A team named in ZEVET_MASORA_TEAMS wins; otherwise the one opened
+ *  for that workspace. A team is never claimed by NAME: a workspace called "Masoretes" must not inherit the
+ *  team of the same name, only the operator's mapping can say they are the same. */
+function teamForMasoraWorkspace(wid) {
+  const id = String(wid).toLowerCase();
+  const mapped = MASORA_TEAMS.get(id);
+  if (mapped) {
+    const slug = resolveTeamSlug(mapped);
+    return slug ? { team: slug } : { error: `ZEVET_MASORA_TEAMS names a team that does not exist (${mapped})` };
+  }
+  for (const [slug, acc] of teamAccounts) if (acc.masoraWorkspace === id) return { team: slug };
+  return { team: null };
+}
+
+/** A new team for a workspace, named after it ("Name 2" while the name is taken), bound to it. */
+function openMasoraTeam(wid, workspace) {
+  const base = cleanTeamName(workspace) || "Workspace";
+  for (let n = 1; n <= 20; n++) {
+    const r = createTeam(n === 1 ? base : cleanTeamName(`${base} ${n}`));
+    if (r.ok) {
+      teamAccounts.get(r.team).bindMasoraWorkspace(String(wid).toLowerCase());
+      return r.team;
+    }
+    if (r.status !== 409) return null;
+  }
+  return null;
+}
+
 /** `tokenFrom`, resolved to which team (and whose Accounts) it belongs to. */
 function teamFrom(req, url) {
   const token = tokenFrom(req, url);
@@ -1921,6 +1955,45 @@ async function handleRequest(req, res) {
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
     const team = findTeam(url.searchParams.get("name"));
     return json(res, 200, team ? { exists: true, team } : { exists: false });
+  }
+
+  /**
+   * Sign in with Masora: one login for everyone. The body is a Masora-signed assertion (hub/masora-auth.mjs) that the
+   * person belongs to a Masora workspace; the hub maps the workspace to a team (ZEVET_MASORA_TEAMS for teams that
+   * predate this, else the team opened for it, else a new one named after the workspace — admins only) and
+   * signs the person in. Unauthenticated like /team/join: the assertion is the proof, and it is single use.
+   *
+   * ⚠️ THIS RESPONSE ALSO CARRIES THE MASTER SECRET, exactly as /team/join does. Do not add it elsewhere.
+   */
+  if (url.pathname === "/auth/masora" && req.method === "POST") {
+    if (!MASORA_SECRET) return json(res, 503, { error: "Masora sign-in is not configured" });
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const v = verifyAssertion(body && body.assertion, MASORA_SECRET);
+    if (!v.claims || !masoraJti.take(v.claims.jti, v.claims.exp)) {
+      authFailed(req, url);
+      return json(res, 401, { error: v.claims ? "already used" : v.error });
+    }
+    const c = v.claims;
+    const found = teamForMasoraWorkspace(c.wid);
+    if (found.error) return json(res, 409, { error: found.error });
+    let team = found.team;
+    if (!team) {
+      if (c.admin !== true) return json(res, 403, { error: "a workspace admin has to open this team first" });
+      team = openMasoraTeam(c.wid, c.workspace);
+      if (!team) return json(res, 503, { error: "could not open a team for this workspace" });
+    }
+    const acc = teamAccounts.get(team);
+    const r = acc.signInMasora({ sub: c.sub, email: c.email, name: c.name, admin: c.admin === true });
+    if (!r.ok) return json(res, 403, { error: r.error });
+    console.log(`zevet: ${r.login} signed in from Masora (team ${team})`);
+    notifyPeopleChanged(team);
+    return json(res, 200, { ok: true, token: r.token, secret: acc.secret, login: r.login, owner: r.owner, team, teamName: teamName(team, acc) });
   }
 
   /**

@@ -1585,6 +1585,38 @@ async function teamJoin(team, key) {
 
 bridge.handle("zevet:teamJoin", (_e, { team, key } = {}) => teamJoin(team, key));
 
+/* One login for everyone: Masora's signed assertion (family.js, zevet.credentials.json `hub`) in place of a team key.
+ * The hub answers like /team/join, so the same config lands: this machine cannot tell the two apart afterwards. */
+async function hubSignInFromMasora(hubUrl, assertion) {
+  try {
+    const res = await fetch(`${hubUrl}/auth/masora`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ assertion }),
+      signal: AbortSignal.timeout(15000),
+    });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      return { ok: false, error: `Server error ${res.status}` };
+    }
+    if (!res.ok || !body || !body.ok) return { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
+    const existing = readConfig() || {};
+    writeConfig({
+      ...existing,
+      hub: hubUrl,
+      secret: body.secret || existing.secret || "",
+      session: body.token,
+      actor: existing.actor || String(body.login || "").split("@")[0],
+      login: body.login,
+    });
+    return { ok: true, login: body.login, owner: Boolean(body.owner) };
+  } catch {
+    return { ok: false, error: "Offline" };
+  }
+}
+
 /* ── Sign out of GitHub, from Settings ─────────────────────────────────────
  *
  * The counterpart to the three calls above, for a machine that signed in
@@ -1775,6 +1807,7 @@ const family = new Family({
   // button makes (teamJoin, above) — no separate hub credential of any kind
   // is ever held by or sent to Masora.
   joinTeam: (team, key) => teamJoin(team, key),
+  joinHub: hubSignInFromMasora,
   version: APP_VERSION,
   installPath: path.dirname(app.getPath("exe")),
 });

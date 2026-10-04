@@ -139,6 +139,7 @@ class Family {
     // handler, factored out so a relayed join and a typed one run identical
     // code. async (team, key) => {ok, error?, login?, owner?, teamName?}.
     joinTeam = async () => ({ ok: false, error: "not configured" }),
+    joinHub = async () => ({ ok: false, error: "not configured" }), // (hubUrl, assertion) => {ok}: Masora's one-login hub sign-in (main.js)
     readHubAuth, // () => {hub, token} | null : this machine's OWN hub session (main.js's authFor)
     // What Zevet genuinely knows about the person, e.g. the GitHub login or
     // email their own hub sign-in used -- never guessed. () => {email?,
@@ -155,7 +156,7 @@ class Family {
     tickMs = TICK_MS,
     pollMs = REQUEST_POLL_MS,
   } = {}) {
-    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, indexKeys, onIndexNewer, detect, readTeam, joinTeam, readHubAuth, readIdentity, version, installPath, allowLoopbackCloud, host, platform, pid, now, tickMs, pollMs });
+    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, indexKeys, onIndexNewer, detect, readTeam, joinTeam, joinHub, readHubAuth, readIdentity, version, installPath, allowLoopbackCloud, host, platform, pid, now, tickMs, pollMs });
     this.fetch = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
     this.pairing = "idle"; // idle | pairing | no_owner | unreachable | error
     this.team = ""; // last-known team name; refreshed each tick, best-effort
@@ -216,7 +217,9 @@ class Family {
         updated_at: new Date(this.now()).toISOString(),
         install_path: this.installPath,
         running,
-        masora: { connected: !!m.paired, member_email: m.member || null, account_email: (m.paired && m.account_email) || null },
+        // hub_email: whose hub session this machine holds, only while a whoami has resolved a team (this.roster) -- the
+        // cloud shell reads it to know whether Zevet still needs its hub login from Masora's sign-in.
+        masora: { connected: !!m.paired, member_email: m.member || null, account_email: (m.paired && m.account_email) || null, hub_email: (this.roster && (this.readIdentity() || {}).email) || null },
       };
       // `this.roster` is only ever set from a whoami that actually resolved a
       // team (see #refreshRoster) — never guessed, so signed-out and
@@ -372,7 +375,34 @@ class Family {
     drop();
     this.pairing = "idle";
     this.heartbeat();
+    if (c.hub) void this.#signInHub(cloud, c.hub);
     return "connected";
+  }
+
+  /**
+   * One login for everyone: the credentials file's `hub` block is Masora's signed statement that this person belongs
+   * to a workspace, redeemed at the hub for a team session (main.js `joinHub`). The hub must be on the cloud's own
+   * https origin, so the assertion never goes anywhere else. Fire-and-forget like every relayed action: the
+   * assertion is single use, and a failure shows as a missing `hub_email`, which makes Masora issue a fresh one.
+   */
+  async #signInHub(cloud, hub) {
+    let url = "";
+    try {
+      const h = new URL(hub.url);
+      const same = h.origin === new URL(cloud).origin;
+      if (same && (h.protocol === "https:" || this.allowLoopbackCloud) && typeof hub.assertion === "string" && hub.assertion) url = hub.url.replace(/\/+$/, "");
+    } catch {
+      /* malformed url: ignored below */
+    }
+    if (!url) return;
+    try {
+      const r = await this.joinHub(url, hub.assertion);
+      if (!r || !r.ok) console.error(`zevet: hub sign-in from Masora failed (${(r && r.error) || "unknown"})`);
+    } catch (err) {
+      console.error(`zevet: hub sign-in from Masora threw (${err.message})`);
+    }
+    await this.#refreshRoster();
+    this.heartbeat();
   }
 
   /** A 401 from Masora: the token is dead, so drop it and pair again. */
