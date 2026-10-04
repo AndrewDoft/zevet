@@ -112,6 +112,8 @@ describe("POST /auth/masora", () => {
     const m = await (await signIn(h, mint({ wid: "W7", admin: false, sub: "p3", email: "cy@acme.test" }))).json();
     assert.equal(m.ok, true);
     assert.equal(m.team, "default");
+    const ownerless = await hub({ ZEVET_MASORA_TEAMS: "W7=default" });   // a mapped team nobody owns yet: members wait for an admin
+    assert.equal((await signIn(ownerless, mint({ wid: "W7", admin: false }))).status, 403);
     const bad = await hub({ ZEVET_MASORA_TEAMS: "W7=nope" });
     assert.equal((await signIn(bad, mint({ wid: "W7" }))).status, 409);
   });
