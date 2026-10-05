@@ -67,7 +67,9 @@ import { missionOf } from "../lib/text";
 import { agoLabel } from "../lib/fmt";
 import { sessionBlurb, sessionProject } from "../lib/sessions.mjs";
 import { plainError } from "../lib/transcript.mjs";
+import { consoleSprite } from "../lib/roster.mjs";
 import { AgentLogo } from "./brand";
+import { Sprite } from "./sprite";
 import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
@@ -254,6 +256,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
     <div className="agent-row-wrap">
       <div
         className="agent-row"
+        data-console={String(Boolean(c))}
         data-active={String(isOpen)}
         style={{ "--who": `var(--who-${((hue % HUES) + HUES) % HUES})` } as CSSProperties}
       >
@@ -272,7 +275,14 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
             <span className="agent-row-detail">{agentDetail(row)}</span>
           </span>
           {c && c.running ? (
-            <span className="agent-row-live" role="img" aria-label="Running" />
+            /* The figure IS the running indicator: in this row's colour,
+               holding the tool the agent is using right now. The dot is the
+               fallback when the sprite script did not load. */
+            window.zevetSprites?.spriteFor ? (
+              <Sprite {...consoleSprite(c)} title="Running" />
+            ) : (
+              <span className="agent-row-live" role="img" aria-label="Running" />
+            )
           ) : unseen ? (
             <span
               className="agent-row-unseen"

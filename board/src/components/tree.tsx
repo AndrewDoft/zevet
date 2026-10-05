@@ -17,6 +17,7 @@ import {
 } from "../lib/board";
 import type { TreeNode } from "../lib/board";
 import { spritesByPath } from "../lib/roster.mjs";
+import { Sprite } from "./sprite";
 import { bridge } from "../lib/bridge";
 import { ago } from "../lib/text";
 import { authorChangeTokens } from "../lib/change-colors.mjs";
@@ -87,19 +88,7 @@ type SpriteMap = ReturnType<typeof spritesByPath>;
  * plain text prop, and nowhere near the HTML string.
  */
 function AgentSprite({ actor, tool }: { actor: string; tool?: string }) {
-  const spriteFor = window.zevetSprites?.spriteFor;
-  if (!spriteFor) return null; // no bundle script, or a plain browser tab
-  const svg = spriteFor({ tool, width: 16, height: 14 });
-  if (!svg) return null;
-  return (
-    <span
-      className="fsprite"
-      aria-hidden="true"
-      title={actor + " · " + (tool || "working")}
-      style={{ color: hueOf(actor) } as CSSProperties}
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
-  );
+  return <Sprite tool={tool} scale={2} className="fsprite" who={hueOf(actor)} title={actor + " · " + (tool || "working")} />;
 }
 
 function NodeRow({
