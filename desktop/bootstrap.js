@@ -110,7 +110,19 @@ async function startPayload(platform) {
     const onCrash = (err) => bootFailed(`uncaught exception during trial: ${err && err.stack || err}`);
     process.on("uncaughtException", onCrash);
     shell.trial = {
-      confirm: () => { payload.confirm(); process.removeListener("uncaughtException", onCrash); },
+      // confirm() writes the verdict and then gc()s old versions; gc can throw EPERM on Windows. The build is
+      // confirmed either way, so the crash guard always comes off, and the sweep retries once, later.
+      confirm: () => {
+        try {
+          payload.confirm();
+        } catch (err) {
+          log(`payload confirmed; old-version cleanup failed (${err && err.message}); retrying in 10 minutes`);
+          const t = setTimeout(() => { try { payload.gc(); } catch (e) { log(`old-version cleanup still failing: ${e && e.message}`); } }, 10 * 60 * 1000);
+          if (t.unref) t.unref();
+        } finally {
+          process.removeListener("uncaughtException", onCrash);
+        }
+      },
       bootFailed: (why) => payload.bootFailed(why),
     };
   }

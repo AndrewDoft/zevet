@@ -3,9 +3,11 @@
 const fs = require("node:fs");
 
 const FILE = "console-resume.json";
+/** All three CLIs resume a session by id (agent-console.js CAN_RESUME). */
+const AGENTS = new Set(["claude", "codex", "opencode"]);
 
 function resumable(entry) {
-  return Boolean(entry && entry.running && entry.agent === "claude" && entry.sessionId);
+  return Boolean(entry && entry.running && AGENTS.has(entry.agent) && entry.sessionId);
 }
 
 function resumableEntries(entries) {
@@ -26,9 +28,9 @@ function write(file, entries, writeFileSync = fs.writeFileSync, renameSync = fs.
 function read(file, readFileSync = fs.readFileSync, unlinkSync = fs.unlinkSync) {
   try {
     const value = JSON.parse(readFileSync(file, "utf8"));
-    return Array.isArray(value.consoles) ? value.consoles.filter((e) => e && e.id && e.sessionId && e.agent === "claude") : [];
+    return Array.isArray(value.consoles) ? value.consoles.filter((e) => e && e.id && e.sessionId && AGENTS.has(e.agent)) : [];
   } catch { return []; }
   finally { try { unlinkSync(`${file}.${process.pid}.tmp`); } catch {} }
 }
 
-module.exports = { FILE, resumable, resumableEntries, write, read };
+module.exports = { FILE, AGENTS, resumable, resumableEntries, write, read };

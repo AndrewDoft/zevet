@@ -22,7 +22,7 @@ export function spritesByPath(
     now: number;
     idleAfterMs: number;
   },
-): Record<string, { actor: string; tool: string | undefined; ts: number }>;
+): Record<string, Array<{ actor: string; tool: string | undefined; ts: number }>>;
 export function latestToolForActor(
   events: EventLike[],
   opts: { repoName: string | null | undefined; actor: string; now: number; liveAfterMs: number },

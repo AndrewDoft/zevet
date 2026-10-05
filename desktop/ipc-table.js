@@ -369,6 +369,9 @@ The subagents a claude session spawned. Open one by passing its id as
     cached: number | null;
     output: number | null;
     window: number | null;
+    model?: string;
+    effort?: string;
+    account?: string;
   } | null>`, optional: true, doc: `A running console's title and (codex) real context, off its session file.
 
 A running console's own title and, for codex, its real context — see

@@ -7,20 +7,24 @@ import path from "node:path";
 import { ROOT } from "./helpers.mjs";
 
 const require = createRequire(import.meta.url);
-const { decideIdleInstall, createIdleInstaller, IDLE_SECONDS } = require(path.join(ROOT, "desktop", "idle-install.js"));
+const { decideIdleInstall, createIdleInstaller, IDLE_SECONDS, RETRY_GAP_MS, MAX_ATTEMPTS } = require(path.join(ROOT, "desktop", "idle-install.js"));
 const { AGENT_QUIET_MS, INPUT_QUIET_MS } = require(path.join(ROOT, "desktop", "payload-swap.js"));
 
 const base = { phase: "ready", systemIdleSeconds: 0, windowsAway: false, rendererIdle: true, busy: false, attempted: false };
 const d = (o) => decideIdleInstall({ ...base, ...o });
 
 describe("decideIdleInstall", () => {
-  test("machine idle 10 minutes installs", () => {
+  test("machine idle 3 minutes installs", () => {
     assert.deepEqual(d({ systemIdleSeconds: IDLE_SECONDS }), { install: true, hidden: false });
-    assert.equal(IDLE_SECONDS, 600);
+    assert.equal(IDLE_SECONDS, 180);
     assert.equal(d({ systemIdleSeconds: IDLE_SECONDS - 1 }).install, false);
   });
   test("all windows hidden or minimised installs", () => {
     assert.deepEqual(d({ windowsAway: true }), { install: true, hidden: true });
+  });
+  test("waking from sleep installs", () => {
+    assert.deepEqual(d({ resumed: true }), { install: true, hidden: true });
+    assert.equal(d({ resumed: true, busy: true }).install, false, "but never over a busy gate");
   });
   test("never interrupts, whatever else says away", () => {
     assert.equal(d({ windowsAway: true, rendererIdle: false }).install, false);
@@ -52,7 +56,7 @@ describe("createIdleInstaller", () => {
         ...over.gate,
       },
       systemIdleSeconds: () => 900,
-      windowsAway: () => false,
+      windowsAway: () => over.away ?? false,
       persist: () => events.push("persist"),
       log: () => {},
       now: () => NOW,
@@ -92,11 +96,53 @@ describe("createIdleInstaller", () => {
     assert.deepEqual(r.events, ["persist", "install"]);
   });
 
-  test("a version is attempted once", async () => {
-    const r = rig();
-    await r.tick();
+  test("a console mid-turn blocks it, resumable or not", async () => {
+    const r = rig({ gate: { working: () => 1, activity: () => ({ running: 1, resumable: true, nonResumable: 0, lastAt: NOW }) } });
     assert.equal(await r.tick(), false);
-    assert.equal(r.events.filter((e) => e === "install").length, 1);
+    assert.deepEqual(r.events, []);
+  });
+
+  test("idle (not working) resumable consoles of any agent are saved and do not block", async () => {
+    const r = rig({ gate: { working: () => 0, activity: () => ({ running: 3, resumable: true, nonResumable: 0, lastAt: NOW }) } });
+    assert.equal(await r.tick(), true);
+    assert.deepEqual(r.events, ["persist", "install"]);
+  });
+
+  test("an unfocused window installs only after IDLE_SECONDS of it, and focus resets the clock", async () => {
+    let t = NOW, away = true;
+    const r = rig({ away, deps: { now: () => t, windowsAway: () => away, systemIdleSeconds: () => 5 }, gate: { lastInputAt: () => 0 } });
+    assert.equal(await r.tick(), false, "just lost focus");
+    t += IDLE_SECONDS * 1000 - 1000;
+    assert.equal(await r.tick(), false, "not yet");
+    away = false; t += 1000;
+    assert.equal(await r.tick(), false, "focus came back");
+    away = true; t += 1000;
+    assert.equal(await r.tick(), false, "the clock restarted");
+    t += IDLE_SECONDS * 1000;
+    assert.equal(await r.tick(), true);
+  });
+
+  test("resume from sleep installs at once, though the person was 'here' a moment ago", async () => {
+    const r = rig({ deps: { systemIdleSeconds: () => 1 } });
+    assert.equal(await r.tick(), false);
+    assert.equal(await r.tick({ resumed: true }), true);
+    assert.deepEqual(r.events, ["persist", "install"]);
+  });
+
+  test("a failed install is retried after the gap, at most MAX_ATTEMPTS times, so a version is neither spammed nor stranded", async () => {
+    let t = NOW;
+    const r = rig({ deps: { now: () => t } });
+    r.updater.install = async () => { r.events.push("install"); return { ok: false, error: "spawn failed" }; };
+    const installs = () => r.events.filter((e) => e === "install").length;
+    await r.tick();
+    assert.equal(installs(), 1);
+    await r.tick();
+    assert.equal(installs(), 1, "not again inside the gap");
+    for (let i = 0; i < 5; i++) { t += RETRY_GAP_MS + 1; await r.tick(); }
+    assert.equal(installs(), MAX_ATTEMPTS, "bounded");
+    r.updater.state.version = "0.2.101";
+    assert.equal(await r.tick(), false);
+    assert.equal(installs(), MAX_ATTEMPTS + 1, "a newer version starts fresh");
   });
 
   test("a failed save of the consoles cancels the install", async () => {
@@ -129,6 +175,12 @@ describe("main.js wires the idle install and the rollback", async () => {
   const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
   test("the consoles are persisted before the idle install, from the one persist function", () => {
     assert.match(main, /createIdleInstaller\(\{[\s\S]{0,800}persist: persistResumableConsoles/);
+  });
+  test("sleep-resume triggers an attempt; mid-turn consoles gate it; restore resumes the saved agent, not just claude", () => {
+    assert.match(main, /powerMonitor\.on\("resume", \(\) => run\(\{ resumed: true \}\)\)/);
+    assert.match(main, /working: \(\) => consoleLog\.snapshot\(\)\.consoles\.filter\(\(e\) => e\.running && e\.state === "working"\)/);
+    assert.match(main, /agent: s\.agent, cwd: s\.cwd, trusted: true, resumeFrom: s\.sessionId/);
+    assert.match(main, /every\(\(w\) => w\.isMinimized\(\) \|\| !w\.isVisible\(\) \|\| !w\.isFocused\(\)\)/);
   });
   test("the rollback gets the updater, is started on boot, and relaunches through releaseForRelaunch on a first strike", () => {
     assert.match(main, /const appUpdater = new AppUpdater\(\{\s*rollback,/);

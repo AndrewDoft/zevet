@@ -13,7 +13,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -117,16 +117,9 @@ describe("a fresh install's setup window", { skip: NO_DRIVE }, () => {
     assert.equal(r.result ?? r.value ?? r, "drag");
   });
 
-  // Run early, deliberately: main.js's real appUpdater fires its first check
-  // FIRST_CHECK_MS (25s) after launch; see the note this replaced.
-  test("the update banner paints from a status the app pushes, before any sign-in", () => {
-    assert.match(drive("snapshot").outline, /div#updateNote[^\n]*hidden/);
-    drive("eval", `window.paintUpdate({ phase: "ready", version: "9.9.9", canInstall: true, manual: false })`);
-    const ready = drive("snapshot").outline;
-    assert.match(ready, /div#updateNote(?!.*hidden)[^\n]*"v9.9.9/);
-    assert.match(ready, /button#updateBtn(?!.*hidden)[^\n]*"Restart"/);
-    drive("eval", `window.paintUpdate({ phase: "current" })`);
-    assert.match(drive("snapshot").outline, /div#updateNote[^\n]*hidden/);
+  test("setup has no update notification surface", () => {
+    const source = readFileSync(path.join(ROOT, "desktop", "setup.html"), "utf8");
+    assert.doesNotMatch(source, /updateNote|updateBtn|paintUpdate|Restart to install/);
   });
 
   test("signing in with no team name opens no browser and says Name?", () => {

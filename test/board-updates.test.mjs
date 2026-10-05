@@ -182,28 +182,13 @@ describe("the update controls", () => {
   });
 });
 
-describe("a ready update shows a bar, not a dialog", () => {
-  // Andrew: "when you are in the middle of using the app it should just say
-  // update available" — not a modal. These read source rather than render
-  // React, the same way "the update section degrades safely" above does.
-  const appTsx = readFileSync(path.join(ROOT, "board", "src", "App.tsx"), "utf8");
-  const bannerPath = path.join(ROOT, "board", "src", "components", "updatebanner.tsx");
-  const banner = readFileSync(bannerPath, "utf8");
-
-  test("App mounts the bar, and the old modal is gone", () => {
-    assert.match(appTsx, /<UpdateBanner \/>/);
-    assert.ok(!appTsx.includes("UpdateDialog"), "the modal must not still be mounted");
-    assert.equal(
-      existsSync(path.join(ROOT, "board", "src", "components", "updatedialog.tsx")),
-      false,
-      "the old modal file should be deleted, not just unmounted",
-    );
-  });
-
-  test("the bar is not a Dialog wearing a different name", () => {
-    assert.ok(!banner.includes("Dialog"), "a modal component renamed is still a modal");
-    assert.match(banner, /Restart now/);
-    assert.match(banner, />\s*Close\s*</);
+describe("updates install themselves", () => {
+  test("no update bar, row or dialog is mounted", () => {
+    const appTsx = readFileSync(path.join(ROOT, "board", "src", "App.tsx"), "utf8");
+    assert.ok(!/UpdateBanner|UpdateRow|UpdateDialog/.test(appTsx));
+    for (const f of ["updatebanner.tsx", "updaterow.tsx", "updatedialog.tsx"]) {
+      assert.equal(existsSync(path.join(ROOT, "board", "src", "components", f)), false, `${f} should be deleted, not unmounted`);
+    }
   });
 });
 

@@ -11,11 +11,10 @@
 // seen them on a real board. The grids are eyeballed, and that is all.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { consoleSprite } from "../board/src/lib/roster.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -148,58 +147,15 @@ describe("agent sprites", () => {
   });
 });
 
-// ---- the figure on a LIVE agent -------------------------------------------
-// Andrew, 2026-10-05: "i still dont see the sprites in zevet". The tree rider
-// needs a file path on an event, and none of his events had one; so the live
-// agent itself carries the figure, in the rail row and the conversation header.
-
-const call = (toolName, extra = {}) => ({ type: "tool-call", toolCallId: toolName, toolName, ...extra });
-const running = (...messages) => ({ running: true, transcript: { messages } });
-
-describe("a live console's figure", () => {
-  test("holds the tool it is using right now", () => {
-    const c = running(
-      { role: "user", content: [{ type: "text", text: "fix it" }] },
-      { role: "assistant", content: [call("Read", { result: "x" }), call("Edit")] },
-    );
-    assert.deepEqual(consoleSprite(c), { tool: "Edit" });
-    const svg = sprites.spriteFor(consoleSprite(c));
-    assert.match(svg, /data-tool-kind="pencil"/);
-  });
-
-  test("a prompt with no answer yet is a speech bubble", () => {
-    assert.deepEqual(consoleSprite(running({ role: "user", content: [] })), { kind: "prompt" });
-    assert.match(sprites.spriteFor(consoleSprite(running())), /data-tool-kind="bubble"/);
-  });
-
-  test("an answer with no tool call yet is empty-handed", () => {
-    const c = running({ role: "user", content: [] }, { role: "assistant", content: [{ type: "text", text: "ok" }] });
-    assert.match(sprites.spriteFor(consoleSprite(c)), /data-tool-kind="none"/);
-    // assistant-ui lets `content` be a bare string; that must not throw.
-    assert.deepEqual(consoleSprite(running({ role: "assistant", content: "hi" })), {});
-  });
-});
-
 describe("where the figure is drawn", () => {
   const src = (f) => readFileSync(path.join(ROOT, f), "utf8");
 
-  test("a running console row in the rail renders its sprite", () => {
-    const people = src("board/src/components/people.tsx");
-    const branch = people.slice(people.indexOf("{c && c.running ? ("), people.indexOf(") : unseen ? ("));
-    assert.match(branch, /<Sprite \{\.\.\.consoleSprite\(c\)\}/);
-  });
-
-  test("the conversation header mounts the active console's sprite", () => {
-    assert.match(src("board/src/App.tsx"), /<span>Conversation<\/span>\s*<ActiveSprite \/>/);
-    const sprite = src("board/src/components/sprite.tsx");
-    assert.match(sprite, /if \(!c \|\| !c\.running\) return null;/);
-  });
-
-  test("it is drawn at an integer scale of the 22x11 grid, 24px or taller", () => {
-    const sprite = src("board/src/components/sprite.tsx");
-    assert.match(sprite, /scale = 3/);
-    assert.ok(11 * 3 >= 24);
-    assert.match(src("board/src/components/tree.tsx"), /<Sprite [^>]*scale=\{2\}/);
+  test("sprites live in the file tree only: no rail or header figure", () => {
+    for (const f of ["people.tsx", "sessions.tsx", "sprite.tsx", "agent-sprite.tsx"]) {
+      const file = path.join(ROOT, "board", "src", "components", f);
+      if (existsSync(file)) assert.doesNotMatch(readFileSync(file, "utf8"), /consoleSprite|ActiveSprite|<Sprite /);
+    }
+    assert.match(src("board/src/components/tree.tsx"), /width: 14, height: 12/);
   });
 
   test("the sprite script is on the page the desktop loads", () => {

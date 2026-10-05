@@ -246,8 +246,8 @@ async function main() {
   await waitForCDP(port);
   await waitForReady(port, 120_000);
 
-  // The "Restart now" button in board/src/components/updatebanner.tsx calls
-  // exactly this: useBoard.getState().updateInstall() -> window.zevetLocal.updateInstall().
+  // The board no longer has a Restart button (updates install themselves); this calls
+  // the IPC the idle installer uses: window.zevetLocal.updateInstall().
   // No headless click target exists (Playwright is not attached to a visible
   // window here), so the IPC channel it invokes is the equivalent test hook.
   const installResult = await evalInApp(port, "window.zevetLocal.updateInstall().then(s => JSON.stringify(s))");

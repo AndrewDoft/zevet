@@ -11,10 +11,14 @@ describe("console persistence", () => {
     const file = path.join(dir, "resume.json");
     const entries = [
       { id: "same", agent: "claude", root: "r", cwd: "w", worktree: "w", model: "m", mode: "auto", engine: "e", label: "l", sessionId: "sid", state: "working", running: true, worktreeRecord: { dir: "w", branch: "zevet/x" } },
-      { id: "no", agent: "codex", running: true, sessionId: "x" },
+      { id: "cx", agent: "codex", cwd: "w", root: "r", running: true, sessionId: "thr", state: "idle" },
+      { id: "oc", agent: "opencode", cwd: "w", root: "r", running: true, sessionId: "ses", state: "idle" },
+      { id: "no", agent: "gemini", running: true, sessionId: "x" },
+      { id: "nosid", agent: "codex", running: true },
       { id: "dead", agent: "claude", running: false, sessionId: "x" },
     ];
-    assert.deepEqual(resumableEntries(entries), [{ id: "same", agent: "claude", cwd: "w", root: "r", worktree: "w", model: "m", mode: "auto", engine: "e", label: "l", worktreeRecord: { dir: "w", branch: "zevet/x" }, sessionId: "sid", inFlight: true }]);
+    assert.deepEqual(resumableEntries(entries).map((e) => e.id), ["same", "cx", "oc"], "claude, codex and opencode are saved; an unknown agent or a missing session id is not");
+    assert.deepEqual(resumableEntries(entries).slice(0, 1), [{ id: "same", agent: "claude", cwd: "w", root: "r", worktree: "w", model: "m", mode: "auto", engine: "e", label: "l", worktreeRecord: { dir: "w", branch: "zevet/x" }, sessionId: "sid", inFlight: true }]);
     write(file, entries);
     assert.deepEqual(read(file), resumableEntries(entries));
     assert.equal(fs.existsSync(`${file}.${process.pid}.tmp`), false);

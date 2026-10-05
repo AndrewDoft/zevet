@@ -110,8 +110,10 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone, now = Date.n
       /* ⚠️ THE SESSION ID WAS NEVER KEPT, so console-persistence.js's
          resumable() was false for every console and a restart saved nothing
          (0.2.95-0.2.96; found 2026-09-30 when /list showed no sessionId on
-         two working agents). claude stamps session_id on its stream events. */
-      const sid = evt.type === "agent" && evt.payload && typeof evt.payload.session_id === "string" ? evt.payload.session_id : "";
+         two working agents). claude stamps session_id on its stream events,
+         codex thread_id, opencode sessionID: all three resume by it. */
+      const pl = evt.type === "agent" && evt.payload ? evt.payload : null;
+      const sid = pl ? [pl.session_id, pl.thread_id, pl.sessionID].find((v) => typeof v === "string" && v) || "" : "";
       if (e && sid) e.sessionId = sid;
       if (e && !partial && !isPromptEcho(evt)) {
         e.events.push(out);

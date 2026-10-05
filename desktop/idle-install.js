@@ -9,50 +9,62 @@
 
 const { busyReason } = require("./payload-swap.js");
 
-/** The machine untouched this long counts as away. */
-const IDLE_SECONDS = 10 * 60;
+/** The machine untouched, or no window focused, this long counts as away ("a few minutes"). */
+const IDLE_SECONDS = 3 * 60;
 const CHECK_MS = 60 * 1000;
+/** A failed attempt is retried, at most this often and this many times per version. After that the quit-time install
+ *  (app-update.js installOnQuit) is what is left, so a version is never stranded by one bad run. */
+const RETRY_GAP_MS = 5 * 60 * 1000;
+const MAX_ATTEMPTS = 3;
 
 /**
  * "install" only when nobody is in the middle of anything:
  *   rendererIdle  must be true — false means an answer streaming, typed text or a dialog (never interrupted)
- *   then either every window hidden/minimised, or the machine idle for IDLE_SECONDS
+ *   then either the person was away (`windowsAway`: no window focused for IDLE_SECONDS), the machine idle for
+ *   IDLE_SECONDS, or the machine just woke from sleep (`resumed`: they were not looking, and nothing was running).
  * `hidden` says the person was not looking.
  */
-function decideIdleInstall({ phase, systemIdleSeconds, windowsAway, rendererIdle, busy, attempted }) {
+function decideIdleInstall({ phase, systemIdleSeconds, windowsAway, rendererIdle, busy, attempted, resumed }) {
   if (phase !== "ready" || busy || attempted || rendererIdle !== true) return { install: false };
-  if (windowsAway) return { install: true, hidden: true };
+  if (windowsAway || resumed) return { install: true, hidden: true };
   if (Number.isFinite(systemIdleSeconds) && systemIdleSeconds >= IDLE_SECONDS) return { install: true, hidden: false };
   return { install: false };
 }
 
 /**
- * One idle-install attempt per version. `gate` is the same { activity, chatBusy, lastInputAt, windows } the
- * payload swapper gets, so nothing here re-implements "busy". `persist` saves the resumable consoles and MUST
- * run before the installer is spawned; `install` is appUpdater.install. `canSilent` is false where the install
- * would open a disk image instead of replacing the app (an unwritable Mac bundle).
+ * Install attempts per version, bounded. `gate` is the same { activity, chatBusy, lastInputAt, windows } the
+ * payload swapper gets, plus `working()` (consoles mid-turn): a console that is working is never restarted, resumable
+ * or not. `windowsAway()` says no window is focused right now; this measures how long that has held. `persist` saves
+ * the resumable consoles and MUST run before the installer is spawned; `install` is appUpdater.install. `canSilent`
+ * is false where the install would open a disk image instead of replacing the app (an unwritable Mac bundle).
  *
  * rendererIdle is true here because the board reports none: a chat turn in flight and input in the last two
  * minutes are already in busyReason. A non-resumable console never installs (busyReason: nonResumable > 0),
- * since the relaunch would end it.
+ * since the relaunch would end it. `tick({ resumed: true })` is the resume-from-sleep trigger.
  */
 function createIdleInstaller({ updater, gate, canSilent = () => true, systemIdleSeconds, windowsAway, persist, log = () => {}, now = Date.now }) {
-  let attemptedVersion = null;
-  return async function tick() {
+  let tried = { version: null, n: 0, at: 0 };
+  let awaySince = null;
+  return async function tick({ resumed = false } = {}) {
     const s = updater.state;
+    const t = now();
+    if (windowsAway()) { if (awaySince === null) awaySince = t; } else awaySince = null;
     if (s.phase !== "ready" || !s.canInstall || !canSilent()) return false;
-    const why = busyReason({ now: now(), ...gate });
+    const why = busyReason({ now: t, ...gate });
+    const midTurn = typeof gate.working === "function" && gate.working() > 0;
+    const spent = tried.version === s.version && (tried.n >= MAX_ATTEMPTS || t - tried.at < RETRY_GAP_MS);
     const d = decideIdleInstall({
       phase: s.phase,
       systemIdleSeconds: systemIdleSeconds(),
-      windowsAway: windowsAway(),
+      windowsAway: awaySince !== null && t - awaySince >= IDLE_SECONDS * 1000,
       rendererIdle: true,
-      busy: Boolean(why),
-      attempted: attemptedVersion === s.version,
+      busy: Boolean(why) || midTurn,
+      attempted: spent,
+      resumed,
     });
     if (!d.install) return false;
-    attemptedVersion = s.version;
-    log(`idle install of ${s.version}`);
+    tried = { version: s.version, n: tried.version === s.version ? tried.n + 1 : 1, at: t };
+    log(`idle install of ${s.version} (attempt ${tried.n}${resumed ? ", after sleep" : ""})`);
     try {
       persist();
     } catch (err) {
@@ -65,4 +77,4 @@ function createIdleInstaller({ updater, gate, canSilent = () => true, systemIdle
   };
 }
 
-module.exports = { IDLE_SECONDS, CHECK_MS, decideIdleInstall, createIdleInstaller };
+module.exports = { IDLE_SECONDS, CHECK_MS, RETRY_GAP_MS, MAX_ATTEMPTS, decideIdleInstall, createIdleInstaller };

@@ -313,6 +313,9 @@ export interface LocalBridge {
     cached: number | null;
     output: number | null;
     window: number | null;
+    model?: string;
+    effort?: string;
+    account?: string;
   } | null>;
   /**
    * Masora Voice: is it installed, and start it so its flow bar comes up.

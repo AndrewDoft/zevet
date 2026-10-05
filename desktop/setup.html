@@ -102,11 +102,6 @@
     <h1>zevet</h1>
   </header>
 
-  <div id="updateNote" class="note" hidden>
-    <span id="updateText"></span>
-    <div class="row"><button id="updateBtn" class="primary" hidden></button></div>
-  </div>
-
   <div id="staleNotice" class="note" hidden>
     <span>Already set up on this machine.</span>
     <div class="row"><button id="staleSignOut" type="button">Sign out</button></div>
@@ -317,39 +312,6 @@
     $("finish").disabled = false;
     $("repoStep").hidden = false;
     $("repoStep").scrollIntoView();
-  }
-
-  /* ── Update banner: the updater checks the public feed whether or not a team
-        is configured (see main.js), so this is the window to show it on. ── */
-  function paintUpdate(s) {
-    var note = $("updateNote"), text = $("updateText"), btn = $("updateBtn");
-    if (!s || (s.phase !== "downloading" && s.phase !== "ready" && s.phase !== "error")) {
-      note.hidden = true;
-      return;
-    }
-    note.hidden = false;
-    if (s.phase === "downloading") {
-      var pct = Math.max(0, Math.min(100, Math.floor(Number(s.percent) || 0)));
-      text.textContent = s.version + " · " + pct + "%";
-      btn.hidden = true;
-    } else if (s.phase === "ready" && s.canInstall) {
-      text.textContent = "v" + s.version;
-      btn.hidden = false;
-      btn.textContent = s.manual ? "Open installer" : "Restart";
-      btn.onclick = function () {
-        btn.disabled = true;
-        window.zevetLocal.updateInstall();
-      };
-    } else if (s.phase === "error") {
-      text.textContent = "Update failed";
-      btn.hidden = true;
-    } else {
-      note.hidden = true;
-    }
-  }
-  if (window.zevetLocal) {
-    if (typeof window.zevetLocal.onUpdate === "function") window.zevetLocal.onUpdate(paintUpdate);
-    if (typeof window.zevetLocal.updateStatus === "function") window.zevetLocal.updateStatus().then(paintUpdate);
   }
 
   /* ── Sign-in. The config is written by the main process; this window is only

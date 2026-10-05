@@ -99,8 +99,15 @@ function awaitHealthy({ loaded, apiAnswers, timeoutMs = CONFIRM_TIMEOUT_MS, retr
 function confirmWhenHealthy({ payload, loaded, apiAnswers, app, log, timeoutMs, retryMs, sleep, now }) {
   return (async () => {
     if (await awaitHealthy({ loaded, apiAnswers, timeoutMs, retryMs, sleep, now })) {
-      payload.confirm();
-      log("payload confirmed healthy");
+      // confirm() writes the verdict, THEN runs gc, and gc can throw on Windows (EPERM removing an old versions/ dir
+      // something still holds open). The build IS confirmed by then: never let the sweep turn that into a crash.
+      // The leftover dir is swept by the next confirm, which is the retry.
+      try {
+        payload.confirm();
+        log("payload confirmed healthy");
+      } catch (err) {
+        log(`payload confirmed healthy; cleanup of old versions failed, retried at the next confirm: ${err && err.message}`);
+      }
       return true;
     }
     const r = payload.bootFailed("no healthy signal within 120s");

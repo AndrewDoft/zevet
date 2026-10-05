@@ -6,13 +6,11 @@ import { WorkspacesPane } from "./components/workspaces";
 import { Strip } from "./components/strip";
 import { ConnBanner } from "./components/conn";
 import { Palette } from "./components/palette";
-import { UpdateRow } from "./components/updaterow";
 import { Conversation } from "./components/conversation";
 import { ConsoleRuntimeProvider } from "./lib/runtime";
 import { FollowControl, TreeFill } from "./components/tree";
 import { DetailPane } from "./components/detail";
 import { SettingsSheet } from "./components/settings";
-import { UpdateBanner } from "./components/updatebanner";
 import { VoiceDialog } from "./components/voicedialog";
 import { SubagentsPanel } from "./components/subagents-panel";
 import {
@@ -243,7 +241,6 @@ function App() {
           <ConnBanner />
           <Strip />
           </div>
-          <UpdateRow />
           {/* ⚠️ NO "Repos" HEADER. It was a full pane-title row — 24px of
               padding and a word — sitting above a dropdown that already says
               what it is. Andrew: "get rid of the repo header and have the
@@ -288,7 +285,6 @@ function App() {
       </div>
       <SettingsSheet />
       <Palette />
-      <UpdateBanner />
       <VoiceDialog />
       <SubagentsPanel />
     </ConsoleRuntimeProvider>

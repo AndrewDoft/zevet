@@ -3715,7 +3715,7 @@ async function restoreResumableConsoles() {
   try { fs.rmSync(resumeSnapshotFile(), { force: true }); } catch (err) { console.warn(`[zevet] resume snapshot not removed: ${err.message}`); }
   for (const s of saved) {
     const r = await startAgentCore({
-      agent: "claude", cwd: s.cwd, trusted: true, resumeFrom: s.sessionId, forcedId: s.id,
+      agent: s.agent, cwd: s.cwd, trusted: true, resumeFrom: s.sessionId, forcedId: s.id,
       restorePlace: { root: s.root, worktree: s.worktreeRecord || null },
       opts: { model: s.model, mode: s.mode, engine: s.engine, label: s.label, sessionId: s.sessionId },
     });
@@ -3954,8 +3954,11 @@ const useGate = {
   activity: () => {
     const a = consoleLog.activity();
     const live = consoleLog.snapshot().consoles.filter((e) => e.running);
-    return { ...a, resumable: live.some((e) => e.agent === "claude" && e.sessionId), nonResumable: live.filter((e) => !(e.agent === "claude" && e.sessionId)).length };
+    const can = (e) => consolePersistence.AGENTS.has(e.agent) && e.sessionId;
+    return { ...a, resumable: live.some(can), nonResumable: live.filter((e) => !can(e)).length };
   },
+  /** Consoles mid-turn: the idle installer never restarts one, resumable or not. */
+  working: () => consoleLog.snapshot().consoles.filter((e) => e.running && e.state === "working").length,
   chatBusy: () => Boolean(chatRun && chatRun.turn),
   lastInputAt: () => lastInputAt,
   windows: () => BrowserWindow.getAllWindows().length,
@@ -4363,14 +4366,18 @@ function startIdleInstall() {
     gate: useGate,
     canSilent: () => appUpdater.steps.canOnQuit(appUpdater),
     systemIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+    // No window focused: hidden, minimised, behind another app. idle-install.js times how long that has held.
     windowsAway: () => {
       const all = BrowserWindow.getAllWindows();
-      return all.length > 0 && all.every((w) => w.isMinimized() || !w.isVisible());
+      return all.length > 0 && all.every((w) => w.isMinimized() || !w.isVisible() || !w.isFocused());
     },
     persist: persistResumableConsoles, // before the installer spawns; a non-resumable console never gets here (busyReason)
     log: (m) => bootShell.log(m),
   });
-  setInterval(() => void tick().catch((err) => bootShell.log(`idle install: ${err && err.message}`)), IDLE_CHECK_MS).unref();
+  const run = (o) => void tick(o).catch((err) => bootShell.log(`idle install: ${err && err.message}`));
+  setInterval(run, IDLE_CHECK_MS).unref();
+  // Waking from sleep: the person was not looking, and nothing ran meanwhile.
+  powerMonitor.on("resume", () => run({ resumed: true }));
 }
 
 /** The on-focus recheck and the resume-from-sleep recheck share one gate so

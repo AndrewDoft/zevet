@@ -253,3 +253,15 @@ test("a console keeps claude's session id, so a restart can resume it", async ()
   log.open("c2", { agent: "claude", cwd: "/w", root: "/w" }, "c1");
   assert.equal(log.snapshot().consoles[0].sessionId, "s-123", "a follow-up process keeps the thread's id");
 });
+
+test("codex's thread_id and opencode's sessionID are kept as the session id too", async () => {
+  const { createRequire } = await import("node:module");
+  const { createConsoleLog: make } = createRequire(import.meta.url)("../desktop/console-log.js");
+  const log = make();
+  log.open("cx", { agent: "codex", cwd: "/w", root: "/w" });
+  log.open("oc", { agent: "opencode", cwd: "/w", root: "/w" });
+  log.record("cx", { type: "agent", payload: { type: "thread.started", thread_id: "thr-1" } });
+  log.record("oc", { type: "agent", payload: { type: "step_start", sessionID: "ses-1" } });
+  const by = Object.fromEntries(log.snapshot().consoles.map((c) => [c.id, c.sessionId]));
+  assert.deepEqual(by, { cx: "thr-1", oc: "ses-1" });
+});

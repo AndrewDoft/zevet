@@ -177,6 +177,15 @@ describe("confirmWhenHealthy", () => {
     await confirmWhenHealthy({ ...t, loaded: Promise.resolve(), apiAnswers: async () => ++n >= 3, log() {}, ...clock() });
     assert.deepEqual(t.calls, ["confirm"]);
   });
+  test("a gc failure (EPERM on an old versions/ dir) after the verdict is written does not crash the confirm", async () => {
+    const t = trial();
+    const logs = [];
+    t.payload.confirm = () => { t.calls.push("confirm"); throw Object.assign(new Error("EPERM: operation not permitted, rmdir versions/0.2.100"), { code: "EPERM" }); };
+    const ok = await confirmWhenHealthy({ ...t, loaded: Promise.resolve(), apiAnswers: async () => true, log: (m) => logs.push(m), ...clock() });
+    assert.equal(ok, true, "still confirmed");
+    assert.deepEqual(t.calls, ["confirm"], "no strike, no relaunch");
+    assert.match(logs.join(" "), /cleanup of old versions failed.*EPERM/);
+  });
   test("the API never answers: a strike is counted and the app relaunches with exit 1", async () => {
     const t = trial();
     const ok = await confirmWhenHealthy({ ...t, loaded: Promise.resolve(), apiAnswers: async () => false, log() {}, ...clock() });

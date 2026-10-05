@@ -8,7 +8,6 @@ import {
   selectViewMode,
   useBoard,
 } from "../lib/board";
-import { updateCommand, updatePercent, updateStatusText } from "../lib/update.mjs";
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { Twist } from "./twist";
 import { GithubMark, GoogleMark } from "./logos";
@@ -811,68 +810,14 @@ type IndexStatusView = {
 };
 
 function VersionSection() {
-  const { state: s, checking, installing } = useBoard(selectUpdates);
-  const updateCheck = useBoard((s) => s.updateCheck);
-  const updateInstall = useBoard((s) => s.updateInstall);
+  const { state: s } = useBoard(selectUpdates);
   if (!bridge.local || typeof bridge.local.updateStatus !== "function") {
     return (
       <SSection title="Version" summary="web">{null}</SSection>
     );
   }
-  const up = { checking, installing };
-  const out: ReactNode[] = [];
-  const status = updateStatusText(s, up);
-  out.push(
-    <div className="srow" aria-live="polite" key="status">
-      <span className="k">Status</span>
-      <span className="v">{status}</span>
-    </div>,
-  );
-  if (s && s.next && s.next.build) {
-    out.push(<SRow key="next" k="Next" v={`${s.next.build} (${s.next.when})`} />);
-  }
-  if (s && s.phase === "downloading") {
-    const pct = updatePercent(s);
-    out.push(
-      <div className="sbar" role="progressbar" aria-label="Update download" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} key="bar">
-        <span style={{ width: pct + "%" }} />
-      </div>,
-    );
-  }
-  const hasCheck = Boolean(bridge.local && typeof bridge.local.updateCheck === "function");
-  const hasInstall = Boolean(bridge.local && typeof bridge.local.updateInstall === "function");
-  const cmd = updateCommand(s, up, { hasCheck, hasInstall });
-  const actions: ReactNode[] = [];
-  if (cmd && cmd.kind !== "check") {
-    actions.push(
-      <button
-        className={MAKE_BTN}
-        type="button"
-        key="install"
-        disabled={cmd.disabled}
-        onClick={() => updateInstall()}
-      >
-        {cmd.label}
-      </button>,
-    );
-  }
-  if (hasCheck) {
-    actions.push(
-      <button
-        className={MAKE_BTN}
-        type="button"
-        key="check"
-        disabled={checking || installing || (s && s.phase === "checking") || (s && s.phase === "downloading") || false}
-        onClick={() => updateCheck()}
-      >
-        {checking || (s && s.phase === "checking") ? "Checking…" : "Check now"}
-      </button>,
-    );
-  }
-  out.push(<SRow key="updates" k="Updates" v={<div className="update-actions">{actions}</div>} />);
-  return (
-    <SSection title="Version" summary={bridge.cfg?.version || (s && s.running) || "unknown"}>{out}</SSection>
-  );
+  // Updates install themselves (desktop/idle-install.js); there is nothing to click, so Version is only the number.
+  return <SSection title="Version" summary={bridge.cfg?.version || (s && s.running) || "unknown"}>{null}</SSection>;
 }
 
 /**
