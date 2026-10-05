@@ -1660,3 +1660,14 @@ launched by Zevet getting the hub hooks via `--settings` (`agent-console.js`), a
 - **Hub** redeployed from the tag in place; `BUILD_ID` `d4dddd2a9d9d` -> `afb54a24e840`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-056 — Shipped: 0.2.116, Live agents show their sprite on the rail and in the conversation header (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-05).** 2 commit(s) past v0.2.115.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.116 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.116`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `41c94366…` (153088016 B), dmg `cea2300c…` (205199625 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2116 on both platforms. Manifests win `e2784dbb…`, mac `4934827c…`. Delta: 1 new blob(s) uploaded. 78 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `afb54a24e840` -> `8fc1a63ac8e6`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
