@@ -153,13 +153,41 @@ function repoIsOptedIn(dir) {
   });
 }
 
+/**
+ * The main checkout behind ANY linked git worktree, zevet-made or not.
+ *
+ * `zevetOrigin` only resolves a worktree zevet itself created (the sidecar
+ * JSON next to it) -- an agent sitting in a worktree the user or the agent
+ * made by hand (`git worktree add ../repo-fix`) fell through to
+ * `path.basename(dir)`, so its activity showed up under a repo name nobody's
+ * board had open. Every linked worktree, zevet-made or not, carries this same
+ * pointer back to the one shared `.git` -- `gitdir` is git's own record of it,
+ * not something zevet invented, so reading it needs no sidecar at all.
+ * Keep in sync with the copy in hook.mjs.
+ */
+function linkedWorktreeOrigin(dotgit, worktreeDir) {
+  try {
+    const link = readFileSync(dotgit, "utf8").trim();
+    const m = link.match(/^gitdir:\s*(.+)$/);
+    if (!m) return null;
+    const gitdir = path.resolve(path.dirname(dotgit), m[1]);
+    const commondir = readFileSync(path.join(gitdir, "commondir"), "utf8").trim();
+    const root = path.dirname(path.resolve(gitdir, commondir));
+    return root !== worktreeDir ? root : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Repo root, name and branch, straight off the filesystem. No git subprocess. */
 function repoInfo(startDir) {
   try {
     let dir = path.resolve(startDir || process.cwd());
     for (let i = 0; i < 40; i++) {
-      if (existsSync(path.join(dir, ".git"))) {
-        const origin = zevetOrigin(dir);
+      const dotgit = path.join(dir, ".git");
+      if (existsSync(dotgit)) {
+        const origin = zevetOrigin(dir)
+          || (!existsSync(path.join(dotgit, "HEAD")) ? linkedWorktreeOrigin(dotgit, dir) : null);
         // `root` stays the worktree: it is where the agent's files are.
         return { repo: path.basename(origin || dir), root: dir, origin };
       }

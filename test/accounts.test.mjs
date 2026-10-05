@@ -246,6 +246,186 @@ describe("sessions", () => {
   });
 });
 
+describe("invite keys", () => {
+  test("allow() mints a key for a fresh invite, and only the hash is stored", (t) => {
+    const dir = tmp(t);
+    const file = path.join(dir, "a.json");
+    const a = new Accounts({ file });
+    a.signIn(alice); // an owner is required before anyone else can be invited
+    const r = a.allow("kai");
+    assert.equal(r.ok, true);
+    assert.match(r.key, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+    const raw = JSON.parse(readFileSync(file, "utf8"));
+    const entry = raw.allowed.find((e) => e.login === "kai");
+    assert.ok(entry.inviteKeyHash, "the hash is stored");
+    assert.equal(String(entry.inviteKeyHash).includes(r.key.replace("-", "")), false);
+    assert.equal(JSON.stringify(raw).includes(r.key), false, "the plaintext key must never touch disk");
+  });
+
+  test("redeeming a valid key mints a session exactly like a sign-in, and marks the invitee active", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    const r = a.redeem(key);
+    assert.equal(r.ok, true);
+    assert.ok(a.session(r.token), "a live session came back");
+    const entry = a.list().find((p) => p.login === "kai");
+    assert.ok(entry.id, "the invitee is no longer pending — it has an id, like any claimed member");
+    assert.equal(a.mayEnter({ login: "someone-else", id: "5555" }).ok, false, "nobody else can enter using kai's row");
+  });
+
+  test("a key works with or without its dash, and case-insensitively", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    // A fresh Accounts instance over the same file, so this is provably
+    // reading persisted state rather than some in-memory convenience.
+    const a2 = new Accounts({ file: a.file });
+    const r = a2.redeem(key.replace("-", "").toLowerCase());
+    assert.equal(r.ok, true);
+  });
+
+  test("a key is one-time use", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    assert.equal(a.redeem(key).ok, true);
+    const second = a.redeem(key);
+    assert.equal(second.ok, false);
+    assert.equal(second.error, "bad key");
+  });
+
+  test("a wrong key is refused with one terse error, and does not affect the real one", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    const wrong = a.redeem("ZZZZ-ZZZZ");
+    assert.equal(wrong.ok, false);
+    assert.equal(wrong.error, "bad key");
+    assert.equal(a.redeem(key).ok, true, "the real key still works");
+  });
+
+  test("an expired key is refused, and cannot be redeemed later either", (t) => {
+    let now = 1_000_000_000_000;
+    const dir = tmp(t);
+    const a = new Accounts({ file: path.join(dir, "a.json"), now: () => now });
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    now += 15 * 24 * 60 * 60 * 1000; // past the 14-day TTL
+    const r = a.redeem(key);
+    assert.equal(r.ok, false);
+    assert.equal(r.error, "bad key");
+    now += 1000;
+    assert.equal(a.redeem(key).ok, false, "an expired key does not come back to life either");
+  });
+
+  test("re-inviting a still-pending login rotates the key — the old one stops working", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const first = a.allow("kai").key;
+    const second = a.allow("kai").key;
+    assert.notEqual(first, second);
+    assert.equal(a.redeem(first).ok, false, "the rotated-out key is dead");
+    assert.equal(a.redeem(second).ok, true, "the new key works");
+  });
+
+  test("inviting somebody already active mints no key — there is nothing pending to key", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    a.signIn(bob); // kai/bob is now an active member, not a pending invite
+    const r = a.allow("kai");
+    assert.equal(r.ok, true);
+    assert.equal(r.already, true);
+    assert.equal(r.key, undefined);
+  });
+
+  test("revoking the invitee kills the key", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    a.revoke("kai");
+    const r = a.redeem(key);
+    assert.equal(r.ok, false);
+    assert.equal(r.error, "bad key");
+  });
+
+  // Andrew: "i invited michael twice" — a bare GitHub login one day and that
+  // same person's email address the next are two different (provider, login)
+  // pairs, and used to become two independent pending rows for one person.
+  test("re-inviting the same person under a DIFFERENT identifier resends the one pending row, not a second", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    const first = a.allow("michael", { email: "michael@example.com" });
+    assert.equal(first.ok, true);
+    assert.equal(first.already, false);
+
+    // Typed as a bare email the second time — no `email` option needed, a
+    // bare email invite is its own recipient.
+    const second = a.allow("michael@example.com");
+    assert.equal(second.ok, true);
+    assert.equal(second.already, true, "recognised as the SAME pending invite");
+    assert.equal(second.login, "michael", "resent the original row, not a new one keyed on the email");
+    assert.notEqual(second.key, first.key, "the key still rotates on resend");
+
+    const pending = a.list().filter((p) => !p.id);
+    assert.equal(pending.length, 1, "one row per invitee");
+  });
+
+  test("cross-identifier dedupe only fires once an email is actually resolved — no email means no match to make", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    a.allow("michael"); // no email ever resolved for this one (e.g. no public profile email)
+    const second = a.allow("michael2");
+    assert.equal(second.already, false, "different login, no shared email on record — genuinely a different invite");
+    assert.equal(a.list().filter((p) => !p.id).length, 2);
+  });
+});
+
+describe("invite lifecycle — what person() (hub/server.mjs) reads back", () => {
+  test("recordInviteEmail persists the send outcome on the row; a login with no pending row is a no-op", (t) => {
+    const a = store(t);
+    a.signIn(alice);
+    a.allow("kai");
+    a.recordInviteEmail("kai", { sent: true });
+    let entry = a.list().find((p) => p.login === "kai");
+    assert.equal(entry.emailSent, true);
+    assert.ok(entry.emailSentAt);
+    assert.equal(entry.emailError, "");
+
+    a.recordInviteEmail("kai", { sent: false, error: "Resend: invalid domain" });
+    entry = a.list().find((p) => p.login === "kai");
+    assert.equal(entry.emailSent, false);
+    assert.equal(entry.emailError, "Resend: invalid domain");
+
+    assert.doesNotThrow(() => a.recordInviteEmail("nobody-pending", { sent: true }));
+  });
+
+  test("lastSeen is 0 for a login that never signed in, and tracks session() activity once they have", (t) => {
+    let now = 1_000_000;
+    const a = new Accounts({ file: path.join(tmp(t), "a.json"), now: () => now });
+    a.signIn(alice);
+    assert.equal(a.lastSeen("kai"), 0);
+
+    const { token } = a.signIn(bob); // bob's login is "kai"
+    assert.equal(a.lastSeen("kai"), now);
+
+    now += 2 * 60 * 60 * 1000; // two hours later, an authenticated request
+    a.session(token); // touches the session's `at` (throttled to once an hour)
+    assert.equal(a.lastSeen("kai"), now, "lastSeen tracks the desktop's own later activity, not just the first sign-in");
+  });
+
+  test("accepting an invite (redeeming its key) stamps acceptedAt on the claimed row", (t) => {
+    let now = 5_000_000;
+    const a = new Accounts({ file: path.join(tmp(t), "a.json"), now: () => now });
+    a.signIn(alice);
+    const { key } = a.allow("kai");
+    now += 10_000;
+    assert.equal(a.redeem(key).ok, true);
+    const entry = a.list().find((p) => p.login === "kai");
+    assert.equal(entry.acceptedAt, new Date(now).toISOString());
+  });
+});
+
 describe("the file", () => {
   // The 0600 mode is requested in #save and is honoured on the deployed
   // Linux box; Windows largely ignores it, so it is not asserted here rather

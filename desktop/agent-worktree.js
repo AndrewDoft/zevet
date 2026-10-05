@@ -155,8 +155,9 @@ function createAgentWorktrees({ home, git = runGit, platform = process.platform 
     },
 
     /** Every worktree this module made and nobody is using: at app start,
-     *  that is all of them — consoles do not outlive the app. */
-    async prune() {
+     *  that is all of them — consoles do not outlive the app — except `inUse`
+     *  (resolved dirs), the worktrees of consoles a payload swap restored. */
+    async prune(inUse = new Set()) {
       let names = [];
       try {
         names = fs.readdirSync(root).filter((n) => n.endsWith(".json"));
@@ -165,7 +166,9 @@ function createAgentWorktrees({ home, git = runGit, platform = process.platform 
       }
       for (const n of names) {
         try {
-          await api.release(JSON.parse(fs.readFileSync(path.join(root, n), "utf8")));
+          const rec = JSON.parse(fs.readFileSync(path.join(root, n), "utf8"));
+          if (rec && rec.dir && inUse.has(path.resolve(rec.dir))) continue;
+          await api.release(rec);
         } catch {
           // Unreadable record: left alone rather than guessed at.
         }

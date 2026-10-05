@@ -22,8 +22,8 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { startHub, TOKEN } from "./helpers.mjs";
-import { deriveAuthToken } from "../hub/accounts.mjs";
+import { startHub, TOKEN, sessionFor } from "./helpers.mjs";
+import { Accounts, deriveAuthToken } from "../hub/accounts.mjs";
 
 // Importing the hub would normally seize a port; ZEVET_NO_LISTEN says load the
 // module and do not listen. ZEVET_TOKEN because the hub refuses to exist
@@ -314,12 +314,15 @@ describe("message assembly", () => {
 
 // ---- end to end -------------------------------------------------------------
 
-function wsUrl(base, token = TOKEN) {
+// The ws upgrade now requires a real session (teamFromSession — see
+// hub/server.mjs), not just the shared TOKEN; sessionFor(base) is the one
+// startHub() auto-seeded for this exact hub, same as state()'s own default.
+function wsUrl(base, token = sessionFor(base) ?? TOKEN) {
   return `${base.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(token)}`;
 }
 
 /** Node's own WebSocket client, wrapped so a test can await what it received. */
-function connect(base, token = TOKEN) {
+function connect(base, token = sessionFor(base) ?? TOKEN) {
   const ws = new WebSocket(wsUrl(base, token));
   ws.binaryType = "arraybuffer";
   const got = [];
@@ -381,7 +384,7 @@ async function until(predicate, why, ms = 5000) {
 const settle = () => new Promise((r) => setTimeout(r, 150));
 
 /** The handshake, by hand, so a test can send bytes no library would send. */
-function rawUpgrade(port, { path = "/ws", token = TOKEN, version = "13", upgrade = "websocket" } = {}) {
+function rawUpgrade(port, { path = "/ws", token = sessionFor(`http://127.0.0.1:${port}`) ?? TOKEN, version = "13", upgrade = "websocket" } = {}) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(port, "127.0.0.1");
     let buf = Buffer.alloc(0);
@@ -440,6 +443,36 @@ function tokenFor(hub, team) {
 
 const createTeam = (base) => fetch(`${base}/team/create`, { method: "POST" }).then((r) => r.json());
 
+/**
+ * A hub with one or more teams (plus the default) PRE-CLAIMED with a signed-in
+ * owner, for tests that need a real session on a team other than the default.
+ *
+ * The ws upgrade now requires teamFromSession (see hub/server.mjs) and there
+ * is no synthetic way to sign a DYNAMICALLY /team/create'd team's owner in —
+ * that route mints an unclaimed team on purpose, and claiming one needs a
+ * real GitHub/Google round trip this suite has none of. loadTeams() already
+ * discovers any `accounts-<slug>.json` sitting in TEAMS_DIR at boot (same
+ * mechanism team.test.mjs's own seededHub() relies on for the default team),
+ * so writing one for a CHOSEN slug before startHub() gets the same effect
+ * without ever touching /team/create.
+ */
+async function seededTeamHub(slugs) {
+  const dir = mkdtempSync(path.join(tmpdir(), "zevet-ws-seeded-team-"));
+  const sessions = {};
+  // "default" is claimed the same way: its file IS accounts.json, not
+  // accounts-default.json (loadTeams() explicitly skips a slug named
+  // DEFAULT_TEAM, matching how the DEFAULT team's own file is always named).
+  for (const slug of slugs) {
+    const file = path.join(dir, slug === "default" ? "accounts.json" : `accounts-${slug}.json`);
+    const seed = new Accounts({ file });
+    sessions[slug] = seed.signIn({ login: `owner-${slug}`, id: `owner-${slug}-1` }).token;
+  }
+  const h = await startHub({ ZEVET_ACCOUNTS: path.join(dir, "accounts.json") });
+  h.accountsDir = dir;
+  h.sessionFor = (slug) => sessions[slug];
+  return h;
+}
+
 let hub;
 before(async () => {
   hub = await startHub();
@@ -468,7 +501,7 @@ describe("the upgrade handshake", () => {
         socket.on("connect", () => {
           socket.write(
             [
-              `GET /ws?token=${TOKEN} HTTP/1.1`,
+              `GET /ws?token=${sessionFor(fresh.base)} HTTP/1.1`,
               `host: 127.0.0.1:${fresh.port}`,
               "upgrade: websocket",
               "connection: Upgrade",
@@ -916,12 +949,10 @@ describe("rooms", () => {
 
 describe("cross-team room isolation", () => {
   test("a member of team B cannot join team A's room by name — no traffic crosses", async () => {
-    const fresh = await teamHub();
+    const fresh = await seededTeamHub(["team-a", "team-b"]);
     try {
-      const a = await createTeam(fresh.base);
-      const b = await createTeam(fresh.base);
-      const tokenA = tokenFor(fresh, a.team);
-      const tokenB = tokenFor(fresh, b.team);
+      const tokenA = fresh.sessionFor("team-a");
+      const tokenB = fresh.sessionFor("team-b");
 
       const inA = connect(fresh.base, tokenA);
       const inB = connect(fresh.base, tokenB);
@@ -947,12 +978,10 @@ describe("cross-team room isolation", () => {
   });
 
   test("a late joiner in team B does not replay team A's log for the same room name", async () => {
-    const fresh = await teamHub();
+    const fresh = await seededTeamHub(["team-a", "team-b"]);
     try {
-      const a = await createTeam(fresh.base);
-      const b = await createTeam(fresh.base);
-      const tokenA = tokenFor(fresh, a.team);
-      const tokenB = tokenFor(fresh, b.team);
+      const tokenA = fresh.sessionFor("team-a");
+      const tokenB = fresh.sessionFor("team-b");
 
       const inA = connect(fresh.base, tokenA);
       const other = connect(fresh.base, tokenA);
@@ -977,12 +1006,11 @@ describe("cross-team room isolation", () => {
   });
 
   test("the default team and a created team do not share a room of the same name", async () => {
-    const fresh = await teamHub();
+    const fresh = await seededTeamHub(["default", "team-a"]);
     try {
-      const a = await createTeam(fresh.base);
-      const tokenA = tokenFor(fresh, a.team);
+      const tokenA = fresh.sessionFor("team-a");
 
-      const inDefault = connect(fresh.base, TOKEN);
+      const inDefault = connect(fresh.base, fresh.sessionFor("default"));
       const inA = connect(fresh.base, tokenA);
       await Promise.all([inDefault.open, inA.open]);
       inDefault.join("room-x");
@@ -1000,10 +1028,9 @@ describe("cross-team room isolation", () => {
   });
 
   test("two teammates on the SAME team still relay normally through the scoping", async () => {
-    const fresh = await teamHub();
+    const fresh = await seededTeamHub(["team-a"]);
     try {
-      const a = await createTeam(fresh.base);
-      const tokenA = tokenFor(fresh, a.team);
+      const tokenA = fresh.sessionFor("team-a");
       const one = connect(fresh.base, tokenA);
       const two = connect(fresh.base, tokenA);
       await Promise.all([one.open, two.open]);
@@ -1145,6 +1172,9 @@ describe("observability", () => {
       const before = await (await fetch(`${fresh.base}/healthz`)).json();
       // `teams` is additive too, same rule as the two ws counts: a hub with
       // no teams created yet still has the DEFAULT one.
+      // `build` (the board build id) is additive as well; test/stale-build.test.mjs owns its value.
+      assert.match(before.build, /^[0-9a-f]{12}$/);
+      delete before.build;
       assert.deepEqual(before, { ok: true, events: 0, listeners: 0, rooms: 0, wsListeners: 0, teams: 1 });
 
       const a = connect(fresh.base);

@@ -5,6 +5,8 @@
 // liability than the encoder below.
 //
 //   node make-icon.mjs
+//   node make-icon.mjs <out.png> <size>   # the same mark at another size
+//                                          # (the board's model logo, 64px)
 //
 // ⚠️ THIS IS THE MASORA LOGO, NOT A DESIGN OF ITS OWN (Andrew, 2026-09-18:
 // "change the favicon or desktop icon of Zevet so that it matches this new
@@ -35,7 +37,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SIZE = 512;
+const SIZE = Number(process.argv[3]) || 512;
+// Every number below is in 512-space; K scales them to SIZE.
+const K = SIZE / 512;
 
 // Two colours, both read out of the favicon's own pixels rather than off a
 // stylesheet, so this file cannot drift from the image it is copying.
@@ -91,7 +95,7 @@ function disc(cx, cy, r, rgb) {
 // The tile: eggshell, generously rounded, and paper right out to the edge. The
 // old icon had a --line hairline around it; the favicon has none, and matching
 // it is the whole point.
-roundRect(0, 0, SIZE, SIZE, 96, PAPER);
+roundRect(0, 0, SIZE, SIZE, 96 * K, PAPER);
 
 // ∴ — one dot up, two down, the Masora mark. The favicon's 256-space numbers,
 // doubled: r 21→42, (128,81)→(256,162), (74,175)→(148,350), (182,175)→(364,350).
@@ -101,7 +105,7 @@ const DOTS = [
   [148, 350], // lower left
   [364, 350], // lower right
 ];
-for (const [cx, cy] of DOTS) disc(cx, cy, DOT_R, INK);
+for (const [cx, cy] of DOTS) disc(cx * K, cy * K, DOT_R * K, INK);
 
 // ---- PNG encoding ----------------------------------------------------------
 const CRC_TABLE = (() => {
@@ -151,7 +155,7 @@ const png = Buffer.concat([
   chunk("IEND", Buffer.alloc(0)),
 ]);
 
-const out = path.join(HERE, "build", "icon.png");
+const out = process.argv[2] ? path.resolve(process.argv[2]) : path.join(HERE, "build", "icon.png");
 mkdirSync(path.dirname(out), { recursive: true });
 writeFileSync(out, png);
 console.log(`wrote ${out} (${SIZE}x${SIZE} RGBA, ${png.length} bytes)`);

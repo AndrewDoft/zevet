@@ -311,12 +311,19 @@ function closeOpenTurn(state) {
  */
 // Recorded identifiers are metadata, never a conversation title.
 function sessionTitle(s) {
-  const title = unwrapEnvelope(text(s.title)).replace(/\s+/g, " ").trim();
+  const title = unwrapEnvelope(text(s.title)).trim();
   return title === text(s.id) || /^(?:[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9a-f]{7,40})$/i.test(title) ? "" : title;
 }
 
 function sessionFallback(s) {
-  return s.source === "codex" ? "Codex session" : s.source === "claude" ? "Claude session" : "Session";
+  if (!s.cwd && !s.repo && (s.source === "claude" || s.source === "codex")) {
+    return `${s.source === "claude" ? "Claude" : "Codex"} session`;
+  }
+  if (!s.cwd && !s.repo) return "Session";
+  const repo = String(s.repo || s.cwd || "").split(/[\\/]/).filter(Boolean).pop() || "repo";
+  const date = new Date(Number(s.updated ?? s.started ?? 0));
+  const time = Number.isNaN(date.getTime()) ? "00:00" : date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${titleCase(repo)} ${time}`;
 }
 
 /* ⚠️ THE FIRST SENTENCE, NOT THE FIRST THREE WORDS. A three-word cut titled
@@ -325,25 +332,78 @@ function sessionFallback(s) {
    ellipsis trims it to what fits, so the cap here only bounds a pasted wall. */
 export function sessionBlurb(session) {
   const s = session || {};
-  const one = firstSentence(sessionTitle(s)) || firstSentence(unwrapEnvelope(text(s.prompt)));
-  if (!one) return sessionFallback(s);
-  return one.length > 80 ? `${one.slice(0, 79)}…` : one;
+  const one = firstSentence(unwrapEnvelope(text(sessionTitle(s))) || unwrapEnvelope(text(s.prompt)));
+  return one ? (one.length > 80 ? `${one.slice(0, 79)}…` : one) : sessionFallback(s);
 }
 
 function firstSentence(said) {
   return said.trim().split(/\n|(?<=[.!?])\s+(?=[A-Z])/)[0].replace(/\s+/g, " ").trim();
 }
 
-export function sessionLabel(session) {
+function cleanTitle(value) {
+  let cleaned = unwrapEnvelope(text(value)).trim();
+  const preamble = /^(?:RULES\s*\(hard\):|#?\s*RESUME\s*[—:-])\s*/i.exec(cleaned);
+  if (preamble) {
+    const rest = cleaned.slice(preamble[0].length);
+    const task = /(?:^|\n)\s*TASK:\s*(.+?)(?=\n|$)/i.exec(rest);
+    const heading = /(?:^|\n)\s*#+\s*(?:Track\s*\d*\s*:\s*|Track\s*:\s*)?(.+?)(?=\n|$)/i.exec(rest);
+    cleaned = (task && task[1]) || (heading && heading[1]) || rest;
+    if (heading) cleaned = cleaned.split(/\s+[—:-]\s+/, 1)[0];
+    const issue = /(?:sentry\s+)?(?:issue\s+)?([A-Z][A-Z0-9]+-[A-Z0-9-]+)/i.exec(cleaned);
+    if (task && issue && /sentry/i.test(cleaned)) cleaned = `Sentry ${issue[1]}`;
+  }
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  cleaned = cleaned.replace(/^you were\s+/i, "");
+  cleaned = cleaned.replace(/^TASK:\s*/i, "");
+  cleaned = cleaned.replace(/^#+\s*(?:Track\s*\d*\s*:\s*|Track\s*:\s*)?/i, "");
+  cleaned = cleaned.replace(/^#+\s*/, "").replace(/^>\s*/, "");
+  cleaned = cleaned.replace(/\bClaude session\b|\bUntitled\b/gi, "");
+  cleaned = cleaned.replace(/https?:\/\/\S+|[A-Za-z]:[\\/]\S+|\\(?:[^\\/\s]+[\\/])+\S+/g, "");
+  return cleaned.replace(/\s+/g, " ").trim().replace(/[.!?…—:-]+$/, "").trim();
+}
+
+const STOPWORDS = new Set(["the", "a", "an", "for", "of", "and", "to", "in", "on", "with", "after"]);
+
+function shortWords(value, limit = 20) {
+  const words = value.split(/\s+/).filter(Boolean)
+    .map((word) => word.replace(/_+/g, " "))
+    .flatMap((word) => word.split(/\s+/))
+    .map((word) => /[A-Z].*-[A-Z].*-/.test(word) ? word : word.replace(/-+/g, " "))
+    .flatMap((word) => word.split(/\s+/));
+  const useful = words;
+  let out = "";
+  for (const word of useful.length ? useful : words) {
+    const next = out ? `${out} ${word}` : word;
+    if (next.length <= limit) out = next;
+    else if (!out) return word.slice(0, limit);
+    else break;
+  }
+  return out || "repo";
+}
+
+function titleCase(value) {
+  return value.replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
+export function sessionLabel(session, listed = []) {
   const s = session || {};
-  // Each candidate is peeled on its own, so a title that is ALL envelope falls
-  // through to the prompt rather than taking the whole chain down with it.
-  const raw =
-    sessionTitle(s) ||
-    unwrapEnvelope(text(s.prompt)) ||
-    sessionFallback(s);
-  const one = raw.replace(/\s+/g, " ").trim();
-  return one.length > 72 ? `${one.slice(0, 71)}…` : one;
+  const label = cleanTitle(s.label);
+  const rawTitle = cleanTitle(sessionTitle(s));
+  const rawPrompt = cleanTitle(s.prompt);
+  const raw = label || rawTitle || rawPrompt || sessionFallback(s);
+  const humanize = Boolean(s.label) || /^(?:RULES|#\s*RESUME)\b/i.test(text(s.title));
+  let name = /^(?:Claude|Codex) session$/.test(raw) ? raw : (humanize ? titleCase(shortWords(raw)) : shortWords(raw));
+  const collisions = listed.filter((other) => other && other !== s && (
+    String(other.label || "") === String(s.label || "") && String(other.title || "") === String(s.title || "") && String(other.prompt || "") === String(s.prompt || "")
+  ));
+  if (collisions.length) {
+    const branch = String(s.branch || "").split(/[\\/]/).filter(Boolean).pop();
+    const repo = String(s.repo || s.cwd || "").split(/[\\/]/).filter(Boolean).pop();
+    const diff = branch || repo || String(listed.indexOf(s) + 1).padStart(2, "0");
+    const room = Math.max(1, 20 - String(diff).length - 1);
+    name = `${name.slice(0, room).trim()} ${diff}`.trim();
+  }
+  return name;
 }
 
 /**
@@ -474,4 +534,33 @@ export function sessionMatches(session, query) {
     .map((v) => text(v).toLowerCase())
     .join(" ");
   return q.split(/\s+/).every((word) => hay.includes(word));
+}
+
+/**
+ * Fold a repo tree's groups so worktrees sit under their base repo.
+ *
+ * `resolved` groups got their name from agent-sessions.js § repoOf, which reads
+ * the worktree's `.git` and already answers the origin — those are trusted as
+ * they are, so `zevet-crm` (a real repo) never lands under `zevet`. Only an
+ * UNRESOLVED name (its folder is gone, or it was never read off disk) is folded
+ * by name: `masora2-w125-fixb` joins `masora2` when a `masora2` group exists,
+ * the longest such base winning.
+ *
+ * @template T
+ * @param {Map<string, { rows: T[], resolved: boolean }>} bucket
+ * @returns {Map<string, T[]>}
+ */
+export function foldRepoGroups(bucket) {
+  const out = new Map();
+  const names = [...bucket.keys()];
+  for (const [name, g] of bucket) {
+    let into = name;
+    if (!g.resolved) {
+      for (const base of names) {
+        if (base !== name && base.length < name.length && /^[-_.]/.test(name.slice(base.length)) && name.startsWith(base) && (into === name || base.length > into.length)) into = base;
+      }
+    }
+    out.set(into, (out.get(into) || []).concat(g.rows));
+  }
+  return out;
 }

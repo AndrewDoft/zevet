@@ -26,12 +26,34 @@ jobs:
             script: dist:mac
             artifact: zevet-macos
     runs-on: ${{ matrix.os }}
+    # Only the Windows leg's federated credential is scoped to this environment
+    # (repo:AndrewDoft/zevet:environment:signing); the macOS leg never reaches
+    # azure/login so this costs it nothing.
+    environment: signing
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      # Same Defender gotcha masora2's sibling-install.yml already documents
+      # for a freshly-built, freshly-signed installer with no reputation yet:
+      # every real NSIS installer this job runs (smoke:win,
+      # repro:fresh-silent, repro-andrew-incident.mjs,
+      # repro-registry-hijack.mjs) exited 3221225477 (STATUS_ACCESS_VIOLATION)
+      # intermittently on 2026-09-28, always on the FIRST real install spawned
+      # in the job, sometimes within a second of starting -- consistent with
+      # cloud-delivered real-time scanning intervening on a binary it has
+      # never seen before. This runner is disposable, so there is nothing to
+      # protect it from.
+      - name: Disable Windows Defender real-time scanning (CI runner only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
 
       # build/icon.png is generated, not committed, and it must exist BEFORE the
       # suite runs because the packaging test reads its pixels.
@@ -60,6 +82,10 @@ jobs:
         working-directory: editor
         run: npm ci
 
+      - name: Install DMG layout tools
+        if: runner.os == 'macOS'
+        run: PIP_BREAK_SYSTEM_PACKAGES=1 python3 -m pip install --user ds-store==1.3.3 mac-alias==2.2.3
+
       # The hub and the client have no dependencies, so this is the whole suite.
       # It runs on both runners on purpose: the bugs this project keeps finding
       # are the ones that are correct on one platform and wrong on the other.
@@ -71,7 +97,45 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build
+      # A fresh CI keychain has no path to Apple's Developer ID intermediate, so
+      # `security find-identity` reports an imported cert as CSSMERR_TP_NOT_TRUSTED
+      # even though it is perfectly valid -- verified once on a real Codemagic mac
+      # build this session (electron-builder found "1 identities found ... 0 valid
+      # identities found"). The root (Apple Root CA) is already a trusted system
+      # anchor; only this intermediate was missing from electron-builder's own
+      # bundled root cert keychain.
+      - name: Import Apple's Developer ID intermediate CA
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MAC_SIGNED: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ "$MAC_SIGNED" = "true" ]; then
+            curl -fsSL -o /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+            security import /tmp/DeveloperIDG2CA.cer -k ~/Library/Keychains/login.keychain-db
+          fi
+
+      # electron-builder's notarize path needs APPLE_API_KEY to be a FILESYSTEM
+      # PATH to the .p8 (that's what @electron/notarize's `appleApiKey` is and
+      # passes straight through as `--key`), not the secret's base64 text, so
+      # the secret is decoded to a file here and the env var repointed at it.
+      # App Store Connect API key, not an Apple ID + app-specific password: that
+      # path locked the Apple ID twice on a bad credential; an API key cannot.
+      - name: Decode the App Store Connect API key
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${APPLE_API_KEY_B64:-}" ]; then
+            echo "$APPLE_API_KEY_B64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          fi
+        env:
+          APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY }}
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
         working-directory: desktop
         # Signing is enabled when all publisher credentials are configured.
         # Otherwise the Mac bundle gets an ad-hoc integrity seal.
@@ -79,9 +143,9 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ env.APPLE_API_KEY_PATH }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -94,6 +158,91 @@ jobs:
         # electron-builder directly bypasses both steps.
         run: npm run ${{ matrix.script }}
 
+      # ─────────────────────────────────────────────────────────────────────
+      # Windows: two stages instead of one `npm run dist:win`.
+      #
+      # electron-builder 25.1.8's own Azure Trusted Signing path (win.azureSignOptions;
+      # this two-stage flow was left unchanged in the 26.17.0 upgrade)
+      # gates on AZURE_CLIENT_SECRET / AZURE_CLIENT_CERTIFICATE_PATH / username+password
+      # (packages/app-builder-lib/out/codeSign/windowsSignAzureManager.js, verified by
+      # reading the installed package) — no federated-token branch, so a GitHub OIDC
+      # token satisfies none of the three and it throws before ever signing. Signing
+      # instead runs as azure/artifact-signing-action steps, which do support OIDC
+      # directly. The app exe has to be signed BEFORE the NSIS installer is packed, or
+      # only the installer wrapper carries a signature and Program Files does not —
+      # hence dir build, sign, then --prepackaged pack, then sign the installer too.
+      - name: Build (Windows, unsigned unpacked app)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node build.cjs -c electron-builder.config.js --win dir --publish never
+
+      - name: Azure login (OIDC, Windows signing only)
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign the app executable(s)
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_CODE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_CODE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERT_PROFILE }}
+          files-folder: desktop/out/win-unpacked
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the app executable signature
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = Get-ChildItem desktop/out/win-unpacked/*.exe
+          if ($files.Count -eq 0) { throw "no exe found in desktop/out/win-unpacked" }
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            Write-Host "$($f.Name): $($sig.Status) — $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne "Valid") { throw "$($f.Name) is not validly signed: $($sig.Status)" }
+            if ($sig.SignerCertificate.Subject -notmatch "CN=Andrew Doft") { throw "$($f.Name) signer is not Andrew Doft: $($sig.SignerCertificate.Subject)" }
+          }
+
+      - name: Pack the NSIS installer from the signed app
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node build.cjs -c electron-builder.config.js --win nsis --prepackaged out/win-unpacked --publish never
+
+      - name: Sign the NSIS installer
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_CODE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_CODE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERT_PROFILE }}
+          files-folder: desktop/out
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the installer signature
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = Get-ChildItem desktop/out/*.exe
+          if ($files.Count -eq 0) { throw "no installer exe found in desktop/out" }
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            Write-Host "$($f.Name): $($sig.Status) — $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne "Valid") { throw "$($f.Name) is not validly signed: $($sig.Status)" }
+            if ($sig.SignerCertificate.Subject -notmatch "CN=Andrew Doft") { throw "$($f.Name) signer is not Andrew Doft: $($sig.SignerCertificate.Subject)" }
+          }
+
       # Exercise the final DMG, not just electron-builder's exit status. The
       # script checks the complete signature, every Mach-O architecture, the
       # packaged native ONNX/Transformers modules, and a normal app launch.
@@ -103,8 +252,93 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: desktop
         env:
-          ZEVET_EXPECT_SIGNED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && '1' || '0' }}
+          ZEVET_EXPECT_SIGNED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' && '1' || '0' }}
         run: npm run smoke:mac
+
+      # Windows runs it BEFORE smoke:win, which rebuilds win-unpacked at a bumped
+      # version: the proof needs the app built from the version in package.json.
+      - name: Prove the payload swap (no installer) and the 3-strike revert
+        if: runner.os == 'Windows'
+        run: node scripts/test-payload-swap.mjs desktop/out/win-unpacked/zevet.exe
+
+      # Install -> update -> install-on-quit's own args -> launch, on a real
+      # NSIS installer. Exists because of a real incident: an update silently
+      # left Program Files\zevet empty, exit code 0 the whole way. See
+      # scripts/smoke-windows.mjs and desktop/build/installer.nsh.
+      - name: Smoke the Windows install/update cycle
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: npm run smoke:win
+
+      # The payload swap on the packaged app, both platforms: a second payload is published
+      # to a local pulse server and the app must take it WITHOUT the installer (only the
+      # changed file fetched, app.asar untouched), and a payload that crashes on boot must
+      # revert after three strikes. Launches the app for real, in throwaway directories.
+      # See scripts/test-payload-swap.mjs.
+      - name: Prove the payload swap (no installer) and the 3-strike revert
+        if: runner.os == 'macOS'
+        run: node scripts/test-payload-swap.mjs desktop/out/mac-arm64/zevet.app/Contents/MacOS/zevet
+
+      # A masora2 CI job (sibling-install.yml, run 36375729128) found that
+      # downloading this exact signed installer and running it with bare `/S`
+      # on a clean machine exits 0 but extracts nothing. smoke:win above
+      # always passes an explicit /currentuser; production's own real callers
+      # (app-update.js's INSTALL_ARGS/QUIT_INSTALL_ARGS, and masora2's
+      # sibling-family.js) never pass a mode flag at all -- this is the one
+      # starting condition (fresh machine, no mode flag) nothing else here
+      # tests. See scripts/repro-fresh-silent-install.mjs.
+      - name: Prove a fresh bare /S and explicit /D= install actually extract
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: npm run repro:fresh-silent
+
+      # A second, real-world incident (Andrew's own machine, 2026-09-27): the
+      # registry's InstallLocation was corrupted to "C:\Program" while the
+      # REAL app, at the standard per-user default, sat there untouched on
+      # an old unsigned build the whole time. Reproduces that exact shape
+      # against a real (not fixture) old installer, then proves THIS build's
+      # installer self-heals it with installOnQuit()'s real args -- no
+      # /allusers, no /currentuser, no /D. See scripts/repro-andrew-incident.mjs,
+      # whose header explains why this checks out v0.2.70 rather than the
+      # literal v0.2.71 that is actually stranded: 0.2.71's own installer
+      # crashes outright on THIS runner image, a separate, already-fixed,
+      # CI-only defect unrelated to the one under test here.
+      - name: Check out zevet 0.2.70 (old, unsigned, pre-dates installer.nsh)
+        if: runner.os == 'Windows'
+        uses: actions/checkout@v4
+        with:
+          ref: v0.2.70
+          path: old-build
+
+      - name: Build zevet 0.2.70 (unsigned -- an old build already installed)
+        if: runner.os == 'Windows'
+        working-directory: old-build/desktop
+        run: |
+          npm ci
+          node make-icon.mjs
+          node build.cjs -c electron-builder.config.js --win --publish never
+
+      - name: Reproduce and prove the self-heal (Andrew's exact incident)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node ../scripts/repro-andrew-incident.mjs "../old-build/desktop/out"
+
+      # A THIRD incident, found by re-reading Andrew's real machine after the
+      # above two fixes: every silent update DID land somewhere and DID exit
+      # 0 -- just never in the copy actually running. masora2's own
+      # sibling-install test harness registers a per-machine copy pointing at
+      # a temp directory (/allusers /D=<temp>) on a real dev box, and
+      # app-update.js's install()/installOnQuit() never told NSIS's
+      # multiUser.nsh where the running copy actually is -- so it read the
+      # registry, found that per-machine entry, and every update since has
+      # been silently hijacked into the temp directory while
+      # %LOCALAPPDATA%\Programs\zevet sat on 0.2.71 the whole time. Fixed in
+      # desktop/app-update.js's winInstallArgs; reused here with the same
+      # old build as the self-heal step above.
+      - name: Prove an update reaches the RUNNING install, not a phantom per-machine copy elsewhere
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node ../scripts/repro-registry-hijack.mjs "../old-build/desktop/out"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -116,14 +350,20 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 # ---------------------------------------------------------------------------
-# UNSIGNED, AND WHAT THAT COSTS
+# SIGNING STATUS, AS OF THIS BUILD
 #
-# Windows has no publisher signature. The macOS bundle is sealed ad-hoc to
-# keep its final resources and native code internally consistent, but it has
-# no Developer ID signature or notarization. Gatekeeper still rejects it as
-# untrusted; recipients must use macOS's explicit per-app approval flow.
-# The build and smoke test never remove quarantine or change Gatekeeper.
+# Windows: signed as "Andrew Doft" via Azure Trusted Signing/OIDC (see the
+# steps above) whenever AZURE_CODE_SIGNING_ACCOUNT is set as a repo variable
+# -- it is, so every Windows build from here on carries a real publisher
+# signature, verified in-job by Get-AuthenticodeSignature.
 #
-# Trusted distribution requires the publisher's Apple Developer identity and
-# notarization, plus a Windows code-signing certificate. Those credentials are
-# intentionally not created or purchased by this build.
+# macOS: signs with the Developer ID Application identity (CSC_LINK / CSC_KEY_PASSWORD)
+# and notarizes with an App Store Connect API key (APPLE_API_KEY / APPLE_API_KEY_ID /
+# APPLE_API_ISSUER) -- never an Apple ID + password, which locked the account once.
+# desktop/staple-macos.cjs staples the ticket onto the .app (afterSign) and
+# desktop/notarize-dmg.cjs separately notarizes + staples the .dmg (afterAllArtifactBuild),
+# since electron-builder's own notarize() only ever submits the .app and never staples
+# anything. `ZEVET_EXPECT_SIGNED` in the smoke step reflects whether all five secrets are
+# set -- it only demands a real signature once they exist -- so a green run here is not
+# itself proof macOS is notarized; check the job log's own signing step for what it
+# actually did.

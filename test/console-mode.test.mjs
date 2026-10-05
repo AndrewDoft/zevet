@@ -77,8 +77,11 @@ describe("sendPrompt applies a pending posture change before it resumes", () => 
   test("the swap only fires for a running console with a real, different, resumable nextMode", () => {
     assert.match(
       fn,
-      /const swapping =\s*before\.running && Boolean\(before\.nextMode\) && before\.nextMode !== before\.mode && Boolean\(before\.sessionId\);/,
+      /const modeChange = Boolean\(before\.nextMode\) && before\.nextMode !== before\.mode;/,
     );
+    // Retargeted 2026-09-30: a pending MODEL (nextModel) swaps the same way, so
+    // the condition was split in two; running + resumable still gate it.
+    assert.match(fn, /const swapping = before\.running && \(modeChange \|\| modelChange\) && Boolean\(before\.sessionId\);/);
   });
 
   test("it reuses stopConsole — no second stop is written", () => {

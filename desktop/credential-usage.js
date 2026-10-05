@@ -8,7 +8,7 @@
 // without a real minute passing.
 "use strict";
 
-const CACHE_MS = 60 * 1000;
+const CACHE_MS = 5 * 60 * 1000;
 
 /** credentialId -> { value, at } */
 const cache = new Map();
@@ -34,7 +34,24 @@ async function utilizationFor(id, credential, { fetchImpl = fetch, now = Date.no
   return value;
 }
 
+/** The 5h/7d windows for a subscription credential, with `at` = when they were
+ *  PROBED (a cached reading keeps its own time, so the board can tell it apart
+ *  from a fresher rate_limit_event). Undefined when there are none. */
+async function windowsFor(id, credential, { fetchImpl = fetch, now = Date.now } = {}) {
+  const cached = cache.get(id);
+  if (cached && cached.windows && now() - cached.at < CACHE_MS) return { windows: cached.windows, at: cached.at };
+  const result = await probeWindows(credential, fetchImpl);
+  const at = now();
+  cache.set(id, { value: result && result.value, windows: result && result.windows, at });
+  return result && result.windows && result.windows.length ? { windows: result.windows, at } : undefined;
+}
+
 async function probe({ provider, kind, key } = {}, fetchImpl) {
+  const result = await probeWindows({ provider, kind, key }, fetchImpl);
+  return result && result.value;
+}
+
+async function probeWindows({ provider, kind, key } = {}, fetchImpl) {
   if (provider !== "anthropic" || !key) return undefined;
   let res;
   try {
@@ -61,13 +78,28 @@ async function probe({ provider, kind, key } = {}, fetchImpl) {
     // api_key: no plan window to report at all. 0 (fully available) unless
     // the probe itself failed, in which case the credential is unusable and
     // the ladder should skip this rung, not treat it as wide open.
-    return res.ok ? 0 : undefined;
+    return { value: res.ok ? 0 : undefined, windows: undefined };
   }
 
   const h5 = Number(res.headers.get("anthropic-ratelimit-unified-5h-utilization"));
   const h7 = Number(res.headers.get("anthropic-ratelimit-unified-7d-utilization"));
   if (Number.isNaN(h5) && Number.isNaN(h7)) return undefined;
-  return Math.max(Number.isNaN(h5) ? 0 : h5, Number.isNaN(h7) ? 0 : h7);
+  const headers = new Map();
+  if (res.headers && typeof res.headers.entries === "function") {
+    for (const [name, value] of res.headers.entries()) {
+      if (/^anthropic-ratelimit-unified-(5h|7d)-reset$/i.test(name)) headers.set(name.toLowerCase(), value);
+    }
+  }
+  const reset = (key) => {
+    const value = headers.get(`anthropic-ratelimit-unified-${key}-reset`);
+    const n = Number(value);
+    return Number.isFinite(n) ? n * 1000 : 0;
+  };
+  const windows = [
+    !Number.isNaN(h5) && { key: "five_hour", utilization: h5, resetsAt: reset("5h") },
+    !Number.isNaN(h7) && { key: "seven_day", utilization: h7, resetsAt: reset("7d") },
+  ].filter(Boolean);
+  return { value: Math.max(Number.isNaN(h5) ? 0 : h5, Number.isNaN(h7) ? 0 : h7), windows };
 }
 
 /** Test-only: drop every cached reading. */
@@ -75,4 +107,4 @@ function _clearCache() {
   cache.clear();
 }
 
-module.exports = { utilizationFor, _clearCache };
+module.exports = { utilizationFor, windowsFor, _clearCache };

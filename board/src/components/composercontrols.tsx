@@ -20,19 +20,23 @@
  * run running.
  */
 import { useContext } from "react";
+import { FolderIcon, SlidersHorizontalIcon } from "lucide-react";
+import { bridge } from "../lib/bridge";
 import { ChatSurface } from "../lib/surface";
 import { ContextCardButton, PastPromptsButton } from "./composercards";
 import { PromptLibraryPanel } from "./promptlib";
 import { QuotaChip } from "./quota";
-import { RunMeterCard } from "./runmeters";
+import { RunMeterCard, type RunUsage } from "./runmeters";
 import { ModelChoice } from "./model-choice";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Textarea } from "./ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { mono } from "./assistant-ui/elements/surfaces";
 import { cn } from "@/lib/utils";
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { CONTEXT_FLOOR, contextShare } from "../lib/meter.mjs";
 import { selectActiveConsole, useBoard } from "../lib/board";
-import { useChat } from "../lib/chat";
+import { CHAT_AGENTS, useChat } from "../lib/chat";
 import { runningModelName } from "../lib/models.mjs";
 import { money, tokens } from "../lib/fmt";
 import type { LaunchMode } from "../lib/types";
@@ -84,9 +88,9 @@ const compactModelChoice = cn(
 );
 
 interface ComposerSource {
-  usage: { context: number | null; cacheHit: number | null; cost: number | null; model: string | null; window: number | null } | null;
+  usage: RunUsage | null;
   model: string;
-  runningModel: { id: string; name: string } | undefined;
+  runningModel: { id: string; name: string; title?: string } | undefined;
   agents: UsableAgent[];
   launchMode: LaunchMode;
   setLaunchMode: (m: LaunchMode) => void;
@@ -107,9 +111,18 @@ function useComposerSource(): ComposerSource {
     const thread = activeId ? threads[activeId] : null;
     const usage = thread?.usage ?? null;
     const model = usage?.model ? runningModelName(usage.model, usage.model) : "";
-    const runningModel = usage?.model ? { id: `claude:${usage.model}`, name: model || "Default" } : undefined;
-    // Chat only uses claude-cli provider
-    const usable = localAgents.filter((a) => a.ok && a.name === "claude");
+    // Chat's model is chosen per turn, so the trigger shows the run's only
+    // while one is in flight; after that the pick is what the next turn uses.
+    const runningModel = !thread?.busy
+      ? undefined
+      : thread.agent === "zevet"
+        ? { id: "zevet:auto", name: thread.route ? `Zevet · ${thread.route}` : "Zevet", title: thread.routeWhy }
+        : usage?.model
+          ? { id: `${thread.agent}:${usage.model}`, name: model || "Default" }
+          : undefined;
+    // The rows Code offers, less the agents Chat has no adapter for (gemini,
+    // meta): a row that would run as another agent is not a choice.
+    const usable = localAgents.filter((a) => a.ok && (CHAT_AGENTS as readonly string[]).includes(a.name));
     return {
       usage,
       model,
@@ -129,7 +142,11 @@ function useComposerSource(): ComposerSource {
   const usable = localAgents.filter((a) => a.ok);
   const model = active ? runningModelName(active.usage.model, active.model) : "";
   const runningModel = active
-    ? { id: `${active.agent}:${active.usage.model || active.model}`, name: model || "Default" }
+    ? active.nextModel
+      ? { id: `${active.agent}:${active.nextModel}`, name: runningModelName("", active.nextModel) }
+      : active.agent === "zevet"
+      ? { id: "zevet:auto", name: active.route ? `Zevet · ${active.route}` : "Zevet", title: active.routeWhy }
+      : { id: `${active.agent}:${active.usage.model || active.model}`, name: model || "Default" }
     : undefined;
   return {
     usage: active?.usage ?? null,
@@ -141,6 +158,92 @@ function useComposerSource(): ComposerSource {
     setConsoleMode,
     activeKey: active?.key ?? null,
   };
+}
+
+const NO_FOLDER = "::none";
+const PICK_FOLDER = "::pick";
+const base = (dir: string) => dir.split(/[\\/]+/).filter(Boolean).pop() || dir;
+
+/** Chat + Work: the folder this thread works in. None is plain chat; a folder
+ *  gives the agent its tools there. */
+function FolderChip() {
+  const dir = useChat((s) => s.chats.find((c) => c.id === s.activeId)?.folder ?? (s.activeId ? "" : s.draftFolder));
+  const setFolder = useChat((s) => s.setFolder);
+  const workspaces = useBoard((s) => s.localWorkspaces);
+  const refresh = useBoard((s) => s.refreshLocalWorkspaces);
+  const dirs = workspaces.map((w) => w.dir);
+  if (dir && !dirs.includes(dir)) dirs.unshift(dir);
+  return (
+    <Select
+      value={dir || NO_FOLDER}
+      onValueChange={(v: string | null) => {
+        if (!v) return;
+        if (v === NO_FOLDER) void setFolder("");
+        else if (v === PICK_FOLDER)
+          void bridge.local?.addWorkspace().then(async (w) => {
+            if (!w) return;
+            await refresh();
+            await setFolder(w.dir);
+          });
+        else void setFolder(v);
+      }}
+    >
+      <SelectTrigger
+        size="sm"
+        data-slot="folder-chip"
+        className="h-7 max-w-40 shrink-0 gap-1 rounded-full border-transparent bg-foreground/[0.04] px-2 text-xs"
+        aria-label="Folder"
+        title={dir || "Folder"}
+      >
+        <FolderIcon className="size-3.5" aria-hidden="true" />
+        <SelectValue>{(v: string) => (v === NO_FOLDER ? "Folder" : base(v))}</SelectValue>
+      </SelectTrigger>
+      <SelectContent align="start">
+        <SelectItem value={NO_FOLDER}>None</SelectItem>
+        {dirs.map((d) => (
+          <SelectItem key={d} value={d}>
+            {base(d)}
+          </SelectItem>
+        ))}
+        <SelectItem value={PICK_FOLDER}>Choose folder…</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** claude launch flags with no other home: `--continue` (the latest session in
+ *  this folder, for the next start only) and `--add-dir` (more folders the
+ *  agent may touch). Effort lives in the model picker. Code surface only. */
+function LaunchExtras() {
+  const cont = useBoard((s) => s.launchContinue);
+  const setCont = useBoard((s) => s.setLaunchContinue);
+  const dirs = useBoard((s) => s.launchAddDirs);
+  const setDirs = useBoard((s) => s.setLaunchAddDirs);
+  const on = cont || dirs.trim().length > 0;
+  return (
+    <Popover>
+      <PopoverTrigger
+        aria-label="Session options"
+        title="Continue the latest session here · extra folders"
+        className={cn(
+          "flex h-7 shrink-0 items-center rounded-full px-2 text-xs",
+          on ? "bg-foreground/10 text-foreground" : "bg-foreground/[0.04] text-foreground/60",
+        )}
+      >
+        <SlidersHorizontalIcon className="size-3.5" aria-hidden="true" />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="flex w-72 flex-col gap-3 text-xs">
+        <label className="flex items-start gap-2">
+          <input type="checkbox" checked={cont} onChange={(e) => setCont(e.target.checked)} className="mt-0.5" />
+          <span>Continue the latest Claude session in this folder (next start only)</span>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>Extra folders Claude may use, one path per line</span>
+          <Textarea value={dirs} onChange={(e) => setDirs(e.target.value)} rows={3} className="text-xs" />
+        </label>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function ComposerControls() {
@@ -233,6 +336,8 @@ export function ComposerControls() {
         </SelectContent      >
       </Select>
 
+      {isChat ? <FolderChip /> : <LaunchExtras />}
+
       {facts}
     </div>
   );
@@ -260,8 +365,6 @@ export function ComposerControls() {
  */
 export function ComposerExtras() {
   const { usage } = useComposerSource();
-  const isChat = useContext(ChatSurface);
-
   return (
     <ContextCardButton>
       {usage && usage.context != null ? (

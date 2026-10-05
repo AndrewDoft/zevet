@@ -36,18 +36,29 @@ is exactly as available as the product.
 
 ### Where it runs
 
-The hub is live at **https://34-74-69-129.sslip.io**, on the Google Compute
-Engine instance `masora-app`, behind the Caddy that fronts usemasora.com. Real
-Let's Encrypt certificate, no DNS record needed: `sslip.io` resolves any
-dotted-quad hostname to that address, which is how a box with no spare domain
-gets HTTPS.
+The hub is live at **https://hub.usemasora.com**, on the Google Compute
+Engine instance `masora-app`, behind the Caddy that fronts usemasora.com — the
+same Caddy block also answers on **https://34-74-69-129.sslip.io**, which is
+never taken away. The sslip address is the one with no DNS dependency at all
+(`sslip.io` resolves any dotted-quad hostname to that address, which is how a
+box with no spare domain gets HTTPS), so it stays live permanently as the
+fallback for a network that cannot resolve `usemasora.com` — a blocked
+resolver, or a filter that treats a bare `sslip.io` domain on principle as
+untrusted and refuses it instead.
 
-It moved there on 2026-09-19. It used to run on a DigitalOcean droplet at
-`157-245-87-197.sslip.io`, which is where usemasora.com used to be served from
-too; the site moved to Google Cloud and the hub was the last thing left behind.
-The token did not change, so an existing install needs only the new address —
-`~/.zevet/config.json`, or re-run setup. The old address no longer serves the
-hub.
+`desktop/hub-target.js`'s `HOSTED_HUB` is the domain now; `LEGACY_HUB` names
+the sslip address for exactly one purpose — an existing install whose stored
+`cfg.hub` is still the old default gets rewritten to the new one on launch,
+automatically, but only once a quick reachability check of the new host
+actually succeeds (see `migrateHubDomain` in `desktop/main.js`). A hub
+configured on purpose — self-hosting, `ZEVET_HUB`, an address typed into
+setup — is never touched by that rewrite.
+
+The hub moved to this GCE instance on 2026-09-19, from a DigitalOcean droplet
+at `157-245-87-197.sslip.io` (where usemasora.com used to be served from too;
+the old address no longer serves the hub). The token did not change either
+time — an existing install only ever needs a new address, not a new
+credential.
 
     /srv/zevet                     the checkout
     /srv/zevet/.env                ZEVET_TOKEN, 0600
@@ -76,14 +87,17 @@ The board is at `<hub>/?token=<ZEVET_TOKEN>`.
 Send them **one command and one secret**. On macOS:
 
 ```bash
-curl -fsSL https://34-74-69-129.sslip.io/setup.sh -o setup.sh && bash setup.sh
+curl -fsSL https://hub.usemasora.com/setup.sh -o setup.sh && bash setup.sh
 ```
 
 On Windows:
 
 ```powershell
-irm https://34-74-69-129.sslip.io/setup.ps1 -OutFile setup.ps1; powershell -ExecutionPolicy Bypass -File .\setup.ps1
+irm https://hub.usemasora.com/setup.ps1 -OutFile setup.ps1; powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
+
+(`https://34-74-69-129.sslip.io` works identically for both — same hub,
+same token — for a network that cannot resolve `usemasora.com`.)
 
 It asks for the hub URL (that one), the shared token (send it separately, not in
 the same message as the link) and the name they want on the board. Then it finds

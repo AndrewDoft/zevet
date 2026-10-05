@@ -656,14 +656,14 @@ describe("the embedder reaches a packaged build", () => {
   const pkg = JSON.parse(readFileSync(path.join(ROOT, "desktop", "package.json"), "utf8"));
   const files = pkg.build.files;
 
-  test("embedder.js is in build.files", () => {
+  test("embedder.js is in payload.files", () => {
     // `files` is an ALLOWLIST. A module missing from it is simply not copied,
     // and the installed app dies on the require — a crash no test, no
     // `npm start` and no code review catches, because all three run from the
     // checkout where the file is right there. desktop-bridges.test.mjs makes
     // this assertion for everything main.js requires; embedder.js is reached
     // from the index rather than from main.js, so it needs its own.
-    assert.ok(files.includes("embedder.js"), "embedder.js is not in build.files, so the packaged app cannot load it");
+    assert.ok(pkg.payload.files.includes("embedder.js"), "embedder.js is not in payload.files, so the packaged app cannot load it");
   });
 
   test("the runtime is an OPTIONAL dependency, pinned exactly", () => {

@@ -148,6 +148,30 @@ const AGENTS = [
     // an environment variable, which no auth file can show.
     envKeys: () => ["OPENROUTER_API_KEY"],
   },
+  {
+    id: "muse-code",
+    label: "Muse Code",
+    bin: "muse",
+    // Meta's own docs (docs/contracts/muse-code-hooks.md, fetched 2026-09-27)
+    // publish the hook EVENT NAMES and where hooks are configured
+    // (<repo>/.muse/hooks.json, ~/.config/muse/settings.json), but not the
+    // exact stdin JSON payload a hook command receives, and there is no
+    // `muse` install on this machine to probe it the way codex-hooks.md did.
+    // Wiring hooks from a guessed payload shape is exactly the mistake that
+    // note had to correct twice. Detection only, until that is verified
+    // against a real install — see INSUF-009.
+    hooks: false,
+    // No confirmed non-PATH install locations: the installer (curl
+    // install.sh / irm install.ps1) is a script, not a package with a known
+    // fixed directory the way Codex's build-hash path is. onPath() above is
+    // the only mechanism here.
+    extraPaths: () => [],
+    authFiles: () => [],
+    // MODEL_API_KEY is the Meta Model API's own documented env var
+    // (docs/contracts/meta-model-api.md) and Muse Code is built on it, so its
+    // presence is the same "presence only" signal every other entry uses.
+    envKeys: () => ["MODEL_API_KEY"],
+  },
 ];
 
 /** Everything found, whether or not it is usable. */

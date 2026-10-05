@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { consoleSprite } from "../board/src/lib/roster.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -39,15 +40,15 @@ describe("agent sprites", () => {
     // printed identically side by side, which is a deeply unhelpful five
     // minutes.
     assert.deepEqual(Array.from(sprites.kinds()).sort(), [
-      "book", "bubble", "code", "doc", "eraser", "lens", "none", "pencil", "wrench",
+      "book", "bubble", "code", "doc", "eraser", "laptop", "lens", "none", "page", "pencil", "wrench",
     ]);
   });
 
-  test("every sprite is the same 22x10 grid", () => {
+  test("every sprite is the same 22x11 grid", () => {
     // The invariant that makes one figure line up with the next.
     for (const kind of sprites.kinds()) {
       const svg = sprites.spriteFor({ hint: kind });
-      assert.match(svg, /viewBox="0 0 22 10"/, `${kind} is not 22x10`);
+      assert.match(svg, /viewBox="0 0 22 11"/, `${kind} is not 22x11`);
       // No rect may extend past x=22, which is what an over-long row would
       // produce -- and an over-long row is the single easiest mistake to make
       // in a hand-written pixel grid.
@@ -56,7 +57,7 @@ describe("agent sprites", () => {
         assert.ok(right <= 22, `${kind} has a rect ending at x=${right}`);
       }
       for (const m of svg.matchAll(/y="(\d+)"/g)) {
-        assert.ok(Number(m[1]) < 10, `${kind} has a rect at y=${m[1]}`);
+        assert.ok(Number(m[1]) < 11, `${kind} has a rect at y=${m[1]}`);
       }
     }
   });
@@ -86,7 +87,9 @@ describe("agent sprites", () => {
     // client/hook.mjs forwards verbatim as `tool`.
     assert.equal(sprites.toolKind("Edit"), "pencil");
     assert.equal(sprites.toolKind("MultiEdit"), "pencil");
-    assert.equal(sprites.toolKind("Write"), "doc");
+    assert.equal(sprites.toolKind("Write"), "page");
+    assert.equal(sprites.toolKind("TodoWrite"), "doc");
+    assert.equal(sprites.toolKind("PowerShell"), "laptop");
     assert.equal(sprites.toolKind("Read"), "book");
     assert.equal(sprites.toolKind("Grep"), "lens");
     assert.equal(sprites.toolKind("Glob"), "lens");
@@ -129,11 +132,77 @@ describe("agent sprites", () => {
   });
 
   test("the drawing is run-length encoded, not one rect per pixel", () => {
-    // 220 cells; a naive encoder emits one rect each and the board redraws
+    // 242 cells; a naive encoder emits one rect each and the board redraws
     // these on every event.
     const svg = sprites.spriteFor({ tool: "Edit" });
     const rects = [...svg.matchAll(/<rect /g)].length;
     assert.ok(rects < 80, `${rects} rects — the run-length encoding is not working`);
     assert.ok(rects > 10, `${rects} rects — suspiciously few, is anything drawn?`);
+  });
+
+  test("every tool kind the mapping can answer has a drawing", () => {
+    const kinds = Array.from(sprites.kinds());
+    for (const k of ["lens", "pencil", "page", "book", "doc", "laptop", "wrench", "bubble", "code", "none"]) {
+      assert.ok(kinds.includes(k), `no drawing for ${k}`);
+    }
+  });
+});
+
+// ---- the figure on a LIVE agent -------------------------------------------
+// Andrew, 2026-10-05: "i still dont see the sprites in zevet". The tree rider
+// needs a file path on an event, and none of his events had one; so the live
+// agent itself carries the figure, in the rail row and the conversation header.
+
+const call = (toolName, extra = {}) => ({ type: "tool-call", toolCallId: toolName, toolName, ...extra });
+const running = (...messages) => ({ running: true, transcript: { messages } });
+
+describe("a live console's figure", () => {
+  test("holds the tool it is using right now", () => {
+    const c = running(
+      { role: "user", content: [{ type: "text", text: "fix it" }] },
+      { role: "assistant", content: [call("Read", { result: "x" }), call("Edit")] },
+    );
+    assert.deepEqual(consoleSprite(c), { tool: "Edit" });
+    const svg = sprites.spriteFor(consoleSprite(c));
+    assert.match(svg, /data-tool-kind="pencil"/);
+  });
+
+  test("a prompt with no answer yet is a speech bubble", () => {
+    assert.deepEqual(consoleSprite(running({ role: "user", content: [] })), { kind: "prompt" });
+    assert.match(sprites.spriteFor(consoleSprite(running())), /data-tool-kind="bubble"/);
+  });
+
+  test("an answer with no tool call yet is empty-handed", () => {
+    const c = running({ role: "user", content: [] }, { role: "assistant", content: [{ type: "text", text: "ok" }] });
+    assert.match(sprites.spriteFor(consoleSprite(c)), /data-tool-kind="none"/);
+    // assistant-ui lets `content` be a bare string; that must not throw.
+    assert.deepEqual(consoleSprite(running({ role: "assistant", content: "hi" })), {});
+  });
+});
+
+describe("where the figure is drawn", () => {
+  const src = (f) => readFileSync(path.join(ROOT, f), "utf8");
+
+  test("a running console row in the rail renders its sprite", () => {
+    const people = src("board/src/components/people.tsx");
+    const branch = people.slice(people.indexOf("{c && c.running ? ("), people.indexOf(") : unseen ? ("));
+    assert.match(branch, /<Sprite \{\.\.\.consoleSprite\(c\)\}/);
+  });
+
+  test("the conversation header mounts the active console's sprite", () => {
+    assert.match(src("board/src/App.tsx"), /<span>Conversation<\/span>\s*<ActiveSprite \/>/);
+    const sprite = src("board/src/components/sprite.tsx");
+    assert.match(sprite, /if \(!c \|\| !c\.running\) return null;/);
+  });
+
+  test("it is drawn at an integer scale of the 22x11 grid, 24px or taller", () => {
+    const sprite = src("board/src/components/sprite.tsx");
+    assert.match(sprite, /scale = 3/);
+    assert.ok(11 * 3 >= 24);
+    assert.match(src("board/src/components/tree.tsx"), /<Sprite [^>]*scale=\{2\}/);
+  });
+
+  test("the sprite script is on the page the desktop loads", () => {
+    assert.match(src("hub/public/index.html"), /<script src="\/agent-sprites\.js"><\/script>/);
   });
 });

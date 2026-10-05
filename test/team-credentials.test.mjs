@@ -74,7 +74,9 @@ describe("team credentials", () => {
     const body = await res.json();
     assert.ok(body.id);
 
-    const list = await fetch(`${hub().base}/team/credentials`, { headers: { "x-zevet-token": SHARED_TOKEN } }).then((r) => r.json());
+    // GET /team/credentials now needs a real session too (teamFromSession —
+    // see hub/server.mjs), not just the shared token.
+    const list = await fetch(`${hub().base}/team/credentials`, { headers: { "x-zevet-token": OWNER_SESSION } }).then((r) => r.json());
     const rec = list.credentials.find((c) => c.id === body.id);
     assert.ok(rec);
     assert.equal(rec.label, "shared key");
@@ -93,7 +95,7 @@ describe("team credentials", () => {
     });
     assert.equal(res.status, 200);
     const { id } = await res.json();
-    const meta = await fetch(`${hub().base}/team/credentials`, { headers: { "x-zevet-token": SHARED_TOKEN } })
+    const meta = await fetch(`${hub().base}/team/credentials`, { headers: { "x-zevet-token": OWNER_SESSION } })
       .then((r) => r.json())
       .then((b) => b.credentials.find((c) => c.id === id));
     assert.equal(meta.addedBy, "trevor");
@@ -159,8 +161,14 @@ describe("team credentials", () => {
     const asOwner = await fetch(`${hub().base}/team/credentials/${add.id}/secret`, { headers: { "x-zevet-token": OWNER_SESSION } });
     assert.equal(asOwner.status, 200);
 
+    // CONTRACT CHANGE: a shared-token caller used to be treated as "an
+    // authenticated member of the team" for this route, same as reading the
+    // board. It leaked exactly the same way — an old install's token, held
+    // by nobody who ever signed in, could read a live API key. Reading a
+    // raw credential secret now needs a real session (teamFromSession — see
+    // hub/server.mjs), same as /api/state and the board it sits next to.
     const asShared = await fetch(`${hub().base}/team/credentials/${add.id}/secret`, { headers: { "x-zevet-token": SHARED_TOKEN } });
-    assert.equal(asShared.status, 200, "a shared-token caller is still an authenticated member of the team, and may read");
+    assert.equal(asShared.status, 401, "a shared token must not be able to read a team credential's raw secret");
   });
 
   test("a member of another team cannot read this team's credential at all", async () => {
@@ -205,7 +213,7 @@ describe("team credentials", () => {
     });
     assert.equal(ownerRes.status, 200);
 
-    const list = await fetch(`${hub().base}/team/credentials`, { headers: { "x-zevet-token": SHARED_TOKEN } }).then((r) => r.json());
+    const list = await fetch(`${hub().base}/team/credentials`, { headers: { "x-zevet-token": OWNER_SESSION } }).then((r) => r.json());
     assert.equal(list.credentials.some((c) => c.id === add.id), false);
   });
 

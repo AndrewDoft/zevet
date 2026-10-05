@@ -31,12 +31,12 @@
 // files to edit is not a thing an uninstaller should do uninvited.
 import { readFileSync, writeFileSync, existsSync, copyFileSync, rmSync } from "node:fs";
 import path from "node:path";
-import os from "node:os";
 import { installCodex, codexConfigPathFor, codexGlobalConfigPath, stripBlock, BLOCK_START } from "./install-codex.mjs";
 import { stripTrustBlock, TRUST_START } from "./codex-trust.mjs";
 import { removeOpencode } from "./install-opencode.mjs";
+import { zevetHome, atomicWriteJson } from "./zevet-home.mjs";
 
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const WORKSPACES = path.join(HOME, "workspaces.json");
 const CLIENT_DIR = path.join(HOME, "client");
 const CONFIG = path.join(HOME, "config.json");
@@ -129,7 +129,7 @@ function removeClaude(repo) {
 
   try {
     backup(file);
-    writeFileSync(file, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+    atomicWriteJson(file, cfg);
   } catch (err) {
     return { state: "failed", detail: `could not write ${file} (${err.message})` };
   }

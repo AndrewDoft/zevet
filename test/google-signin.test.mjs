@@ -309,6 +309,97 @@ describe("two providers on one hub", () => {
   });
 });
 
+describe("an email invitation, claimed by whoever actually signs in", () => {
+  test("a Google sign-in with that verified email is admitted, and claims the row", () => {
+    const a = store(t0());
+    a.signIn({ provider: "github", id: "1", login: "andrewdoft" });
+    assert.equal(a.allow("kai@usemasora.com").ok, true);
+
+    const kai = { provider: "google", id: "9", login: "kai@usemasora.com", email: "kai@usemasora.com" };
+    assert.equal(a.mayEnter(kai, {}).ok, true);
+    a.signIn(kai);
+    const row = a.list().find((p) => p.login === "kai@usemasora.com");
+    assert.ok(row.id, "the invite must have been claimed (an id set), not left pending beside a new row");
+    assert.equal(a.list().length, 2, "one owner, one claimed invite — never a second row for kai");
+  });
+
+  test("a GitHub sign-in whose verified primary email matches is admitted too", () => {
+    const a = store(t0());
+    a.signIn({ provider: "github", id: "1", login: "andrewdoft" });
+    assert.equal(a.allow("kai@usemasora.com").ok, true);
+
+    // GitHub's own login has nothing to do with the invited address — this is
+    // the whole point: the email is what matched, not the name.
+    const kai = { provider: "github", id: "555", login: "kai-gh", email: "kai@usemasora.com" };
+    const may = a.mayEnter(kai, {});
+    assert.equal(may.ok, true);
+    a.signIn(kai);
+
+    const list = a.list();
+    assert.equal(list.length, 2, "the email invite must be CLAIMED, not left as a second, permanently-pending row");
+    const row = list.find((p) => p.login === "kai-gh");
+    assert.equal(row.provider, "github", "the row now reflects who actually signed in");
+    assert.ok(row.id);
+  });
+
+  test("without a matching email, GitHub falls back to matching by login only", () => {
+    const a = store(t0());
+    a.signIn({ provider: "github", id: "1", login: "andrewdoft" });
+    assert.equal(a.allow("kai@usemasora.com").ok, true);
+
+    const stranger = { provider: "github", id: "9", login: "kai-gh" }; // no email at all
+    assert.equal(a.mayEnter(stranger, {}).ok, false);
+  });
+
+  test("a different GitHub email does not borrow somebody else's invite", () => {
+    const a = store(t0());
+    a.signIn({ provider: "github", id: "1", login: "andrewdoft" });
+    assert.equal(a.allow("kai@usemasora.com").ok, true);
+
+    const mallory = { provider: "github", id: "9", login: "mallory", email: "mallory@elsewhere.com" };
+    assert.equal(a.mayEnter(mallory, {}).ok, false);
+  });
+});
+
+describe("a created team's own Workspace domain toggle", () => {
+  test("the owner's hd is captured on sign-in, and setDomain accepts only that value", () => {
+    const a = store(t0());
+    const owner = { provider: "google", id: "1", login: "owner@acme.com", email: "owner@acme.com", hd: "acme.com" };
+    a.signIn(owner);
+    assert.equal(a.ownerHd, "acme.com");
+    assert.equal(a.domain, "", "off by default, even once the owner's hd is known");
+
+    assert.deepEqual(a.setDomain("not-acme.com"), { ok: false, error: "only acme.com can be set — that is the owner's own Workspace domain" });
+    assert.equal(a.domain, "");
+
+    assert.equal(a.setDomain("acme.com").ok, true);
+    assert.equal(a.domain, "acme.com");
+
+    // Off again, and a colleague at that domain is refused once more.
+    assert.equal(a.setDomain("").ok, true);
+    assert.equal(a.domain, "");
+  });
+
+  test("a colleague at that domain is admitted once the toggle is on, and refused while it is off", () => {
+    const a = store(t0());
+    const owner = { provider: "google", id: "1", login: "owner@acme.com", hd: "acme.com" };
+    a.signIn(owner);
+    const colleague = { provider: "google", id: "2", login: "kai@acme.com", hd: "acme.com" };
+
+    assert.equal(a.mayEnter(colleague, { domain: a.domain }).ok, false, "off by default");
+    a.setDomain("acme.com");
+    assert.equal(a.mayEnter(colleague, { domain: a.domain }).ok, true);
+  });
+
+  test("a GitHub owner has no hd to offer, and setDomain refuses anything but empty", () => {
+    const a = store(t0());
+    a.signIn({ provider: "github", id: "1", login: "andrewdoft" });
+    assert.equal(a.ownerHd, "");
+    assert.deepEqual(a.setDomain("acme.com"), { ok: false, error: "the owner did not sign in with a Google Workspace account" });
+    assert.equal(a.setDomain("").ok, true, "clearing an already-off domain is not an error");
+  });
+});
+
 /** node:test gives each `test` its own context; these suites build a store per
  *  test and need one to hang the temp-directory cleanup on. */
 function t0() {

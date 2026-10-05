@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, rmSyn
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { zevetHome, atomicWriteJson } from "./zevet-home.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE = path.join(HERE, "opencode-plugin.mjs");
@@ -68,7 +69,7 @@ export function opencodeGlobalPluginPath(home = os.homedir()) {
  * with it.
  */
 export function opencodeReposPath() {
-  return path.join(process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet"), "opencode-repos.json");
+  return path.join(zevetHome(), "opencode-repos.json");
 }
 
 /** Read the opt-in list; a missing or corrupt file is an empty list, never a throw. */
@@ -85,7 +86,7 @@ export function readOpencodeRepos() {
 function writeOpencodeRepos(list) {
   const file = opencodeReposPath();
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(list, null, 2)}\n`, "utf8");
+  atomicWriteJson(file, list);
 }
 
 /** Case-insensitive on Windows, exact elsewhere — matches hook.mjs's own repo comparison. */

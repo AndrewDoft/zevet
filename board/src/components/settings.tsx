@@ -11,6 +11,9 @@ import {
 import { updateCommand, updatePercent, updateStatusText } from "../lib/update.mjs";
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { Twist } from "./twist";
+import { GithubMark, GoogleMark } from "./logos";
+import { IdentityRows } from "./identity";
+import { TeamInvite, handle } from "./invite";
 
 function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   return (
@@ -115,7 +118,7 @@ function PermissionSection() {
   );
 }
 
-function GithubConnectBox({ onDone }: { onDone: () => void }) {
+function GithubConnectBox({ team, onDone }: { team: string; onDone: () => void }) {
   const [state, setState] = useState<
     | { phase: "idle" }
     | { phase: "starting" }
@@ -131,8 +134,7 @@ function GithubConnectBox({ onDone }: { onDone: () => void }) {
       return;
     }
     setState({ phase: "starting" });
-    const hub = (bridge.cfg && bridge.cfg.hub) || undefined;
-    window.zevet?.githubStart?.(hub).then((r) => {
+    window.zevet?.githubStart?.(null, team || undefined).then((r) => {
       if (!r || !r.ok) {
         setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
         return;
@@ -154,13 +156,14 @@ function GithubConnectBox({ onDone }: { onDone: () => void }) {
   }
 
   const label = connectPhaseLabel(state.phase, "GitHub");
+  const idle = state.phase === "idle" || state.phase === "done";
 
   const value = connectValue(state.phase, state, "GitHub");
 
   return (
     <div className="srow">
-      <button className={MAKE_BTN} type="button" disabled={state.phase === "starting"} onClick={click}>
-        {label}
+      <button className={MAKE_BTN} type="button" aria-label={label} disabled={state.phase === "starting"} onClick={click}>
+        {idle ? <><GithubMark /> GitHub</> : label}
       </button>
       <span className="v">{value}</span>
     </div>
@@ -194,7 +197,28 @@ function GithubDisconnectRow({ onDone }: { onDone: () => void }) {
   );
 }
 
-function GoogleConnectBox({ onDone }: { onDone: () => void }) {
+function TeamSignOutRow() {
+  const [state, setState] = useState<"idle" | "busy" | "fail">("idle");
+
+  function click() {
+    setState("busy");
+    window.zevet?.signOutTeam?.().then(
+      (r) => { if (!r || !r.ok) setState("fail"); },
+      () => setState("fail"),
+    );
+  }
+
+  return (
+    <div className="srow">
+      <button className={MAKE_BTN} type="button" disabled={state === "busy"} onClick={click}>
+        {state === "busy" ? "Signing out…" : state === "fail" ? "Retry" : "Sign out"}
+      </button>
+      <span className="v">{state === "fail" ? "Could not sign out." : "Leave this team on this machine."}</span>
+    </div>
+  );
+}
+
+function GoogleConnectBox({ team, onDone }: { team: string; onDone: () => void }) {
   const [state, setState] = useState<
     | { phase: "idle" }
     | { phase: "starting" }
@@ -210,8 +234,7 @@ function GoogleConnectBox({ onDone }: { onDone: () => void }) {
       return;
     }
     setState({ phase: "starting" });
-    const hub = (bridge.cfg && bridge.cfg.hub) || undefined;
-    window.zevet?.googleStart?.(hub).then((r) => {
+    window.zevet?.googleStart?.(null, team || undefined).then((r) => {
       if (!r || !r.ok) {
         setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
         return;
@@ -233,13 +256,14 @@ function GoogleConnectBox({ onDone }: { onDone: () => void }) {
   }
 
   const label = connectPhaseLabel(state.phase, "Google");
+  const idle = state.phase === "idle" || state.phase === "done";
 
   const value = connectValue(state.phase, state, "Google");
 
   return (
     <div className="srow">
-      <button className={MAKE_BTN} type="button" disabled={state.phase === "starting"} onClick={click}>
-        {label}
+      <button className={MAKE_BTN} type="button" aria-label={label} disabled={state.phase === "starting"} onClick={click}>
+        {idle ? <><GoogleMark /> Google</> : label}
       </button>
       <span className="v">
         {value}
@@ -291,55 +315,20 @@ function AccountSection() {
   const whoState = useBoard((s) => s.who.state) as unknown as Record<string, unknown> | null;
   const who = useBoard((s) => s.who);
   const refreshWhoami = useBoard((s) => s.refreshWhoami);
-  const invite = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [whoErr, setWhoErr] = useState("");
-
   useEffect(() => {
     if (!who.state) refreshWhoami();
   }, [who.state, refreshWhoami]);
 
-  function changePeople(route: string, login: string) {
-    setBusy(true);
-    setWhoErr("");
-    fetch(route, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ login }),
-    })
-      .then((r) =>
-        r.json().then((b) => ({ status: r.status, body: b as { people?: Array<Record<string, unknown>>; error?: string } })),
-      )
-      .then(
-        (r) => {
-          setBusy(false);
-          if (r.status === 200 && r.body.people) {
-            useBoard.setState({ who: { state: { ...(whoState || {}), people: r.body.people } as never, busy: false } });
-          } else {
-            setWhoErr(r.body.error || ("Could not sign in."));
-          }
-        },
-        () => {
-          setBusy(false);
-          setWhoErr("Could not connect.");
-        },
-      );
-  }
-
   if (!whoState) {
     return (
-      <SSection title="Account" summary="loading…">
-        <SNote>Loading account…</SNote>
-      </SSection>
+      <SSection title="Account & Team" summary="loading…">{null}</SSection>
     );
   }
 
   if (whoState.ok === false) {
     return (
-      <SSection title="Account" summary="error">
-        <SNote>Could not load account.</SNote>
-        <button className={MAKE_BTN} type="button" onClick={() => refreshWhoami()}>
+      <SSection title="Account & Team" summary="Error">
+                <button className={MAKE_BTN} type="button" onClick={() => refreshWhoami()}>
           Retry
         </button>
       </SSection>
@@ -349,7 +338,27 @@ function AccountSection() {
   const login = typeof whoState.login === "string" ? whoState.login : "";
   const shared = Boolean(whoState.shared);
   const owner = Boolean(whoState.owner);
-  const people = Array.isArray(whoState.people) ? (whoState.people as Array<{ login: string; owner?: boolean; pending?: boolean }>) : [];
+  const people = Array.isArray(whoState.people)
+    ? (whoState.people as Array<{
+        login: string;
+        key?: string;
+        provider?: string;
+        owner?: boolean;
+        pending?: boolean;
+        state?: string;
+        invitedAt?: string | null;
+        emailSentAt?: string | null;
+        emailError?: string | null;
+        acceptedAt?: string | null;
+        lastSeen?: number | null;
+      }>)
+    : [];
+  // The SLUG (whoami's `team`), not teamLabel: passed through to
+  // githubStart/googleStart below so a reconnect from a NON-default team
+  // claims an identity on THAT team, not the hub's default one. Omitted
+  // (falsy), the desktop IPC layer's own default already lands on the
+  // default team, so an empty string here changes nothing for it.
+  const teamSlug = typeof whoState.team === "string" ? whoState.team : "";
   const githubSignIn = Boolean(whoState.githubSignIn);
   const googleSignIn = Boolean(whoState.googleSignIn);
   const local = Boolean(bridge.local);
@@ -376,62 +385,36 @@ function AccountSection() {
     if (local && window.zevet && typeof window.zevet.googleLogout === "function") {
       out.push(<GoogleDisconnectRow key="disc-google" onDone={() => refreshWhoami()} />);
     }
+    if (local && window.zevet && typeof window.zevet.signOutTeam === "function") {
+      out.push(<TeamSignOutRow key="team-signout" />);
+    }
   } else if (shared) {
-    if (canConnect) out.push(<GithubConnectBox key="connect-github" onDone={() => refreshWhoami()} />);
-    if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" onDone={() => refreshWhoami()} />);
-    if (!canConnect && !canConnectGoogle) out.push(<SNote key="note">Sign in from the desktop app.</SNote>);
+    if (canConnect) out.push(<GithubConnectBox key="connect-github" team={teamSlug} onDone={() => refreshWhoami()} />);
+    if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" team={teamSlug} onDone={() => refreshWhoami()} />);
   }
 
-  const list: ReactNode[] = [];
-  if (people.length) {
-    people.forEach((p) => {
-      list.push(
-        <div className="srow" key={p.login}>
-          <span className="k">
-            {"@" + p.login + (p.owner ? "  \u00b7 owner" : p.pending ? "  \u00b7 invited" : "")}
-          </span>
-          <span className="v">
-            {owner && !p.owner ? (
-              <button className={MAKE_BTN} type="button" disabled={busy} onClick={() => changePeople("/auth/revoke", p.login)}>
-                Remove
-              </button>
-            ) : null}
-          </span>
-        </div>,
-      );
-    });
-  }
-  if (list.length) {
+  // One person, many sign-ins: what is linked to me, link another, and the
+  // owner's combine. Only for a real personal session.
+  const me = whoState.me as { identities: Array<{ provider: string; login: string }> } | null | undefined;
+  if (login && me) {
     out.push(
-      <div key="people" style={{ marginTop: "8px" }}>
-        {list}
-      </div>,
+      <IdentityRows
+        key="identities"
+        identities={me.identities}
+        owner={owner}
+        people={people.filter((p) => !p.pending)}
+        githubSignIn={githubSignIn}
+        googleSignIn={googleSignIn}
+        onChanged={() => refreshWhoami()}
+      />,
     );
   }
 
-  if (owner) {
-    out.push(
-      <form
-        key="invite"
-        className="sinvite"
-        onSubmit={(ev) => {
-          ev.preventDefault();
-          const v = (invite.current && invite.current.value.trim()) || "";
-          if (v) changePeople("/auth/allow", v);
-        }}
-      >
-        <input className="mono" id="settingsInvite" type="text" ref={invite} aria-label="GitHub username or email" placeholder="GitHub username or email" autoComplete="off" spellCheck={false} />
-        <button className={MAKE_BTN} type="submit" disabled={busy}>
-          Invite
-        </button>
-      </form>,
-    );
-  }
-
-  if (whoErr) out.push(<SNote key="err">{whoErr}</SNote>);
+  out.push(<ReportingLine key="reporting" />);
+  out.push(<TeamInvite key="team" />);
 
   return (
-    <SSection title="Account" summary={login ? "@" + login : "not signed in"}>
+    <SSection title="Account & Team" summary={login ? handle(login) : "not signed in"}>
       {out}
     </SSection>
   );
@@ -464,6 +447,7 @@ const CREDENTIAL_KINDS: Array<{ provider: string; kind: string; label: string; t
   { provider: "anthropic", kind: "api_key", label: "Anthropic — API key", teamOk: true },
   { provider: "anthropic", kind: "subscription_token", label: "Anthropic — subscription token", teamOk: false },
   { provider: "openai", kind: "api_key", label: "OpenAI — API key", teamOk: true },
+  { provider: "meta", kind: "api_key", label: "Meta — API key", teamOk: true },
 ];
 
 function credentialLine(c: CredentialMeta): string {
@@ -575,7 +559,6 @@ function LadderEditor({ credentials, ladder, onSaved }: { credentials: Credentia
 
   return (
     <div style={{ marginTop: "6px" }}>
-      <SNote>Rotates in order: each launch uses the first step whose credential is below its own usage ceiling.</SNote>
       {rows.map((r, i) => (
         <div className="srow" key={i}>
           <Select
@@ -653,9 +636,7 @@ function CredentialsSection() {
 
   if (!available) {
     return (
-      <SSection title="Model credentials" summary="desktop app only">
-        <SNote>Manage credentials from the Zevet desktop app.</SNote>
-      </SSection>
+      <SSection title="Model credentials" summary="desktop only">{null}</SSection>
     );
   }
 
@@ -735,26 +716,18 @@ function IndexSection() {
   const m = stripMachine as (StatusResultView & { cindex?: boolean; cindexPort?: number }) | null;
   if (m && m.cindex === true) {
     return (
-      <SSection title="Code search" summary="external">
-        <SNote>
-          Managed externally.
-        </SNote>
-      </SSection>
+      <SSection title="Code search" summary="external">{null}</SSection>
     );
   }
   if (!bridge.local || typeof bridge.local.indexStatus !== "function") {
     return (
-      <SSection title="Code search" summary="unavailable">
-        <SNote>Not available in this build.</SNote>
-      </SSection>
+      <SSection title="Code search" summary="unavailable">{null}</SSection>
     );
   }
   const st = (indexStatus || null) as IndexStatusView | null;
   if (!st) {
     return (
-      <SSection title="Code search" summary="checking…">
-        <SNote>Checking this machine…</SNote>
-      </SSection>
+      <SSection title="Code search" summary="checking…">{null}</SSection>
     );
   }
 
@@ -772,7 +745,6 @@ function IndexSection() {
 
   if (!st.capable) {
     node.push(<SRow key="status" k="Status" v="not enabled on this machine" />);
-    node.push(<SNote key="why">{st.reasons.join("  \u00b7  ")}</SNote>);
     return (
       <SSection title="Code search" summary="off">{node}</SSection>
     );
@@ -801,7 +773,7 @@ function IndexSection() {
         bridge.local && typeof bridge.local.indexEnable === "function" &&
           bridge.local.indexEnable(localRoot).then((r) => {
             setIndex({
-              progressText: r && r.ok ? "done \u2014 " + r.indexed + " indexed, " + r.skipped + " skipped" : "failed: " + ((r && r.error) || "unknown"),
+              progressText: r && r.ok ? "done — " + r.indexed + " indexed, " + r.skipped + " skipped" : "failed: " + ((r && r.error) || "unknown"),
             });
             refreshIndexStatus();
           }).catch((err: unknown) => {
@@ -814,7 +786,6 @@ function IndexSection() {
     </button>,
   );
 
-  if (!localRoot) node.push(<SNote key="pick">Open a folder to build its index.</SNote>);
   if (index.progressText !== "ready") node.push(<SNote key="prog">{index.progressText}</SNote>);
   if (index.barPct > 0 && index.barPct < 100) {
     node.push(
@@ -845,9 +816,7 @@ function VersionSection() {
   const updateInstall = useBoard((s) => s.updateInstall);
   if (!bridge.local || typeof bridge.local.updateStatus !== "function") {
     return (
-      <SSection title="Version" summary="web">
-        <SNote>Get the latest version at usemasora.com/zevet.</SNote>
-      </SSection>
+      <SSection title="Version" summary="web">{null}</SSection>
     );
   }
   const up = { checking, installing };
@@ -859,6 +828,9 @@ function VersionSection() {
       <span className="v">{status}</span>
     </div>,
   );
+  if (s && s.next && s.next.build) {
+    out.push(<SRow key="next" k="Next" v={`${s.next.build} (${s.next.when})`} />);
+  }
   if (s && s.phase === "downloading") {
     const pct = updatePercent(s);
     out.push(
@@ -899,98 +871,60 @@ function VersionSection() {
   }
   out.push(<SRow key="updates" k="Updates" v={<div className="update-actions">{actions}</div>} />);
   return (
-    <SSection title="Version" summary={s && s.current ? s.current : "unknown"}>{out}</SSection>
+    <SSection title="Version" summary={bridge.cfg?.version || (s && s.running) || "unknown"}>{out}</SSection>
   );
 }
 
 /**
- * Pairing with Masora (T5, docs/contracts/cross_app_context.md). Settings
- * row idiom per commit 27d7004: the closed row already says what this is set
- * to -- "not paired", or the paired host -- so nothing needs opening to read
- * the one fact this section exists for.
+ * Linking with Masora (T5, docs/contracts/cross_app_context.md). The link runs
+ * in the background from the moment the board opens (desktop/masora-link.js);
+ * this section only reports it. Settings row idiom per commit 27d7004: the
+ * closed row already says the state -- the linked host, "waiting for approval",
+ * "not running" -- so nothing needs opening to read it.
  */
+type MasoraLinkState = { phase: string; paired?: boolean; code?: string; error?: string };
+
+const LINK_SUMMARY: Record<string, string> = {
+  waiting: "waiting for approval",
+  unreachable: "offline",
+  error: "error",
+};
+
 function MasoraSection() {
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
-  const [cfg, setCfg] = useState<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean } | null>(null);
-  const [urlDraft, setUrlDraft] = useState("");
-  const [pair, setPair] = useState<
-    | { phase: "idle" }
-    | { phase: "starting" }
-    | { phase: "waiting"; code: string }
-    | { phase: "fail"; message: string }
-  >({ phase: "idle" });
+  const [cfg, setCfg] = useState<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean } | null>(null);
+  const [link, setLink] = useState<MasoraLinkState | null>(null);
 
   function refresh() {
     window.zevet?.masoraConfig?.().then((c) => {
-      if (c) {
-        setCfg(c);
-        setUrlDraft(c.url);
-      }
+      if (c) setCfg(c);
     });
   }
   useEffect(() => {
-    if (!cfg) refresh();
+    refresh();
+    const poll = () =>
+      window.zevet?.masoraLinkStatus?.().then((s: MasoraLinkState | undefined) => {
+        if (!s) return;
+        setLink((prev) => {
+          // The background link just finished: re-read the config so the row
+          // flips to the linked host and the Chat/repo switches appear.
+          if (s.paired && !(prev && prev.paired)) refresh();
+          return s;
+        });
+      });
+    poll();
+    const t = setInterval(poll, 2000);
+    return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!bridge.local) return null;
 
-  function pairClick() {
-    if (pair.phase === "waiting") {
-      window.zevet?.masoraPairCancel?.();
-      setPair({ phase: "idle" });
-      return;
-    }
-    setPair({ phase: "starting" });
-    window.zevet?.masoraPairStart?.().then((r) => {
-      if (!r || !r.ok) {
-        setPair({ phase: "fail", message: (r && r.error) || "Could not start pairing." });
-        return;
-      }
-      setPair({ phase: "waiting", code: r.userCode || "" });
-      window.zevet?.masoraPairWait?.().then(
-        (done) => {
-          if (!done || !done.ok) {
-            if (done && done.cancelled) setPair({ phase: "idle" });
-            else setPair({ phase: "fail", message: (done && done.error) || "Pairing failed." });
-            return;
-          }
-          setPair({ phase: "idle" });
-          refresh();
-        },
-        (err) => setPair({ phase: "fail", message: (err && err.message) || "Pairing failed." }),
-      );
-    }, (err) => setPair({ phase: "fail", message: (err && err.message) || "Could not start pairing." }));
-  }
-
-  function hostOf(url: string): string {
-    try {
-      return new URL(url).host;
-    } catch {
-      return url; // the URL field can't be hand-edited once paired, but a
-      // malformed saved value must still render a row rather than crash one.
-    }
-  }
-  const summary = !cfg ? "loading…" : cfg.paired ? hostOf(cfg.url) : "not paired";
+  const phase = link ? link.phase : "";
+  const summary = !cfg ? "loading…" : cfg.paired ? cfg.member || "Linked" : LINK_SUMMARY[phase] || "not linked";
 
   return (
     <SSection title="Masora" summary={summary}>
-      <div className="srow">
-        <span className="k">URL</span>
-        <input
-          className="mono"
-          type="text"
-          value={urlDraft}
-          onChange={(ev) => setUrlDraft(ev.target.value)}
-          onBlur={() => {
-            if (cfg && urlDraft.trim() && urlDraft.trim() !== cfg.url) {
-              window.zevet?.masoraSaveUrl?.(urlDraft.trim()).then((c) => c && setCfg(c));
-            }
-          }}
-          disabled={Boolean(cfg && cfg.paired)}
-          spellCheck={false}
-        />
-      </div>
       {cfg && cfg.paired ? (
         <div className="srow">
           <button
@@ -1002,14 +936,24 @@ function MasoraSection() {
           </button>
         </div>
       ) : (
-        <div className="srow">
-          <button className={MAKE_BTN} type="button" disabled={pair.phase === "starting"} onClick={pairClick}>
-            {pair.phase === "waiting" ? "Cancel" : pair.phase === "starting" ? "Starting…" : "Pair with Masora"}
-          </button>
-          {pair.phase === "waiting" ? <span className="v mono">{pair.code}</span> : null}
+        <div className="srow" id="masoraLinkRow">
+          {phase === "waiting" ? (
+            <button className={MAKE_BTN} type="button" onClick={() => window.zevet?.masoraLinkApprove?.()}>
+              Approve
+            </button>
+          ) : (
+            <button
+              className={MAKE_BTN}
+              type="button"
+              onClick={() => window.zevet?.masoraLinkStart?.().then((s: MasoraLinkState | undefined) => s && setLink(s))}
+            >
+              Link now
+            </button>
+          )}
+          {phase === "waiting" && link && link.code ? <span className="v mono">{link.code}</span> : null}
         </div>
       )}
-      {pair.phase === "fail" ? <SNote style={{ color: "var(--bad)" }}>{pair.message}</SNote> : null}
+      {phase === "error" && link && link.error ? <SNote style={{ color: "var(--bad)" }}>{link.error}</SNote> : null}
       {cfg && cfg.paired ? (
         <>
           {window.zevet?.masoraChatPush ? (
@@ -1027,7 +971,6 @@ function MasoraSection() {
               </span>
             </div>
           ) : null}
-          <SNote>Off by default, per folder.</SNote>
           {(localWorkspaces || []).map((w) => (
             <div className="srow" key={w.dir}>
               <span className="k">{w.name}</span>
@@ -1049,6 +992,132 @@ function MasoraSection() {
           ))}
         </>
       ) : null}
+    </SSection>
+  );
+}
+
+/**
+ * The Masora family: one chip per sibling app, Install | Update | Connect |
+ * Connected, and the chip is the action. State comes from desktop/family.js.
+ */
+type FamilyRow = {
+  app: string;
+  name: string;
+  state: "Install" | "Update" | "Connect" | "Connected";
+  version: string | null;
+  running: boolean;
+  member: string | null;
+  lastSeen: string | null;
+  page: string;
+  download: string | null;
+};
+
+function FamilyCard({ row, onClose, onChange }: { row: FamilyRow; onClose: () => void; onChange: () => void }) {
+  const [msg, setMsg] = useState("");
+  const startVersion = useRef(row.version);
+  const act = (action: string) =>
+    window.zevet?.familyAct?.(row.app, action).then((r) => {
+      if (!r) return;
+      if (r.download) window.open(r.download, "_blank", "noopener,noreferrer");
+      else if (action === "update") setMsg("Updating…");
+      else if (action === "connect") setMsg(r.pairing === "no_owner" ? "Sign in to Masora" : "Connecting…");
+      onChange();
+    });
+  // The sibling's heartbeat moved to a new version: the update is done.
+  const updating = msg === "Updating…" && row.version === startVersion.current;
+  return (
+    <>
+      <div className="sheet-back fcard-back" onClick={onClose} />
+      <div className="fcard" role="dialog" aria-label={row.name}>
+        <div className="sheet-head">
+          <h2>{row.name}</h2>
+          <button className="sheet-close" type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="fcard-body">
+          {row.state === "Install" ? (
+            <>
+              <iframe className="fcard-frame" src={row.page} title={row.name} sandbox="allow-scripts allow-same-origin allow-popups" referrerPolicy="no-referrer" />
+              {row.download ? (
+                <button className={MAKE_BTN} type="button" onClick={() => window.open(row.download as string, "_blank", "noopener,noreferrer")}>
+                  Download
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          {row.state === "Update" ? (
+            <button className={MAKE_BTN} type="button" disabled={updating} onClick={() => act("update")}>
+              {updating ? "Updating…" : row.running ? "Update" : "Download"}
+            </button>
+          ) : null}
+          {row.state === "Connect" ? (
+            <button className={MAKE_BTN} type="button" onClick={() => act("connect")}>
+              Connect
+            </button>
+          ) : null}
+          {row.state === "Connected" ? (
+            <>
+              {row.member ? <SRow k="Account" v={row.member} /> : null}
+              {row.lastSeen ? <SRow k="Seen" v={new Date(row.lastSeen).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} /> : null}
+              {row.app === "masora" ? (
+                <button className={MAKE_BTN} type="button" onClick={() => window.zevet?.familyAct?.("masora", "disconnect").then(onChange)}>
+                  Disconnect
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          {msg && row.state !== "Connected" && !updating ? <span className="snote">{msg}</span> : null}
+          {updating ? <span className="snote">Updating…</span> : null}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** One red line when this machine's agents are not reaching the hub; nothing when they are. */
+function ReportingLine() {
+  const [problem, setProblem] = useState("");
+  useEffect(() => {
+    const ask = () => window.zevet?.reportingStatus?.().then((r) => setProblem((r && r.problem) || ""));
+    ask();
+    const t = setInterval(ask, 15000);
+    return () => clearInterval(t);
+  }, []);
+  if (!problem) return null;
+  return (
+    <div className="srow" id="settingsReporting">
+      <span className="k">Reporting</span>
+      <span className="v" style={{ color: "var(--bad)" }}>{problem}</span>
+    </div>
+  );
+}
+
+function FamilySection() {
+  const [rows, setRows] = useState<FamilyRow[] | null>(null);
+  const [card, setCard] = useState("");
+  const refresh = () => window.zevet?.familyStatus?.().then((r) => Array.isArray(r) && setRows(r as FamilyRow[]));
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 4000);
+    return () => clearInterval(t);
+  }, []);
+  if (!bridge.local || !window.zevet?.familyStatus) return null;
+  const open = rows?.find((r) => r.app === card);
+  const pending = rows?.find((r) => r.state !== "Connected");
+  return (
+    <SSection title="Family" id="settingsFamily" summary={!rows ? "…" : pending ? `${pending.name} · ${pending.state}` : "Connected"}>
+      {(rows || []).map((r) => (
+        <div className="srow" key={r.app}>
+          <span className="k">{r.name}</span>
+          <span className="v">
+            <button className={MAKE_BTN + " fchip"} type="button" data-state={r.state} onClick={() => setCard(r.app)}>
+              {r.state}
+            </button>
+          </span>
+        </div>
+      ))}
+      {open ? <FamilyCard row={open} onClose={() => setCard("")} onChange={refresh} /> : null}
     </SSection>
   );
 }
@@ -1157,21 +1226,12 @@ function ConnectionsSection() {
   );
 }
 
-function credentialLabel() {
-  const c = bridge.cfg;
-  if (!c) return "unknown";
-  if (c.legacy) return "Set up shared editing";
-  if (c.session) return "GitHub sign-in" + (c.hasSecret ? " + team key" : " \u00b7 team key missing");
-  return c.hasSecret ? "team key" : "none configured";
-}
-
 export function SettingsSheet() {
   const sheetOpen = useBoard((s) => s.sheetOpen);
   const closeSettings = useBoard((s) => s.closeSettings);
   const viewMode = useBoard(selectViewMode);
   const setView = useBoard((s) => s.setView);
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
-  const myActor = useBoard((s) => s.myActor);
 
   const sheetRef = useRef<HTMLDivElement>(null);
   const wasOpen = useRef(false);
@@ -1262,7 +1322,7 @@ export function SettingsSheet() {
           summary={!local ? "desktop only" : localWorkspaces.length ? String(localWorkspaces.length) : "none"}
         >
           {!local ? (
-            <SNote>Use the desktop app to open local folders.</SNote>
+            <SNote>Desktop only.</SNote>
           ) : (
             <>
               {(localWorkspaces || []).map((w) => (
@@ -1281,12 +1341,8 @@ export function SettingsSheet() {
         <CredentialsSection />
         <IndexSection />
         <MasoraSection />
+        <FamilySection />
         <ConnectionsSection />
-
-        <SSection title="Connection" summary={credentialLabel()}>
-          <SRow k="Team address" v={bridge.hub} mono />
-          <SRow k="You" v={myActor || "unknown"} />
-        </SSection>
 
         <VersionSection />
       </div>

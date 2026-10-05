@@ -69,6 +69,34 @@ const ASK_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    // What --permission-prompt-tool calls for EVERY tool use claude would
+    // otherwise prompt about — Bash, Edit, all of them, not just this
+    // server's own four. This is what makes the loopback gate answer for
+    // the whole run rather than just for computer use.
+    //
+    // Request/response shape verified against the installed
+    // @anthropic-ai/claude-agent-sdk's own bundled source (the zod schema
+    // the CLI parses our reply with), not assumed from docs:
+    //   request:  { tool_name, input, tool_use_id }
+    //   allow:    { behavior: "allow", updatedInput: <object> }
+    //   deny:     { behavior: "deny", message: <string> }
+    name: "permission_prompt",
+    description: "Internal: called by Claude Code itself to ask permission before any tool call.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tool_name: { type: "string" },
+        input: { type: "object" },
+        tool_use_id: { type: "string" },
+      },
+      required: ["tool_name", "input"],
+      // Unlike our own four tools, the caller here is Claude Code's own CLI,
+      // whose exact argument set is not ours to pin down — additive fields
+      // it adds later must not break discovery.
+      additionalProperties: true,
+    },
+  },
 ];
 
 const COMPUTER_TOOLS = [
@@ -109,34 +137,6 @@ const COMPUTER_TOOLS = [
       properties: { key: { type: "string" } },
       required: ["key"],
       additionalProperties: false,
-    },
-  },
-  {
-    // What --permission-prompt-tool calls for EVERY tool use claude would
-    // otherwise prompt about — Bash, Edit, all of them, not just this
-    // server's own four. This is what makes the loopback gate answer for
-    // the whole run rather than just for computer use.
-    //
-    // Request/response shape verified against the installed
-    // @anthropic-ai/claude-agent-sdk's own bundled source (the zod schema
-    // the CLI parses our reply with), not assumed from docs:
-    //   request:  { tool_name, input, tool_use_id }
-    //   allow:    { behavior: "allow", updatedInput: <object> }
-    //   deny:     { behavior: "deny", message: <string> }
-    name: "permission_prompt",
-    description: "Internal: called by Claude Code itself to ask permission before any tool call.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tool_name: { type: "string" },
-        input: { type: "object" },
-        tool_use_id: { type: "string" },
-      },
-      required: ["tool_name", "input"],
-      // Unlike our own four tools, the caller here is Claude Code's own CLI,
-      // whose exact argument set is not ours to pin down — additive fields
-      // it adds later must not break discovery.
-      additionalProperties: true,
     },
   },
 ];
@@ -208,7 +208,7 @@ function textResult(text, isError = false) {
 }
 
 /** The gate. Every tool call goes through this before doing anything. */
-async function requestPermit(tool, args) {
+async function requestPermit(tool, args, extra = {}) {
   const url = process.env.ZEVET_MCP_URL;
   const token = process.env.ZEVET_MCP_TOKEN;
   if (!url || !token) {
@@ -223,7 +223,7 @@ async function requestPermit(tool, args) {
     const res = await fetch(`${url.replace(/\/+$/, "")}/permit`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ tool, arguments: args }),
+      body: JSON.stringify({ tool, arguments: args, ...extra }),
       signal: AbortSignal.timeout(150_000),
     });
     if (!res.ok) return { ok: false, reason: `permission gate returned HTTP ${res.status}` };
@@ -300,6 +300,18 @@ async function doKey(args) {
   return textResult(`pressed ${args.key}`);
 }
 
+const OWN_TOOLS = new Set(["ask_user", "screenshot", "click", "type_text", "press_key"]);
+
+/** The gate's body is capped (ask-server MAX_BODY_BYTES), and a Write of a big
+ *  file would exceed it and be denied. The card only needs to show what is
+ *  being asked; the allow reply still carries the untouched input. */
+function clipStrings(v, max = 4000) {
+  if (typeof v === "string") return v.length > max ? v.slice(0, max) + `… (${v.length - max} more characters)` : v;
+  if (Array.isArray(v)) return v.slice(0, 50).map((x) => clipStrings(x, max));
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).slice(0, 50).map(([k, x]) => [k, clipStrings(x, max)]));
+  return v;
+}
+
 /**
  * --permission-prompt-tool's handler. Deliberately NOT routed through the
  * ordinary refuse-with-isError path the other four tools use below: this
@@ -315,7 +327,17 @@ async function doPermissionPrompt(args) {
     const toolName = typeof args.tool_name === "string" ? args.tool_name : "";
     const input = args.input && typeof args.input === "object" ? args.input : {};
 
-    const permit = await requestPermit(toolName, input);
+    /* This server's own tools gate themselves (callTool → requestPermit, with
+       wording the board knows), and asking to be asked would be two cards for
+       one action — or, for ask_user, a dialog to approve a dialog. */
+    if (toolName.startsWith("mcp__zevet__") && OWN_TOOLS.has(toolName.slice("mcp__zevet__".length))) {
+      return { content: [{ type: "text", text: JSON.stringify({ behavior: "allow", updatedInput: input }) }] };
+    }
+
+    const permit = await requestPermit(toolName, clipStrings(input), {
+      via: "claude",
+      run: process.env.ZEVET_MCP_RUN || "",
+    });
     const decision = permit.ok
       ? { behavior: "allow", updatedInput: input }
       : { behavior: "deny", message: String(permit.reason || "denied") };
@@ -427,4 +449,4 @@ if (require.main === module) {
   startStdioLoop();
 }
 
-module.exports = { PROTOCOL_VERSION, SERVER_INFO, ASK_TOOLS, COMPUTER_TOOLS, toolsFor, cleanQuestion, handleMessage, callTool, startStdioLoop };
+module.exports = { clipStrings, PROTOCOL_VERSION, SERVER_INFO, ASK_TOOLS, COMPUTER_TOOLS, toolsFor, cleanQuestion, handleMessage, callTool, startStdioLoop };

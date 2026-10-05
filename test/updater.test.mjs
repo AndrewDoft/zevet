@@ -8,12 +8,27 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { tempDir, ROOT } from "./helpers.mjs";
 import { deriveAuthToken } from "../client/secret.mjs";
+import { readSignedManifest } from "../client/signing.mjs";
+
+const { signDocument } = createRequire(import.meta.url)("../desktop/update-signing.js");
+const CLIENT_DOMAIN = "zevet-client-v1\n";
+const PAIR = generateKeyPairSync("ed25519");
+const PEM = PAIR.privateKey.export({ format: "pem", type: "pkcs8" });
+const TRUST = `zevet-test:${PAIR.publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64")}`;
+
+/** What the hub serves once signed: legacy top-level fields plus a signed payload. */
+function signedManifest(files, version = "9.9.9", pem = PEM) {
+  const list = Object.entries(files).map(([name, content]) => ({ name, bytes: Buffer.byteLength(content), sha256: createHash("sha256").update(content).digest("hex") }));
+  const payload = { schema: 1, type: "zevet-client", version, files: list };
+  return { version, files: list, payload, signature: signDocument(CLIENT_DOMAIN, payload, pem, "zevet-test") };
+}
 
 const TOKEN = "updater-test-token";
 
@@ -67,7 +82,10 @@ function runUpdater(home, hub, env = {}) {
       // secret in the environment beat everything else, so one exported in the
       // shell running this suite would replace the credential every test above
       // assumes. The auth tests at the bottom override these deliberately.
-      env: { ...process.env, ZEVET_HOME: home, ZEVET_HUB: hub, ZEVET_TOKEN: TOKEN, ZEVET_SECRET: "", ...env },
+      // ZEVET_ALLOW_UNSIGNED_MANIFEST: the cases outside "a signed manifest" below
+      // test fetching, hashing and path safety, not the signature; the fake hub
+      // there does not sign. The signed cases clear it.
+      env: { ...process.env, ZEVET_HOME: home, ZEVET_HUB: hub, ZEVET_TOKEN: TOKEN, ZEVET_SECRET: "", ZEVET_ALLOW_UNSIGNED_MANIFEST: "1", ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
@@ -321,5 +339,75 @@ describe("what the updater presents as a credential", () => {
       await hub.stop();
       home.cleanup();
     }
+  });
+});
+
+describe("a signed manifest", () => {
+  const FILES = { "hook.mjs": "// signed v2\n" };
+  const signedEnv = { ZEVET_ALLOW_UNSIGNED_MANIFEST: "", ZEVET_HUB_TRUSTED_KEY: TRUST };
+
+  async function attempt(t, manifest, env = signedEnv) {
+    const home = tempDir("zevet-signed-");
+    const hub = await fakeHub(FILES, { manifestOverride: manifest });
+    t.after(async () => {
+      await hub.stop();
+      home.cleanup();
+    });
+    const r = await runUpdater(home.dir, hub.base, env);
+    return { r, installed: existsSync(path.join(home.dir, "client", "hook.mjs")) };
+  }
+
+  test("installs when signed by a trusted key", async (t) => {
+    const { r, installed } = await attempt(t, signedManifest(FILES));
+    assert.equal(installed, true, r.stderr);
+  });
+
+  test("an unsigned manifest installs nothing unless the dev flag says so", async (t) => {
+    const unsigned = { version: "9.9.9", files: signedManifest(FILES).files };
+    const refused = await attempt(t, unsigned, { ZEVET_ALLOW_UNSIGNED_MANIFEST: "" });
+    assert.equal(refused.installed, false);
+    assert.match(refused.r.stderr, /not validly signed/);
+    const allowed = await attempt(t, unsigned, { ZEVET_ALLOW_UNSIGNED_MANIFEST: "1" });
+    assert.equal(allowed.installed, true);
+    assert.match(allowed.r.stderr, /UNSIGNED manifest/);
+  });
+
+  test("a manifest signed by an untrusted key installs nothing", async (t) => {
+    const other = generateKeyPairSync("ed25519").privateKey.export({ format: "pem", type: "pkcs8" });
+    const { r, installed } = await attempt(t, signedManifest(FILES, "9.9.9", other));
+    assert.equal(installed, false);
+    assert.match(r.stderr, /does not match the document/);
+  });
+
+  test("a payload edited after signing installs nothing", async (t) => {
+    const m = signedManifest(FILES);
+    m.payload.files[0].sha256 = createHash("sha256").update("// evil\n").digest("hex");
+    const { r, installed } = await attempt(t, m);
+    assert.equal(installed, false);
+    assert.match(r.stderr, /not validly signed/);
+  });
+
+  test("the top-level files are ignored: the signed payload decides what is fetched", async (t) => {
+    const m = signedManifest(FILES);
+    m.files = [{ name: "evil.mjs", bytes: 1, sha256: "f".repeat(64) }];
+    const { installed } = await attempt(t, m);
+    assert.equal(installed, true);
+  });
+
+  test("the loopback test key is ignored for an https hub", () => {
+    const env = { ZEVET_HUB_TRUSTED_KEY: TRUST };
+    const m = signedManifest(FILES);
+    assert.equal(readSignedManifest(m, { hub: "http://127.0.0.1:1", env }).error, undefined);
+    assert.match(readSignedManifest(m, { hub: "https://hub.example", env }).error, /untrusted key/);
+    assert.match(readSignedManifest(m, { hub: "http://127.0.0.1:1", env: {} }).error, /untrusted key/);
+  });
+
+  test("a plain-http hub that is not loopback is never contacted", async (t) => {
+    const home = tempDir("zevet-plain-");
+    t.after(() => home.cleanup());
+    const r = await runUpdater(home.dir, "http://203.0.113.9:8787", signedEnv);
+    assert.equal(r.code, 0);
+    assert.match(r.stderr, /plain http/);
+    assert.equal(existsSync(path.join(home.dir, "client")), false);
   });
 });

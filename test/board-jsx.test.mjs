@@ -54,3 +54,15 @@ describe("no unicode escape renders as itself", () => {
     );
   });
 });
+
+describe("chat thread spacing", () => {
+  test("keeps turns and assistant parts visibly separated", () => {
+    const thread = readFileSync(
+      path.join(SRC, "components", "assistant-ui", "elements", "thread.aui.tsx"),
+      "utf8",
+    );
+
+    assert.match(thread, /data-slot="aui_message-group"[\s\S]*?gap-y-8/);
+    assert.match(thread, /data-slot="aui_assistant-message-content"[\s\S]*?flex flex-col gap-y-4/);
+  });
+});

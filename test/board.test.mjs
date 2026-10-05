@@ -256,12 +256,26 @@ describe("the setup window", () => {
     }
   });
 
-  test("GitHub sign-in is the primary action and the secret is the fallback", () => {
-    // The ordering IS the feature. A refactor that puts the secret field back
-    // at the top has undone the change while leaving every line of it in place.
+  test("GitHub sign-in is the primary action", () => {
     assert.ok(/id="gh"[^>]*class="[^"]*primary/.test(html), "the GitHub button must be the primary one");
-    assert.ok(html.indexOf('id="gh"') < html.indexOf('id="token"'), "the secret field must come after the GitHub button");
-    assert.ok(/<details[^>]*id="manual"/.test(html), "the secret field must be folded away behind a disclosure");
+  });
+
+  // Andrew, verbatim: "there are two spaces for the key, we only need the
+  // top ones." BUG-2026-09-28: setup.html used to also show a second,
+  // password-type "Key" field (the master secret, id="token", behind an
+  // "Other" disclosure) alongside the invite-key field. Removed outright —
+  // GitHub/Google sign-in and the invite key (id="inviteKey") are the only
+  // two ways into a team now; a headless machine still connects without any
+  // setup window at all, via ZEVET_TOKEN (client/secret.mjs, doctor.mjs).
+  test("there is exactly one key field in the whole window", () => {
+    const inputs = [...html.matchAll(/<input\b[^>]*>/g)].map((m) => m[0]);
+    const keyish = inputs.filter((tag) => /placeholder="[^"]*key/i.test(tag) || /type="password"/.test(tag) || /id="[^"]*[Kk]ey"/.test(tag));
+    assert.deepEqual(
+      keyish.map((tag) => tag.match(/id="([^"]+)"/)?.[1]),
+      ["inviteKey"],
+      "exactly one key-shaped input must remain, and it must be inviteKey",
+    );
+    assert.doesNotMatch(html, /id="token"|id="manual"|id="check"/);
   });
 
   test("the setup window never asks the main process for a credential back", () => {

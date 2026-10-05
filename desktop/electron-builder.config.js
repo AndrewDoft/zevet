@@ -38,13 +38,9 @@
 // Actions runner without a cloud HSM anyway — so the cloud service is both
 // cheaper and the only one that fits this pipeline.
 //
-// ⚠️ NEITHER IS A SECURITY CONTROL FOR ZEVET'S UPDATER. The update manifest and
-// the file it names come from the same host, so the published sha256 proves the
-// bytes arrived intact, not that the host is honest (desktop/app-update.js says
-// so at length). Signing narrows that: a signed installer cannot be swapped for
-// somebody else's, because the OS checks the signature before running it. It is
-// a real improvement and it is not the same as the updater verifying a
-// publisher key, which zevet still does not do.
+// The update feed itself is Ed25519-signed (desktop/update-signing.js), and the
+// updater checks an installer's publisher against these signatures before
+// offering it (desktop/app-update.js); the OS signature is the second lock.
 "use strict";
 
 const base = require("./package.json").build;
@@ -74,7 +70,12 @@ module.exports = {
           // The default entitlements electron-builder ships are correct for an
           // Electron app; a custom plist is only needed for camera, microphone
           // or the like, and zevet asks for none of them.
-          notarize: { teamId: process.env.APPLE_TEAM_ID },
+          //
+          // `true`, not `{ teamId }`: with an API-key notarization credential
+          // (APPLE_API_KEY/_KEY_ID/_ISSUER — see signing.js), getNotarizeOptions()
+          // never reads notarize.teamId at all; that field exists only for the
+          // Apple-ID + app-specific-password path this project no longer uses.
+          notarize: true,
           // The final artifact smoke check also requires Gatekeeper acceptance
           // when this build is configured for publisher signing.
           gatekeeperAssess: true,

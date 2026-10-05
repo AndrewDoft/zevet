@@ -18,7 +18,7 @@ import {
   type ComputerStep,
 } from "./assistant-ui/elements/computer-use";
 import { PermissionGrant, type GrantScope } from "./assistant-ui/elements/permission-grant";
-import { field, mono } from "./assistant-ui/elements/surfaces";
+import { field, mono, paper } from "./assistant-ui/elements/surfaces";
 import { pct } from "./assistant-ui/utils/range";
 import { answerPermit, selectActiveConsole, useBoard } from "../lib/board";
 import type { PermitRequest } from "../lib/bridge";
@@ -83,9 +83,52 @@ function reachFor(p: PermitRequest): string[] {
   return out;
 }
 
+/** What Claude's own tool wants to do, as plain text. Everything is model
+ *  output, so it is only ever rendered as a text child. */
+function toolInput(input: Record<string, unknown>): string {
+  const first = ["command", "file_path", "path", "url", "pattern", "query"].find((k) => typeof input[k] === "string");
+  const main = first ? str(input[first]) : "";
+  const rest = Object.entries(input).filter(([k]) => k !== first);
+  const extra = rest.length ? JSON.stringify(Object.fromEntries(rest), null, 1) : "";
+  const text = [main, extra].filter(Boolean).join("\n") || "(no input)";
+  return text.length > 1500 ? `${text.slice(0, 1500)}\n… (${text.length - 1500} more characters)` : text;
+}
+
+/** Claude's own tool asking to run (--permission-prompt-tool): the tool and
+ *  its input, and three answers. The agent is blocked until one is given. */
+function ToolApproval({ permit }: { permit: PermitRequest }) {
+  const btn =
+    "text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]";
+  return (
+    <div data-slot="tool-approval" className={cn(paper, "flex w-full max-w-md flex-col gap-3 rounded-[20px] p-4")}>
+      <div className="flex flex-col">
+        <span className="truncate text-[13.5px] font-medium">{permit.tool || "tool"}</span>
+        <span className="text-foreground/45 text-xs">wants to run — the agent is waiting on you</span>
+      </div>
+      <pre className={cn(mono, "text-foreground/70 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs")}>
+        {toolInput(rec(permit.arguments ?? permit.args))}
+      </pre>
+      <div className="flex items-center justify-end gap-2">
+        <button type="button" className={btn} onClick={() => void answerPermit(permit.id, false, "the person declined")}>
+          Deny
+        </button>
+        <button type="button" className={btn} onClick={() => void answerPermit(permit.id, true)}>
+          Allow once
+        </button>
+        {permit.canAlways ? (
+          <button type="button" className={btn} onClick={() => void answerPermit(permit.id, true, undefined, true)}>
+            Always this session
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function PermitPrompt() {
   const permit = useBoard((s) => s.permits[0]);
   if (!permit) return null;
+  if (permit.via === "claude") return <ToolApproval permit={permit} />;
 
   return (
     <PermissionGrant

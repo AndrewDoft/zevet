@@ -249,7 +249,8 @@ describe("the Connections panel's bridge exists (settings.md P0s)", () => {
   // left "Opening…". Source assertions because preload.js touches Electron.
   const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const preload = readFileSync(path.join(ROOT, "desktop", "preload.js"), "utf8");
-  const bridge = readFileSync(path.join(ROOT, "board", "src", "lib", "bridge.ts"), "utf8");
+  // The types are generated from the IPC table (desktop/ipc-table.js), not written in bridge.ts.
+  const bridge = readFileSync(path.join(ROOT, "board", "src", "lib", "bridge.generated.d.ts"), "utf8");
 
   test("preload exposes masoraSources and masoraConnect on window.zevet", () => {
     assert.match(preload, /masoraSources:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("masora:sources"\)/);

@@ -25,6 +25,7 @@ const {
   assembleTranscript,
   closeTranscript,
   emptyTranscript,
+  turnInFlight,
   plainError,
 } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "transcript.mjs")).href);
 const { resetClock } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "model-limits.mjs")).href);
@@ -547,5 +548,20 @@ describe("claude payloads that are not transcript content", () => {
     s = claude({ type: "rate_limit_event", rate_limit_info: { status: "rejected", unifiedWindows: {} } }, s);
     assert.equal(s.messages[0].status.type, "incomplete");
     assert.equal(s.messages[0].status.error, "Rate limited");
+  });
+});
+
+describe("turnInFlight — working vs idle for the subagents panel", () => {
+  test("idle before anything, working after a prompt, working mid-answer, idle after the result", () => {
+    let s = emptyTranscript();
+    assert.equal(turnInFlight(s), false);
+    s = appendUserText(s, "go");
+    assert.equal(turnInFlight(s), true);
+    s = claude(text("ZEVET-OK"), s);
+    assert.equal(turnInFlight(s), true);
+    s = claude({ type: "result", subtype: "success", result: "ZEVET-OK" }, s);
+    assert.equal(turnInFlight(s), false);
+    s = appendUserText(s, "again");
+    assert.equal(turnInFlight(s), true);
   });
 });

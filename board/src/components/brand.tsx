@@ -12,6 +12,7 @@ import { HUES } from "../lib/constants";
 import { ClaudeLogo, OpenAILogo } from "./assistant-ui/elements/logos";
 import { normalizeAgentKey, providerFor } from "./icons/providers";
 import { VoiceOrb } from "./assistant-ui/elements/voice";
+import zevetMark from "./icons/zevet-mark.png?inline";
 
 /* ---------------------------------------------------------------------------
  * AgentLogo — the provider mark for the CLI actually running, not a generic
@@ -52,6 +53,13 @@ export function AgentLogo({ agent, model, hue, className }: AgentLogoProps) {
   const style = who ? ({ "--who": who, color: who } as CSSProperties) : undefined;
 
   const a = normalizeAgentKey(agent);
+
+  /* The "Zevet" pick (lib/zevet-model.mjs): the app's own ∴ tile, as a PNG
+     (Andrew, 2026-09-30), rendered off desktop/make-icon.mjs at 64px.
+     Checked before the model: a routed run's model is whichever rung answered. */
+  if (a === "zevet") {
+    return <img src={zevetMark} alt="" draggable={false} className={cn("size-4 shrink-0 rounded-[3px]", className)} />;
+  }
 
   if (a === "claude") {
     return (

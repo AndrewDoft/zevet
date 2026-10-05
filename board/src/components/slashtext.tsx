@@ -58,9 +58,10 @@ export const UserText: TextMessagePartComponent = ({ text }) => {
      have announced anything — but the file does say which CLI wrote it, and
      that is enough for the fallback list. Without this, reading back a
      transcript showed every claude command as plain text and the highlight
-     looked broken rather than absent. Chat is always claude and takes the
-     list from its own run's init line. */
-  const agent = isChat ? "claude" : (active?.agent ?? reading?.source ?? null);
+     looked broken rather than absent. Chat follows the agent the next send
+     goes to, like the menu. */
+  const launchAgent = useBoard((s) => s.launchAgent);
+  const agent = isChat ? launchAgent || "claude" : (active?.agent ?? reading?.source ?? null);
   const announced = isChat ? chatSlash ?? undefined : active?.slashCommands;
   const known = useMemo(() => commandsFor(agent, announced), [agent, announced]);
   const env = useMemo(() => readEnvelope(text), [text]);

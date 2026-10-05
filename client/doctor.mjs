@@ -31,9 +31,10 @@ import os from "node:os";
 import { detectAgents } from "./detect.mjs";
 import { resolveAuth } from "./secret.mjs";
 import { openrouterReady } from "./install-opencode.mjs";
+import { zevetHome } from "./zevet-home.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const CONFIG = path.join(HOME, "config.json");
 const TIMEOUT_MS = Number(process.env.ZEVET_TIMEOUT_MS || 3000);
 
@@ -67,6 +68,9 @@ const CLIENT_FILES = [
   // hook that cannot start at all, which is the least visible failure in the
   // product: silence is what a working hook also looks like.
   "secret.mjs",
+  "zevet-home.mjs",
+  // Imported by updater.mjs: verifies the hub's signed client manifest.
+  "signing.mjs",
   // Not imported by anything here yet; the editor is what will use it. Listed
   // because this list's job is to mirror what the hub ships, not to guess what
   // is currently reachable.
@@ -377,7 +381,16 @@ async function checkToken(settings, hubUp) {
     return;
   }
   try {
-    const res = await get(`${settings.hub}/api/state`, { "x-zevet-token": settings.token });
+    // NOT /api/state: it now requires a real personal session (teamFromSession
+    // — see hub/server.mjs and the incident it documents), and the token this
+    // checks is the derived/shared one hook.mjs actually sends — the normal,
+    // expected shape for a hook-only machine that has never signed in. That
+    // combination used to be a false "rejected", diagnosing a perfectly
+    // working setup as broken. /auth/whoami still answers a shared token
+    // (200, `shared: true`, an empty people list) — it is the read-only,
+    // no-side-effect route that is correct for BOTH a shared and a session
+    // token, which is what this check has to be neutral to.
+    const res = await get(`${settings.hub}/auth/whoami`, { "x-zevet-token": settings.token });
     if (res.ok) {
       report(true, "token", "accepted by the hub");
     } else if (res.status === 401) {
@@ -391,7 +404,7 @@ async function checkToken(settings, hubUp) {
     } else if (res.status === 429) {
       report(false, "token", "rate limited (429) — too many failed attempts from this address; wait a few minutes");
     } else {
-      report(false, "token", `the hub answered ${res.status} on /api/state`);
+      report(false, "token", `the hub answered ${res.status} on /auth/whoami`);
     }
   } catch (err) {
     report(false, "token", `could not ask the hub (${why(err, settings.token, settings.secret)})`);

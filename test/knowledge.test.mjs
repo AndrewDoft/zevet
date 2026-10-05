@@ -134,9 +134,9 @@ test("nothing offers to forget a memory", () => {
   assert.ok(!/onForget/.test(runspecCode), "runspec.tsx offers a forget it cannot perform");
 
   const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
-  const start = main.indexOf('ipcMain.handle("local:memories"');
+  const start = main.indexOf('bridge.handle("local:memories"');
   assert.ok(start > 0, "local:memories handler not found");
-  const end = main.indexOf("ipcMain.handle(", start + 1);
+  const end = main.indexOf("bridge.handle(", start + 1);
   const handler = main.slice(start, end > 0 ? end : undefined)
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");

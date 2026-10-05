@@ -19,14 +19,16 @@ import { ROOT } from "./helpers.mjs";
 
 const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
 const bridge = readFileSync(path.join(ROOT, "board", "src", "lib", "bridge.ts"), "utf8");
+// The bridge MEMBERS are generated from desktop/ipc-table.js; bridge.ts still holds the payload interfaces.
+const bridgeMembers = readFileSync(path.join(ROOT, "board", "src", "lib", "bridge.generated.d.ts"), "utf8");
 const asksCard = readFileSync(path.join(ROOT, "board", "src", "components", "asks.tsx"), "utf8");
 const conversation = readFileSync(path.join(ROOT, "board", "src", "components", "conversation.tsx"), "utf8");
 
 describe("the wire contract", () => {
   test("AskRequest and the two LocalBridge members are declared", () => {
     assert.match(bridge, /interface AskRequest \{[\s\S]*?id: string;[\s\S]*?question: string;[\s\S]*?header: string;[\s\S]*?multi: boolean;[\s\S]*?options: Array<\{ label: string; description: string \}>;/);
-    assert.match(bridge, /onAskRequest\?:\s*\(cb: \(req: AskRequest\) => void\) => \(\) => void;/);
-    assert.match(bridge, /askAnswer\?:\s*\(id: string, picked: string\[\]\) => Promise<\{ ok: boolean; error\?: string \}>;/);
+    assert.match(bridgeMembers, /onAskRequest\?:\s*\(cb: \(req: AskRequest\) => void\) => \(\) => void;/);
+    assert.match(bridgeMembers, /askAnswer\?:\s*\(id: string, picked: string\[\]\) => Promise<\{ ok: boolean; error\?: string \}>;/);
   });
 });
 

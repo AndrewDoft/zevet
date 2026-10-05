@@ -4,6 +4,8 @@
 // C2 brief fetch (fail-open), and the C4 http MCP entry shape.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { tempDir, ROOT } from "./helpers.mjs";
@@ -34,9 +36,31 @@ function fakeCrypto(key = "k") {
 describe("config", () => {
   test("defaults to the production URL and unpaired", () => {
     const cfg = masora.readConfig();
-    assert.equal(cfg.url, masora.DEFAULT_URL);
+    assert.equal(cfg.url, masora.defaultUrl());
     assert.equal(cfg.paired, false);
     assert.deepEqual(cfg.repos, {});
+  });
+
+  test("the default is the cloud origin, the family descriptor's cloud (https only) when Masora wrote one; web is ignored", () => {
+    const origin = createRequire(import.meta.url)("../desktop/hub-target.js").cloudOrigin();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-fam-"));
+    const prev = process.env.MASORA_FAMILY_DIR;
+    process.env.MASORA_FAMILY_DIR = dir;
+    const write = (o) => fs.writeFileSync(path.join(dir, "masora.json"), JSON.stringify(o));
+    try {
+      assert.equal(masora.defaultUrl(), origin);
+      write({ cloud: "https://app-34-74-69-129.sslip.io/" });
+      assert.equal(masora.defaultUrl(), "https://app-34-74-69-129.sslip.io");
+      write({ cloud: "http://insecure.example.com" });
+      assert.equal(masora.defaultUrl(), origin, "http is refused");
+      write({ cloud: "javascript:alert(1)" });
+      assert.equal(masora.defaultUrl(), origin);
+      write({ web: "https://elsewhere.example.com" });
+      assert.equal(masora.defaultUrl(), origin, "the old `web` key is ignored");
+    } finally {
+      if (prev === undefined) delete process.env.MASORA_FAMILY_DIR; else process.env.MASORA_FAMILY_DIR = prev;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("saveUrl persists and trims", () => {
@@ -47,7 +71,7 @@ describe("config", () => {
 
   test("blank saveUrl falls back to the default rather than an empty string", () => {
     const cfg = masora.saveUrl("   ");
-    assert.equal(cfg.url, masora.DEFAULT_URL);
+    assert.equal(cfg.url, masora.defaultUrl());
   });
 
   test("token round-trips through the injected encrypt/decrypt and never sits in the config as plaintext", () => {
@@ -77,6 +101,29 @@ describe("config", () => {
     assert.equal(cfg.paired, false);
     assert.equal(cfg.url, "https://keep.example.com");
     assert.equal(cfg.repos[path.resolve("/repo/a")], true);
+  });
+
+  test("no canonical (an older Masora): display falls back to member_email", () => {
+    const { encrypt } = fakeCrypto();
+    masora.saveToken("t", encrypt, "old@b.co");
+    assert.equal(masora.readConfig().member, "old@b.co");
+  });
+
+  test("a canonical identity replaces member_email: name preferred, email as the fallback", () => {
+    const { encrypt } = fakeCrypto();
+    masora.saveToken("t", encrypt, "old@b.co", { name: "Andrew", email: "andrew@real.co", aliases: [] });
+    assert.equal(masora.readConfig().member, "Andrew");
+
+    masora.saveToken("t", encrypt, "old@b.co", { name: null, email: "andrew@real.co", aliases: [] });
+    assert.equal(masora.readConfig().member, "andrew@real.co");
+  });
+
+  test("unpair clears a stored canonical too", () => {
+    const { encrypt } = fakeCrypto();
+    masora.saveToken("t", encrypt, "old@b.co", { name: "Andrew", email: "andrew@real.co", aliases: [] });
+    masora.unpair();
+    masora.saveToken("t2", encrypt, "old@b.co");
+    assert.equal(masora.readConfig().member, "old@b.co");
   });
 
   test("setRepoOpted(dir, false) removes the key rather than storing false", () => {

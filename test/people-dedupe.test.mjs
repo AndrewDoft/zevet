@@ -56,4 +56,8 @@ describe("people.tsx — a console and a matching disk session make ONE row", ()
     );
     assert.ok(!/continue/.test(consoleLoop), "a console row must never be skipped for being claimed");
   });
+
+  test("a live console row passes its API label to the shared session namer", () => {
+    assert.match(people, /sessionBlurb\(\{ title: c\.title \|\| c\.autoTitle, prompt: firstPrompt\(c\), label: c\.label, source: c\.agent \}\)/);
+  });
 });

@@ -1,6 +1,7 @@
 // Masora provider OAuth flow: fetch authorize URL, open in browser or fallback to admin.
 // D-326: Zevet holds no secrets, opens Masora's OAuth flows via system browser.
 "use strict";
+const { openSafe } = require("./open-safe.js");
 
 /**
  * Map Zevet's provider IDs to Masora's provider names and optional kind param.
@@ -83,14 +84,14 @@ async function connectProvider({ provider, baseUrl, token, shell, fetchImpl } = 
   } catch (err) {
     // Network error or timeout
     console.warn(`oauth ${provider}: install fetch failed`, err && err.message);
-    shell.openExternal(`${url}/admin`).catch(() => {});
+    openSafe(`${url}/admin`, shell).catch(() => {});
     return { ok: true, via: "admin", status: "error" };
   }
 
   // If not 200, fallback to admin
   if (installStatus !== 200) {
     console.warn(`oauth ${provider}: install returned ${installStatus}`);
-    shell.openExternal(`${url}/admin`).catch(() => {});
+    openSafe(`${url}/admin`, shell).catch(() => {});
     return { ok: true, via: "admin", status: installStatus };
   }
 
@@ -99,18 +100,18 @@ async function connectProvider({ provider, baseUrl, token, shell, fetchImpl } = 
     body = await installRes.json();
   } catch {
     console.warn(`oauth ${provider}: install response not JSON`);
-    shell.openExternal(`${url}/admin`).catch(() => {});
+    openSafe(`${url}/admin`, shell).catch(() => {});
     return { ok: true, via: "admin", status: 200 };
   }
 
   const authorizeUrl = body && body.authorize_url ? String(body.authorize_url) : null;
   if (!authorizeUrl || !authorizeUrl.startsWith("https://")) {
     console.warn(`oauth ${provider}: no valid authorize_url`, authorizeUrl);
-    shell.openExternal(`${url}/admin`).catch(() => {});
+    openSafe(`${url}/admin`, shell).catch(() => {});
     return { ok: true, via: "admin", status: 200 };
   }
 
-  shell.openExternal(authorizeUrl).catch(() => {});
+  openSafe(authorizeUrl, shell).catch(() => {});
   return { ok: true, via: "authorize", status: 200 };
 }
 

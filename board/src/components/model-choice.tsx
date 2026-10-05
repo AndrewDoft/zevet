@@ -35,7 +35,8 @@ import { MODELS } from "../lib/constants";
 import { aliasOf, describeModel } from "../lib/models.mjs";
 import { modelLimitedUntil, sortByLimit } from "../lib/model-limits.mjs";
 import { whenText } from "../lib/when.mjs";
-import { useBoard } from "../lib/board";
+import { ZEVET_MODEL, defaultPick, withZevet } from "../lib/zevet-model.mjs";
+import { selectActiveConsole, useBoard } from "../lib/board";
 import { useChat } from "../lib/chat";
 import { ChatSurface } from "../lib/surface";
 import { zStorage } from "../lib/bridge";
@@ -44,6 +45,8 @@ import type { UsableAgent } from "../lib/types";
 /** codex is the one CLI here that takes a reasoning-effort flag. Offering the
  *  control for models that ignore it would be inventing a setting. */
 const HAS_EFFORT = new Set(["codex"]);
+/** `claude --help`: --effort <level> (low, medium, high, xhigh, max). */
+const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"].map((id) => ({ id, name: id === "xhigh" ? "XHigh" : id[0].toUpperCase() + id.slice(1) }));
 
 
 /** `running`: the console in front, whose model the trigger shows instead of
@@ -54,9 +57,11 @@ export function ModelChoice({
   running,
 }: {
   agents: UsableAgent[];
-  running?: { id: string; name: string };
+  running?: { id: string; name: string; title?: string };
 }) {
   const launchModel = useBoard((s) => s.launchModel);
+  const active = useBoard(selectActiveConsole);
+  const setConsoleModel = useBoard((s) => s.setConsoleModel);
   const setLaunchAgent = useBoard((s) => s.setLaunchAgent);
   const setLaunchModel = useBoard((s) => s.setLaunchModel);
   const launchEffort = useBoard((s) => s.launchEffort);
@@ -87,6 +92,12 @@ export function ModelChoice({
         // opencode's provider-prefixed ids and claude/codex's short ones share
         // one namespace otherwise, and a limit on one agent's "sonnet" would
         // wrongly gray another's.
+        // `a.models` is this machine's own cache (main.js `local:agents`,
+        // read fresh off ~/.codex/models_cache.json etc.) — a model there is
+        // known to exist for THIS account. Missing it, MODELS[a.name] is the
+        // bundled fallback captured off whoever last ran sync-agent-models.mjs
+        // and says nothing about what this install's account can reach.
+        const verified = Boolean(a.models);
         const rawAliases = a.models?.map((m) => m.id) ?? MODELS[a.name] ?? [];
         const aliases = sortByLimit(
           rawAliases.map((alias) => `${a.name}:${alias}`),
@@ -94,7 +105,7 @@ export function ModelChoice({
         ).map((qualified) => qualified.slice(a.name.length + 1));
         return {
           agent: a,
-          models: aliases.map((alias): ModelOption & { resetLabel?: string } => {
+          models: aliases.map((alias): ModelOption & { resetLabel?: string; verified?: boolean } => {
             const { label, from, note, trains } = describeModel(alias);
             const notes = [from, note, trains ? "may train on prompts" : null].filter(Boolean);
             const resetAt = modelLimitedUntil(zStorage, `${a.name}:${alias}`);
@@ -113,12 +124,13 @@ export function ModelChoice({
               // The provider's own mark, where one is honest. opencode fronts a
               // dozen providers, so the MODEL is what identifies it, not the CLI.
               icon: <AgentLogo agent={a.name} model={alias} className="size-3.5" />,
-              efforts: HAS_EFFORT.has(a.name) && alias ? true : undefined,
+              efforts: a.name === "claude" ? CLAUDE_EFFORTS : HAS_EFFORT.has(a.name) && alias ? true : undefined,
               // Grayed and unselectable until it clears — a model that would
               // only fail the same way again is not a real choice. The reset
               // time is the tooltip (ModelSelectorItem's `title` below).
               disabled: Boolean(resetAt),
               resetLabel: resetAt ? `Resets ${whenText(resetAt)}` : undefined,
+              verified,
             };
           }),
         };
@@ -126,9 +138,25 @@ export function ModelChoice({
     [agents],
   );
 
-  const all = useMemo(() => groups.flatMap((g) => g.models), [groups]);
-  const match = all.find((m) => aliasOf(m.id) === launchModel);
-  const selected = match?.id ?? all[0]?.id ?? "";
+  /* Zevet leads the list, above every agent's group — in Chat too: a chat
+     turn on it runs through the same router (desktop/chat-zevet.js). */
+  const zevet = useMemo(() => ({ ...ZEVET_MODEL, icon: <AgentLogo agent="zevet" className="size-3.5" /> }), []);
+  const all = useMemo(
+    () => withZevet(groups.flatMap((g) => g.models), agents).map((m) => (m === ZEVET_MODEL ? zevet : m)),
+    [groups, agents, zevet],
+  );
+  const zevetFirst = all[0]?.id === ZEVET_MODEL.id;
+  const selected = defaultPick(all, launchModel, aliasOf);
+  const match = all.find((m) => m.id === selected && aliasOf(m.id) === launchModel);
+  /* ⚠️ ROOT CAUSE of a fresh install's first Codex message failing with
+     "Provider error 400" (no local ~/.codex/models_cache.json yet, so
+     a.models above was undefined and this fell through to MODELS[a.name] —
+     the id zevet shipped with, captured off Andrew's own account, which is
+     not guaranteed to exist for anyone else's plan). all[0] is only trusted
+     here when it is VERIFIED — read off this machine's own CLI cache. With
+     nothing verified, `selected` stays "" and the write-back below skips,
+     so invocationFor never adds a `--model`/`-m` flag and the CLI falls back
+     to its own default, which is always valid for whatever account it is. */
 
   /* ⚠️ THE FALLBACK WAS DISPLAY-ONLY, so the picker showed one model and the
      run started on another. `launchModel` is what board.ts § startConsole
@@ -142,14 +170,22 @@ export function ModelChoice({
      one. Guarded on there being no match AND a list to pick from, so this
      settles in a single pass and cannot ping-pong. */
   useEffect(() => {
-    // Code only, front only: Chat's picker lists claude alone, so a Chat
-    // instance "correcting" an opencode pick reset every non-claude choice to
-    // Opus (seen live 2026-09-23). Chat reads claude-or-default at send.
-    if (inChat || !front || match || !selected) return;
+    // Front only: the hidden surface's picker must not correct a pick the
+    // visible one is about to make.
+    if (!front || match || !selected) return;
     setLaunchModel(aliasOf(selected));
     const cut = selected.indexOf(":");
     if (cut > 0) setLaunchAgent(selected.slice(0, cut));
-  }, [inChat, front, match, selected, setLaunchModel, setLaunchAgent]);
+  }, [front, match, selected, setLaunchModel, setLaunchAgent]);
+
+  /* The model persists across a relaunch and the agent does not, so a stored
+     Codex pick came back showing GPT-5.6 while claude was still the agent that
+     ran it (seen live 2026-09-24: `claude --model gpt-5.6-luna`). The picker
+     shows the model; the agent follows it. */
+  useEffect(() => {
+    const cut = match ? match.id.indexOf(":") : -1;
+    if (front && cut > 0) setLaunchAgent(match!.id.slice(0, cut));
+  }, [front, match, setLaunchAgent]);
 
   return (
     <ModelSelectorRoot
@@ -162,6 +198,9 @@ export function ModelChoice({
         setLaunchModel(aliasOf(id));
         const cut = id.indexOf(":");
         if (cut > 0) setLaunchAgent(id.slice(0, cut));
+        // Mid-thread in Code: the same CLI resumes on the new model at the next
+        // prompt (board.ts § setConsoleModel), marked "switched from X to Y".
+        if (!inChat && front && active && active.agent !== "zevet" && id.startsWith(`${active.agent}:`)) setConsoleModel(active.key, aliasOf(id));
       }}
       effort={launchEffort || undefined}
       onEffortChange={(e) => setLaunchEffort(e)}
@@ -170,7 +209,7 @@ export function ModelChoice({
     >
       <ModelSelectorTrigger className="w-full justify-between" variant="outline">
         {running ? (
-          <span data-slot="model-selector-value" className="truncate">
+          <span data-slot="model-selector-value" className="truncate" title={running.title || undefined}>
             {running.name}
           </span>
         ) : (
@@ -183,6 +222,11 @@ export function ModelChoice({
             A list that long is searched, not scrolled. */}
         <ModelSelectorSearch placeholder="Search models…" />
         <ModelSelectorList>
+          {zevetFirst && (
+            <ModelSelectorGroup key="zevet">
+              <ModelSelectorItem model={zevet} />
+            </ModelSelectorGroup>
+          )}
           {groups.map(({ agent, models }) => (
             <ModelSelectorGroup
               key={agent.name}
@@ -192,8 +236,6 @@ export function ModelChoice({
                     <AgentLogo agent={agent.name} className="size-3" />
                     {agent.name}
                   </span>
-                  {/* Only what you can act on: the sign-in state and turn style on
-                      every group was noise. */}
                   {!agent.signedIn && <span className={cn(mono, "text-foreground/35")}>Not signed in</span>}
                 </span>
               }

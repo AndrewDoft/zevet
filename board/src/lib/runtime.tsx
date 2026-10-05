@@ -34,6 +34,7 @@ import { bridge } from "./bridge";
 import { MasoraVoiceDictationAdapter } from "./voice";
 import { MULTI_TURN } from "./constants";
 import { groupTurnTools } from "./turngroup.mjs";
+import { overlayDraft } from "./chat-stream.mjs";
 import { parseLocal } from "./slash.mjs";
 import { ToolUIs } from "../components/tools";
 import type { ConsoleEntry } from "./types";
@@ -143,9 +144,20 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
   const sessionMessages = useBoard((s) => s.sessions.openTranscript?.messages);
   const reading = Boolean(openSession);
 
-  const raw = reading
-    ? (sessionMessages ?? NO_MESSAGES)
-    : (active?.transcript.messages ?? NO_MESSAGES);
+  /* Streamed text of the block in flight is laid over the open message; the
+     complete block replaces it (chat-stream.mjs). Memoised because the runtime
+     re-renders per token and turngroup below memoises on this reference. */
+  const activeTranscript = active?.transcript;
+  const activeDraft = active?.draft ?? "";
+  const raw = useMemo(
+    () =>
+      reading
+        ? (sessionMessages ?? NO_MESSAGES)
+        : activeTranscript
+        ? (overlayDraft(activeTranscript, activeDraft) as ThreadMessageLike[])
+        : NO_MESSAGES,
+    [reading, sessionMessages, activeTranscript, activeDraft],
+  );
 
   /* ONE TOOL-CALL DROPDOWN PER TURN, not ten. assistant-ui groups ADJACENT
    * tool calls, and an agent breaks adjacency constantly — measured on a real

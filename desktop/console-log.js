@@ -22,11 +22,46 @@
 const EVENT_CAP = 2000;
 const HEAD = 50;
 
+/** entries.get(id)'s stored shape, projected to what a caller may read --
+ *  shared by `snapshot()` and `get()` so the gap-marker splice happens once. */
+function toPublic(e, head) {
+  return {
+    id: e.id,
+    ...e.meta,
+    running: e.running,
+    // What a restart resumes (console-persistence.js); "" until claude says.
+    sessionId: e.sessionId || "",
+    state: e.running ? e.state : "exited",
+    turns: e.turns,
+    lastResult: e.lastResult,
+    isError: e.isError,
+    costUsd: e.costUsd,
+    usage: e.usage,
+    events: e.dropped
+      ? [...e.events.slice(0, head), { type: "gap", id: e.id, dropped: e.dropped }, ...e.events.slice(head)]
+      : e.events.slice(),
+  };
+}
+
 // ponytail: capped by event count, not bytes; a run of huge tool results can
 // still hold a lot. Add a byte budget if memory ever shows up.
-function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
+/** claude's --replay-user-messages echoes each prompt back as a text-only
+ *  `user` line; the console already stores its own `prompt` event for it, so
+ *  the echo is a second copy. A `user` line carrying a tool_result is the
+ *  tool's record and stays. */
+function isPromptEcho(evt) {
+  const p = evt.type === "agent" && evt.payload;
+  if (!p || p.type !== "user" || !p.message) return false;
+  const c = p.message.content;
+  return typeof c === "string" || (Array.isArray(c) && !c.some((part) => part && part.type === "tool_result"));
+}
+
+/** `onceDone(id)` fires when the first turn's `result` arrives on a console
+ *  marked `setOnce` -- fire-and-forget workers use it to end the process. */
+function createConsoleLog({ cap = EVENT_CAP, head = HEAD, onceDone, now = Date.now } = {}) {
   const entries = new Map();
   let seq = 0;
+  let lastAt = 0;
 
   return {
     /**
@@ -36,6 +71,7 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
      * second thread.
      */
     open(id, meta, continues) {
+      lastAt = now();
       const prev = continues ? entries.get(continues) : null;
       if (prev) entries.delete(continues);
       entries.set(id, {
@@ -44,10 +80,20 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
         // on a follow-up either. Nor does its generated title.
         meta: prev ? { ...meta, startedAt: prev.meta.startedAt, ...(prev.meta.title ? { title: prev.meta.title } : {}) } : meta,
         running: true,
+        // working = a prompt is out and its `result` has not come back; idle =
+        // the process is up and waiting for the next one (claude stays alive
+        // between turns, so `running` alone never says a turn is done).
+        state: "idle",
+        turns: prev ? prev.turns : 0,
+        lastResult: prev ? prev.lastResult : "",
+        isError: prev ? prev.isError : false,
+        costUsd: prev ? prev.costUsd : null,
+        usage: prev ? prev.usage : null,
         // Re-stamped with the new id: the board replays them against the
         // console that now answers to it, and drops what matches no console.
         events: prev ? prev.events.map((e) => ({ ...e, id })) : [],
         dropped: prev ? prev.dropped : 0,
+        sessionId: prev ? prev.sessionId : "",
       });
     },
 
@@ -56,16 +102,51 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
      *  snapshot already holds. */
     record(id, evt) {
       const out = { ...evt, id, seq: ++seq };
+      lastAt = now();
       const e = entries.get(id);
-      if (e) {
+      // Partial-message deltas (claude --include-partial-messages) are live-only:
+      // hundreds per answer, and the complete block that follows is what a reload needs.
+      const partial = evt.type === "agent" && evt.payload && evt.payload.type === "stream_event";
+      /* ⚠️ THE SESSION ID WAS NEVER KEPT, so console-persistence.js's
+         resumable() was false for every console and a restart saved nothing
+         (0.2.95-0.2.96; found 2026-09-30 when /list showed no sessionId on
+         two working agents). claude stamps session_id on its stream events. */
+      const sid = evt.type === "agent" && evt.payload && typeof evt.payload.session_id === "string" ? evt.payload.session_id : "";
+      if (e && sid) e.sessionId = sid;
+      if (e && !partial && !isPromptEcho(evt)) {
         e.events.push(out);
         if (evt.type === "exit") e.running = false;
+        else if (evt.type === "prompt") e.state = "working";
+        else if (evt.type === "turn_end") {
+          // A routed ("Zevet" model) turn that finished on codex or opencode.
+          e.state = "idle";
+          e.turns++;
+          e.lastResult = typeof evt.result === "string" ? evt.result : "";
+          e.isError = false;
+          if (e.once && onceDone) onceDone(id);
+        }
+        else if (evt.type === "agent" && evt.payload && evt.payload.type === "result") {
+          const r = evt.payload;
+          e.state = "idle";
+          e.turns++;
+          e.lastResult = typeof r.result === "string" ? r.result : "";
+          e.isError = Boolean(r.is_error);
+          if (typeof r.total_cost_usd === "number") e.costUsd = r.total_cost_usd;
+          if (r.usage && typeof r.usage === "object") e.usage = r.usage;
+          if (e.once && onceDone) onceDone(id);
+        }
         if (e.events.length > cap) {
           e.events.splice(head, 1);
           e.dropped++;
         }
       }
       return out;
+    },
+
+    /** Mark a console fire-and-forget: `onceDone` fires after its first result. */
+    setOnce(id) {
+      const e = entries.get(id);
+      if (e) e.once = true;
     },
 
     /** Whether the thread has been sent a prompt yet: the first one is what
@@ -83,6 +164,12 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
       e.meta = { ...e.meta, title };
       return true;
     },
+    updateMeta(id, patch) {
+      const e = entries.get(id);
+      if (!e) return false;
+      e.meta = { ...e.meta, ...patch };
+      return true;
+    },
 
     /** The board closed the thread. A finished console is otherwise kept, so a
      *  run that ended during a reload still comes back, as finished. */
@@ -93,15 +180,23 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
     snapshot() {
       return {
         seq,
-        consoles: [...entries.values()].map((e) => ({
-          id: e.id,
-          ...e.meta,
-          running: e.running,
-          events: e.dropped
-            ? [...e.events.slice(0, head), { type: "gap", id: e.id, dropped: e.dropped }, ...e.events.slice(head)]
-            : e.events.slice(),
-        })),
+        consoles: [...entries.values()].map((e) => toPublic(e, head)),
       };
+    },
+
+    /** One console, in the same shape `snapshot()` hands each entry -- for a
+     *  caller that wants a single console rather than every one of them (the
+     *  control API's status/output/wait, desktop/agent-api.js). Undefined
+     *  when there is no such console. */
+    get(id) {
+      const e = entries.get(id);
+      return e ? toPublic(e, head) : undefined;
+    },
+
+    /** For the payload swap gate (payload-swap.js): how many consoles have a live
+     *  process, and when any console last opened or spoke (0 = never). */
+    activity() {
+      return { running: [...entries.values()].filter((e) => e.running).length, lastAt };
     },
 
     clear() {

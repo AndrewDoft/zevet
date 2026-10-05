@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectAgents } from "./detect.mjs";
 import { installCodex, grantCodexHookTrust } from "./install-codex.mjs";
+import { atomicWriteJson } from "./zevet-home.mjs";
 import {
   addOpencodeRepo,
   installOpencodeGlobal,
@@ -146,7 +147,7 @@ function installClaude(repo, node, remove) {
     }
   }
 
-  writeFileSync(file, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+  atomicWriteJson(file, cfg);
   return { ok: true, detail: file, removed };
 }
 

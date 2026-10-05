@@ -7,7 +7,7 @@
 // the exit is always 0.
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { startHub, state, runScript, tempDir, TOKEN } from "./helpers.mjs";
 import { addOpencodeRepo } from "../client/install-opencode.mjs";
@@ -19,6 +19,10 @@ const TOOL_PAYLOAD = JSON.stringify({
 });
 
 function hookRun(home, hub, extra = {}) {
+  // A fresh last-check stamp, so the hook does not spawn its detached updater:
+  // the interval below only suppresses it once a stamp exists, and an updater
+  // still writing into home.dir races the test's cleanup (ENOTEMPTY on CI).
+  writeFileSync(path.join(home.dir, "last-check"), String(Date.now()));
   return runScript("hook.mjs", {
     stdin: TOOL_PAYLOAD,
     args: ["--zevet-hook", "--zevet-agent", "claude-code", "--zevet-repo", home.repo],
@@ -40,6 +44,17 @@ function outboxOf(home) {
 }
 
 describe("the hook outbox", () => {
+  test("a plain-http hub that is not loopback gets neither the token nor a queued retry", async (t) => {
+    const home = tempDir("zevet-outbox-http-");
+    t.after(() => home.cleanup());
+    home.repo = home.dir;
+    const r = await hookRun(home, "http://203.0.113.9:8787");
+    assert.equal(r.stdout, "");
+    assert.equal(r.code, 0);
+    assert.match(r.stderr, /plain-http hub/);
+    assert.equal(existsSync(outboxOf(home)), false, "an event was queued for a hub that must not be contacted");
+  });
+
   test("an unreachable hub queues the event without touching the turn", async (t) => {
     const home = tempDir("zevet-outbox-");
     t.after(() => home.cleanup());
@@ -63,11 +78,11 @@ describe("the hook outbox", () => {
 
     const hub = await startHub();
     try {
-      const before = (await state(hub.base, TOKEN)).body.events.length;
+      const before = (await state(hub.base)).body.events.length;
       const r = await hookRun(home, hub.base);
       assert.equal(r.stdout, "");
       assert.equal(r.code, 0);
-      const events = (await state(hub.base, TOKEN)).body.events.slice(before);
+      const events = (await state(hub.base)).body.events.slice(before);
       assert.equal(events.length, 3, `expected 2 queued + 1 live, got ${events.length}`);
       assert.equal(readFileSync(outboxOf(home), "utf8"), "", "outbox did not drain");
     } finally {
@@ -134,12 +149,12 @@ describe("the plugin outbox", () => {
 
     const hub = await startHub();
     try {
-      const before = (await state(hub.base, TOKEN)).body.events.length;
+      const before = (await state(hub.base)).body.events.length;
       await withEnv({ ...env, ZEVET_HUB: hub.base, ZEVET_TOKEN: TOKEN }, async () => {
         const hooks = await mod.Zevet({ directory: home.dir });
         await hooks.event({ event: { type: "session.idle" } });
       });
-      const events = (await state(hub.base, TOKEN)).body.events.slice(before);
+      const events = (await state(hub.base)).body.events.slice(before);
       assert.deepEqual(events.map((e) => e.kind), ["tool", "turn_end"]);
       assert.equal(readFileSync(file, "utf8"), "", "outbox did not drain");
     } finally {

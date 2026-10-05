@@ -30,6 +30,22 @@ test("a snapshot hands back each console's metadata and events in order", () => 
   assert.deepEqual(c.events.map((e) => e.type), ["agent", "prompt"]);
 });
 
+test("get() returns one console in the same shape snapshot() gives each entry", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  log.record("a", { type: "agent", payload: { n: 1 } });
+  const [fromSnapshot] = log.snapshot().consoles;
+  assert.deepEqual(log.get("a"), fromSnapshot);
+});
+
+test("get() is undefined for a console that was never opened, or already forgotten", () => {
+  const log = createConsoleLog();
+  assert.equal(log.get("nope"), undefined);
+  log.open("a", META);
+  log.forget("a");
+  assert.equal(log.get("a"), undefined);
+});
+
 test("a console that finished during the reload comes back finished", () => {
   const log = createConsoleLog();
   log.open("a", META);
@@ -102,7 +118,7 @@ const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
 const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
 
 test("a follow-up drops the old process's handle", () => {
-  const resume = main.slice(main.indexOf('ipcMain.handle("local:resumeAgent"'), main.indexOf('ipcMain.handle("local:sendToAgent"'));
+  const resume = main.slice(main.indexOf('bridge.handle("local:resumeAgent"'), main.indexOf('bridge.handle("local:sendToAgent"'));
   assert.match(resume, /consoles\.delete\(continues\)/, "every follow-up leaks the exited handle");
 });
 
@@ -110,7 +126,7 @@ test("a console closed while starting stops the process it was waiting for", () 
   assert.match(board, /function closedMeanwhile\([^)]*\)[^{]*\{[^}]*myConsoles\.some\(\(x\) => x\.key === c\.key\)/);
   assert.match(board, /stopAgent\(String\(id\)\);\s*void bridge\.local\?\.forgetAgent\?\.\(String\(id\)\)/);
   // startAgent and both resume paths: every place a new process id lands.
-  assert.equal(board.match(/if \(closedMeanwhile\(c, r\.id\)\) return;\s*(\/\/[^\n]*\s*)*c\.id = r\.id/g)?.length, 3);
+  assert.equal(board.match(/if \(closedMeanwhile\(c, r\.id\)\) return[^;]*;\s*(\/\/[^\n]*\s*)*c\.id = r\.id/g)?.length, 3);
 });
 
 test("a generated title is kept with the metadata and follows a continued thread", () => {
@@ -124,4 +140,116 @@ test("a generated title is kept with the metadata and follows a continued thread
   log.open("b", META, "a");
   assert.equal(log.snapshot().consoles[0].title, "Greeting");
   assert.equal(log.setTitle("a", "Gone"), false);
+});
+
+const result = (extra = {}) => ({ type: "agent", payload: { type: "result", result: "ZEVET-OK", total_cost_usd: 0.02, usage: { output_tokens: 4 }, ...extra } });
+
+test("state: idle after open, working after a prompt, idle again on the result, exited on exit", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  assert.equal(log.get("a").state, "idle");
+  log.record("a", { type: "prompt", text: "go" });
+  assert.equal(log.get("a").state, "working");
+  log.record("a", result());
+  const c = log.get("a");
+  assert.equal(c.state, "idle");
+  assert.equal(c.running, true);
+  assert.equal(c.turns, 1);
+  assert.equal(c.lastResult, "ZEVET-OK");
+  assert.equal(c.costUsd, 0.02);
+  assert.deepEqual(c.usage, { output_tokens: 4 });
+  log.record("a", { type: "prompt", text: "again" });
+  assert.equal(log.get("a").state, "working");
+  log.record("a", { type: "exit", code: 0, signal: null });
+  assert.equal(log.get("a").state, "exited");
+});
+
+test("an errored result is flagged", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  log.record("a", result({ is_error: true }));
+  assert.equal(log.get("a").isError, true);
+});
+
+test("turn state survives a follow-up's new process id", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  log.record("a", result());
+  log.open("b", META, "a");
+  assert.equal(log.get("b").turns, 1);
+  assert.equal(log.get("b").lastResult, "ZEVET-OK");
+});
+
+test("claude's text-only user echo is not stored; a tool_result user line is", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  log.record("a", { type: "prompt", text: "hi" });
+  log.record("a", { type: "agent", payload: { type: "user", message: { role: "user", content: [{ type: "text", text: "hi" }] } } });
+  log.record("a", { type: "agent", payload: { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "ok" }] } } });
+  const kinds = log.get("a").events.map((e) => (e.payload ? e.payload.message.content[0].type : e.type));
+  assert.deepEqual(kinds, ["prompt", "tool_result"]);
+});
+
+test("partial-message deltas are live-only: sent to the board, never stored", () => {
+  const log = createConsoleLog();
+  log.open("a", META);
+  const live = log.record("a", { type: "agent", payload: { type: "stream_event", event: { delta: { text: "ZE" } } } });
+  assert.equal(live.payload.type, "stream_event");
+  assert.equal(log.get("a").events.length, 0);
+});
+
+test("onceDone fires after the first result of a console marked setOnce, and only then", () => {
+  const done = [];
+  const log = createConsoleLog({ onceDone: (id) => done.push(id) });
+  log.open("a", META);
+  log.open("b", META);
+  log.setOnce("a");
+  log.record("b", result());
+  assert.deepEqual(done, []);
+  log.record("a", { type: "prompt", text: "x" });
+  assert.deepEqual(done, []);
+  log.record("a", result());
+  assert.deepEqual(done, ["a"]);
+});
+
+test("activity() says how many consoles have a live process and when any last spoke (the payload swap gate reads it)", () => {
+  let t = 1000;
+  const log = createConsoleLog({ now: () => t });
+  assert.deepEqual(log.activity(), { running: 0, lastAt: 0 });
+  log.open("a", { agent: "claude" });
+  log.open("b", { agent: "codex" });
+  assert.deepEqual(log.activity(), { running: 2, lastAt: 1000 });
+  t = 5000;
+  log.record("a", { type: "exit" });
+  assert.deepEqual(log.activity(), { running: 1, lastAt: 5000 }, "an exited console is no longer running, but its exit is activity");
+  t = 9000;
+  log.record("b", { type: "exit" });
+  assert.deepEqual(log.activity(), { running: 0, lastAt: 9000 });
+});
+
+test("a routed turn that ended on codex or opencode goes idle with its answer (the agent API's /wait returns)", () => {
+  const log = createConsoleLog();
+  log.open("z", { ...META, agent: "zevet" });
+  log.record("z", { type: "prompt", text: "hi" });
+  assert.equal(log.get("z").state, "working");
+  log.record("z", { type: "turn_end", result: "pineapple" });
+  const c = log.get("z");
+  assert.equal(c.state, "idle");
+  assert.equal(c.lastResult, "pineapple");
+  assert.equal(c.turns, 1);
+});
+
+test("a console keeps claude's session id, so a restart can resume it", async () => {
+  const { createRequire } = await import("node:module");
+  const req = createRequire(import.meta.url);
+  const { createConsoleLog: make } = req("../desktop/console-log.js");
+  const { resumableEntries } = req("../desktop/console-persistence.js");
+  const log = make();
+  log.open("c1", { agent: "claude", cwd: "/w", root: "/w" });
+  log.record("c1", { type: "agent", payload: { type: "system", subtype: "init", session_id: "s-123" } });
+  const snap = log.snapshot().consoles;
+  assert.equal(snap[0].sessionId, "s-123");
+  assert.deepEqual(resumableEntries(snap).map((e) => e.sessionId), ["s-123"], "and it is saved");
+  log.open("c2", { agent: "claude", cwd: "/w", root: "/w" }, "c1");
+  assert.equal(log.snapshot().consoles[0].sessionId, "s-123", "a follow-up process keeps the thread's id");
 });
