@@ -103,6 +103,7 @@ function updaterFor(host, dir, opts = {}) {
     dir,
     log: (m) => logs.push(m),
     onStatus: (s) => seenStatus.push(s.phase),
+    autoInstall: false,
     ...opts,
   });
   u.logs = logs;
@@ -442,6 +443,46 @@ describe("the updater, end to end", () => {
 });
 
 describe("installing", () => {
+  test("a verified build is installed automatically when checking makes it ready", async (t) => {
+    let installs = 0;
+    const { u } = await downloadedMac(t, {
+      autoInstall: true,
+      installImpl: async () => { installs++; return { ok: true }; },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(installs, 1);
+    assert.equal(u.status().phase, "current");
+  });
+
+  test("automatic install retries a failed attempt with bounded backoff", async (t) => {
+    let attempts = 0;
+    const { u } = await downloadedMac(t, {
+      autoInstall: true,
+      retryDelays: [0],
+      installImpl: async () => {
+        attempts++;
+        if (attempts === 1) throw new Error("busy");
+        return { ok: true };
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(attempts, 2);
+    assert.equal(u.status().phase, "current");
+  });
+
+  test("lifecycle triggers share one in-flight automatic install", async (t) => {
+    let release;
+    let attempts = 0;
+    const { u } = await downloadedMac(t, {
+      autoInstall: true,
+      installImpl: () => new Promise((resolve) => { attempts++; release = resolve; }),
+    });
+    u.trigger("resume");
+    u.trigger("focus");
+    assert.equal(attempts, 1);
+    release({ ok: true });
+    await new Promise((resolve) => setImmediate(resolve));
+  });
   test("nothing downloaded means nothing to install", async () => {
     const t = tempDir("zevet-upd-");
     try {

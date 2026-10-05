@@ -312,10 +312,6 @@ export interface LocalBridge {
    *  called once for an existing user upgrading from a build without it. */
   setPrefs?: (entries: Record<string, string>) => Promise<unknown>;
   indexEnable?: (root: string | null) => Promise<{ ok?: boolean; indexed?: number; skipped?: number; error?: string } | null | undefined>;
-  updateCheck: () => Promise<unknown>;
-  updateStatus: () => Promise<unknown>;
-  updateInstall: () => Promise<{ ok?: boolean; manual?: boolean; error?: string }>;
-  onUpdate: (cb: (s: unknown) => void) => void;
   onIndexEvent: (cb: (p: { kind?: string; total?: number; loaded?: number; indexed?: number }) => void) => void;
   workspaces: () => Promise<LocalWorkspace[]>;
   tree: (dir: string) => Promise<{ ok: boolean; entries?: LocalEntry[]; truncated?: boolean; error?: string }>;

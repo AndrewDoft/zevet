@@ -177,8 +177,8 @@ describe("the update controls", () => {
 
   test("the update section degrades safely in browsers and old app builds", () => {
     const settings = readFileSync(path.join(ROOT, "board", "src", "components", "settings.tsx"), "utf8");
-    assert.ok(settings.includes('typeof bridge.local.updateStatus !== "function"'), "the Settings gate is still there");
-    assert.ok(settings.includes("Get the latest version at usemasora.com/zevet."));
+    assert.match(settings, /<SSection title="Version" summary="installed" \/>/);
+    assert.doesNotMatch(settings, /Restart to install|Open installer|Check now|Update download/);
   });
 });
 

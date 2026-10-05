@@ -154,7 +154,7 @@ describe("the bridge surface the renderer is written against", () => {
       //   after a save/toggle/remove round-trip it initiated itself. Carries
       //   the same schedule records local:schedules already returns to an
       //   invoke, from a click — no new data crosses the boundary here.
-      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentEvent", "local:askRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
+      ["chat:event", "doc:message", "doc:status", "local:agentEvent", "local:askRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {

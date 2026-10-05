@@ -16,12 +16,6 @@ import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
 import type { TranscriptState } from "./transcript.d.mts";
 import { mainSurface, repoToFollow, showConversation, showFile } from "./view.mjs";
 import {
-  canInstallState,
-  createUpdateControl,
-  type UpdateControl,
-  type UpdatesLike,
-} from "./update.mjs";
-import {
   clampPaneWidth,
   followAllows as rosterFollowAllows,
   lastToolFor as rosterLastToolFor,
@@ -33,7 +27,7 @@ import {
 } from "./constants";
 import type {
   Collision, Conn, ConsoleEntry, ConsoleLine, HubEvent, LaunchMode, LocalEntry,
-  LocalFileData, LocalWorkspace, RateWindow, RosterEntry, Snapshot, Theme, UpdateState, ViewMode,
+  LocalFileData, LocalWorkspace, RateWindow, RosterEntry, Snapshot, Theme, ViewMode,
 } from "./types";
 
 /* ---------------------------------------------------------------------------
@@ -258,14 +252,6 @@ interface BoardState {
   index: { state: unknown; barPct: number; progressText: string };
   indexStatus: unknown;
 
-  updates: {
-    state: UpdateState | null;
-    revision: number;
-    checking: boolean;
-    installing: boolean;
-    installError: string;
-    notice: string;
-  };
 
   panes: Record<string, number>;
   sheetOpen: boolean;
@@ -346,10 +332,6 @@ interface BoardState {
   refreshLocalWorkspaces: () => Promise<void>;
   refreshStats: (force?: boolean) => void;
 
-  updateCheck: () => void;
-  updateInstall: () => void;
-  receiveUpdate: (s: UpdateState) => void;
-  setUpdateChecking: (v: boolean) => void;
 
   refreshWhoami: () => void;
   setWhoBusy: (v: boolean) => void;
@@ -525,7 +507,6 @@ export const useBoard = create<BoardState>((set, get) => ({
   index: { state: null, barPct: 0, progressText: "ready" },
   indexStatus: null,
 
-  updates: { state: null, revision: 0, checking: false, installing: false, installError: "", notice: "" },
 
   panes: (() => {
     const d: Record<string, number> = { ...PANE_DEFAULTS };
@@ -1027,12 +1008,6 @@ export const useBoard = create<BoardState>((set, get) => ({
     });
   },
 
-  updateCheck: () => updateCtl().check(),
-  updateInstall: () => updateCtl().install(),
-  receiveUpdate: (s) => updateCtl().receiveUpdate(s),
-
-  setUpdateChecking: (v) => updateCtl().setBusy({ checking: v }),
-
   refreshWhoami: () => {
     fetch("/auth/whoami", { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
@@ -1394,19 +1369,6 @@ export const useBoard = create<BoardState>((set, get) => ({
   tick: 0,
   bumpTick: () => set((g) => ({ tick: (g.tick + 1) % 1_000_000 })),
 }));
-
-/* The update state machine, created once and mirrored into the store. The
- * control is deferred so the store exists before its onChange fires. */
-let updateCtlHandle: UpdateControl | null = null;
-function updateCtl(): UpdateControl {
-  if (!updateCtlHandle) {
-    updateCtlHandle = createUpdateControl(
-      () => bridge.local,
-      (u: UpdatesLike) => useBoard.setState({ updates: u as never }),
-    );
-  }
-  return updateCtlHandle;
-}
 
 /* ---------------------------------------------------------------------------
  * SELECTOR-FRIENDLY HELPERS
@@ -2861,11 +2823,6 @@ export function boot(): void {
   void g.refreshLocalWorkspaces().then(restoreLastRoot);
   void g.refreshLocalAgents();
 
-  // The updater: one state machine drives the rail and Settings, subscribes
-  // to pushes from the app, and reads the initial status guarded so that an
-  // app push that lands mid-read is not overwritten. See board-updates tests.
-  updateCtl().startUpdates();
-
   if (bridge.local && typeof bridge.local.onIndexEvent === "function") {
     bridge.local.onIndexEvent((p) => {
       if (!p) return;
@@ -3200,4 +3157,3 @@ export const selectStrip = (s: BoardState) => s.strip;
 export const selectTheme = (s: BoardState) => s.theme;
 export const selectViewMode = (s: BoardState) => s.viewMode;
 export const selectEdView = (s: BoardState) => s.edView;
-export const selectUpdates = (s: BoardState) => s.updates;

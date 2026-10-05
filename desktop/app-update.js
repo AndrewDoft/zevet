@@ -89,7 +89,8 @@ const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 /** First check after launch, then every interval. The delay keeps the update
  *  check out of the startup path, where it would compete with the window. */
 const FIRST_CHECK_MS = 25 * 1000;
-const EVERY_MS = 6 * 60 * 60 * 1000;
+const EVERY_MS = 60 * 60 * 1000;
+const DEFAULT_RETRY_DELAYS = [30 * 1000, 2 * 60 * 1000, 10 * 60 * 1000];
 
 /**
  * Compare two dotted versions numerically.
@@ -228,6 +229,11 @@ class AppUpdater {
     this.spawnImpl = o.spawnImpl || spawn;
     this.openImpl = o.openImpl || null; // set by main.js to shell.openPath
     this.quitImpl = typeof o.quitImpl === "function" ? o.quitImpl : () => {};
+    this.installImpl = typeof o.installImpl === "function" ? o.installImpl : null;
+    this.autoInstall = o.autoInstall !== false;
+    this.retryDelays = Array.isArray(o.retryDelays) ? o.retryDelays : DEFAULT_RETRY_DELAYS;
+    this._installing = false;
+    this._retry = 0;
 
     /** Everything the renderer is told, and the only state that leaves here. */
     this.state = {
@@ -274,6 +280,49 @@ class AppUpdater {
     clearTimeout(this._timer);
     clearInterval(this._timer);
     this._timer = null;
+  }
+
+  trigger() {
+    if (this.state.phase === "ready") {
+      if (this._installTimer) {
+        clearTimeout(this._installTimer);
+        this._installTimer = null;
+      }
+      void this._installAutomatically();
+    }
+    else void this.check();
+  }
+
+  _scheduleInstall(delay) {
+    if (!this.autoInstall || this._installing || this._installTimer) return;
+    this._installTimer = setTimeout(() => {
+      this._installTimer = null;
+      void this._installAutomatically();
+    }, delay);
+    if (this._installTimer.unref) this._installTimer.unref();
+  }
+
+  async _installAutomatically() {
+    if (this._installing || this.state.phase !== "ready") return;
+    this._installing = true;
+    try {
+      const result = this.installImpl ? await this.installImpl() : await this.install();
+      if (result && result.ok) {
+        this._retry = 0;
+        this._set({ phase: "current", canInstall: false, version: null });
+      } else {
+        throw new Error((result && result.error) || "automatic install failed");
+      }
+    } catch (err) {
+      this.log(`automatic install failed: ${err.message}`);
+      const delay = this.retryDelays[this._retry++];
+      if (delay !== undefined) {
+        this._installing = false;
+        this._scheduleInstall(delay);
+      }
+    } finally {
+      this._installing = false;
+    }
   }
 
   /**
@@ -335,6 +384,7 @@ class AppUpdater {
       if (this._verified(dest, m.entry)) {
         this._readyEntry = m.entry;
         this._set({ phase: "ready", version: m.version, notes: m.notes, file: dest, percent: 100, canInstall: true, error: null });
+        this._scheduleInstall(0);
         return this.status();
       }
 
@@ -342,6 +392,7 @@ class AppUpdater {
       await this._download(url, dest, m.entry);
       this._readyEntry = m.entry;
       this._set({ phase: "ready", file: dest, percent: 100, canInstall: true });
+      this._scheduleInstall(0);
       this.log(`${this.currentVersion} -> ${m.version} downloaded and verified`);
       return this.status();
     } catch (err) {

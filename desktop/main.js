@@ -3353,8 +3353,8 @@ ipcMain.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(a
  *     system temp directory. Windows disk cleanup empties temp, and an
  *     installer that vanishes between "ready" and the click is a bug report
  *     nobody can reproduce.
- *   - That the renderer is TOLD, and never asked. The board shows a row; the
- *     person clicks it or does not.
+ *   - The renderer is never involved. A verified build installs on lifecycle
+ *     triggers and the installer relaunches the same app state.
  * ======================================================================== */
 const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),
@@ -3364,10 +3364,6 @@ const appUpdater = new AppUpdater({
   // configured yet, or not signed in — has no board window at all. Sent to
   // setupWindow too, so "0.2.57 is ready" shows up on the screen a first-run
   // person is actually looking at, not just one that may never open.
-  onStatus: (s) => {
-    toBoard("app:update", s);
-    if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send("app:update", s);
-  },
   log: (m) => console.log(`[zevet-app-update] ${m}`),
   openImpl: (f) => shell.openPath(f),
   quitImpl: () => {
@@ -3415,9 +3411,6 @@ ipcMain.handle("local:voiceStatus", () => masoraVoice.status());
 ipcMain.handle("local:voiceStart", () => masoraVoice.start());
 ipcMain.handle("local:voiceMic", () => masoraVoice.mic());
 
-ipcMain.handle("app:updateStatus", () => appUpdater.status());
-ipcMain.handle("app:updateCheck", () => appUpdater.check());
-ipcMain.handle("app:updateInstall", () => appUpdater.install());
 
 app.whenReady().then(() => {
   buildMenu();
@@ -3425,9 +3418,9 @@ app.whenReady().then(() => {
   void worktrees.prune();
   startScheduler();
   startMasoraPush();
-  // After the window, never before it: an update check that delayed the
-  // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();
+  app.on("browser-window-focus", () => appUpdater.trigger());
+  app.on("resume", () => appUpdater.trigger());
   const cfg = readConfig();
   if (cfg) openBoard(cfg);
   else openSetup(null);
@@ -3440,6 +3433,8 @@ app.whenReady().then(() => {
     }
   });
 });
+
+app.on("before-quit", () => appUpdater.trigger());
 
 app.on("window-all-closed", () => {
   stopCollisionWatch();

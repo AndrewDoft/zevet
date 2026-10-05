@@ -216,21 +216,6 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   chrome: (spec) => ipcRenderer.invoke("ui:chrome", spec),
 
   /**
-   * Staying current. `updateInstall` is the only one with a consequence, and
-   * it is reachable only from a button the person presses -- nothing here
-   * runs an installer on a timer. See desktop/app-update.js for what that
-   * does per platform, and for what the published checksum does not buy.
-   */
-  updateStatus: () => ipcRenderer.invoke("app:updateStatus"),
-  updateCheck: () => ipcRenderer.invoke("app:updateCheck"),
-  updateInstall: () => ipcRenderer.invoke("app:updateInstall"),
-  onUpdate: (fn) => {
-    const handler = (_e, payload) => fn(payload);
-    ipcRenderer.on("app:update", handler);
-    return () => ipcRenderer.removeListener("app:update", handler);
-  },
-
-  /**
    * The code index. Every one of these is inert on a machine the capability
    * gate turned down, and `indexEnable` is the ONLY thing that fetches the
    * model -- nothing here starts a download on its own.
