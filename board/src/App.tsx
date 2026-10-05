@@ -271,8 +271,8 @@ function App() {
             <div className="pane-title row">
               <span>Conversation</span>
               {bridge.local && localRoot ? (
-                <button type="button" className="rail-new" aria-label="Start an agent" title="Start an agent" onClick={openLauncher}>
-                  +
+                <button type="button" className="rail-new rail-new-label" aria-label="New agent" title="New agent" onClick={openLauncher}>
+                  New agent +
                 </button>
               ) : null}
             </div>

@@ -38,8 +38,9 @@ describe("Team pane", () => {
   });
 
   test("starting an agent stays reachable: Conversation header + and the palette", () => {
-    assert.match(app, /aria-label="Start an agent" title="Start an agent" onClick=\{openLauncher\}/);
-    assert.match(src("components/palette.tsx"), /label: "Start an agent"/);
+    assert.match(app, /aria-label="New agent" title="New agent" onClick=\{openLauncher\}/);
+    assert.match(src("components/palette.tsx"), /label: "New agent"/);
+    assert.match(app, />\s*New agent \+\s*<\/button>/);
   });
 });
 

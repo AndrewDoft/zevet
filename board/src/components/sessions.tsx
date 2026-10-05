@@ -70,7 +70,7 @@ function SessionRow({ s, hue, listed }: { s: SessionSummary; hue?: number; liste
   );
 }
 
-/** "Continue in Zevet" is for sessions Zevet did NOT start. A session zevet
+/** "Resume" is for sessions Zevet did NOT start. A session zevet
  *  (or any SDK host) launched records surface "sdk"; a terminal, desktop-app or
  *  IDE one does not. Not offered without an id to resume by, or a bridge. */
 function ContinueInZevet({ s }: { s: SessionSummary }) {
@@ -82,10 +82,9 @@ function ContinueInZevet({ s }: { s: SessionSummary }) {
     <button
       type="button"
       className="session-row-continue"
-      title="Resume this session in Zevet, with its full history"
       onClick={() => continueSession(s)}
     >
-      Continue in Zevet
+      Resume
     </button>
   );
 }

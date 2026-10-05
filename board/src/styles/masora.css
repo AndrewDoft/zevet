@@ -374,6 +374,7 @@
     color: var(--ink-muted); background: none; border: 0; cursor: pointer;
     border-radius: 4px;
   }
+  .rail-new.rail-new-label { width: auto; padding: 0 6px; font-size: 12px; white-space: nowrap; }
   .rail-new:hover { color: var(--ink); background: var(--raise-soft); }
   .pane-title.row > .rail-new + .follow { margin-left: 0; }
 
