@@ -1115,6 +1115,37 @@ export class Accounts {
   }
 
   /**
+   * Operator-declared proof (ZEVET_IDENTITY_LINKS): `who` (any login, name or
+   * alias of a member) holds the verified `email` — typically a GitHub-owner row
+   * that never carried one, so Masora's sign-in of the same human could not
+   * bind to it. Records the email, folds whoever it now provably duplicates
+   * (`mergeProvable`), and optionally sets the display name. Idempotent: a
+   * second run changes nothing and returns [].
+   */
+  linkEmail(who, email, display = "") {
+    const n = String(who || "").trim().toLowerCase().replace(/^@/, "");
+    const e = String(email || "").trim().toLowerCase();
+    const r = this.#people().find((x) => idents(x).some((i) => i.id) && this.#namesOf(x).includes(n));
+    if (!r || !e) return [];
+    const done = [];
+    if (!emailsOf(r).has(e)) {
+      const list = idents(r);
+      const i = list.find((x) => x.id);
+      i.emails = uniqStrings([...(i.emails || []), e]);
+      setIdents(r, list);
+      this.#save();
+      done.push(`${r.login} now holds ${e}`);
+    }
+    for (const m of this.mergeProvable()) done.push(`${m.absorbed} merged into ${m.kept} (${m.why})`);
+    const keep = this.#people().find((x) => emailsOf(x).has(e));
+    if (keep && display && keep.display !== display && [undefined, keep].includes(this.#claimedBy(display))) {
+      this.rename(keep.login, display);
+      done.push(`${keep.login} is shown as ${display}`);
+    }
+    return done;
+  }
+
+  /**
    * Resolve the name an event was recorded under (a machine's `actor` string)
    * to the person's CURRENT display name — so a rename, a linked identity and
    * a merge all show up on events already in the log, without rewriting it.

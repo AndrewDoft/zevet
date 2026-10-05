@@ -979,6 +979,17 @@ const MASORA_SECRET = process.env.ZEVET_MASORA_SECRET || "";
 const MASORA_TEAMS = parseTeamMap(process.env.ZEVET_MASORA_TEAMS);
 const masoraJti = replayGuard();
 
+/** ZEVET_IDENTITY_LINKS="who=email[=Display Name],...": the operator's word that a member holds an address, so Masora's
+ *  sign-in of the same human binds to them instead of opening a second row (see Accounts.linkEmail). Applied to every
+ *  team at boot and before each Masora sign-in; idempotent, and each change is logged. */
+const IDENTITY_LINKS = String(process.env.ZEVET_IDENTITY_LINKS || "").split(",").map((p) => p.trim().split("=").map((x) => x.trim())).filter((p) => p[0] && p[1]);
+function applyIdentityLinks(acc, team) {
+  for (const [who, email, display] of IDENTITY_LINKS) {
+    for (const line of acc.linkEmail(who, email, display)) console.log(`zevet: identity link (team ${team}): ${line}`);
+  }
+}
+for (const [team, acc] of teamAccounts) applyIdentityLinks(acc, team);
+
 /** {team} | {team: null} (none yet) | {error}. A team named in ZEVET_MASORA_TEAMS wins; otherwise the one opened
  *  for that workspace. A team is never claimed by NAME: a workspace called "Masoretes" must not inherit the
  *  team of the same name, only the operator's mapping can say they are the same. */
@@ -1989,6 +2000,7 @@ async function handleRequest(req, res) {
       if (!team) return json(res, 503, { error: "could not open a team for this workspace" });
     }
     const acc = teamAccounts.get(team);
+    applyIdentityLinks(acc, team);
     const r = acc.signInMasora({ sub: c.sub, email: c.email, name: c.name, admin: c.admin === true });
     if (!r.ok) return json(res, 403, { error: r.error });
     console.log(`zevet: ${r.login} signed in from Masora (team ${team})`);

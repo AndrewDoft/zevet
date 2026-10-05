@@ -104,7 +104,7 @@ function TeammateRow({ login, invited, hue }: { login: string; invited: boolean;
       data-invited={String(invited)}
     >
       <span className="person-away-dot" aria-hidden="true" />
-      <span className="person-away-name">{"@" + login}</span>
+      <span className="person-away-name">{login}</span>
       <span className="person-away-state">{invited ? "invited" : "active"}</span>
     </div>
   );
