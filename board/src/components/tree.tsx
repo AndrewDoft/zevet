@@ -9,6 +9,8 @@ import {
   fileEvents,
   collisionSet,
   hueOf,
+  authorStyle,
+  myAuthorStyle,
   selectCollapsed,
   selectEvents,
   selectStats,
@@ -17,10 +19,13 @@ import {
 } from "../lib/board";
 import type { TreeNode } from "../lib/board";
 import { spritesByPath } from "../lib/roster.mjs";
+import { DiffCounts } from "./diffcounts";
+import { lastAuthor } from "../lib/authorcolor.mjs";
 import { bridge } from "../lib/bridge";
 import { ago } from "../lib/text";
 
-function StatBadge({ path }: { path: string }) {
+/** `author`: whoever touched the file last; null falls back to green/red. */
+function StatBadge({ path, author }: { path: string; author: string | null }) {
   const stats = useBoard(selectStats);
   const localRoot = useBoard((s) => s.localRoot);
   const local = Boolean(bridge.local);
@@ -46,22 +51,15 @@ function StatBadge({ path }: { path: string }) {
         </span>,
       );
     } else {
-      if (d.added)
-        parts.push(
-          <span className="text-emerald-600 dark:text-emerald-400" key="a">
-            +{d.added}
-          </span>,
-        );
-      if (d.removed)
-        parts.push(
-          <span className="text-red-600 dark:text-red-400" key="d">
-            {"\u2212" + d.removed}
-          </span>,
-        );
+      parts.push(<DiffCounts key="n" added={d.added} removed={d.removed} />);
     }
   }
   if (!parts.length) return null;
-  return <span className={cn(mono, "stat shrink-0 tabular-nums")}>{parts}</span>;
+  return (
+    <span className={cn(mono, "stat shrink-0 tabular-nums")} data-author={author || undefined} style={authorStyle(author)}>
+      {parts}
+    </span>
+  );
 }
 
 type SpriteMap = ReturnType<typeof spritesByPath>;
@@ -146,7 +144,7 @@ function NodeRow({
           )}
           <span className="name">{node.name}</span>
         </span>
-        {!isDir ? <StatBadge path={path} /> : null}
+        {!isDir ? <StatBadge path={path} author={lastAuthor(node.who)} /> : null}
         <span className="marks">
           {marks.map((a) => (
             <span
@@ -266,10 +264,8 @@ function TreeSummary() {
   return (
     <div className="flex items-baseline justify-between px-4 pt-1 pb-2">
       <span className="text-[12.5px] font-medium">{paths.length} files changed</span>
-      <span className={cn(mono, "tabular-nums")}>
-        <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>{" "}
-        <span className="text-red-600 dark:text-red-400">{"\u2212"}{removed}</span>
-      </span>
+      {/* The checkout on screen is mine, so its total is in my colour. */}
+      <DiffCounts added={added} removed={removed} showZero style={myAuthorStyle()} />
     </div>
   );
 }

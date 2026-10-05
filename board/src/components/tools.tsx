@@ -22,7 +22,7 @@
 import { makeAssistantToolUI } from "@assistant-ui/react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { useBoard } from "../lib/board";
+import { myAuthorStyle } from "../lib/board";
 import { CodeDiff, type DiffLine } from "./assistant-ui/elements/code-diff";
 import { FileTree, type FileTreeNode } from "./assistant-ui/elements/file-tree";
 import { SubagentList } from "./assistant-ui/elements/subagent-list";
@@ -180,8 +180,6 @@ function diffOf(before: string, after: string): DiffLine[] {
 
 function EditUI(p: ToolProps) {
   const { args } = p;
-  const roster = useBoard((s) => s.roster);
-  const myActor = useBoard((s) => s.myActor);
   const file = pick(args, "file_path", "filePath", "path", "file");
   const before = pick(args, "old_string", "oldString", "old", "search");
   const after = pick(args, "new_string", "newString", "new", "content", "replace");
@@ -193,13 +191,12 @@ function EditUI(p: ToolProps) {
     <Shell name="Edit" target={file} tool={p}>
       <CodeDiff
         className="max-w-none"
+        style={myAuthorStyle()}
         filename={shortPath(file) || "(unnamed file)"}
         additions={additions}
         deletions={deletions}
         lines={body.slice(0, 80)}
         cycle={body.length}
-        author={pick(args, "author", "actor", "created_by") || myActor || undefined}
-        roster={roster}
       />
     </Shell>
   );

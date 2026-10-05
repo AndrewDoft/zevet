@@ -44,11 +44,11 @@ test("the status poll and the pushed status both carry it", () => {
   assert.match(main, /onStatus: \(raw\) => \{\s*const s = withRunningBuild\(raw\);/);
 });
 
-test("Settings shows only the running build, never the installer beside it, and Next", () => {
+test("Settings shows only the running build, never the installer beside it, and no update status", () => {
   // Andrew, 2026-10-01: "settings should only show 2.105 or whatever the new version is, not the app thing".
   assert.match(settings, /summary=\{bridge\.cfg\?\.version \|\| \(s && s\.running\) \|\| "unknown"\}/);
   assert.doesNotMatch(settings, /\(app \$\{s\.current\}\)/);
-  assert.match(settings, /k="Next" v=\{`\$\{s\.next\.build\} \(\$\{s\.next\.when\}\)`\}/);
+  assert.doesNotMatch(settings, /k="Next"/, "updates install themselves; Settings has no update status");
 });
 
 test("the first Settings render has the running build synchronously and cannot fall back to current", () => {
