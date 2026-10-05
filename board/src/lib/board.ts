@@ -1,6 +1,8 @@
+import type { CSSProperties } from "react";
 import { create } from "zustand";
 import { bridge, zStorage, type AgentEvent, type AgentSchedule, type AgentSettings, type AskRequest, type HeldConsole, type MemoryNote, type PermitRequest, type RepoCommit, type StatusResult } from "./bridge";
 import { shortInput } from "./fmt";
+import { authorStyle as authorStyleOf } from "./authorcolor.mjs";
 import {
   appendAgentPayload,
   appendUserText,
@@ -1598,6 +1600,17 @@ export function workspaces(): Array<{ repo: string; branch?: string; lastTs: num
 export function hueOf(actor: string | null | undefined): string {
   const i = useBoard.getState().roster.findIndex((r) => r.actor === actor);
   return "var(--who-" + ((i < 0 ? 0 : i) % HUES) + ")";
+}
+
+/** Colour tokens for a change made by `actor` — spread onto the element that
+ *  holds the +N/−N or diff lines. {} (generic green/red) for an unknown author. */
+export function authorStyle(actor: string | null | undefined): CSSProperties {
+  return authorStyleOf(actor, useBoard.getState().roster) as CSSProperties;
+}
+
+/** My own changes: my colour, like anyone else's. */
+export function myAuthorStyle(): CSSProperties {
+  return authorStyle(useBoard.getState().myActor);
 }
 
 export function isIdle(r: { actor: string; lastTs: number }, now: number): boolean {

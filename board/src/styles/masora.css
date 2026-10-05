@@ -39,6 +39,13 @@
     --who-2: #42693e;
     --who-3: #715287;
     --who-4: #805725;
+    /* Removal variants of --who-N: the same hue, darker, so -N reads as the
+       same person's work. Contrast-checked in test/author-color.test.mjs. */
+    --who-0-del: #1e455a;
+    --who-1-del: #5f3522;
+    --who-2-del: #2e4a2b;
+    --who-3-del: #4f395f;
+    --who-4-del: #5a3d1a;
     --syntax-string: #42693e;
     --syntax-number: #874c30;
     --syntax-function: #715287;
@@ -70,6 +77,12 @@
     --who-2: #a4cd9d;
     --who-3: #c3aed9;
     --who-4: #dfbd82;
+    /* Dark theme: muted (dimmed toward the paper) rather than darker. */
+    --who-0-del: #7698ae;
+    --who-1-del: #b08c76;
+    --who-2-del: #7e9b7b;
+    --who-3-del: #9d8daf;
+    --who-4-del: #a78f68;
     --syntax-string: #a4cd9d;
     --syntax-number: #dcad8d;
     --syntax-function: #c3aed9;
@@ -930,6 +943,15 @@
   .stat .add { color: var(--success); }
   .stat .del { color: var(--alert); }
   .stat .new { color: var(--cerulean); }
+
+  /* Change colour = author colour. authorStyle(actor) (lib/authorcolor.mjs)
+     sets --diff-* on the element; with no author they are unset and these
+     fall back to the generic green/red. Every +N/-N and diff line uses these
+     classes, never a colour of its own. */
+  .d-add { color: var(--diff-add, var(--success)); }
+  .d-del { color: var(--diff-del, var(--alert)); }
+  .d-add-bg { background: var(--diff-add-bg, color-mix(in srgb, var(--success) 8%, transparent)); color: var(--diff-add, var(--success)); }
+  .d-del-bg { background: var(--diff-del-bg, color-mix(in srgb, var(--alert) 5%, transparent)); color: var(--diff-del, var(--alert)); }
   .node[data-sel="true"] .stat .loc { color: var(--subtle); }
   /* A directory gets no badge. Summing a folder's lines invites the question
      of whether it counts what is collapsed underneath it, and either answer is

@@ -49,10 +49,8 @@ export function CodeDiff({
       <div className="flex items-center justify-between px-4 pt-3 pb-2">
         <span className="text-foreground/90">{filename}</span>
         <span className={cn(mono, "tabular-nums")}>
-          <span className="text-emerald-600 dark:text-emerald-400">
-            +{additions}
-          </span>{" "}
-          <span className="text-red-600 dark:text-red-400">−{deletions}</span>
+          <span className="d-add">+{additions}</span>{" "}
+          <span className="d-del">−{deletions}</span>
         </span>
       </div>
       <div className={codeScroll}>
@@ -64,9 +62,9 @@ export function CodeDiff({
                 "fade-in animate-in fill-mode-both flex px-4 py-0.5 leading-relaxed whitespace-pre duration-300",
                 line.kind === "context" && "text-foreground/45",
                 line.kind === "added" &&
-                  "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+                  "d-add-bg",
                 line.kind === "removed" &&
-                  "bg-red-500/10 text-red-700 dark:text-red-300",
+                  "d-del-bg",
               )}
               style={{ animationDelay: `${i * 60}ms` }}
             >
