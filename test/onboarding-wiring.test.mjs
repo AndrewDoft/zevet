@@ -15,18 +15,18 @@ const pkg = JSON.parse(read("desktop", "package.json"));
 
 /** The body of `ipcMain.handle("<channel>", ...)`, up to its closing `});`. */
 function handler(channel) {
-  const i = main.indexOf(`ipcMain.handle("${channel}"`);
+  const i = main.indexOf(`bridge.handle("${channel}"`);
   assert.ok(i >= 0, `${channel} is registered`);
   return main.slice(i, main.indexOf("\n});", i));
 }
 
 describe("sign-in opens the system browser", () => {
-  test("GitHub and Google both call shell.openExternal with the URL the hub gave, and report whether it opened", () => {
+  test("GitHub and Google both call openSafe (shell.openExternal, https/loopback only) with the URL the hub gave, and report whether it opened", () => {
     const gh = handler("zevet:githubStart");
-    assert.match(gh, /opened = await shell\.openExternal\(r\.verificationUriComplete\)\.then\(\(\) => true, \(\) => false\)/);
+    assert.match(gh, /opened = await openSafe\(r\.verificationUriComplete\)\.then\(\(\) => true, \(\) => false\)/);
     assert.match(gh, /expiresIn: r\.expiresIn, opened/);
     const g = handler("zevet:googleStart");
-    assert.match(g, /opened = await shell\.openExternal\(r\.authUrl\)\.then\(\(\) => true, \(\) => false\)/);
+    assert.match(g, /opened = await openSafe\(r\.authUrl\)\.then\(\(\) => true, \(\) => false\)/);
     assert.match(g, /domain: r\.domain, opened/);
   });
 
@@ -63,9 +63,10 @@ describe("hubs are named", () => {
     assert.match(handler("zevet:teamCreate"), /targetHub\(\)/);
   });
 
-  test("the rail and Settings show it", () => {
+  test("the rail shows it; Settings folds it into Account & Team", () => {
     assert.match(read("board", "src", "App.tsx"), /id="railTeam"/);
-    assert.match(read("board", "src", "components", "settings.tsx"), /<SSection title="Team" summary=\{teamName\}>/);
+    assert.match(read("board", "src", "components", "settings.tsx"), /<SSection title="Account & Team"/);
+    assert.doesNotMatch(read("board", "src", "components", "settings.tsx"), /<SSection title="Team"/);
   });
 });
 
@@ -98,7 +99,7 @@ describe("the family runs from the main process", () => {
     assert.match(main, /appUpdater\.start\(\);\s*family\.start\(\)/);
     assert.match(main, /before-quit", \(\) => family\.stop\(\)/);
     for (const n of ["familyStatus", "familyAct"]) assert.match(preload, new RegExp(n + ":"));
-    assert.ok(pkg.build.files.includes("family.js"));
+    assert.ok(pkg.payload.files.includes("family.js"));
   });
   test("a 401 from Masora re-pairs", () => {
     assert.match(handler("masora:sources"), /res\.status === 401\) void family\.repair\(\)/);
@@ -119,15 +120,27 @@ describe("the Masora link is a background job", () => {
   });
 
   test("it ships in the installer", () => {
-    assert.ok(pkg.build.files.includes("masora-link.js"));
+    assert.ok(pkg.payload.files.includes("masora-link.js"));
   });
 });
 
 describe("Settings copy is provider-neutral", () => {
   test("a Google login is not prefixed with @, and the session is not called GitHub's", () => {
-    const s = read("board", "src", "components", "settings.tsx");
+    const s = read("board", "src", "components", "settings.tsx") + read("board", "src", "components", "invite.tsx");
     assert.doesNotMatch(s, /"@" \+ p\.login|summary=\{login \? "@"/);
     assert.match(s, /login\.includes\("@"\) \? login/);
     assert.doesNotMatch(s, /"GitHub sign-in" \+ \(c\.hasSecret/);
+  });
+});
+
+describe("Google first: a mapped-domain person never sees a team or a key", () => {
+  test("the team/key/GitHub form starts closed and Google then names no team", () => {
+    assert.match(setup, /<div id="other" hidden>/);
+    assert.match(setup, /var direct = \$\("other"\)\.hidden;\s*var team = direct \? "" : await teamFor\(\);/);
+  });
+
+  test("a refusal opens the form; a success closes it", () => {
+    assert.match(setup, /if \(direct\) showOther\(true\);/);
+    assert.match(setup, /function signedIn\(done\) \{[^}]*showOther\(false\);/);
   });
 });

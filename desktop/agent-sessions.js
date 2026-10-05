@@ -489,6 +489,57 @@ function listCodex() {
  * recorded. An unknown one therefore matches nothing rather than reaching the
  * filesystem.
  */
+/**
+ * The repo a folder belongs to, by name, or "" when it is in none (or gone).
+ *
+ * A linked worktree answers its ORIGIN's name: `masora2-w125-fixb`,
+ * `.claude/worktrees/x` and Zevet's own worktrees all file under `masora2`
+ * (Andrew, 2026-09-30: "they should all be under the base repo"). Walks up, so
+ * a session started in `masora2/apps/web` is masora2 too. File reads only, the
+ * same as client/hook.mjs § repoInfo; no git process per session.
+ */
+const originCache = new Map();
+/** The origin repo's root folder for `dir` (a worktree answers its origin), or "". */
+function originOf(dir) {
+  if (!dir || !path.isAbsolute(dir)) return "";
+  const key = path.resolve(dir).toLowerCase();
+  if (originCache.has(key)) return originCache.get(key);
+  let found = "";
+  let d = path.resolve(dir);
+  for (let i = 0; i < 40; i++) {
+    const dotgit = path.join(d, ".git");
+    let st = null;
+    try {
+      st = fs.statSync(dotgit);
+    } catch {
+      /* not a repo root; keep walking */
+    }
+    if (st) {
+      found = d;
+      if (st.isFile()) {
+        try {
+          const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotgit, "utf8"));
+          const gitdir = m ? path.resolve(d, m[1].trim()) : "";
+          if (gitdir) found = path.dirname(path.resolve(gitdir, fs.readFileSync(path.join(gitdir, "commondir"), "utf8").trim()));
+        } catch {
+          /* a submodule, or a worktree whose origin is gone: its own folder */
+        }
+      }
+      break;
+    }
+    const up = path.dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  // Only a hit is cached: a folder that is not a repo yet may become one.
+  if (found) originCache.set(key, found);
+  return found;
+}
+function repoOf(dir) {
+  const o = originOf(dir);
+  return o ? path.basename(o) : "";
+}
+
 function list({ cwd = null, limit = MAX_SESSIONS } = {}) {
   // Zevet Chat's own claude sessions (desktop/chat.js) are conversations, not
   // work in a repo: they belong to Chat, never to Code's session lists.
@@ -527,6 +578,7 @@ function list({ cwd = null, limit = MAX_SESSIONS } = {}) {
     if (wantCwd && f.source === "codex" && path.resolve(s.cwd || "").toLowerCase() !== wantCwd) {
       continue;
     }
+    s.repo = repoOf(s.cwd);
     sessions.push(s);
     if (sessions.length >= cap) break;
   }
@@ -537,6 +589,33 @@ function list({ cwd = null, limit = MAX_SESSIONS } = {}) {
     sessions,
     total: found.length,
   };
+}
+
+/**
+ * The folder a session ran in, as its OWN transcript recorded it — or null.
+ *
+ * This is what lets a terminal session be continued from a folder that was
+ * never opened as a workspace: main.js accepts the renderer's `cwd` only when
+ * it equals this, so a renderer can name a session but not choose a directory.
+ * `id` is claude's file name or codex's `sessionId` (the id each CLI resumes by).
+ */
+function cwdOf(source, id) {
+  if (typeof id !== "string" || !SEGMENT.test(id)) return null;
+  let s = null;
+  if (source === "codex") {
+    const titles = codexTitles();
+    for (const f of listCodex()) {
+      const d = describeCodex(f.slug, f.id, f.stat, titles);
+      if (d.sessionId === id) {
+        s = d;
+        break;
+      }
+    }
+  } else {
+    const f = listClaude().find((x) => x.id === id);
+    if (f) s = describeClaude(f.slug, f.id, f.stat);
+  }
+  return s && s.cwd && path.isAbsolute(s.cwd) ? s.cwd : null;
 }
 
 /**
@@ -752,4 +831,4 @@ function live(source, id) {
   return { title, context: null, cached: null, output: null, window: null };
 }
 
-module.exports = { list, read, children, live, claudeDir, codexDir, _fileFor: fileFor, _firstAsk: firstAsk };
+module.exports = { list, read, children, live, cwdOf, claudeDir, codexDir, repoOf, originOf, _fileFor: fileFor, _firstAsk: firstAsk };

@@ -22,7 +22,7 @@ function token() {
     "[Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))";
   // PSModulePath leaking in from pwsh makes Windows PowerShell load the wrong modules and fail.
   const { PSModulePath, ...env } = process.env;
-  return execFileSync("powershell", ["-NoProfile", "-Command", ps], { encoding: "utf8", env }).trim();
+  return execFileSync("powershell", ["-NoProfile", "-Command", ps], { encoding: "utf8", env, windowsHide: true }).trim();
 }
 
 const headers = { "x-auth-token": token(), "content-type": "application/json" };

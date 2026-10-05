@@ -81,8 +81,17 @@ class MasoraLink {
 
   async #reachable(url) {
     try {
-      const res = await this.fetch(`${url.replace(/\/+$/, "")}/healthz`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
-      return res.ok;
+      const base = url.replace(/\/+$/, "");
+      // The cloud serves its API health at /api/health. /healthz is a page
+      // route there, so the desktop-only page policy returns 404 to this
+      // main-process fetch even though device registration is available.
+      const res = await this.fetch(`${base}/api/health`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+      if (res.ok) return true;
+      // Older local runtimes only exposed /healthz. Fall back when the API
+      // route is absent, never when it reports an unhealthy service.
+      if (res.status !== 404 && res.status !== 405) return false;
+      const legacy = await this.fetch(`${base}/healthz`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+      return legacy.ok;
     } catch {
       return false;
     }

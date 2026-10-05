@@ -10,6 +10,8 @@ export interface TranscriptState {
   messages: ThreadMessageLike[];
   /** Index of the assistant message being streamed into, or -1. */
   openIndex: number;
+  /** The model the last prompt was sent on (appendUserText), for the switch rule. */
+  model?: string;
   /** The id the AGENT sent -> where the NEWEST call with that id lives, so a
    *  result finds the call it belongs to. */
   toolIndex: Record<string, ToolIndexEntry>;
@@ -34,13 +36,14 @@ export type TranscriptEvent =
   | { type: "exit"; code?: number | null; error?: string | null };
 
 export function emptyTranscript(): TranscriptState;
-export function appendUserText(state: TranscriptState, text: string): TranscriptState;
+export function appendUserText(state: TranscriptState, text: string, model?: string): TranscriptState;
 export function appendLine(state: TranscriptState, text: string): TranscriptState;
 export function appendAgentPayload(
   state: TranscriptState,
   payload: unknown,
   opts?: TranscriptOptions,
 ): TranscriptState;
+export function turnInFlight(state: TranscriptState): boolean;
 export function closeTranscript(
   state: TranscriptState,
   ending?: { code?: number | null; error?: string | null; stopped?: boolean },

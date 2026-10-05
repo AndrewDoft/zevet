@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { startHub, post, state, TOKEN } from "./helpers.mjs";
+import { startHub, post, state } from "./helpers.mjs";
 
 function eventLog(t) {
   const dir = mkdtempSync(path.join(tmpdir(), "zevet-events-test-"));
@@ -32,7 +32,7 @@ describe("event persistence", () => {
 
     const two = await startHub({ ZEVET_EVENTS: file });
     try {
-      const s = await state(two.base, TOKEN);
+      const s = await state(two.base);
       assert.deepEqual(
         s.body.events.map((e) => e.tool),
         ["Read", "Bash"],
@@ -48,7 +48,7 @@ describe("event persistence", () => {
     writeFileSync(file, '{"kind":"tool","tool":"Read"}\nthis is not json\n{"kind":"tool","tool":"Bash"}\n');
     const hub = await startHub({ ZEVET_EVENTS: file });
     try {
-      const s = await state(hub.base, TOKEN);
+      const s = await state(hub.base);
       assert.deepEqual(s.body.events.map((e) => e.tool), ["Read", "Bash"]);
     } finally {
       await hub.stop();
@@ -62,7 +62,7 @@ describe("event persistence", () => {
       for (let i = 0; i < 8; i++) {
         assert.equal((await post(hub.base, evt(`tool-${i}`))).status, 200);
       }
-      const s = await state(hub.base, TOKEN);
+      const s = await state(hub.base);
       assert.deepEqual(
         s.body.events.map((e) => e.tool),
         ["tool-3", "tool-4", "tool-5", "tool-6", "tool-7"],
@@ -83,7 +83,7 @@ describe("event persistence", () => {
     try {
       await post(hub.base, { kind: "prompt", actor: "t", repo: "r", detail: "do the secret thing" });
       await new Promise((r) => setTimeout(r, 10));
-      const s = await state(hub.base, TOKEN);
+      const s = await state(hub.base);
       assert.equal(s.body.events.length, 1);
       assert.equal(s.body.events[0].detail, "", "old detail is still served");
       assert.equal(s.body.events[0].actor, "t", "structure was trimmed with the words");
@@ -98,7 +98,7 @@ describe("event persistence", () => {
     try {
       await post(hub.base, { kind: "prompt", actor: "t", repo: "r", detail: "do the secret thing" });
       await new Promise((r) => setTimeout(r, 10));
-      const s = await state(hub.base, TOKEN);
+      const s = await state(hub.base);
       assert.equal(s.body.events[0].detail, "do the secret thing");
     } finally {
       await hub.stop();

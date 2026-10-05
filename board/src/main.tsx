@@ -4,6 +4,9 @@ import "./styles/masora.css";
 import { bridge } from "./lib/bridge";
 import { hydratePrefsMirror } from "./lib/prefs-mirror.mjs";
 
+const bootstrapBuild = new URLSearchParams(location.search).get("build");
+if (bootstrapBuild) window.__zevetCfg = { version: bootstrapBuild };
+
 /* Every "zevet.*" preference a person set, off this machine rather than off
  * whichever hub served this page — before "./App" (and, through it, ./lib/
  * board's `create<BoardState>` call) is even imported, since that is where

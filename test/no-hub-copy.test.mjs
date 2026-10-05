@@ -42,7 +42,7 @@ describe("visibleStrings", () => {
 
 describe("no hub copy in what people read", () => {
   const files = [
-    ...walk(path.join(ROOT, "board", "src")).filter((f) => !/fixture\.ts$/.test(f)),
+    ...walk(path.join(ROOT, "board", "src")).filter((f) => !/fixture\.ts$/.test(f) && !/\.d\.ts$/.test(f)), // a generated .d.ts is types, not copy
     ...readdirSync(path.join(ROOT, "desktop"))
       .filter((f) => /^(main|preload|setup-.*|github-signin|google-signin)\.js$/.test(f))
       .map((f) => path.join(ROOT, "desktop", f)),

@@ -1,18 +1,21 @@
-import { PanelLeftClose, PanelLeftOpen, SettingsIcon } from "lucide-react";
+import { SettingsIcon } from "lucide-react";
 import { useEffect } from "react";
 import { PeoplePane } from "./components/people";
+import { InvitePlus } from "./components/invite";
 import { WorkspacesPane } from "./components/workspaces";
 import { Strip } from "./components/strip";
 import { ConnBanner } from "./components/conn";
 import { Palette } from "./components/palette";
 import { UpdateRow } from "./components/updaterow";
 import { Conversation } from "./components/conversation";
+import { ActiveSprite } from "./components/sprite";
 import { ConsoleRuntimeProvider } from "./lib/runtime";
 import { FollowControl, TreeFill } from "./components/tree";
 import { DetailPane } from "./components/detail";
 import { SettingsSheet } from "./components/settings";
 import { UpdateBanner } from "./components/updatebanner";
 import { VoiceDialog } from "./components/voicedialog";
+import { SubagentsPanel } from "./components/subagents-panel";
 import {
   applyPanes,
   applyTheme,
@@ -28,28 +31,7 @@ import {
 import { bridge } from "./lib/bridge";
 import { ChatMain, ChatRail, ModeSwitch } from "./components/chatmode";
 import { useChat, wireChat } from "./lib/chat";
-
-/** Folds the file tree away, leaving the rail. Ctrl/Cmd+B, like an editor's
- *  sidebar. */
-function TreeToggle() {
-  const hidden = useBoard((s) => s.treeHidden);
-  const toggleTree = useBoard((s) => s.toggleTree);
-  const label = hidden ? "Show files" : "Hide files";
-  const Icon = hidden ? PanelLeftOpen : PanelLeftClose;
-  return (
-    <button
-      type="button"
-      className="rail-new tree-toggle"
-      id="treeToggle"
-      aria-label={label}
-      aria-pressed={hidden}
-      title={label + " (" + (navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl+") + "B)"}
-      onClick={toggleTree}
-    >
-      <Icon className="size-3.5" aria-hidden="true" />
-    </button>
-  );
-}
+import { CHECK_MS, createStaleReload } from "./lib/stale-build.mjs";
 
 function RailFoot() {
   const theme = useBoard(selectTheme);
@@ -113,7 +95,6 @@ function App() {
   const mode = useChat((s) => s.mode);
 
   const roster = useBoard(selectRoster);
-  const launching = useBoard((s) => s.launching);
   const openLauncher = useBoard((s) => s.openLauncher);
   const local = Boolean(bridge.local);
   const blanked = !roster.length && !(local && localRoot);
@@ -122,6 +103,32 @@ function App() {
     boot();
     wireChat();
     useBoard.getState().refreshWhoami();
+  }, []);
+
+  /* A hub deploy reaches an open board: see lib/stale-build.mjs. */
+  useEffect(() => {
+    const mine = document.querySelector<HTMLMetaElement>('meta[name="zevet-build"]')?.content ?? "";
+    const stale = createStaleReload({
+      mine,
+      fetchBuild: async () => ((await (await fetch("/version", { cache: "no-store" })).json()) as { build?: string }).build ?? "",
+      doc: document,
+      now: Date.now,
+      editorDirty: () => Boolean(useBoard.getState().edView?.dirty),
+      reload: () => window.location.reload(),
+    });
+    const tick = () => void stale.tick();
+    const touch = () => stale.touch();
+    const timer = setInterval(tick, CHECK_MS);
+    const inputs = ["pointerdown", "keydown", "wheel"] as const;
+    inputs.forEach((e) => window.addEventListener(e, touch, { passive: true, capture: true }));
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      inputs.forEach((e) => window.removeEventListener(e, touch, { capture: true }));
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", tick);
+    };
   }, []);
 
   useEffect(() => {
@@ -181,36 +188,33 @@ function App() {
               of its column. It is a People control by meaning as well as by
               position: mine/all/off says whose work to watch. */}
           <div className="pane-title row">
-            {/* ⚠️ THE LABEL IS "Agents"; THE ID IS STILL `#people`. What this
-                pane lists is a person and the agents running under them, and
-                Andrew asked for it to say so. The id stays because it is the
-                hook a dozen CSS rules and two tests reach for, and renaming a
-                selector to match a word is churn with a chance of a miss. */}
-            <span>Agents</span>
-            {/* ⚠️ THE PLUS IS THE LAUNCHER. It used to be a full text row at
-                the bottom of the You list reading "Start an agent…", which is
-                a whole line of a 250px rail spent on a verb. Andrew: "there is
-                also no need for like the new agent thing, you can put a plus
-                sign somewhere else." Here it costs nothing: the title row was
-                already this tall for the follow control beside it.
-                Gated on an open folder for the same reason the row was — with
-                no repo there is nothing to start an agent IN, and a launcher
-                that opens onto that is a dead end. */}
-            {bridge.local && localRoot ? (
-              <button
-                type="button"
-                className="rail-new"
-                aria-expanded={launching}
-                aria-haspopup="dialog"
-                aria-label="Start an agent"
-                title="Start an agent"
-                onClick={openLauncher}
-              >
-                +
-              </button>
-            ) : null}
+            {/* ⚠️ THE LABEL IS "Team"; THE ID IS STILL `#people`. What this
+                pane lists is the people on the team and the agents running
+                under them, and Andrew asked for the word to say so. The id
+                stays because it is the hook a dozen CSS rules and two tests
+                reach for, and renaming a selector to match a word is churn
+                with a chance of a miss. */}
+            <span>Team</span>
+            {/* ⚠️ THE PLUS IS THE INVITE, not the launcher. Andrew: "make the
+                plus sign next to it work. it has to generate an iframe popup
+                with an invite, you can import this from settings." It is the
+                same TeamInvite Settings renders, in a dialog, and it shows
+                for whoever can invite. Starting an agent did not go away: the
+                composer starts the run (lib/runtime.tsx onNew), the Conversation
+                header's "+" below puts a blank one in front, and the palette
+                still has "Start an agent". */}
+            <InvitePlus />
             <FollowControl blanked={blanked} />
-            <TreeToggle />
+            {/* ⚠️ NO FOLD BUTTON HERE ANY MORE. It was `#treeToggle`, and at a
+                narrow rail width (180px, see masora.css's max-width: 1100px
+                rule) this row is wider than its column — the button rendered
+                behind the treecol next door, which painted over it in DOM
+                order, so it was there but unclickable. The tree still folds
+                the same way (`treeHidden`, `Ctrl+B`/`Cmd+B` below): now by
+                dragging its edge shut (see buildSplits in lib/board.ts) or the
+                "Open tree" button beside the repo picker in Strip when it is
+                closed. One working way to close it and one to reopen it,
+                instead of a second control drawn on top of the first. */}
           </div>
           <div className="pane-body" id="people">
             <PeoplePane />
@@ -265,7 +269,15 @@ function App() {
         <div className="middle">
           <TreeFill blanked={blanked} />
           <div className="chatcol">
-            <div className="pane-title">Conversation</div>
+            <div className="pane-title row">
+              <span>Conversation</span>
+              <ActiveSprite />
+              {bridge.local && localRoot ? (
+                <button type="button" className="rail-new rail-new-label" aria-label="New agent" title="New agent" onClick={openLauncher}>
+                  New agent +
+                </button>
+              ) : null}
+            </div>
             <div className="pane-body" id="chat">
               <Conversation />
             </div>
@@ -280,6 +292,7 @@ function App() {
       <Palette />
       <UpdateBanner />
       <VoiceDialog />
+      <SubagentsPanel />
     </ConsoleRuntimeProvider>
   );
 }

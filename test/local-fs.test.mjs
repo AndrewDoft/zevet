@@ -995,7 +995,7 @@ describe("the local:write IPC surface", () => {
   const preload = readFileSync(path.join(REPO, "desktop", "preload.js"), "utf8");
 
   test("the handler goes through knownRoot, like every other local: handler", () => {
-    const start = main.indexOf('ipcMain.handle("local:write"');
+    const start = main.indexOf('bridge.handle("local:write"');
     assert.ok(start > 0, "main.js registers no local:write handler");
     const body = main.slice(start, main.indexOf("\n});", start));
 
@@ -1012,14 +1012,14 @@ describe("the local:write IPC surface", () => {
     // And the same guard is on the two handlers this one was modelled on, so a
     // refactor that drops it from any of them fails here.
     for (const channel of ["local:tree", "local:read", "local:write"]) {
-      const at = main.indexOf(`ipcMain.handle("${channel}"`);
+      const at = main.indexOf(`bridge.handle("${channel}"`);
       assert.ok(at > 0, `no handler for ${channel}`);
       assert.ok(main.slice(at, main.indexOf("\n});", at)).includes("knownRoot"), `${channel} skips knownRoot`);
     }
   });
 
   test("the renderer's options are rebuilt, never spread", () => {
-    const start = main.indexOf('ipcMain.handle("local:write"');
+    const start = main.indexOf('bridge.handle("local:write"');
     const body = main.slice(start, main.indexOf("\n});", start));
 
     // `maxBytes` from a renderer is a renderer setting its own size limit;

@@ -949,3 +949,725 @@ automated suite.
 **Reversibility.** High. Everything is additive: a new `Accounts` field with a
 narrow setter, one new route, one new relay action, one new prune method called
 from existing call sites.
+
+## D-022 — A dead board load retries once, then names the host and the likely cause, instead of a bare "Offline"
+
+Real incident (2026-09-27): Tommaso, a brand-new external user with no team
+and no invite, reported "the hub couldn't be reached, none of it worked" on
+Windows. `main.js`'s `did-fail-load` handler was firing `unreachablePage`,
+which showed only "Offline" and a raw Chromium error code — no host, no
+reason a non-technical person could act on.
+
+Traced every OTHER path that can leave a fresh install stuck first, to avoid
+fixing a symptom instead of the cause: `hub-target.js#resolveHub` always
+falls back to the baked-in `HOSTED_HUB` for a truly fresh profile (no env, no
+existing config), and its history (`a402531`) shows only one value it has
+ever held, so a stale address is ruled out. A missing/invalid credential
+already gets its own distinct page (`credentialPage`), and setup's own
+create/join errors are already surfaced inline in `setup.html` — neither of
+those routes through `unreachablePage`. That leaves exactly one path landing
+here: a real network-level failure on the board's OWN load, after a working
+credential was already established. Two changes for that path:
+
+1. **One retry, 1.5s later, before saying anything.** A fresh network
+   interface (Wi-Fi still associating, a VPN adapter still coming up) can
+   lose the very first request without the hub being down at all — the same
+   race a browser's own retry papers over. `code === -3` (a normal
+   navigation abort) is still ignored, as before.
+2. **`unreachablePage` now names the host** (parsed from `cfg.hub`, falling
+   back to the raw string if unparseable) **and gives an actionable hint**
+   (VPN/firewall/strict DNS) instead of only a Chromium error code — satisfies
+   the brief's "never a generic message when the real cause is actionable."
+
+**Not changed:** `credentialPage` and setup's own error surfacing — both
+already name their specific cause and were never part of this bug.
+
+**Reversibility.** High: the retry is a local `setTimeout`, no new state
+persisted; the message change touches only rendered text.
+
+**Verification:** `test/hub-unreachable.test.mjs` drives a real dead port
+(`127.0.0.1:1`, refused everywhere) through `drive.mjs` and asserts the host
+and an actionable hint appear — red against the pre-fix page (no host, no
+hint), green after. `test/onboard-live.test.mjs` (workflow_dispatch,
+`.github/workflows/onboard-live.yml`, windows-latest + macos-latest) drives
+the exact fresh-install "Create a team" move against the real hosted hub,
+since only that address can catch "stale" or "genuinely unreachable" — every
+other test here talks to a disposable hub this suite spawns itself.
+
+---
+
+## D-023 — Muse Spark and Muse Code get the Gemini treatment, not a fabricated adapter
+
+**2026-09-27**
+
+**Decision.** Meta's Model API (Muse Spark) is added to the composer's model picker the same way
+Gemini already is: listed, described, but with no execution adapter (`ok: false` always). Unlike
+Gemini — which is always shown behind a permanent Connect chip — the Meta group is only added to
+the Chat picker's `usable` list when a key is actually detected (`composercontrols.tsx`,
+`meta?.signedIn`), because Andrew asked for it to "show only when usable" rather than as a
+standing upsell. Muse Code (Meta's coding CLI) is added to `client/detect.mjs` for detection only
+(installed / signed-in via `MODEL_API_KEY`, same "presence only" discipline every other entry
+uses) with `hooks: false` — no `.muse/hooks.json` is written and no session/transcript file is
+read.
+
+**Alternatives considered.**
+- *Build a direct HTTP adapter now* (Node's built-in `fetch` against
+  `https://api.meta.ai/v1/chat/completions`, OpenAI-compatible shapes). Rejected for this pass:
+  the exact streaming/tool-call JSON was not fetched field-by-field this session (only confirmed
+  to exist, via docs nav and prose — see `docs/contracts/meta-model-api.md`), and CLAUDE.md-style
+  discipline (never guess a wire format) applies just as much to a response schema as to a hook
+  payload. INSUF-009 records this as the next step.
+- *Wire Muse Code hooks from the documented event names alone.* Rejected: the event names and
+  config LOCATIONS are documented, but the stdin PAYLOAD shape is not, and there is no `muse`
+  install on this machine to verify it against — exactly the mistake `docs/contracts/
+  codex-hooks.md` records having made once already (a repo-local hooks path that silently never
+  fired) and is asked not to repeat by guessing.
+- *Route Muse Spark through opencode's existing zen models instead of adding anything.* Already
+  true and unaffected by this change (`muse-spark-1.2/1.3-contributor-free` already show under
+  "Open models" once opencode is installed — no key needed) — but it does not give Andrew a place
+  to save his OWN Meta key, which he explicitly asked for, so it is additive to this, not a
+  replacement.
+
+**Reversibility.** High. Every addition is either inert until consumed (the `meta:api_key` ->
+`MODEL_API_KEY` credential-table entry; `client/detect.mjs`'s `muse-code` row) or purely
+presentational (the picker group). Nothing here changes what any existing agent does.
+
+**Verification.** `test/muse-model.test.mjs` (11 assertions, 2 mutation-checked live: the
+Chat-only gating condition, and `client/detect.mjs`'s `hooks: false`), `test/detect.test.mjs`
+(2 new cases), full suite green except pre-existing environment gaps unrelated to this change
+(missing `desktop/build/icon.png` asset, Electron's binary failing to download in this sandbox —
+both present before this change and unrelated to it). A headless Chromium screenshot
+(`?dev=1` fixture mode, Chat + Work tab, model picker open, filtered to "muse") confirms the Meta
+group renders with the correct name, icon, and disabled state; see the session's report for the
+image.
+
+---
+
+## D-024 — The manual master-secret field is removed from setup.html, not merged
+
+**2026-09-28**
+
+**Decision.** Andrew, verbatim: "there are two spaces for the key, we only need the top ones."
+`desktop/setup.html` had two key-shaped inputs: `#inviteKey` (the per-invite join key, always
+visible in Join mode) and `#token` (the raw master secret, behind an "Other" disclosure, wired to
+`zevet:test`/`zevet:save`). The second is deleted outright — the `<details id="manual">` block,
+its `#check` handler, and every reference to `$("token")` in `signedIn()`/`finish` are gone.
+GitHub sign-in, Google sign-in, and the invite key are the only three ways into a team from this
+window now.
+
+**Why it came up.** The two fields serve genuinely different mechanisms (a personal, revocable,
+per-invitee key vs. an anonymous shared master secret for a hub with no OAuth app configured), so
+a literal reading of "merge them" would need one input to parse two incompatible formats
+(9-char `XXXX-XXXX` vs. a 48-char hex secret) behind one button — fragile, and not what was asked.
+Andrew's instruction was to remove the second field, not reconcile it with the first.
+
+**Alternatives considered.**
+- *Keep both fields, reorder/relabel only.* Rejected: does not satisfy "we only need the top
+  ones" — the complaint is about the field existing at all, not its position.
+- *Merge into one field with format-sniffing (short code vs. long secret).* Rejected: two
+  different `maxlength`/`type` constraints on one input is exactly the kind of clever-but-fragile
+  code this project's own CLAUDE.md-equivalent discipline (ponytail: fewest files, boring over
+  clever) argues against, for a capability that already has a non-UI path.
+- *Remove the UI but keep `zevet:test`/`zevet:save`'s IPC surface wired.* Taken — no other file
+  calls it from a still-live UI element, but ripping out main.js/preload.js plumbing that costs
+  nothing to leave is a bigger diff for no behavior change.
+
+**Reversibility.** Medium. A self-hosted hub with NEITHER GitHub nor Google configured (no
+`ZEVET_GITHUB_CLIENT_ID`, no `ZEVET_GOOGLE_CLIENT_ID`) has no way to become the FIRST owner from
+this window any more — `createTeam` already refuses `/team/create` with no provider configured
+(hub/server.mjs), so this window was never the only gate for that case anyway. A brand-new
+machine still connects headlessly via `ZEVET_TOKEN`/`ZEVET_SECRET` (client/secret.mjs,
+doctor.mjs) — the setup WINDOW loses the capability, the product does not.
+
+**Verification.** `test/board.test.mjs`'s "there is exactly one key field in the whole window"
+and `test/setup-window.test.mjs`'s "there is no second key field" — both mutation-tested: adding
+a synthetic second key-shaped input (or restoring `#token`/`#manual`/`#check`) turns them red;
+restored to green after reverting the mutation. `test/setup-window.test.mjs`'s
+"a completed sign-in enables Open and reveals Folder" replaces the removed
+"the team-key path connects..." test, driving `window.signedIn()` directly (the same pattern this
+file already used for `window.paintUpdate`) since no path in that file's single hub instance can
+produce a REAL successful sign-in without a live GitHub/Google app or an owner session — the
+real HTTP-level "does redeeming a key actually work" contract stays covered in
+`test/team.test.mjs`'s `/team/join` describe block, unchanged.
+
+## D-025 — One person, many identities: linked on VERIFIED email or a second OAuth sign-in, never on a typed address
+
+**Decision.** A person record (the old allowlist row) may carry extra `identities`, each with the
+emails that identity proved. Sign-in links a new identity to an existing person only on *verified*
+evidence: GitHub's `GET /user/emails` rows with `verified: true` (needs the `user:email` scope,
+now requested alongside `read:user` — docs.github.com/rest/users/emails), or Google's
+`email_verified` id-token email. The GitHub public-profile email and an invite-key redemption's
+typed address are not evidence. A signed-in person can add a second identity from Settings by
+running that identity's own OAuth sign-in with `link: true` (session cookie required; no new
+session, no secret handed out), and unlink any but their last. `combine` (owner only) covers what
+evidence cannot prove ("andrew" + "@AndrewDoft"). `scripts/merge-people.mjs` merges stored
+duplicates that evidence proves; dry-run by default, idempotent.
+
+**Names.** Events name their actor as a string the machine reports. A person's display name,
+linked logins and aliases resolve those strings at read time (`actorResolver`), so a rename or a
+merge re-points events already in the log without rewriting `events.jsonl`. A rename may not take
+a name another person or a hook-only teammate already wears on the board.
+
+**Cost / reversibility.** Existing GitHub users are asked to approve one extra scope on their next
+sign-in; a token without it just yields no email evidence (the call is best-effort). Records gain
+optional fields only, so an older hub still reads the file. A merge is not undoable by the hub —
+`--apply` writes a `.bak-<timestamp>` copy first.
+
+## D-026 — Both update channels are Ed25519-signed with one pinned key; publisher checks are enforced only where the running app has a publisher
+
+**Decided (Andrew, 2026-09-28).** Audit B3/B4: the desktop feed and the hub's client manifest took
+their sha256 from the host that served the file, so host compromise was code execution on every
+install. Now `zevet-latest.json` carries a signed `payload` (domain `"zevet-update-v1\n"`) and the hub's
+`/dist/manifest.json` a signed `payload` (domain `"zevet-client-v1\n"`), both under key
+`zevet-2026-09` (raw public key pinned in `desktop/update-signing.js` and `client/signing.mjs`).
+Scheme is Zevet Voice's (`updates/signing.py`): domain bytes (including the trailing `\n`) + canonical
+JSON. Legacy top-level fields stay so already-installed clients keep updating; new clients read only
+the payload. Hubs must be https (loopback http excepted).
+
+- **No fallback for unsigned.** The app rejects an unsigned feed outright. The client updater accepts
+  one only with `ZEVET_ALLOW_UNSIGNED_MANIFEST=1`, and a test key only for a loopback hub/feed
+  (`ZEVET_HUB_TRUSTED_KEY`, `ZEVET_APP_FEED_TRUSTED_KEY`) so tests never need the real key.
+- **The hub holds no private key.** The client manifest is signed at release time
+  (`scripts/sign-client-manifest.mjs` -> `hub/client-manifest.signed.json`); the hub attaches the
+  signature only when it covers exactly the files on disk, else serves the unsigned manifest, which
+  current clients reject (updates pause instead of shipping unsigned code). `release-check` fails while stale.
+- **Publisher check** (Authenticode `CN=Andrew Doft` / Developer ID team `27C8FVB83B`) runs before an
+  installer is offered. It is enforced when the RUNNING app carries that publisher and log-only otherwise,
+  so unsigned dev builds and CI proofs still update. Alternative rejected: enforce always, which breaks
+  every local build and the Codemagic unsigned proofs.
+- **Bootstrap.** Clients that predate signing take the first signed update on trust of the old channel;
+  only later updates are protected. Unavoidable without a flag day.
+
+**Reversibility.** Key rotation: ship a build that pins both ids, then retire the old one. Backing out
+signing entirely means restoring `readManifest(json, ...)` in `AppUpdater.check()` and the manifest read in
+`client/updater.mjs`.
+
+**Verification.** `test/update-signing.test.mjs` (real-key vector; CJS/ESM parity; domain separation),
+`test/app-update.test.mjs` "a signed feed and a signed installer", `test/updater.test.mjs` "a signed
+manifest", `test/hub-client-manifest.test.mjs`, `test/outbox.test.mjs` (plain-http hook). Each guard was
+mutated (removed) and its test went red before restoring.
+
+## D-027 — Shipped: Electron 44, signed update channels, and macOS in-place self-update (0.2.86)
+
+**Decided (Andrew, 2026-09-28, "continue everything and finish it and deploy").** D-025's Electron
+38.1.2 -> 44.4.5 / electron-builder 25.1.8 -> 26.17.0 bump and D-026's signed update channels merged
+to `main` and released as zevet 0.2.86: signed Windows installer (`Get-AuthenticodeSignature` ->
+`Valid`, `CN=Andrew Doft`), notarized macOS `.dmg` (`spctl` -> `source=Notarized Developer ID`,
+ticket stapled), both proven on the real `build.yml` v-tag pipeline (Windows + macOS runners) rather
+than an ad-hoc local build. The already-live 0.2.85 feed (an unrelated identity-linking release,
+`f3dccbb`, that shipped from `main` while this branch was in flight) was re-signed in place first,
+then the hub was redeployed with the signed client manifest, then 0.2.86 was cut — so an installed
+app never saw a feed it would reject, and no app ever saw an unsigned hub manifest.
+
+- **Real bug found by the macOS self-update proof, not by review.** `_macReplaceSteps`'s cleanup
+  step (sweeping stray `zevet*.app` copies) chained every step with `&&`; a `for` loop's exit status
+  is its last command's, and `[ -e "$f" ]` is false whenever there is nothing stray to sweep — the
+  common case. That silently cancelled the `open` (relaunch) chained after it: the bundle swap to
+  X+1 completed but "Restart now" never brought the app back. Fixed by ending the step with `; true`
+  (`desktop/app-update.js`), reproduced and pinned with a real `/bin/sh -c` execution of the exact
+  generated string (`test/app-update.test.mjs`, skipped on win32 — no `/bin/sh` there), and confirmed
+  green on real Apple Silicon (Codemagic `macos-autoupdate`) both before (red, with diagnostics
+  showing no relaunch) and after (green, `PASS`) the fix.
+- **`scripts/make-feed.mjs`'s Authenticode check** inherited the same PSModulePath-poisons-a-nested-
+  Windows-PowerShell trap `scripts/codemagic.mjs` already worked around, discovered while cutting
+  this release from a pwsh shell: a validly signed `.exe` was refused as "looks corrupted" because
+  the nested `powershell.exe` could not autoload `Get-AuthenticodeSignature`. Same fix (strip
+  `PSModulePath` from the child's env) applied there too.
+
+**Verification.** `node scripts/run-tests.mjs` (0 fail), `npm run typecheck`, board build reproduces
+`hub/public` byte-for-byte. `ci.yml` green on the merge commit and on the 0.2.86 release commit.
+Live feed and hub client manifest verified over HTTPS against the pinned key after each deploy step
+(`desktop/app-update.js`'s `readSignedFeed`, `desktop/update-signing.js`'s `verifySigned`). Stable
+download links (`/download/Zevet.dmg`, `/download/Zevet-Setup.exe`) confirmed by exact
+`Content-Length` match, not just a 200. `usemasora.com/zevet` confirmed showing 0.2.86 after its
+5-minute ISR window revalidated.
+
+**Not done.** RELEASING.md's landing-page rebuild step (§5, "only when the page itself changes") was
+not needed and not run — the page picked up the new version from the feed alone, as designed.
+
+## D-028 — Shipped: @masora/desktop-kit v0.1.2 — updater core, safe-open, IPC guard, family module (0.2.88)
+
+**Decided (Andrew, 2026-09-29, "release Zevet 0.2.88").** The 11 commits since v0.2.87 (`d28b7e5`..`5bf2536`)
+moved the desktop app's updater core, signed-feed verify, single-instance lock, safe-open, IPC guard,
+rotating log, and the family (dir/key/heartbeat/request) module onto `@masora/desktop-kit` v0.1.2, and
+replaced the hand-maintained preload/bridge with one IPC table (`desktop/ipc-table.js`) that generates
+both `desktop/preload.js` and `board/src/lib/bridge.generated.d.ts`. No `hub/` or `client/` file changed
+functionally — `hub/public/board.js` is byte-identical to 0.2.87 (only its `.map` and `.srchash` moved,
+tracking the source-only `bridge.ts` -> `bridge.generated.d.ts` split) — so this release needed no hub
+redeploy, only the desktop app.
+
+- **Verified before tagging.** `node scripts/run-tests.mjs`: 2645 pass, 0 fail, 7 skipped (all named).
+  `ci` and a `workflow_dispatch` `build` both green on `5bf2536` before the version bump, confirming the
+  exact commit being tagged was already proven on both Windows and macOS runners.
+- **Built and signed on the real `v0.2.88` tag pipeline**, not an ad-hoc local build: Windows
+  `Get-AuthenticodeSignature` -> `Valid`, `CN=Andrew Doft` on both `zevet.exe` and the NSIS installer;
+  macOS `.app` signed `Developer ID Application: Michael Shvidler (27C8FVB83B)`, notarized and stapled
+  twice (app then dmg), `spctl` -> `source=Notarized Developer ID`.
+  `hub/client-manifest.signed.json` re-signed for the version bump alone (file list and hashes
+  unchanged from 0.2.87) — `scripts/release-check.mjs`'s `checkSignedManifest` passed before tagging.
+- **The stable links needed their usual per-release repoint.** `/srv/masora/Caddyfile`'s
+  `Zevet.dmg`/`Zevet-Setup.exe` rewrites were still pinned to `zevet-0.2.87-*`, exactly as RELEASING.md
+  §4a describes — edited in place with the `r+` python script (never `sed -i`, same bind-mount-inode
+  trap), confirmed inside the running container at `/etc/caddy/Caddyfile` (the doc's example path is the
+  HOST path; the container sees it at `/etc/caddy/Caddyfile`, per `docker inspect --format '{{.Mounts}}'`),
+  then `caddy reload`.
+
+**Verification.** Live feed (`https://usemasora.com/download/zevet-latest.json`) parses and verifies
+under the pinned key via `desktop/app-update.js`'s real `readSignedFeed`; a one-byte tamper to
+`payload.platforms["win32-x64"].bytes` is rejected with "signature does not match the document". Both
+installer URLs return `200` with `Content-Length` exactly equal to the feed's `bytes`, and the bytes
+served over HTTPS hash to the feed's `sha256` exactly (`sha256sum` on a fresh `curl` download, not just
+on the upload source). The stable links (`/download/Zevet.dmg`, `/download/Zevet-Setup.exe`) confirmed
+repointed by exact `Content-Length` match after the Caddy reload. `usemasora.com/zevet` confirmed
+showing `0.2.88` after its 5-minute ISR window revalidated.
+
+**Not done.** No hub redeploy — nothing under `hub/` or `client/` changed in a way that affects what the
+live hub serves (see above), so `docs/RELEASING.md`'s "Deploying the hub" section did not apply this
+release. DECISIONS.md has no entry for 0.2.87 itself (`e760e22`/`edd75d4` shipped without one); that gap
+predates this release and was not backfilled here.
+
+## D-029 — An open board reloads itself onto a new hub deploy, only when idle
+
+The desktop app loads the board from the hub and never navigates again, so a hub deploy never reached an open
+window. The hub now has a build id — sha256 of `board.js.srchash` + `editor.js.srchash`, first 12 hex, or
+`HUB_BUILD_ID` — served at `GET /version` (`{build}`, no-store), in `/healthz`, and stamped into the served
+`index.html` as `<meta name="zevet-build">`. The board (`board/src/lib/stale-build.mjs`, wired in `App.tsx`)
+polls `/version` every 60 s and on focus/visibility and reloads when it differs **and** the board has had no
+input for 2 min (hidden counts as idle) **and** no dialog is open **and** the editor has no unsaved buffer
+**and** no input/textarea/contenteditable holds text (the agent and terminal prompts are textareas). Baseline is
+the page's own meta, not the first poll, so a deploy landing between page load and first poll is still seen.
+
+## D-030 — The main process is split into a shell (bootstrap.js, in the asar) and a hot-swapped payload
+
+**Decided (masora2 plan 2026-09-29-seamless-updates §3.6, W5).** `desktop/bootstrap.js` is the asar
+entry: single-instance lock, the desktop-kit payload client, then `require(<payload dir>/main.js)`.
+Everything in `payload.files` (`desktop/package.json`: `main.js` and every module it requires, the
+preload, the setup page, fonts, icon) plus `client/*.mjs` is the payload; the installer carries it as
+`resources/app-core`, the seed. The shell is `bootstrap.js`, `payload-config.js`, `update-signing.js`
+(the pinned keys), `app-update.js` (the installer updater), Electron and the native modules. The split
+follows `git log origin/main -30 -- desktop/`: releases touch `main.js`, `agent-*.js`, `console-log.js`,
+`preload.js`, `ipc-table.js`, `package.json`; `app-update.js` and `update-signing.js` last changed for
+the kit adoption, and the pinned keys must not be replaceable by the thing they verify.
+
+- **seq** = `seqOf(version)` = `major*1e6 + minor*1e3 + patch` (0.2.89 -> 2089), so every version has a
+  higher seq and the seed maps to the pulse exactly. `SHELL_VERSION = 1`.
+- **Idle gate** (`payload-swap.js`): no swap while a console has a live process or spoke in 5 min, a chat
+  turn is in flight, a window had input in 2 min, or no window is open. Then `activate(); relaunch();
+  exit(0)`; quit activates without relaunching (`will-quit`, not `before-quit`, which a beforeunload can cancel).
+- **Trial**: confirmed once a window has stopped loading (success OR failure: an unreachable hub is not the
+  payload's fault) and the agent API answers, else a strike after 120 s; a load throw or an uncaught
+  exception before confirm is a strike; three revert.
+- **Installer feed** stays for shell updates. `app.getVersion()` is the installer's version and feeds only
+  the installer updater; everything user-visible (Sentry release, hub version) reads the payload build.
+- **Preload** sits in the payload, outside the asar, so it resolves `@sentry/electron` from the shell's
+  directory, passed as `--zevet-shell-dir=`; the main process resolves shell packages through `NODE_PATH`
+  set only while `bootstrap.js` loads `main.js` (spawned agents must not inherit it).
+- **Open**: `client/*.mjs` also ships as `resources/client` (extraResources) as the fallback; the payload
+  copy is preferred. Drop the extraResource once a release has run on the payload path.
+
+> Renumbered from D-029 at merge: D-029 went to the hub build-id reload (hub-build-reload).
+
+## D-031 — Shipped: bootstrap-shell payload release, and the first payload published (0.2.89)
+
+**Decided (Andrew, 2026-09-29, "release Zevet 0.2.89").** First version built on the D-030 shell/payload
+split: `desktop/package.json`'s `main` is `bootstrap.js`, and the release carries the payload as
+`resources/app-core`, the seed. This is also the first release to publish a payload, not just an
+installer — the `p/zevet/stable/{win-x64,mac-arm64}` pulses now exist on `masora-app` for the first time,
+seq 2089, mapping exactly to what this installer carries (per D-030, `seqOf("0.2.89") = 2089`).
+
+- **Verified before tagging.** `npm test`: 2720 tests, 2713 pass, 0 fail, 7 skipped. Both `build.yml` legs
+  green on the tag (`93c83e0`, `v0.2.89`): Windows `Get-AuthenticodeSignature` -> `Valid`, `CN=Andrew Doft`;
+  macOS `spctl` -> `source=Notarized Developer ID`, ticket stapled, native arm64 in all 18 Mach-O files.
+- **`hub/client-manifest.signed.json` re-signed** for the version bump (`scripts/sign-client-manifest.mjs`);
+  `scripts/release-check.mjs` passed before tagging.
+- **Installer feed and payload published together.** `scripts/make-feed.mjs ./release-0.2.89` for the
+  installer feed; `scripts/make-feed.mjs payload --out ./payload-0.2.89 --channel stable` staged
+  `desktop/payload-tree.cjs`'s tree (the same tree this build's installer seeds from) and wrote 67 blobs
+  + 2 manifests (one per platform) + 2 pulses. Uploaded bytes-before-pointer: `p/b/`, `p/m/`, the two
+  payload pulses, then `zevet-latest.json` last.
+- **Published straight to `stable`**, not `canary` first — this is the seeding release, so there is no
+  earlier build for a canary cohort to compare against; `stable`'s seq starts at 2089 and the seed maps
+  exactly, same as the plan's masora 0.3.116 step.
+- **Stable links repointed** (`/download/Zevet.dmg`, `/download/Zevet-Setup.exe`) in place via the `r+`
+  python script (never `sed -i`), confirmed inside `masora-caddy-1` at `/etc/caddy/Caddyfile`, then
+  `caddy reload`.
+- **Hub redeployed** from the `v0.2.89` tag (tarball over `/srv/zevet` in place, `docker restart
+  masora-zevet-hub-1`) since the manifest was re-signed. `board.js`/`editor.js` sources did not change
+  this release, so `BUILD_ID` (`507c4ef3009d`) is unchanged from before the restart — expected per its
+  definition (D-029: a hash of the two `.srchash` files, not of the deploy itself).
+
+**Verification.** Both stable links return `200` with bytes that hash to the exact sha256 the feed
+(and CI) named (`e339912d…` dmg, `69bd66c7…` exe) — a fresh `curl | sha256sum`, not the upload source.
+Both `p/zevet/stable/*/pulse.json` cryptographically verify under the pinned `zevet-2026-09` key via
+desktop-kit's real `verifyFeed`/`PULSE_DOMAIN`, naming build `0.2.89` seq `2089`. `p/m/*` and `p/b/*`
+serve `Cache-Control: public, max-age=31536000, immutable`; the pulses serve `no-store`. Hub `/healthz`
+and `/version` both `200` after redeploy.
+
+**Not done / could not verify from here.** No Windows or macOS machine on hand to click "Check now" and
+watch a live app actually swap onto the new payload (RELEASING.md §6/§7's `test-payload-swap.mjs` covers
+this in CI instead, and ran green on both `build.yml` legs). Disk on `masora-app` was 15G free before and
+after upload (well above the 5G cleanup threshold), so no old installers were removed.
+
+## D-032 — API-spawned agents are pushed to the board; the actor a signed-in machine reports joins its person; the owner can rename anyone
+
+**Decided (Andrew, 2026-09-29/30).** Two reports: "I can't see the agents you're running, only when I'm
+in the repo", and "AndrewDoft and andrew are no longer combined".
+
+**Agents.** The board learns of a console from exactly two things: its own launch, and one
+`local:consoles` snapshot at page load. An agent spawned through the loopback API (or a schedule)
+is neither, so it reached the board only as a *disk session*, and that scan is scoped to the open
+repo (`refreshSessions` / `localRoot`). Fix: `announceConsole()` in `desktop/main.js` pushes the new
+console over `local:agentAttached` (API spawn + scheduled run — not board launches, which already
+hold an id-less pending entry); the board attaches it once (`reattachConsoles` now skips an id it
+holds, exact match — `consoleById`'s pending-launch fallback would mis-fold). The People pane already
+groups every `myConsoles` entry by repo, so no second view. `/list` reported `cwd: null` only
+because `summarize` emits `root`; it now also emits `cwd` (worktree when there is one), `worktree`,
+`branch`. New push channel, added to the frozen list in `desktop-bridges.test.mjs`: it carries what
+`local:agentEvent` / `local:consoles` already do.
+
+**People.** Production `accounts.json` was inspected read-only: owner `andrewdoft`, display
+`andrew` (`named`), alias `AndrewDoft` — combined, and it survives restarts (bind-mounted
+`/srv/zevet/var`). The hub's combine/rename and the owner check were correct and are now pinned by a
+restart test. What was missing: (1) Settings had Combine but no way for the owner to rename *another*
+person (the hub route already allowed it) — added; (2) the desktop's sign-in sets its actor to the
+GitHub login while the hook uses the OS user, so one human keeps producing a second actor nobody has
+aliased — a signed-in board now tells the hub its own machine's actor once per actor
+(`renameSelf(me.name)`; the hub adds it as an alias only if no other person holds it).
+Typing a name is still not proof (D-025); this is the person's own authenticated session claiming
+their own machine's string, the same evidence `/auth/rename` already accepted.
+
+**Not done / caveat.** A *different* teammate who shares an OS username with an unclaimed actor can
+still be folded by whoever claims it first; the `machine` field is not part of the alias.
+
+## D-033 — Shipped: the first payload-only release (0.2.90), canary then stable, with a hub deploy
+
+**Decided (Andrew, 2026-09-29/30, "release Zevet 0.2.90").** Carries D-032 (agent visibility, people
+rename) and an offline-update Sentry fix.
+
+- **Payload-only, not a shell release.** `git diff --stat v0.2.89..HEAD -- desktop/` touched
+  `main.js`, `preload.js`, `agent-api.js`, `ipc-table.js` and `sentry.js`. All five are in `payload.files`
+  (`preload.js` too: `bootstrap.js` `verifyEntry`s it as payload), none is `bootstrap.js`,
+  `payload-config.js`, `update-signing.js`, `app-update.js`, Electron or a native module. `SHELL_VERSION`
+  stays 1 and `shell_min` 1. `zevet-latest.json` was **not** touched (still 0.2.89): installed apps
+  take the payload with no installer bar. Installers for 0.2.90 were still built and published, and the
+  stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads (they seed 0.2.90).
+- **Sentry ELECTRON-5/3.** `captureUpdateFailure` sends offline errors ("fetch failed", aborted check,
+  ENOTFOUND/ECONNREFUSED/...) as one `warning` message (fingerprint `auto-update`,`offline`); bad
+  signature / hash mismatch stay exceptions. Test mutated red twice (offline branch disabled; branch
+  always taken), restored.
+- **Verified before tagging.** `npm test` 2729 tests, 2722 pass, 0 fail, 7 skipped;
+  `client-manifest.signed.json` re-signed. Tag `v0.2.90` on `release/0.2.90` (not merged to main); both
+  `build.yml` legs green (Authenticode `Valid` `CN=Andrew Doft`; macOS `source=Notarized Developer ID`).
+  sha256: exe `d9792f87…e3e9b4` (153052448 B), dmg `383e935e…e31b` (205232739 B); the stable links
+  serve exactly those bytes.
+- **Payload: canary, verified, then promoted.** 67 blobs + 2 manifests (win `41e4422e…`, mac `3b5aff4f…`).
+  Uploaded blobs, manifests, canary pulses; over HTTPS all 67 blobs per platform brotli-decode to their
+  manifest hashes, pulses verify under the pinned `zevet-2026-09` key, `no-store`; blobs `immutable`.
+  Then `publish-payload.mjs promote` canary -> stable: seq 2090 (> 2089) on both platforms.
+- **Delta a 0.2.89 install fetches:** 5 blobs, 91,697 bytes compressed (294,975 raw) per platform.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `507c4ef3009d` -> `bb82c3d86e6e` (board.js changed).
+
+**Not verified.** No live app was made to swap (would restart agents running in the installed Zevet);
+`test-payload-swap.mjs` covered that in CI.
+
+## D-034 — Shipped: 0.2.91, the status strip shows the real 5h/7d limits (payload-only, hub deploy)
+
+**Decided (Andrew, 2026-09-29/30, "release Zevet 0.2.91").** Carries ed4743e + 7bd4706: the strip shows the
+rate-limit windows (percent used, time to reset) instead of Zevet's token tally.
+
+- **Payload-only, not a shell release.** `git diff --stat v0.2.90..HEAD` touched `board/src` and tests
+  only; nothing under `desktop/` or `client/`. `SHELL_VERSION` stays 1, `shell_min` 1, `zevet-latest.json`
+  untouched (still 0.2.89). Installers for 0.2.91 were built and published, and the stable `Zevet-Setup.exe` /
+  `Zevet.dmg` links repointed, for new downloads.
+- **The committed board bundle was stale.** ed4743e changed `board/src` without rebuilding
+  `hub/public/board.js`, so `test/board-bundle.test.mjs` failed (and main's `ci` run went red). The release
+  commit rebuilds it (`npm ci && npm run build` in `board/`); the hub's `BUILD_ID` only moves because of that.
+- **Verified before tagging.** `npm test` 2732 tests, 2725 pass, 0 fail, 7 skipped; client manifest re-signed.
+  Tag `v0.2.91` on `release/0.2.91`; both `build.yml` legs green (Authenticode `Valid` `CN=Andrew Doft`;
+  macOS `source=Notarized Developer ID`). sha256: exe `36381c86…7437` (153052224 B), dmg `8a6010c7…d6df`
+  (205230656 B); the stable links serve exactly those bytes.
+- **Payload: canary, verified, then promoted.** The board is not in the payload, so the tree hashes to the
+  same 67 blobs as 0.2.90: **0 new blobs**, 2 new manifests (win `f35b144b…`, mac `d61272b1…`), pulses
+  only. Pulses verify under the pinned `zevet-2026-09` key over HTTPS, `no-store`. Promoted canary -> stable:
+  seq 2091 (> 2090) on both platforms.
+- **Delta a 0.2.90 install fetches:** 0 blobs, 0 bytes (manifest + pulse only). The strip change reaches
+  installs through the hub's board bundle, not the payload.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `bb82c3d86e6e` -> `e40eb6443647`; `/healthz` ok.
+
+**Not verified.** No live app was made to swap or reload (would disturb agents running in the installed Zevet).
+
+## D-035 — Shipped: 0.2.92, a cold launch applies a staged payload (shell release)
+
+**Decided (Andrew, 2026-09-30).** 0.2.91 was staged on his PC, Zevet was force-killed and relaunched, and
+`bootstrap.js` booted 0.2.89 again: the only apply paths were the idle swapper and `will-quit`, and a kill,
+crash, reboot or logoff skips both. `startPayload` now calls `payload.activate()` before `payload.resolve()`
+when `payload.staged()` is non-null (log `payload <build> staged; applied at launch`). `activate()` re-checks
+bad-list, shell_min and schemaHead and writes `current.json` as a trial, so the existing confirm / 3-strike
+revert covers a bad build. A throw is logged and boot continues on the current build.
+
+- **Shell release.** `bootstrap.js` is not in the payload tree, so this needs the installer: installers + signed
+  installer feed (`zevet-latest.json` 0.2.89 -> 0.2.92) + payload. Installed shells do not have the fix until
+  they take the installer; the payload alone cannot carry it.
+- **shell_min stays 1 (`SHELL_VERSION` unchanged).** The 0.2.92 payload runs on the old shell (it needs nothing
+  the new shell adds), so raising it would strand every install that has not taken the installer.
+- **Test.** `test/bootstrap-staged.test.mjs` loads the real `bootstrap.js` with electron, desktop-kit and
+  payload-config stubbed: staged -> activate then resolve, runs as trial; nothing staged -> no activate;
+  activate throws -> boots current. **Mutated:** the `await payload.activate()` line removed -> 2 of 3 red;
+  restored -> green.
+- **Verified before tagging.** `npm test` 2735 tests, 2728 pass, 0 fail, 7 skipped; board bundle was not stale;
+  client manifest re-signed. Tag `v0.2.92` on `release/0.2.92`; `build.yml` both legs and `ci` green.
+  sha256: exe `40184fdc…` (153052528 B), dmg `4fa41aca…` (205240842 B); the stable links serve those bytes.
+- **Payload:** canary then stable, seq 2092 (> 2091) on both platforms, 67 blobs each (uploaded all; existing
+  ones are content-addressed). Over HTTPS all 134 blobs brotli-decode to their manifest hashes; pulses `no-store`.
+  Manifests win `ae4cd766…`, mac `e8720fce…`.
+- **Hub not redeployed:** the board did not change. `hub/client-manifest.signed.json` was re-signed for 0.2.92
+  and is committed; the hub keeps serving the 0.2.91 one until its next deploy (still validly signed).
+
+**Not verified.** No live app was launched, restarted or killed (Andrew's installed Zevet was left alone).
+
+## D-036 — Shipped: 0.2.93, Settings → Version shows the running payload build; tool-call groups keep following (payload-only, hub deploy)
+
+**Decided (Andrew, 2026-09-30, "release Zevet 0.2.93").** Carries 3caa07c (Settings → Version shows the running
+payload build, not the installer version) and 571e26a (opening a tool-call group keeps later groups open and following).
+
+- **Payload-only, not a shell release.** `git diff --stat v0.2.92..origin/main` touched `desktop/main.js` (a payload
+  file), `board/src`, the rebuilt `hub/public/board.js`, tests and DECISIONS.md; no `bootstrap.js`, Electron or native
+  module. `SHELL_VERSION` 1, `shell_min` 1, `zevet-latest.json` untouched (still 0.2.92). Installers for 0.2.93 were
+  built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Tag `v0.2.93`; `build.yml` both legs and `ci` green; exe Authenticode `Valid` `CN=Andrew Doft`.
+  sha256: exe `8bde55e2…` (153052792 B), dmg `3404867e…` (205220403 B); the stable links serve those bytes.
+- **Payload:** canary, verified over HTTPS, then stable; seq 2093 (> 2092) on both platforms. Manifests win `91497595…`,
+  mac `16531ba2…`. **Delta a 0.2.92 install fetches: 1 blob (`desktop/main.js`, 57030 B brotli)** + manifest + pulse.
+  All 67 blobs brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`, `no-store`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `e40eb6443647` -> `9bda76f5c97c`; `/healthz` and `/version` agree.
+
+**Not verified.** No live app was launched, restarted or killed (Andrew's installed Zevet was left alone).
+
+## D-037 — Shipped: 0.2.94, startup 5h/7d probe, Zevet-launched agents carry the hub hooks, worktree identity (payload-only, hub deploy)
+
+**Decided (Andrew, 2026-09-30, "release Zevet 0.2.94").** Carries the startup 5h/7d probe (`credential-usage.js`,
+`agent-engine.js`, `main.js`), Settings version running/installer/Next, the combine suggestion (board), claude agents
+launched by Zevet getting the hub hooks via `--settings` (`agent-console.js`), and hook worktree identity
+(`client/hook.mjs`, `client/opencode-plugin.mjs`).
+
+- **Payload-only, not a shell release.** `git diff --stat v0.2.93..origin/main` touched payload files (`desktop/main.js`,
+  `agent-console.js`, `agent-engine.js`, `credential-usage.js`, `client/hook.mjs`, `client/opencode-plugin.mjs`), `board/src`,
+  the rebuilt `hub/public/board.js`, tests and DECISIONS.md; no `bootstrap.js`, `payload-config.js`, `update-signing.js`,
+  `app-update.js`, Electron or native module. `SHELL_VERSION` 1, `shell_min` 1, `zevet-latest.json` untouched (still 0.2.92).
+  `client/*.mjs` is payload; installed clients also take it through the hub's signed client manifest (re-signed, committed).
+  Installers were built and published, stable `Zevet-Setup.exe` / `Zevet.dmg` repointed, for new downloads.
+- **First tag failed CI.** The plain-worktree tests compared against the unresolved temp path; git records the real one
+  (macOS `/private/var`, Windows 8.3 -> long), so macOS and Windows failed while Windows-local passed. Test-only fix
+  (`realpathSync.native`); nothing had been published, so `v0.2.94` was deleted and re-cut on the fixed commit.
+- **Verified.** `npm test` 2772 tests, 0 fail, 7 skipped locally; `build.yml` both legs and `ci` green on the final tag.
+  sha256: exe `06659aa6…` (153055576 B), dmg `948086b4…` (205189628 B); the stable links serve exactly those bytes.
+- **Payload:** canary, verified over HTTPS (pulse signature under `zevet-2026-09`, `no-store`, manifest hash, 67/67 blobs
+  brotli-decode to their hashes, both platforms), then stable; seq 2094 (> 2093). Manifests win `40c8c035…`, mac `60e652df…`.
+  **Delta a 0.2.93 install fetches: 6 blobs, 93,021 B brotli** + manifest + pulse.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9bda76f5c97c` -> `ce0b7413b53e`; `/healthz` and `/version` agree.
+
+**Not verified.** No live app was launched, restarted or killed (Andrew's installed Zevet was left alone).
+
+## D-038 — Shipped: 0.2.95, Match its own worktree case-insensitively on Windows (shell release)
+
+**Decided (automatic, `npm run ship`, 2026-09-30).** ? commit(s) past v0.2.94.
+
+- **Shell release.** desktop/package-lock.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.95) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.95`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `6f741313…` (153057296 B), dmg `3dc950ee…` (205205875 B); the stable links serve those bytes.
+- **Payload:** canary, verified over HTTPS, then stable; seq 2095 on both platforms. Manifests win `e2a6a747…`, mac `5c1fc87c…`. Delta: 6 new blob(s) uploaded. 68 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-039 — Shipped: 0.2.96, Bundle for 0.2.96 (Zevet model, spawn via board) (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-09-30).** ? commit(s) past v0.2.95.
+
+- **Shell release.** desktop/package-lock.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.96) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.96`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `02284050…` (153066048 B), dmg `17586b6c…` (205216390 B); the stable links serve those bytes.
+- **Payload:** canary, verified over HTTPS, then stable; seq 2096 on both platforms. Manifests win `a350983c…`, mac `4b4bd609…`. Delta: ? new blob(s) uploaded. 70 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `ce0b7413b53e` -> `ba9d7b69ccb5`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-040 — Shipped: 0.2.97, Keep claude's session id per console, so restarts resume them (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-09-30).** 9 commit(s) past v0.2.96.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.97 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.97`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `8ae89213…` (153068536 B), dmg `19f96cda…` (205244081 B); the stable links serve those bytes.
+- **Payload:** canary, verified over HTTPS, then stable; seq 2097 on both platforms. Manifests win `ac3c2e5b…`, mac `75584776…`. Delta: 7 new blob(s) uploaded. 71 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `ba9d7b69ccb5` -> `20cbf2ebb00a`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-041 — Shipped: 0.2.98, Agent API /list reports each console's session id (payload-only)
+
+**Decided (automatic, `npm run ship`, 2026-09-30).** 2 commit(s) past v0.2.97.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.98 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.98`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `875a175c…` (153068456 B), dmg `f54b9b47…` (205246880 B); the stable links serve those bytes.
+- **Payload:** canary, verified over HTTPS, then stable; seq 2098 on both platforms. Manifests win `402dc7ec…`, mac `28a1f2d3…`. Delta: 1 new blob(s) uploaded. 71 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-042 — Shipped: 0.2.99, Sprites show when the open folder is a worktree (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-09-30).** 2 commit(s) past v0.2.98.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.99 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.99`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `40364417…` (153068744 B), dmg `9312df42…` (205236039 B); the stable links serve those bytes.
+- **Payload:** canary, verified over HTTPS, then stable; seq 2099 on both platforms. Manifests win `ba28e63f…`, mac `c96b2d87…`. Delta: 3 new blob(s) uploaded. 71 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `20cbf2ebb00a` -> `59a26fa08c4b`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-043 — Shipped: 0.2.100, Force the TAP reporter so the gate can name failing files (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-09-30).** ? commit(s) past v0.2.99.
+
+- **Shell release.** desktop/app-update.js, desktop/package-lock.json, desktop/package.json, desktop/update-rollback.js, desktop/update-signing.js changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.100) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.100`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `6093238e…` (153077960 B), dmg `8d9afa0b…` (205199804 B); the stable links serve those bytes.
+- **Payload:** canary, verified over HTTPS, then stable; seq 2100 on both platforms. Manifests win `63b632b2…`, mac `a734eb54…`. Delta: 9 new blob(s) uploaded. 74 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `59a26fa08c4b` -> `f6d7d5a2d34c`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-044 — Shipped: 0.2.101, Pick the cloud origin at launch (app.usemasora.com if it resolves, else the sslip one); Ma (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-01).** ? commit(s) past v0.2.100.
+
+- **Shell release.** desktop/package-lock.json, desktop/payload-config.js changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.101) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.101`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `9aa23103…` (153080528 B), dmg `3109baae…` (205197641 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2101 on both platforms. Manifests win `02f5f390…`, mac `63dbe216…`. Delta: 0 new blob(s) uploaded. 75 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9c3446cdcdbf` -> `9c3446cdcdbf`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-045 — Shipped: 0.2.102, Cloud origin is fixed at app.usemasora.com (payload-only)
+
+**Decided (automatic, `npm run ship`, 2026-10-01).** 4 commit(s) past v0.2.101.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.102 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.102`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `de25c029…` (153079920 B), dmg `15a5954e…` (205202315 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2102 on both platforms. Manifests win `fc82582f…`, mac `624e91b0…`. Delta: 2 new blob(s) uploaded. 75 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-046 — Shipped: 0.2.103, Masora link says offline (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-01).** ? commit(s) past v0.2.102.
+
+- **Shell release.** desktop/package-lock.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.103) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.103`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `05dccc37…` (153079944 B), dmg `5dbcc7f2…` (205193107 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2103 on both platforms. Manifests win `6a795eea…`, mac `969debff…`. Delta: 0 new blob(s) uploaded. 75 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9c3446cdcdbf` -> `12f071c4e39e`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-047 — Shipped: 0.2.104, A hub migration moves the open board with it (payload-only)
+
+**Decided (automatic, `npm run ship`, 2026-10-01).** 2 commit(s) past v0.2.103.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.104 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.104`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `e731856b…` (153079832 B), dmg `88b72532…` (205200645 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2104 on both platforms. Manifests win `4f472b6c…`, mac `7a57e169…`. Delta: 1 new blob(s) uploaded. 75 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-048 — Shipped: 0.2.105, Zevet router v2 (classified, seeded, free-only, privacy-gated) (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-01).** 12 commit(s) past v0.2.104.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.105 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.105`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `7f8dee73…` (153084520 B), dmg `fd441d8a…` (205235433 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2105 on both platforms. Manifests win `27997ec0…`, mac `edc44475…`. Delta: 4 new blob(s) uploaded. 76 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `12f071c4e39e` -> `3ad72bb5ee74`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-049 — Shipped: 0.2.106, Main into fix/no-workspace-error (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-01).** 8 commit(s) past v0.2.105.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.106 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.106`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `19467a1d…` (153085464 B), dmg `6ebd6e8a…` (205222377 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2106 on both platforms. Manifests win `da0bfa5f…`, mac `9ec88694…`. Delta: 2 new blob(s) uploaded. 77 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `3ad72bb5ee74` -> `9200e4e21d0e`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-050 — Shipped: 0.2.108, Google sign-in from a mapped Workspace domain joins the default team, no team name or key (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-01).** 3 commit(s) past v0.2.106.
+
+- **Shell release.** desktop/package-lock.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.108) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.108`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `8b1a90c2…` (153085544 B), dmg `3d9e57e7…` (205178450 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2108 on both platforms. Manifests win `d108a753…`, mac `bab663fe…`. Delta: 1 new blob(s) uploaded. 77 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9200e4e21d0e` -> `9200e4e21d0e`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-051 — Shipped: 0.2.109, One team per Google Workspace — sign-in routes to the domain's team, no second team can cl (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-01).** 3 commit(s) past v0.2.108.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.109 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.109`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `71354d29…` (153085864 B), dmg `e1b2622f…` (205180670 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2109 on both platforms. Manifests win `2508e64f…`, mac `6a65c856…`. Delta: 1 new blob(s) uploaded. 77 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9200e4e21d0e` -> `9200e4e21d0e`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-052 — Shipped: 0.2.110, Fix Mac window controls overlapping Zevet navigation (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-02).** 2 commit(s) past v0.2.109.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.110 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.110`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `84ff75e3…` (153085904 B), dmg `41f6aee3…` (205223813 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2110 on both platforms. Manifests win `9e43c99c…`, mac `b3979d1c…`. Delta: 1 new blob(s) uploaded. 77 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9200e4e21d0e` -> `81f2f9bda1ab`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-053 — Shipped: 0.2.111, Zevet pairs with the signed-in Masora cloud automatically (payload-only)
+
+**Decided (automatic, `npm run ship`, 2026-10-05).** 2 commit(s) past v0.2.110.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.111 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.111`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `3b586e1a…` (153086704 B), dmg `73971e05…` (205235226 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2111 on both platforms. Manifests win `74073991…`, mac `047b9f36…`. Delta: 2 new blob(s) uploaded. 77 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-054 — Shipped: 0.2.112, Chat thread spacing; Masora one-login hub sign-in (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-05).** 6 commit(s) past v0.2.111.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.112 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.112`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `5a3746ab…` (153087112 B), dmg `2363d8e7…` (205234016 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2112 on both platforms. Manifests win `631b2cc1…`, mac `0042127e…`. Delta: 2 new blob(s) uploaded. 77 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `81f2f9bda1ab` -> `1226eb09dff3`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-055 — Shipped: 0.2.115, Clearer labels: Resume, New agent + (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-05).** 18 commit(s) past v0.2.112.
+
+- **Shell release.** desktop/package-lock.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.115) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.115`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `9b66005f…` (153087560 B), dmg `54dd8804…` (205228985 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2115 on both platforms. Manifests win `b29491d5…`, mac `c11bfe98…`. Delta: 2 new blob(s) uploaded. 78 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `d4dddd2a9d9d` -> `afb54a24e840`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-056 — Shipped: 0.2.116, Live agents show their sprite on the rail and in the conversation header (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-05).** 2 commit(s) past v0.2.115.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.116 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.116`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `41c94366…` (153088016 B), dmg `cea2300c…` (205199625 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2116 on both platforms. Manifests win `e2784dbb…`, mac `4934827c…`. Delta: 1 new blob(s) uploaded. 78 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `afb54a24e840` -> `8fc1a63ac8e6`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).

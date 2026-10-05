@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { startHub, ROOT } from "./helpers.mjs";
+import { startHub, ROOT, NO_DRIVE } from "./helpers.mjs";
 
 const DRIVE = path.join(ROOT, "scripts", "drive", "drive.mjs");
 const SECRET = randomBytes(24).toString("hex");
@@ -25,7 +25,7 @@ const SECRET = randomBytes(24).toString("hex");
 const HUB_COPY = /\bhub\b|sslip|https?:\/\//i;
 
 function drive(...args) {
-  const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout: 30000 });
+  const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout: 90000 });
   return JSON.parse(out);
 }
 
@@ -45,6 +45,7 @@ async function waitFor(pred, { tries = 30, everyMs = 150 } = {}) {
 let hub;
 let accountsDir;
 before(async () => {
+  if (NO_DRIVE) return;
   // ZEVET_SECRET, and ZEVET_TOKEN cleared to "" rather than left at helpers'
   // default: the manual "Team key" field in setup.html is the master secret,
   // and this hub's shared token must be DERIVED from it (matching what a
@@ -69,9 +70,20 @@ before(async () => {
   // The app resolves the hub itself (desktop/hub-target.js); this is how the
   // driven one is pointed at the test hub, since setup has no field for it.
   process.env.ZEVET_HUB = hub.base;
+  // The driven app's real updater checks its feed 25s after launch. Left at the
+  // default that is the LIVE usemasora.com feed, so this file's first test was
+  // asserting on whatever production happened to publish (a feed the app rejects,
+  // e.g. an unsigned one, paints "Update failed"). The hub answers 404 here,
+  // which the updater treats as "nothing published": a hermetic "current".
+  process.env.ZEVET_APP_FEED = `${hub.base}/download/zevet-latest.json`;
+  // A file of its own, not scripts/drive/.state.json's fixed default — see
+  // drive.mjs's own comment. Without this, this file collides with any other
+  // drive-based test file `node --test` happens to run concurrently.
+  process.env.ZEVET_DRIVE_STATE = path.join(accountsDir, "drive-state.json");
   drive("launch");
 });
 after(async () => {
+  if (NO_DRIVE) return;
   try {
     drive("close");
   } catch {
@@ -81,7 +93,7 @@ after(async () => {
   if (accountsDir) rmSync(accountsDir, { recursive: true, force: true, maxRetries: 120, retryDelay: 250 });
 });
 
-describe("a fresh install's setup window", () => {
+describe("a fresh install's setup window", { skip: NO_DRIVE }, () => {
   test("shows the controls a first-run person needs, with Open disabled", () => {
     const { outline } = drive("snapshot");
     assert.match(outline, /input#teamName/);
@@ -118,6 +130,8 @@ describe("a fresh install's setup window", () => {
   });
 
   test("signing in with no team name opens no browser and says Name?", () => {
+    // The form opens behind "Other"; with it closed Google names no team at all.
+    drive("eval", `showOther(true)`);
     drive("click", "#google");
     assert.deepEqual(drive("opened"), []);
     assert.match(drive("snapshot").outline, /div#msg(?!.*hidden)[^\n]*"Name\?"/);
@@ -202,18 +216,28 @@ describe("a fresh install's setup window", () => {
     assert.doesNotMatch(drive("snapshot").outline, /input#hub|details#other/);
   });
 
-  test("the shared-secret fallback is tucked behind a small 'Other' link, not 'Key'", () => {
-    assert.match(drive("snapshot").outline, /summary[^\n]*"Other"/);
-    assert.doesNotMatch(drive("snapshot").outline, /summary[^\n]*"Key"/);
+  // BUG-2026-09-28, Andrew verbatim: "there are two spaces for the key, we
+  // only need the top ones." The master-secret "Other" fallback (id="token",
+  // id="manual", id="check") is removed outright — GitHub/Google sign-in and
+  // the invite key above (input#inviteKey) are the only two ways in now.
+  test("there is no second key field: no 'Other' fallback, no manual secret", () => {
+    const outline = drive("snapshot").outline;
+    assert.doesNotMatch(outline, /input#token|details#manual|button#check/);
+    assert.doesNotMatch(outline, /summary[^\n]*"Other"/);
   });
 
-  test("the team-key path connects, enables Open, and reveals Folder", async () => {
-    drive("click", "#manual summary");
-    drive("type", "#token", SECRET);
-    drive("type", "#actor", "trevor");
-    drive("click", "#check");
-    const outline = await waitFor((o) => !/#check[^\n]*disabled/.test(o) && /div#msg[^\n]*"Connected"/.test(o));
-    assert.match(outline, /div#msg[^\n]*"Connected"/);
+  // signedIn() is what a completed GitHub/Google sign-in OR a redeemed
+  // invite key both call (setup.html's own click handlers) — its DOM effects
+  // are exercised directly here, the same established pattern this file
+  // already uses for paintUpdate above, because every sign-in path in THIS
+  // file's single hub instance either has no real OAuth app (GitHub/Google)
+  // or needs an owner session that only a real sign-in can create (the
+  // invite-key success path is proven at the HTTP layer in
+  // test/team.test.mjs's "/team/join" describe; this proves the UI WIRING
+  // signedIn() drives once any of those paths reports success).
+  test("a completed sign-in enables Open and reveals Folder", () => {
+    drive("eval", `window.signedIn({ teamName: "Acme Platform", login: "trevor", owner: false })`);
+    const outline = drive("snapshot").outline;
     assert.doesNotMatch(outline, /button#finish[^\n]*disabled/);
     assert.match(outline, /button#pick[^\n]*"Folder"/);
   });

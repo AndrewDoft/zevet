@@ -6,6 +6,7 @@
 // "one prompt" therefore appeared under all four codex models and all ten
 // opencode ones, saying the same thing eleven times and reading as if it
 // described the model.
+import { defaultPick } from "../board/src/lib/zevet-model.mjs";
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -51,7 +52,33 @@ describe("the model selector states agent facts once", () => {
 
   test("reasoning effort is offered only where a CLI takes the flag", () => {
     assert.match(choice, /const HAS_EFFORT = new Set\(\["codex"\]\)/);
-    assert.match(choice, /efforts: HAS_EFFORT\.has\(a\.name\) && alias \? true : undefined/);
+    // claude takes --effort <low|medium|high|xhigh|max> (`claude --help`, 2.1.284).
+    assert.match(choice, /efforts: a\.name === "claude" \? CLAUDE_EFFORTS : HAS_EFFORT\.has\(a\.name\) && alias \? true : undefined/);
+    assert.match(choice, /\["low", "medium", "high", "xhigh", "max"\]/);
+  });
+});
+
+describe("a fresh install never guesses a model id the account might not have", () => {
+  // ⚠️ ROOT CAUSE of "Provider error 400" on a brand-new Codex install: no
+  // local ~/.codex/models_cache.json yet, so a.models is undefined and the
+  // picker fell back to MODELS[a.name] (agent-models.generated.mjs — an id
+  // captured off Andrew's own account) and auto-selected all[0] as the launch
+  // default regardless of source, so the very first message passed `-m
+  // gpt-6-astra` to a codex CLI that may have no access to it.
+  test("a model row is marked verified only when it came from this machine's own CLI cache", () => {
+    const rows = choice.slice(choice.indexOf("const groups = useMemo"), choice.indexOf("const all = useMemo"));
+    assert.match(rows, /const verified = Boolean\(a\.models\);/);
+    assert.match(rows, /verified,/);
+  });
+
+  test("the auto-selected default skips unverified rows instead of blindly taking all[0]", () => {
+    // Retargeted 2026-09-30: the rule moved into defaultPick (zevet-model.mjs),
+    // which falls to Zevet ahead of any row; without Zevet it still skips
+    // unverified rows. Pinned by behaviour now, not by the source line.
+    assert.match(choice, /const selected = defaultPick\(all, launchModel, aliasOf\);/);
+    const aliasOf = (id) => id.slice(id.indexOf(":") + 1);
+    assert.equal(defaultPick([{ id: "codex:guess" }, { id: "claude:sonnet", verified: true }], "", aliasOf), "claude:sonnet");
+    assert.equal(defaultPick([{ id: "codex:guess" }], "", aliasOf), "", "back to trusting an unverified all[0]");
   });
 });
 

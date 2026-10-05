@@ -108,7 +108,7 @@ function hashInviteKey(key) {
  */
 const DEFAULT_PROVIDER = "github";
 
-const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null, credentials: [] });
+const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorkspace: "", owner: null, allowed: [], blocked: [], sessions: {}, presence: {}, createdAt: null, credentials: [] });
 
 /** A stored credential record, minus its `key` — what everything except
  *  /team/credentials/:id/secret itself is allowed to see. */
@@ -136,6 +136,70 @@ function provider(rec) {
 function display(rec) {
   const l = String((rec && rec.login) || "");
   return provider(rec) === "google" ? l : `@${l}`;
+}
+
+/** A record's identities, primary first. A person record is the old allowlist
+ *  row plus, optionally, `identities` — every OTHER sign-in that person has
+ *  proved they control (or, for a merged pending invite, still has to). Top-level
+ *  provider/login/id stay the primary, so every reader written before linking
+ *  existed still sees one identity. */
+function idents(rec) {
+  return [{ provider: provider(rec), login: rec.login, id: rec.id || "", display: rec.display, emails: rec.emails || [] }, ...(rec.identities || []).map((i) => ({ ...i, provider: provider(i) }))];
+}
+
+/** Does this identity belong to this person record? Provider AND id. */
+function owns(rec, ident) {
+  return idents(rec).some((i) => samePerson(i, ident));
+}
+
+/** The address an identity is EVIDENCE for. A Google identity's login is an
+ *  email Google verified — but an invite-key redemption mints a synthetic
+ *  `key-…` id for a TYPED address nobody verified, which proves nothing. */
+function emailEvidence(i) {
+  return i.provider === "google" && i.id && !String(i.id).startsWith("key-") ? [String(i.login).toLowerCase()] : [];
+}
+
+/** Every verified email known to belong to this person. */
+function emailsOf(rec) {
+  return new Set(idents(rec).flatMap((i) => [...(i.emails || []), ...emailEvidence(i)]).map((e) => String(e).toLowerCase()));
+}
+
+/** Store a person's identities, identified ones first (a pending row that has
+ *  gained a real identity must stop being "pending"), mirroring the primary
+ *  into the top-level fields. */
+function setIdents(rec, list) {
+  const seen = new Set();
+  const uniq = [];
+  for (const i of list) {
+    const k = i.id ? `${provider(i)}\0${i.id}` : `${provider(i)}\0~${String(i.login).toLowerCase()}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const emails = uniqStrings((i.emails || []).map((e) => String(e).toLowerCase()));
+    uniq.push({ provider: provider(i), login: String(i.login).toLowerCase(), id: i.id || "", display: i.display || i.login, ...(emails.length ? { emails } : {}) });
+  }
+  uniq.sort((a, b) => (a.id ? 0 : 1) - (b.id ? 0 : 1));
+  const [p, ...rest] = uniq;
+  rec.provider = p.provider;
+  rec.login = p.login;
+  rec.id = p.id;
+  if (p.emails) rec.emails = p.emails;
+  else delete rec.emails;
+  if (!rec.named || !rec.display) rec.display = p.display;
+  if (rest.length) rec.identities = rest;
+  else delete rec.identities;
+}
+
+/** A name a person may take: one line, at most 40 characters (an event's
+ *  `actor` is cut to 40, so a longer name could never match its own events). */
+const cleanName = (n) => String(n || "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 40);
+
+const uniqStrings = (a) => [...new Set(a.filter(Boolean))];
+
+/** The verified addresses a sign-in carries. Never the public-profile one:
+ *  callers put those in `user.email`, and only `user.emails` is proof. */
+function verifiedEmails(user) {
+  const list = Array.isArray(user.emails) ? user.emails : [];
+  return uniqStrings(list.map((e) => String(e || "").trim().toLowerCase()).filter((e) => e.includes("@")));
 }
 
 export class Accounts {
@@ -199,6 +263,32 @@ export class Accounts {
   setName(name) {
     this.state.name = name;
     this.#save();
+  }
+
+  /** The Masora workspace this team was opened for ("" when none): the key hub/masora-auth.mjs maps a
+   *  sign-in from Masora to a team by. */
+  get masoraWorkspace() {
+    return this.state.masoraWorkspace || "";
+  }
+
+  bindMasoraWorkspace(wid) {
+    this.state.masoraWorkspace = String(wid);
+    this.#save();
+  }
+
+  /**
+   * A person Masora vouches for (docs/contracts/cross_app_context.md "Hub sign-in"). Stored as a Google-style
+   * record keyed by email, so the same person signing in with Google later auto-links through `#byEmail`
+   * instead of becoming a second row. A person removed from THIS team stays removed (`#blocked`), and an
+   * ownerless team opens only for a Masora admin, so a member cannot become its owner by arriving first.
+   */
+  signInMasora({ sub, email, name, admin }) {
+    const login = String(email).toLowerCase();
+    const user = { provider: "google", login, id: `masora:${sub}`, display: String(name || login), emails: [login] };
+    if (this.#blocked(user)) return { ok: false, error: `${login} was removed from this team` };
+    if (!this.state.owner && !admin) return { ok: false, error: "a workspace admin has to open this team first" };
+    const r = this.signIn(user);
+    return { ok: true, token: r.token, owner: r.owner, login };
   }
 
   /** The login that set this hub up, or null if nobody has yet. */
@@ -335,12 +425,15 @@ export class Accounts {
    * `ZEVET_GITHUB_OWNER` closes it: set it, and only that login can claim the
    * hub, no matter who reaches it first.
    */
-  mayEnter(user, { requiredOwner = "", domain = "" } = {}) {
+  mayEnter(user, { requiredOwner = "", domain = "", domains = [] } = {}) {
     const me = {
       provider: provider(user),
       login: String(user.login || "").toLowerCase(),
       id: String(user.id || ""),
       email: user.email ? String(user.email).toLowerCase() : "",
+      // VERIFIED addresses only (GitHub's /user/emails verified rows, or the
+      // Google id token's verified email) — the only evidence linking uses.
+      emails: verifiedEmails(user),
     };
     if (!me.login || !me.id) return { ok: false, error: `${me.provider === "google" ? "Google" : "GitHub"} did not say who you are` };
 
@@ -360,13 +453,20 @@ export class Accounts {
     // The id is what is checked when both sides have one. A login is renameable
     // and, once renamed, claimable by a stranger — an allowlist keyed on the
     // string alone is an allowlist that can be inherited.
-    for (const a of this.list()) {
-      if (samePerson(a, me)) return { ok: true, first: false };
-      // An invitation the owner typed has no id until its first sign-in, so it
-      // can only be matched by login — within its own provider, because
-      // "andrew" on GitHub and "andrew@…" on Google are different people and a
-      // cross-provider login match would be a way to inherit someone's seat.
-      if (!a.id && provider(a) === me.provider && a.login === me.login) return { ok: true, first: false };
+    // Any identity the person has linked counts, not only the one they first
+    // signed in with.
+    if (this.#personOf(me)) return { ok: true, first: false };
+    // An invitation the owner typed has no id until its first sign-in, so it
+    // can only be matched by login — within its own provider, because
+    // "andrew" on GitHub and "andrew@…" on Google are different people and a
+    // cross-provider login match would be a way to inherit someone's seat.
+    if (this.#pendingFor(me.provider, me.login)) return { ok: true, first: false };
+
+    /* A VERIFIED email that is already this team's — a member's proven address,
+     * or one a pending invite was typed for — admits and links, from either
+     * provider. Never the unverified or merely public-profile kind. */
+    for (const e of me.emails) {
+      if (this.#byEmail([e]).length || this.#pendingFor("google", e)) return { ok: true, first: false };
     }
 
     /**
@@ -400,6 +500,18 @@ export class Accounts {
       return { ok: true, first: false, byDomain: true };
     }
 
+    /* ⚠️ THE MAPPED-DOMAINS DOOR (ZEVET_TEAM_DOMAINS): the same door for a LIST
+     * of domains, and stricter because nothing upstream gated on `hd`. BOTH the
+     * `hd` claim (a Workspace Google administers) AND a verified email on that
+     * same domain must hold — a personal gmail has no `hd`, and an unverified
+     * address is dropped by `verifiedEmails`. */
+    if (me.provider === "google" && domains.length) {
+      const hd = String(user.hd || "").toLowerCase();
+      if (hd && domains.includes(hd) && me.emails.some((e) => e.split("@")[1] === hd)) {
+        return { ok: true, first: false, byDomain: true };
+      }
+    }
+
     // `display(this.state.owner)`, not `this.owner` — the latter is the bare
     // login, and printing it raw drops the "@" that every other mention of a
     // GitHub user in this file carries.
@@ -428,46 +540,179 @@ export class Accounts {
       // reads it back.
       hd: user.hd ? String(user.hd) : "",
     };
+    const emails = verifiedEmails(user);
 
+    let person;
     if (!this.state.owner) {
-      this.state.owner = rec;
+      person = this.state.owner = rec;
     } else {
-      // An invitation the owner typed has no id until now. First sign-in CLAIMS
-      // that row rather than adding a second one — otherwise the person appears
-      // in People twice, once for ever as "pending", which is what this did
-      // before Google arrived and `allow`'s own comment already promised it did
-      // not.
-      //
-      // The second lookup is the cross-provider case `mayEnter` above admits
-      // on: an invite typed as an email (stored as a "google" record) claimed
-      // by a GitHub sign-in whose verified email matched it. Claiming it
-      // rewrites `provider`/`login` to what actually signed in — the row
-      // becomes "the person who is now here", not "the address that was
-      // typed" — which is also why `person()` (server.mjs) and every session
-      // lookup that follows sees the right provider from this point on.
-      const invited =
-        this.state.allowed.find((a) => !a.id && provider(a) === rec.provider && a.login === rec.login) ||
-        (user.email ? this.state.allowed.find((a) => !a.id && provider(a) === "google" && a.login === String(user.email).toLowerCase()) : undefined);
-      if (invited) {
-        invited.id = rec.id;
-        invited.provider = rec.provider;
-        invited.login = rec.login;
-        invited.display = rec.display;
-        invited.hd = rec.hd;
-      } else if (!this.list().some((a) => samePerson(a, rec))) {
+      person = this.#personOf(rec);
+      if (!person) {
+        // ⚠️ THE AUTO-LINK. A person already here whose VERIFIED email is one
+        // this sign-in has just proved it holds is the same human: the new
+        // identity joins them instead of becoming a second person.
+        person = this.#byEmail(emails)[0];
+      }
+      if (!person) {
+        // An invitation the owner typed has no id until now. First sign-in
+        // CLAIMS that row rather than adding a second one — otherwise the
+        // person appears in People twice, once for ever as "pending". Matched
+        // by the login typed, or (the cross-provider case `mayEnter` admits
+        // on) an invite typed as an email that this sign-in verifiably holds
+        // — or, as before linking existed, whose GitHub public-profile email
+        // it is.
+        const pubEmail = user.email ? String(user.email).toLowerCase() : "";
+        const claim =
+          this.#pendingFor(rec.provider, rec.login) ||
+          emails.map((e) => this.#pendingFor("google", e)).find(Boolean) ||
+          (rec.provider === "github" && pubEmail ? this.#pendingFor("google", pubEmail) : undefined);
+        if (claim) {
+          person = claim.rec;
+          // Invite lifecycle ("accepted"): stamped at the claim, before the
+          // typed identity is overwritten by whoever actually signed in.
+          if (!person.acceptedAt) person.acceptedAt = new Date(this.now()).toISOString();
+        }
+      }
+      if (!person) {
         // Somebody the DOMAIN rule admitted lands here, and is recorded exactly
         // like anyone else. That is deliberate: `session()` re-checks the list
         // on every request, so a person admitted by rule and never written down
         // would be signed out again on their very next call.
+        person = rec;
         this.state.allowed.push(rec);
       }
     }
 
+    // Whichever way we got here, this identity is now one of the person's, the
+    // addresses it proved are theirs, and anything else on the team that those
+    // addresses prove to be the same human — a pending invite typed for one, a
+    // second signed-in row — folds into them.
+    person = this.#adopt(person, rec, emails, user.email ? String(user.email).toLowerCase() : "");
+    if (rec.hd && !person.hd) person.hd = rec.hd;
+
+    const p = { provider: person.provider, login: person.login, id: person.id };
     const token = randomBytes(SESSION_BYTES).toString("hex");
-    this.state.sessions[token] = { provider: rec.provider, login: rec.login, id: rec.id, at: this.now() };
+    this.state.sessions[token] = { ...p, at: this.now() };
     this.#sweep();
     this.#save();
-    return { token, login: rec.display, owner: samePerson(this.state.owner, rec) };
+    return { token, login: rec.display, owner: person === this.state.owner };
+  }
+
+  /** Every person record, owner first. The live objects, not copies. */
+  #people() {
+    return [this.state.owner, ...this.state.allowed].filter(Boolean);
+  }
+
+  /** The person who owns this identity (provider AND id), or undefined. */
+  #personOf(ident) {
+    return this.#people().find((r) => owns(r, ident));
+  }
+
+  /** A typed, never-claimed identity with this provider and login — on any
+   *  person, primary or merged-in — as `{ rec }`. */
+  #pendingFor(prov, login) {
+    for (const r of this.#people()) {
+      if (idents(r).some((i) => !i.id && i.provider === prov && i.login === login)) return { rec: r };
+    }
+    return undefined;
+  }
+
+  /** Signed-in people (they have at least one real identity) whose PROVEN
+   *  emails include any of these. A typed invite is not proof of anything. */
+  #byEmail(emails) {
+    if (!emails.length) return [];
+    return this.#people().filter((r) => idents(r).some((i) => i.id) && [...emailsOf(r)].some((e) => emails.includes(e)));
+  }
+
+  /**
+   * Make `ident` (and the proven `emails`) part of `person`, then fold in
+   * everyone else those addresses prove are the same human. Returns the
+   * surviving record — the owner's, if the owner was among them.
+   */
+  #adopt(person, ident, emails, publicEmail = "") {
+    const proof = new Set([...emails, ...(publicEmail && ident.provider === "github" ? [publicEmail] : [])]);
+    const pending = (i) => !i.id && ((i.provider === ident.provider && i.login === ident.login) || (i.provider === "google" && proof.has(i.login)));
+    // A pending identity this sign-in has just proved it holds stops being
+    // pending: it is replaced by the real one, and an email address moves into
+    // `emails` (that is what it always was).
+    const dropped = idents(person).filter(pending);
+    const kept = idents(person).filter((i) => !pending(i));
+    const proven = uniqStrings([...emails, ...dropped.filter((i) => i.provider === "google" && emails.includes(i.login)).map((i) => i.login)]);
+    const at = kept.find((i) => samePerson(i, ident));
+    if (at) at.emails = uniqStrings([...(at.emails || []), ...proven]);
+    else kept.push({ provider: ident.provider, login: ident.login, id: ident.id, display: ident.display, emails: proven });
+    setIdents(person, kept);
+    // Somebody whose primary came from a hand-typed invite never had a name of
+    // their own worth keeping over the one they just signed in with.
+    if (!person.named && dropped.length) person.display = ident.display;
+
+    let keep = person;
+    for (const other of this.#people()) {
+      if (other === keep) continue;
+      const otherPending = idents(other).every((i) => !i.id);
+      const sameHuman = otherPending
+        ? idents(other).some((i) => pending(i) || (i.provider === "google" && emailsOf(keep).has(i.login)))
+        : [...emailsOf(other)].some((e) => emailsOf(keep).has(e));
+      if (sameHuman) keep = this.#merge(keep, other);
+    }
+    return keep;
+  }
+
+  /**
+   * Fold `gone` into `keep`: every identity, verified email, actor alias,
+   * session, credential and pending invite key it had is re-pointed to `keep`
+   * and its row disappears. If either was the owner, the survivor is.
+   *
+   * Events are not rewritten: an event names its actor as a string, and
+   * `actorName` resolves every name the absorbed person ever used to the
+   * survivor's, so the archive re-points itself without touching the log.
+   */
+  #merge(keep, gone) {
+    if (keep === gone) return keep;
+    if (gone === this.state.owner) [keep, gone] = [gone, keep];
+    const old = [idents(keep)[0], idents(gone)[0]].map((i) => ({ provider: i.provider, login: i.login, id: i.id }));
+    const goneLogins = idents(gone).map((i) => i.login);
+
+    const keepWaiting = !keep.id;
+    setIdents(keep, [...idents(keep), ...idents(gone)]);
+    const aliases = uniqStrings([...(keep.aliases || []), ...(gone.aliases || []), gone.display, ...goneLogins]);
+    if (aliases.length) keep.aliases = aliases;
+    if (gone.named && !keep.named) {
+      keep.display = gone.display;
+      keep.named = true;
+    }
+    if (gone.hd && !keep.hd) keep.hd = gone.hd;
+    if (gone.added && (!keep.added || gone.added < keep.added)) keep.added = gone.added;
+    // Only a person still waiting on their invite has a key worth keeping.
+    if (keepWaiting && !keep.id && !keep.inviteKeyHash && gone.inviteKeyHash) {
+      keep.inviteKeyHash = gone.inviteKeyHash;
+      keep.inviteKeyExpires = gone.inviteKeyExpires;
+    }
+    if (keep.id) {
+      delete keep.inviteKeyHash;
+      delete keep.inviteKeyExpires;
+    }
+
+    this.state.allowed = this.state.allowed.filter((a) => a !== gone && a !== keep);
+    if (this.state.owner === gone) this.state.owner = keep;
+    if (this.state.owner !== keep) this.state.allowed.push(keep);
+
+    this.#repoint(old, keep);
+    for (const c of this.state.credentials) {
+      if (goneLogins.includes(c.addedBy)) c.addedBy = keep.login;
+    }
+    return keep;
+  }
+
+  /** Sessions signed in under any of these primaries now belong to `rec`'s. */
+  #repoint(olds, rec) {
+    for (const s of Object.values(this.state.sessions)) {
+      if (olds.some((o) => samePerson(o, s))) {
+        s.provider = rec.provider;
+        s.login = rec.login;
+        s.id = rec.id;
+      }
+    }
   }
 
   /**
@@ -499,7 +744,7 @@ export class Accounts {
     }
     // Revoking a login has to kill its live sessions, and the cheapest correct
     // place to enforce that is here rather than by hunting the session map.
-    if (!this.list().some((a) => samePerson(a, s))) {
+    if (!this.#personOf(s)) {
       delete this.state.sessions[token];
       this.#save();
       return null;
@@ -517,34 +762,120 @@ export class Accounts {
    * string rather than from a second argument or a dropdown, because the two
    * namespaces cannot overlap — GitHub usernames may not contain "@" — and one
    * text box is a better invite form than two.
+   *
+   * `email` is the recipient hub/server.mjs has resolved (or is about to try)
+   * for this invite — passed in so a second invite that resolves to the SAME
+   * address as an already-pending one is recognised as the one invitation,
+   * not a second. Andrew: "i invited michael twice" — typing a bare GitHub
+   * login one day and that person's email the next are two different
+   * (provider, login) pairs and, without this, two separate pending rows for
+   * one person. Matching on the resolved email is the one cross-identifier
+   * check this file makes for a still-pending invite; it does not attempt to
+   * merge an already-CLAIMED member with a new identifier — that is the
+   * multi-identity/persons work elsewhere on this file, not this.
    */
-  allow(login) {
-    const typed = String(login || "").trim().replace(/^@/, "");
-    const l = typed.toLowerCase();
-    const p = l.includes("@") ? "google" : "github";
-
-    if (p === "google") {
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(l)) return { ok: false, error: "that is not an email address" };
-    } else if (!/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/.test(l)) {
-      return { ok: false, error: "that is not a GitHub username or an email address" };
-    }
+  allow(login, { email = "" } = {}) {
+    const v = invitableLogin(login);
+    if (!v.ok) return v;
+    const { typed, login: l, provider: p } = v;
+    // A bare email invite IS its own recipient — no caller has to pass
+    // `email` separately for the common case of inviting an address directly.
+    const mail = String(email || (p === "google" ? l : "") || "").trim().toLowerCase();
 
     const existing = this.list().find((a) => provider(a) === p && a.login === l);
     if (existing) {
       // Already an active member (owner, or claimed by a real sign-in): there
       // is nothing pending to key, and re-typing their name is a no-op.
-      if (existing.id) return { ok: true, already: true };
+      if (existing.id) return { ok: true, already: true, login: l };
       // Still pending: re-inviting ROTATES the key rather than handing back
-      // the one already emailed, in case that email never arrived.
-      return { ok: true, already: true, key: this.inviteKey(l) };
+      // the one already emailed, in case that email never arrived. Also
+      // learns the recipient if this resend is the first time one was
+      // resolved, so a LATER invite typed under a different identifier can
+      // still find this row by email.
+      if (mail && !existing.email) {
+        existing.email = mail;
+        this.#save();
+      }
+      return { ok: true, already: true, key: this.inviteKey(l), login: l };
     }
+
+    if (mail) {
+      const byEmail = this.state.allowed.find((a) => !a.id && a.email === mail);
+      if (byEmail) return { ok: true, already: true, key: this.inviteKey(byEmail.login), login: byEmail.login };
+    }
+
     // Inviting somebody UN-BLOCKS them. The owner typing a name is the owner
     // saying yes, and a block left behind would make this button silently do
     // nothing — the worst shape a permission bug can take.
     this.state.blocked = this.state.blocked.filter((b) => !(provider(b) === p && b.login === l));
-    this.state.allowed.push({ provider: p, login: l, display: typed, id: "", added: new Date(this.now()).toISOString() });
+    this.state.allowed.push({ provider: p, login: l, display: typed, id: "", email: mail, added: new Date(this.now()).toISOString() });
     this.#save();
-    return { ok: true, already: false, key: this.inviteKey(l) };
+    return { ok: true, already: false, key: this.inviteKey(l), login: l };
+  }
+
+  /**
+   * Record what happened when hub/server.mjs tried to email a still-pending
+   * invite — persisted on the row so every later `/auth/whoami` poll shows it,
+   * not only the one HTTP response right after Invite/Resend was clicked. A
+   * no-op for a login with no pending row (already claimed, revoked, or never
+   * invited): there is nothing left to attach this to.
+   */
+  recordInviteEmail(login, { sent, error = "" } = {}) {
+    const l = String(login || "").trim().replace(/^@/, "").toLowerCase();
+    const entry = this.state.allowed.find((a) => a.login === l && !a.id);
+    if (!entry) return;
+    entry.emailSent = Boolean(sent);
+    entry.emailSentAt = new Date(this.now()).toISOString();
+    entry.emailError = sent ? "" : String(error || "");
+    this.#save();
+  }
+
+  /**
+   * The most recent activity timestamp (epoch ms) across every session this
+   * login holds, or 0 if it holds none — never signed in from a device, or
+   * its session aged out (`#sweep`/`session()`'s own TTL). This is the hub's
+   * existing per-device signal for "actually connected", reused rather than
+   * added to: `session()` bumps a session's `at` on every authenticated
+   * request that device makes, so it is a live heartbeat, not just the
+   * moment an invite was claimed.
+   */
+  lastSeen(login) {
+    const l = String(login || "").trim().replace(/^@/, "").toLowerCase();
+    let latest = 0;
+    for (const s of Object.values(this.state.sessions)) {
+      if (s.login === l && s.at > latest) latest = s.at;
+    }
+    return latest;
+  }
+
+  /**
+   * Remember that this person's machine just reported an event (`kind` "event":
+   * a hook POST was accepted) or their board just read the hub (`kind` "board").
+   * Diagnosis for the owner: a teammate whose events never arrive is otherwise
+   * indistinguishable from one who is not working. Kept in memory and written
+   * at most every 30s — a request-rate write would rewrite accounts.json
+   * several times a second; a crash loses seconds of a timestamp, not an account.
+   */
+  noteSeen(session, kind, info = {}) {
+    const r = this.#personOf(session);
+    if (!r) return;
+    const now = this.now();
+    const p = (this.state.presence[r.login] ||= {});
+    p[kind === "event" ? "eventAt" : "boardAt"] = now;
+    if (kind === "event") {
+      if (info.machine) p.machine = info.machine;
+      if (info.build) p.build = info.build;
+    }
+    if (!this.savedPresenceAt || now - this.savedPresenceAt > 30000) {
+      this.savedPresenceAt = now;
+      this.#save();
+    }
+  }
+
+  /** `{ eventAt, boardAt, machine, build }` — each null/"" when never seen. */
+  presenceOf(login) {
+    const p = this.state.presence[String(login || "").toLowerCase()] || {};
+    return { eventAt: p.eventAt || null, boardAt: p.boardAt || null, machine: p.machine || "", build: p.build || "" };
   }
 
   /**
@@ -611,13 +942,15 @@ export class Accounts {
    *  nobody who can add anyone, and the only repair is ssh. */
   revoke(login) {
     const l = String(login || "").trim().replace(/^@/, "").toLowerCase();
-    if (this.state.owner && this.state.owner.login === l) {
+    if (this.state.owner && idents(this.state.owner).some((i) => i.login === l)) {
       return { ok: false, error: "the owner cannot be removed" };
     }
     // Matched across providers on the login alone, which is unambiguous because
-    // the two namespaces are disjoint: only one of them can contain an "@".
-    const going = this.state.allowed.filter((a) => a.login === l);
-    this.state.allowed = this.state.allowed.filter((a) => a.login !== l);
+    // the two namespaces are disjoint: only one of them can contain an "@". Any
+    // identity a person has linked names them, and removing one removes ALL.
+    const named = (a) => idents(a).some((i) => i.login === l);
+    const going = this.state.allowed.filter(named);
+    this.state.allowed = this.state.allowed.filter((a) => !named(a));
 
     /* ⚠️ DELETION ALONE DOES NOT REVOKE ANYBODY ON THE WORKSPACE DOMAIN. They
      * were admitted by a RULE, not by this list, so removing their row just
@@ -630,16 +963,233 @@ export class Accounts {
      * This is for the case where they should keep the Google account and lose
      * zevet. */
     for (const a of going) {
-      if (a.id && !this.state.blocked.some((b) => samePerson(b, a))) {
-        this.state.blocked.push({ provider: provider(a), login: a.login, id: a.id, at: new Date(this.now()).toISOString() });
+      for (const i of idents(a)) {
+        if (i.id && !this.state.blocked.some((b) => samePerson(b, i))) {
+          this.state.blocked.push({ provider: i.provider, login: i.login, id: i.id, at: new Date(this.now()).toISOString() });
+        }
       }
     }
 
     for (const [tok, s] of Object.entries(this.state.sessions)) {
-      if (s.login === l) delete this.state.sessions[tok];
+      if (going.some((a) => owns(a, s))) delete this.state.sessions[tok];
     }
     this.#save();
     return { ok: true, removed: going.length > 0 };
+  }
+
+  /** The person a session (or any {provider, login, id}) belongs to, as a
+   *  read-only view for a response: every identity they have linked and the
+   *  names events may use for them. Never their email addresses. */
+  profile(ref) {
+    const r = ref && ref.id ? this.#personOf(ref) : this.#people().find((x) => idents(x).some((i) => i.login === String((ref && ref.login) || "").toLowerCase()));
+    if (!r) return null;
+    return {
+      name: r.display || r.login,
+      login: r.login,
+      owner: r === this.state.owner,
+      identities: idents(r).filter((i) => i.id).map((i) => ({ provider: i.provider, login: i.login })),
+      aliases: r.aliases || [],
+    };
+  }
+
+  /**
+   * Prove-and-add: `session` is who is signed in, `ident` is a SECOND identity
+   * that has just signed in through its own provider (the caller has already
+   * verified that with the provider — a typed address never reaches here).
+   * The identity joins the caller's person. If it was already somebody else's
+   * row, the caller has proved they control both, so the two become one.
+   */
+  link(session, ident, emails = []) {
+    const me = this.#personOf(session);
+    if (!me) return { ok: false, error: "not signed in" };
+    const id = { provider: provider(ident), login: String(ident.login || "").toLowerCase(), id: String(ident.id || ""), display: String(ident.display || ident.login) };
+    if (!id.login || !id.id) return { ok: false, error: "that account did not say who it is" };
+    if (this.#blocked(id)) return { ok: false, error: `${display(id)} was removed from this team` };
+    if (owns(me, id)) return { ok: true, already: true };
+    const other = this.#personOf(id);
+    let keep = me;
+    if (other) keep = this.#merge(me, other);
+    keep = this.#adopt(keep, id, verifiedEmails({ emails }));
+    this.#save();
+    return { ok: true, merged: Boolean(other), person: this.profile(keep) };
+  }
+
+  /** Take one identity off a person. Never their last real one — that would
+   *  be signing yourself out of the team. Returns `{ ok }`. */
+  unlink(session, target) {
+    const me = this.#personOf(session);
+    if (!me) return { ok: false, error: "not signed in" };
+    const want = { provider: provider(target), login: String((target && target.login) || "").toLowerCase() };
+    const all = idents(me);
+    const real = all.filter((i) => i.id);
+    const gone = real.find((i) => i.provider === want.provider && i.login === want.login);
+    if (!gone) return { ok: false, error: "that account is not linked to you" };
+    if (real.length < 2) return { ok: false, error: "that is your only sign-in — link another one first" };
+    const old = { provider: me.provider, login: me.login, id: me.id };
+    setIdents(me, all.filter((i) => i !== gone && !(i.provider === gone.provider && i.id === gone.id)));
+    if (me.login !== old.login) this.#repoint([old], me);
+    // The address it was known by stays a name events can use, not a proof.
+    me.aliases = uniqStrings([...(me.aliases || []), gone.login]);
+    this.#save();
+    return { ok: true, person: this.profile(me) };
+  }
+
+  /**
+   * Change somebody's display name. WHO MAY is the caller's decision (yourself,
+   * or the owner for anyone); this only refuses a name that would make two
+   * people indistinguishable. The old name and the actor string the caller's
+   * machine reports become aliases, so the events already on the board follow
+   * the new name instead of being orphaned under the old one.
+   */
+  rename(login, name, { actor = "" } = {}) {
+    const r = this.#people().find((x) => idents(x).some((i) => i.login === String(login || "").toLowerCase().replace(/^@/, "")));
+    if (!r) return { ok: false, error: "no such person" };
+    const next = cleanName(name);
+    if (!next) return { ok: false, error: "a name cannot be empty" };
+    const clash = this.#claimedBy(next);
+    if (clash && clash !== r) return { ok: false, error: `${next} is already somebody else's name` };
+    const was = r.display;
+    r.display = next;
+    r.named = true;
+    const a = cleanName(actor);
+    const keep = [...(r.aliases || []), was, ...(a && !(this.#claimedBy(a) && this.#claimedBy(a) !== r) ? [a] : [])].filter((x) => x && x.toLowerCase() !== next.toLowerCase());
+    r.aliases = uniqStrings(keep);
+    if (!r.aliases.length) delete r.aliases;
+    this.#save();
+    return { ok: true, person: this.profile(r) };
+  }
+
+  /** The one person a name (display, any login, any alias) belongs to. */
+  #claimedBy(name) {
+    const n = String(name).toLowerCase().replace(/^@/, "");
+    return this.#people().find((r) => this.#namesOf(r).includes(n));
+  }
+
+  #namesOf(r) {
+    return [r.display, ...idents(r).map((i) => i.login), ...(r.aliases || [])].filter(Boolean).map((x) => String(x).toLowerCase().replace(/^@/, ""));
+  }
+
+  /**
+   * OWNER-ONLY at the route: fold one person into another when the evidence
+   * rule cannot prove it (`andrew` and `@AndrewDoft`). `from` is a login or
+   * display name of a person — or, failing that, an actor name that only
+   * appears on events, which is then simply claimed as an alias.
+   */
+  combine(intoLogin, from) {
+    const find = (x) => {
+      const n = String(x || "").trim().toLowerCase().replace(/^@/, "");
+      return n ? this.#people().find((r) => idents(r).some((i) => i.login === n) || (r.display || "").toLowerCase() === n) : undefined;
+    };
+    const into = find(intoLogin);
+    if (!into) return { ok: false, error: "no such person to combine into" };
+    const src = find(from);
+    if (src === into) return { ok: true, already: true };
+    if (src) {
+      this.#merge(into, src);
+      this.#save();
+      return { ok: true, merged: true };
+    }
+    const actor = cleanName(from);
+    if (!actor) return { ok: false, error: "nothing to combine" };
+    const clash = this.#claimedBy(actor);
+    if (clash && clash !== into) return { ok: false, error: `${actor} already belongs to somebody else` };
+    into.aliases = uniqStrings([...(into.aliases || []), actor]);
+    this.#save();
+    return { ok: true, merged: false, alias: actor };
+  }
+
+  /**
+   * Merge every pair of people the STORED evidence proves are one human, and
+   * say what was merged and why. The evidence is exactly what sign-in uses:
+   * two signed-in people who share a verified email; a typed invite whose
+   * address is a signed-in person's verified one, or whose login is one of
+   * their own. Typing a name is never proof, so "andrew" + "@AndrewDoft" is not
+   * found here — that is `combine`, the owner's call. Idempotent: a second run
+   * finds nothing.
+   */
+  mergeProvable() {
+    const done = [];
+    for (let again = true; again; ) {
+      again = false;
+      const people = this.#people();
+      for (const a of people) {
+        for (const b of people) {
+          const why = a === b ? "" : this.#provablySame(a, b);
+          if (!why) continue;
+          const keep = this.#merge(a, b);
+          done.push({ kept: keep.login, absorbed: (keep === a ? b : a).login, why });
+          again = true;
+          break;
+        }
+        if (again) break;
+      }
+    }
+    if (done.length) this.#save();
+    return done;
+  }
+
+  #provablySame(a, b) {
+    const real = (r) => idents(r).some((i) => i.id);
+    const ea = emailsOf(a);
+    if (real(a) && real(b)) {
+      const shared = [...emailsOf(b)].find((e) => ea.has(e));
+      return shared ? `both hold the verified email ${shared}` : "";
+    }
+    if (real(a) && !real(b)) {
+      for (const i of idents(b)) {
+        if (idents(a).some((x) => x.id && x.provider === i.provider && x.login === i.login)) return `a pending invite for ${i.login}, who has signed in`;
+        if (i.provider === "google" && ea.has(i.login)) return `a pending invite for ${i.login}, a verified email of a signed-in person`;
+      }
+    }
+    return "";
+  }
+
+  /**
+   * Operator-declared proof (ZEVET_IDENTITY_LINKS): `who` (any login, name or
+   * alias of a member) holds the verified `email` — typically a GitHub-owner row
+   * that never carried one, so Masora's sign-in of the same human could not
+   * bind to it. Records the email, folds whoever it now provably duplicates
+   * (`mergeProvable`), and optionally sets the display name. Idempotent: a
+   * second run changes nothing and returns [].
+   */
+  linkEmail(who, email, display = "") {
+    const n = String(who || "").trim().toLowerCase().replace(/^@/, "");
+    const e = String(email || "").trim().toLowerCase();
+    const r = this.#people().find((x) => idents(x).some((i) => i.id) && this.#namesOf(x).includes(n));
+    if (!r || !e) return [];
+    const done = [];
+    if (!emailsOf(r).has(e)) {
+      const list = idents(r);
+      const i = list.find((x) => x.id);
+      i.emails = uniqStrings([...(i.emails || []), e]);
+      setIdents(r, list);
+      this.#save();
+      done.push(`${r.login} now holds ${e}`);
+    }
+    for (const m of this.mergeProvable()) done.push(`${m.absorbed} merged into ${m.kept} (${m.why})`);
+    const keep = this.#people().find((x) => emailsOf(x).has(e));
+    if (keep && display && keep.display !== display && [undefined, keep].includes(this.#claimedBy(display))) {
+      this.rename(keep.login, display);
+      done.push(`${keep.login} is shown as ${display}`);
+    }
+    return done;
+  }
+
+  /**
+   * Resolve the name an event was recorded under (a machine's `actor` string)
+   * to the person's CURRENT display name — so a rename, a linked identity and
+   * a merge all show up on events already in the log, without rewriting it.
+   * A name two people both claim is left alone rather than guessed.
+   */
+  actorResolver() {
+    const by = new Map();
+    for (const r of this.#people()) {
+      for (const n of new Set(this.#namesOf(r))) by.set(n, by.has(n) && by.get(n) !== r ? null : r);
+    }
+    return (actor) => {
+      const r = by.get(String(actor || "").toLowerCase().replace(/^@/, ""));
+      return r && r.display ? r.display : actor;
+    };
   }
 
   /**
@@ -682,6 +1232,7 @@ export class Accounts {
         secret: typeof raw.secret === "string" ? raw.secret : "",
         name: typeof raw.name === "string" ? raw.name : "",
         domain: typeof raw.domain === "string" ? raw.domain : "",
+        masoraWorkspace: typeof raw.masoraWorkspace === "string" ? raw.masoraWorkspace : "",
         owner: raw.owner && raw.owner.login ? tag(raw.owner) : null,
         allowed: Array.isArray(raw.allowed) ? raw.allowed.filter((a) => a && a.login).map(tag) : [],
         // A block with no id blocks nobody — `samePerson` needs one — so a
@@ -689,6 +1240,7 @@ export class Accounts {
         // never matches.
         blocked: Array.isArray(raw.blocked) ? raw.blocked.filter((b) => b && b.login && b.id).map(tag) : [],
         sessions,
+        presence: raw.presence && typeof raw.presence === "object" && !Array.isArray(raw.presence) ? raw.presence : {},
         createdAt: typeof raw.createdAt === "number" ? raw.createdAt : null,
         // A malformed entry (no id or no key) is dropped rather than kept as
         // a row that can never be fetched or deleted by id.
@@ -717,6 +1269,26 @@ export class Accounts {
     writeFileSync(tmp, JSON.stringify(this.state, null, 2), { mode: 0o600 });
     renameSync(tmp, this.file);
   }
+}
+
+/**
+ * Validate and normalise a typed invite identifier, without touching any
+ * state. Exported (not just inlined in `allow`) because hub/server.mjs needs
+ * to know the (provider, login) it resolved to BEFORE deciding whether an
+ * async lookup — a GitHub public-email fetch, to find somewhere to mail the
+ * invite — is even worth making; `allow` itself calls this too, so the two
+ * can never validate a login differently.
+ */
+export function invitableLogin(login) {
+  const typed = String(login || "").trim().replace(/^@/, "");
+  const l = typed.toLowerCase();
+  const p = l.includes("@") ? "google" : "github";
+  if (p === "google") {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(l)) return { ok: false, error: "that is not an email address" };
+  } else if (!/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/.test(l)) {
+    return { ok: false, error: "that is not a GitHub username or an email address" };
+  }
+  return { ok: true, typed, login: l, provider: p };
 }
 
 /** The default location, exported so server.mjs and the tests agree on it. */

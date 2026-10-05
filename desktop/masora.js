@@ -29,14 +29,26 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
+const { zevetHome, atomicWriteJson } = require("./zevet-home.js");
+const { cloudOrigin } = require("./hub-target.js");
 
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const CONFIG_PATH = path.join(HOME, "masora.json");
 
-// Masora runs on this machine (the Masora desktop app); usemasora.com only hosts downloads.
-const DEFAULT_URL = process.env.ZEVET_MASORA_URL || "http://127.0.0.1:3210";
+// Masora is the cloud app. ZEVET_MASORA_URL overrides; else the family descriptor's `cloud` (https only), else the
+// cloud origin. Read per call: Masora may write the descriptor later.
+function defaultUrl() {
+  if (process.env.ZEVET_MASORA_URL) return process.env.ZEVET_MASORA_URL;
+  try {
+    const kit = require("@masora/desktop-kit");
+    const cloud = (kit.readJson(path.join(kit.familyDir(), "masora.json")) || {}).cloud;
+    if (typeof cloud === "string" && /^https:\/\/[^\s/]+/i.test(cloud.trim())) return cloud.trim().replace(/\/+$/, "");
+  } catch {
+    // no kit, no descriptor: the cloud
+  }
+  return cloudOrigin();
+}
 
 /** Matches apps/connector/main.go's own `-poll-interval`/`-poll-deadline` defaults. */
 const POLL_INTERVAL_MS = 5000;
@@ -55,7 +67,7 @@ function readRaw() {
 
 function writeRaw(cfg) {
   fs.mkdirSync(HOME, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+  atomicWriteJson(CONFIG_PATH, cfg);
   try {
     fs.chmodSync(CONFIG_PATH, 0o600);
   } catch {
@@ -70,14 +82,25 @@ function writeRaw(cfg) {
  */
 function readConfig() {
   const raw = readRaw();
+  // `canonical` (added alongside the pair response's `token`) is the real
+  // identity of the paired owner and, when Masora sends one, replaces the
+  // older `member` (member_email) for display. An older Masora that has not
+  // shipped `canonical` yet never sends it, so this falls back to `member`
+  // unchanged -- that's what keeps pairing against one of those working.
+  const canonical = raw.canonical && typeof raw.canonical === "object" && !Array.isArray(raw.canonical) ? raw.canonical : null;
+  const canonicalName = canonical && typeof canonical.name === "string" && canonical.name ? canonical.name : "";
+  const canonicalEmail = canonical && typeof canonical.email === "string" && canonical.email ? canonical.email : "";
+  const legacyMember = typeof raw.member === "string" ? raw.member : "";
   return {
-    url: typeof raw.url === "string" && raw.url ? raw.url : DEFAULT_URL,
+    url: typeof raw.url === "string" && raw.url ? raw.url : defaultUrl(),
     paired: typeof raw.tokenEnc === "string" && raw.tokenEnc.length > 0,
     repos: raw.repos && typeof raw.repos === "object" && !Array.isArray(raw.repos) ? raw.repos : {},
     // Zevet Chat push (C1 `zevet_chat`). Off unless the person turned it on:
     // the per-repo opt-in above says nothing about chats, which have no repo.
     chat: raw.chat === true,
-    member: typeof raw.member === "string" ? raw.member : "",
+    member: canonicalName || canonicalEmail || legacyMember,
+    // The true account email of the stored credential (heartbeat `masora.account_email`).
+    account_email: canonicalEmail || (legacyMember.includes("@") ? legacyMember : ""),
   };
 }
 
@@ -88,15 +111,22 @@ function setChatPush(on) {
 
 function saveUrl(url) {
   const raw = readRaw();
-  writeRaw({ ...raw, url: String(url || "").trim() || DEFAULT_URL });
+  writeRaw({ ...raw, url: String(url || "").trim() || defaultUrl() });
   return readConfig();
 }
 
 /** `encrypt`/`decrypt` are `Buffer -> Buffer` / `Buffer -> string`, i.e.
- *  `electron.safeStorage.encryptString`/`decryptString` bound by the caller. */
-function saveToken(token, encrypt, member) {
+ *  `electron.safeStorage.encryptString`/`decryptString` bound by the caller.
+ *  `canonical`, when the pair response carried one, is `{name, email}` and
+ *  takes over the display in `readConfig()`'s `member` -- see there. */
+function saveToken(token, encrypt, member, canonical) {
   const raw = readRaw();
-  writeRaw({ ...raw, tokenEnc: encrypt(String(token)).toString("base64"), member: member || "" });
+  writeRaw({
+    ...raw,
+    tokenEnc: encrypt(String(token)).toString("base64"),
+    member: member || "",
+    canonical: canonical && typeof canonical === "object" && !Array.isArray(canonical) ? canonical : null,
+  });
 }
 
 function loadToken(decrypt) {
@@ -116,6 +146,7 @@ function unpair() {
   const raw = readRaw();
   delete raw.tokenEnc;
   delete raw.member;
+  delete raw.canonical;
   writeRaw(raw);
 }
 
@@ -270,7 +301,7 @@ function mcpServerEntry(baseUrl) {
 }
 
 module.exports = {
-  DEFAULT_URL,
+  defaultUrl,
   CONFIG_PATH,
   readConfig,
   saveUrl,

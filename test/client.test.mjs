@@ -6,7 +6,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, chmodSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, chmodSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -227,6 +227,44 @@ describe("what the hook reports", () => {
       assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
     } finally {
       await wts.release(wt);
+    }
+  });
+
+  test("an agent in a PLAIN git worktree (not zevet-made) also reports the origin repo", async () => {
+    // The zevet-made case above goes through desktop/agent-worktree.js's own
+    // sidecar JSON. An agent can just as easily be sitting in a worktree
+    // nobody but git knows about -- `git worktree add ../repo-fix-x`, run by
+    // hand or by the agent itself -- and the board must still recognise its
+    // activity as the origin repo's, not some unrelated repo named after the
+    // worktree's own folder.
+    const wtDir = path.join(path.dirname(repo.dir), `${path.basename(repo.dir)}-plainwt`);
+    execFileSync("git", ["worktree", "add", "-q", "-b", "plain-wt", wtDir], { cwd: repo.dir, stdio: "pipe" });
+    try {
+      const e = await send({ cwd: wtDir, hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: path.join(wtDir, "src", "db.ts") } });
+      assert.equal(e.repo, path.basename(repo.dir), "repo must be the origin's name, not the worktree directory's");
+      assert.equal(e.branch, "feature/invites");
+      assert.equal(e.target, "src/db.ts");
+      // git records the REAL path in commondir (macOS /private/var, Windows 8.3 -> long).
+      const root = realpathSync.native(repo.dir).replaceAll("\\", "/");
+      assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
+    } finally {
+      execFileSync("git", ["worktree", "remove", "-f", wtDir], { cwd: repo.dir, stdio: "pipe" });
+    }
+  });
+
+  test("an agent in the MAIN checkout editing a file in a SIBLING worktree still reports the file", async () => {
+    // Andrew's real shape (measured 2026-10-05: 8 of 8 file events on his hub had
+    // target null, so no sprite could ever ride a file): the session starts in
+    // the main checkout and edits `../repo-fix/...`. The path is outside `root`,
+    // but it is the same repo, and `src/db.ts` means the same file to everyone.
+    const wtDir = path.join(path.dirname(repo.dir), `${path.basename(repo.dir)}-siblingwt`);
+    execFileSync("git", ["worktree", "add", "-q", "-b", "sibling-wt", wtDir], { cwd: repo.dir, stdio: "pipe" });
+    try {
+      const e = await send({ cwd: repo.dir, hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: path.join(wtDir, "src", "db.ts") } });
+      assert.equal(e.repo, path.basename(repo.dir));
+      assert.equal(e.target, "src/db.ts");
+    } finally {
+      execFileSync("git", ["worktree", "remove", "-f", wtDir], { cwd: repo.dir, stdio: "pipe" });
     }
   });
 
@@ -683,7 +721,7 @@ describe("what the client actually presents to the hub", () => {
     const fresh = await startHub({ ZEVET_TOKEN: DERIVED });
     try {
       await hookWithConfig({ hub: fresh.base, secret: MASTER, actor: "derived-actor" }, fresh.base);
-      const { body } = await state(fresh.base, DERIVED);
+      const { body } = await state(fresh.base);
       assert.equal(body.events.at(-1)?.actor, "derived-actor", "the event never arrived");
     } finally {
       await fresh.stop();
@@ -697,9 +735,9 @@ describe("what the client actually presents to the hub", () => {
     // silence here is the evidence.
     const fresh = await startHub({ ZEVET_TOKEN: MASTER });
     try {
-      const before = (await state(fresh.base, MASTER)).body.events.length;
+      const before = (await state(fresh.base)).body.events.length;
       await hookWithConfig({ hub: fresh.base, secret: MASTER, actor: "leaky" }, fresh.base);
-      const { body } = await state(fresh.base, MASTER);
+      const { body } = await state(fresh.base);
       assert.equal(body.events.length, before, "the hub accepted something; the master secret went on the wire");
     } finally {
       await fresh.stop();
@@ -738,7 +776,7 @@ describe("what the client actually presents to the hub", () => {
     const fresh = await startHub();
     try {
       await hookWithConfig({ hub: fresh.base, token: TOKEN, actor: "legacy-actor" }, fresh.base);
-      const { body } = await state(fresh.base, TOKEN);
+      const { body } = await state(fresh.base);
       assert.equal(body.events.at(-1)?.actor, "legacy-actor");
     } finally {
       await fresh.stop();
@@ -751,12 +789,12 @@ describe("what the client actually presents to the hub", () => {
     // credential at all -- and the hook's two rules survive that untouched.
     const fresh = await startHub();
     try {
-      const before = (await state(fresh.base, TOKEN)).body.events.length;
+      const before = (await state(fresh.base)).body.events.length;
       const r = await hookWithConfig({ hub: fresh.base, secret: "not hex at all", token: TOKEN }, fresh.base);
       assert.equal(r.stdout, "", "rule 1: nothing on stdout");
       assert.equal(r.code, 0, "rule 2: exit 0");
       assert.match(r.stderr, /master secret is unusable/i, "and it says so on stderr, where it is harmless");
-      const { body } = await state(fresh.base, TOKEN);
+      const { body } = await state(fresh.base);
       assert.equal(
         body.events.length,
         before,

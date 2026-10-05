@@ -25,8 +25,11 @@ export interface ChatThread {
    *  bookkeeping reads this rather than a live launch preference that may
    *  have moved on by the time an event arrives. Null before the first send. */
   model: string | null;
-  /** The CLI the turn went to: claude, codex or opencode. */
+  /** The CLI the turn went to: claude, codex, opencode, or zevet (the router). */
   agent: string;
+  /** For a zevet turn: the model the router landed it on; "" otherwise. */
+  route: string;
+  routeWhy?: string;
 }
 
 export interface StoredMessage {
@@ -41,3 +44,5 @@ export function sendUser(thread: ChatThread, text: string, model?: string | null
 export function chatEvent(thread: ChatThread, evt: unknown): ChatThread;
 export function failTurn(thread: ChatThread, error: string): ChatThread;
 export function visibleMessages(thread: ChatThread): ThreadMessageLike[];
+export function draftAfter(draft: string, payload: unknown): string;
+export function overlayDraft(transcript: TranscriptState, draft: string): ThreadMessageLike[];

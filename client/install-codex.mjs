@@ -32,6 +32,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, realp
 import path from "node:path";
 import os from "node:os";
 import { listCodexHooks, ourHooks, trustBlockFor, stripTrustBlock } from "./codex-trust.mjs";
+import { zevetHome, atomicWriteJson } from "./zevet-home.mjs";
 
 export const BLOCK_START = "# zevet:hooks:start — managed block, do not edit by hand";
 export const BLOCK_END = "# zevet:hooks:end";
@@ -73,7 +74,7 @@ export function codexConfigPathFor(repo) {
  * machine to a hub the whole team can read.
  */
 export function codexReposPath() {
-  return path.join(process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet"), "codex-repos.json");
+  return path.join(zevetHome(), "codex-repos.json");
 }
 
 /** Read the opt-in list; a missing or corrupt file is an empty list, never a throw. */
@@ -91,8 +92,7 @@ export function readCodexRepos() {
 function writeCodexRepos(list) {
   const file = codexReposPath();
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(list, null, 2)}
-`, "utf8");
+  atomicWriteJson(file, list);
 }
 
 /** Match the hook's opt-in check: an alias and its target are one repo. This

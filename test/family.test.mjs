@@ -40,12 +40,12 @@ const feeds = {
 
 function rig(over = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "zevet-family-"));
-  const s = { paired: false, member: "", token: null, url: "", opened: [], updates: 0 };
+  const s = { paired: false, member: "", canonical: null, token: null, url: "", opened: [], updates: 0 };
   const f = new Family({
     dir,
-    readMasora: () => ({ url: s.url, paired: s.paired, member: s.member }),
+    readMasora: () => ({ url: s.url, paired: s.paired, member: s.member, account_email: (s.canonical && s.canonical.email) || "" }),
     saveUrl: (u) => (s.url = u),
-    saveToken: (t, m) => Object.assign(s, { paired: true, token: t, member: m }),
+    saveToken: (t, m, c) => Object.assign(s, { paired: true, token: t, member: m, canonical: c || null }),
     clearToken: () => Object.assign(s, { paired: false, token: null, member: "" }),
     openExternal: async (u) => void s.opened.push(u),
     runUpdate: async () => void s.updates++,
@@ -87,6 +87,42 @@ describe("auto-connect", () => {
     assert.equal(r.s.token, "tok-1");
     assert.equal(r.s.member, "a@b.co");
     assert.equal(r.s.url, web);
+  });
+
+  test("a known identity (e.g. a GitHub login) rides along in the pair request", async () => {
+    const r = rig({ readIdentity: () => ({ github_login: "octocat" }) });
+    r.masora();
+    r.key();
+    fake.pairs.length = 0;
+    assert.equal(await r.f.connect(), "connected");
+    assert.deepEqual(fake.pairs[0].identity, { github_login: "octocat" });
+  });
+
+  test("no known identity: the field is left off entirely, never sent blank", async () => {
+    const r = rig({ readIdentity: () => null });
+    r.masora();
+    r.key();
+    fake.pairs.length = 0;
+    assert.equal(await r.f.connect(), "connected");
+    assert.equal("identity" in fake.pairs[0], false);
+  });
+
+  test("an identity with only blank/empty values is treated the same as none", async () => {
+    const r = rig({ readIdentity: () => ({ email: "", github_login: undefined }) });
+    r.masora();
+    r.key();
+    fake.pairs.length = 0;
+    assert.equal(await r.f.connect(), "connected");
+    assert.equal("identity" in fake.pairs[0], false);
+  });
+
+  test("a canonical identity in the pair response replaces member_email for display", async () => {
+    const r = rig();
+    r.masora();
+    r.key();
+    fake.pair = { status: 200, body: { token: "t-canon", member_email: "old@b.co", canonical: { name: "Andrew", email: "andrew@real.co", aliases: [] } } };
+    assert.equal(await r.f.connect(), "connected");
+    assert.deepEqual(r.s.canonical, { name: "Andrew", email: "andrew@real.co", aliases: [] });
   });
 
   test("not a masora-desktop runtime: no pairing attempted", async () => {
@@ -147,7 +183,7 @@ describe("heartbeat and requests", () => {
     assert.equal(hb.pid, process.pid);
     assert.equal(hb.install_path, "C:/zevet");
     assert.equal(hb.running, true);
-    assert.deepEqual(hb.masora, { connected: true, member_email: "a@b.co" });
+    assert.deepEqual(hb.masora, { connected: true, member_email: "a@b.co", account_email: null, hub_email: null });
     assert.ok(Date.parse(hb.updated_at));
     r.f.stop();
     assert.equal(JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).running, false);
@@ -452,6 +488,43 @@ describe("team roster (Masora relay)", () => {
     assert.equal(hb.people.length, 2);
     assert.equal(hb.people[1].login, "bob");
   });
+
+  test("team.join calls joinTeam(team, key) — Masora's onboarding relay, D-615", async () => {
+    const calls = [];
+    const r = rig({
+      joinTeam: async (team, key) => {
+        calls.push({ team, key });
+        return { ok: true, login: "alice", owner: true, teamName: team };
+      },
+      readHubAuth: () => ({ hub: "https://hub.example", token: "tok" }),
+      fetchImpl: hubFetch({ "https://hub.example/auth/whoami": whoami("Masoretes", []) }),
+    });
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.join", team: "Masoretes", key: "k3y" }));
+    await r.f.pollRequest();
+    assert.deepEqual(calls, [{ team: "Masoretes", key: "k3y" }]);
+    // the roster refresh still ran afterward, same as team.invite/team.revoke
+    const hb = JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8"));
+    assert.equal(hb.team_name, "Masoretes");
+  });
+
+  test("team.join never throws out of pollRequest when joinTeam rejects or reports failure", async () => {
+    const r = rig({
+      joinTeam: async () => {
+        throw new Error("hub unreachable");
+      },
+      readHubAuth: () => null, // no session yet — this machine has not joined anything
+    });
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.join", team: "Masoretes", key: "bad" }));
+    await assert.doesNotReject(() => r.f.pollRequest());
+    // it still wrote a heartbeat (no session -> no roster, but the tick itself must not be lost)
+    assert.ok(existsSync(path.join(r.dir, "zevet.json")));
+  });
+
+  test("no joinTeam configured (the constructor default) is a no-op, not a throw", async () => {
+    const r = rig({ readHubAuth: () => null }); // rig() does not set joinTeam -> Family's own default applies
+    writeFileSync(path.join(r.dir, "zevet.request.json"), JSON.stringify({ action: "team.join", team: "x", key: "y" }));
+    await assert.doesNotReject(() => r.f.pollRequest());
+  });
 });
 
 describe("framing usemasora.com pages", () => {
@@ -464,5 +537,205 @@ describe("framing usemasora.com pages", () => {
     assert.equal(out["X-Frame-Options"], undefined);
     assert.equal(out["Content-Security-Policy"][0], "default-src 'self'; form-action 'self'");
     assert.deepEqual(out["Content-Type"], ["text/html"]);
+  });
+});
+
+describe("cloud credentials file (zevet.credentials.json)", () => {
+  const CLOUD = "https://app.usemasora.com";
+  const iso = (ms = 0) => new Date(Date.now() - ms).toISOString();
+  const cloudRig = (over = {}) => {
+    const r = rig({ allowLoopbackCloud: true, ...over });
+    r.cloudMasora = (extra = {}) => writeFileSync(path.join(r.dir, "masora.json"), JSON.stringify({ runtime: "masora-cloud", cloud: CLOUD, updated_at: iso(), ...extra }));
+    r.cred = (extra = {}) => writeFileSync(path.join(r.dir, "zevet.credentials.json"), JSON.stringify({ cloud: CLOUD, token: "palct_SECRET1", kind: "connector_device", member_email: "me@x.co", issued_at: iso(1000), ...extra }));
+    r.credPath = path.join(r.dir, "zevet.credentials.json");
+    r.hb = () => JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).masora;
+    return r;
+  };
+
+  test("happy path: stored via saveUrl+saveToken, file deleted, heartbeat connected with account_email", () => {
+    const r = cloudRig();
+    r.cloudMasora();
+    r.cred();
+    assert.equal(r.f.consumeCredentials(), "connected");
+    assert.equal(r.s.token, "palct_SECRET1");
+    assert.equal(r.s.url, CLOUD);
+    assert.equal(r.s.member, "me@x.co");
+    assert.equal(existsSync(r.credPath), false);
+    assert.deepEqual(r.hb(), { connected: true, member_email: "me@x.co", account_email: "me@x.co", hub_email: null });
+  });
+
+  test("a trailing slash on either cloud is normalised", () => {
+    const r = cloudRig();
+    r.cloudMasora({ cloud: CLOUD + "/" });
+    r.cred();
+    assert.equal(r.f.consumeCredentials(), "connected");
+    assert.equal(r.s.url, CLOUD);
+  });
+
+  test("loopback http cloud only under the test flag", () => {
+    const lo = "http://127.0.0.1:9";
+    const on = cloudRig();
+    on.cloudMasora({ cloud: lo });
+    on.cred({ cloud: lo });
+    assert.equal(on.f.consumeCredentials(), "connected");
+    const off = cloudRig({ allowLoopbackCloud: false });
+    off.cloudMasora({ cloud: lo });
+    off.cred({ cloud: lo });
+    assert.equal(off.f.consumeCredentials(), "ignored");
+    assert.equal(off.s.token, null);
+  });
+
+  test("wrong cloud: ignored, nothing stored", () => {
+    const r = cloudRig();
+    r.cloudMasora();
+    r.cred({ cloud: "https://evil.example" });
+    assert.equal(r.f.consumeCredentials(), "ignored");
+    assert.equal(r.s.token, null);
+  });
+
+  test("stale issued_at: ignored and deleted", () => {
+    const r = cloudRig();
+    r.cloudMasora();
+    r.cred({ issued_at: iso(11 * 60 * 1000) });
+    assert.equal(r.f.consumeCredentials(), "ignored");
+    assert.equal(r.s.token, null);
+    assert.equal(existsSync(r.credPath), false);
+  });
+
+  test("wrong prefix (palct_ required): ignored", () => {
+    const r = cloudRig();
+    r.cloudMasora();
+    r.cred({ token: "pvdt_voice" });
+    assert.equal(r.f.consumeCredentials(), "ignored");
+    assert.equal(r.s.token, null);
+  });
+
+  test("masora.json not cloud, or not fresh: file ignored and left alone", () => {
+    for (const extra of [{ runtime: "masora-desktop" }, { updated_at: iso(10 * 60 * 1000) }, { cloud: "http://app.usemasora.com" }]) {
+      const r = cloudRig();
+      r.cloudMasora(extra);
+      r.cred();
+      assert.equal(r.f.consumeCredentials(), "ignored");
+      assert.equal(r.s.token, null);
+      assert.equal(existsSync(r.credPath), true);
+    }
+  });
+
+  test("malformed JSON: ignored and deleted", () => {
+    const r = cloudRig();
+    r.cloudMasora();
+    writeFileSync(r.credPath, "{not json");
+    assert.equal(r.f.consumeCredentials(), "ignored");
+    assert.equal(existsSync(r.credPath), false);
+    r.cred({ token: 123 });
+    assert.equal(r.f.consumeCredentials(), "ignored");
+    assert.equal(existsSync(r.credPath), false);
+  });
+
+  test("persist failure keeps the file; the next poll retries", () => {
+    let boom = true;
+    const r = cloudRig({ saveToken: (t, m, c) => { if (boom) throw new Error("no keychain"); Object.assign(r.s, { paired: true, token: t, member: m, canonical: c }); } });
+    r.cloudMasora();
+    r.cred();
+    assert.equal(r.f.consumeCredentials(), "failed");
+    assert.equal(existsSync(r.credPath), true);
+    boom = false;
+    assert.equal(r.f.consumeCredentials(), "connected");
+    assert.equal(existsSync(r.credPath), false);
+  });
+
+  test("the token is never logged", () => {
+    const seen = [];
+    const keep = { log: console.log, error: console.error, warn: console.warn };
+    for (const k of Object.keys(keep)) console[k] = (...a) => seen.push(a.join(" "));
+    try {
+      const ok = cloudRig();
+      ok.cloudMasora();
+      ok.cred();
+      ok.f.consumeCredentials();
+      const bad = cloudRig({ saveToken: () => { throw new Error("no keychain"); } });
+      bad.cloudMasora();
+      bad.cred();
+      bad.f.consumeCredentials();
+    } finally {
+      Object.assign(console, keep);
+    }
+    assert.equal(seen.some((l) => l.includes("SECRET1")), false);
+  });
+
+  test("polled from the request loop", async () => {
+    const r = cloudRig();
+    r.cloudMasora();
+    r.cred();
+    await r.f.pollRequest();
+    assert.equal(r.s.token, "palct_SECRET1");
+  });
+
+  test("a rejected cloud credential (repair) flips the heartbeat to connected:false", async () => {
+    const r = cloudRig();
+    r.cloudMasora();
+    r.cred();
+    r.f.consumeCredentials();
+    assert.equal(r.hb().connected, true);
+    await r.f.repair();
+    assert.deepEqual(r.hb(), { connected: false, member_email: null, account_email: null, hub_email: null });
+  });
+});
+
+describe("one login: the credentials file's hub block", () => {
+  const CLOUD = "https://app.usemasora.com";
+  const HUB = { url: `${CLOUD}/hub/`, assertion: "HUBJWT" };
+  const iso = (ms = 0) => new Date(Date.now() - ms).toISOString();
+  const hubRig = (over = {}) => {
+    const joins = [];
+    const r = rig({ joinHub: async (u, a) => (joins.push([u, a]), { ok: true }), ...over });
+    r.joins = joins;
+    writeFileSync(path.join(r.dir, "masora.json"), JSON.stringify({ runtime: "masora-cloud", cloud: CLOUD, updated_at: iso() }));
+    r.cred = (hub) => writeFileSync(path.join(r.dir, "zevet.credentials.json"), JSON.stringify({ cloud: CLOUD, token: "palct_S", kind: "connector_device", member_email: "me@x.co", issued_at: iso(1000), ...(hub ? { hub } : {}) }));
+    return r;
+  };
+  const settle = () => new Promise((res) => setTimeout(res, 20));
+
+  test("redeemed at the hub on the cloud's own origin, the trailing slash trimmed", async () => {
+    const r = hubRig();
+    r.cred(HUB);
+    assert.equal(r.f.consumeCredentials(), "connected");
+    await settle();
+    assert.deepEqual(r.joins, [[`${CLOUD}/hub`, "HUBJWT"]]);
+  });
+
+  test("a hub on another origin, over http, or with no assertion is never called", async () => {
+    for (const hub of [{ url: "https://evil.example/hub", assertion: "x" }, { url: "http://app.usemasora.com/hub", assertion: "x" }, { url: `${CLOUD}/hub`, assertion: "" }, { url: "nope", assertion: "x" }]) {
+      const r = hubRig();
+      r.cred(hub);
+      assert.equal(r.f.consumeCredentials(), "connected");
+      await settle();
+      assert.deepEqual(r.joins, [], JSON.stringify(hub));
+    }
+  });
+
+  test("no hub block: no hub call; a failing hub does not undo the connection", async () => {
+    const r = hubRig();
+    r.cred();
+    assert.equal(r.f.consumeCredentials(), "connected");
+    await settle();
+    assert.deepEqual(r.joins, []);
+    const bad = hubRig({ joinHub: async () => { throw new Error("down"); } });
+    bad.cred(HUB);
+    assert.equal(bad.f.consumeCredentials(), "connected");
+    await settle();
+    assert.equal(bad.s.token, "palct_S");
+  });
+
+  test("the heartbeat reports hub_email only once a whoami resolved a team", async () => {
+    const hb = (r) => JSON.parse(readFileSync(path.join(r.dir, "zevet.json"), "utf8")).masora.hub_email;
+    const r = hubRig({ readIdentity: () => ({ email: "me@x.co" }), readHubAuth: () => ({ hub: CLOUD + "/hub", token: "t" }),
+      fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true, team: "t", teamName: "Acme", people: [] }) }) });
+    r.f.heartbeat();
+    assert.equal(hb(r), null);
+    r.cred(HUB);
+    r.f.consumeCredentials();
+    await settle();
+    assert.equal(hb(r), "me@x.co");
   });
 });

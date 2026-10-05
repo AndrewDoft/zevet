@@ -3,7 +3,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { tempDir, ROOT } from "./helpers.mjs";
@@ -75,8 +75,18 @@ describe("codex and opencode run a chat through Code's own invocation", () => {
   test("no folder: the most restrictive posture, in the chat's neutral folder", () => {
     const c = chats.create("andrew");
     const f = fake();
-    cli.createCli({ agent: "codex", id: "codex-cli", startConsole: f.startConsole })
-      .open({ chat: chats.read(c.id), model: "gpt-5.5", mode: "dangerous", onEvent() {} });
+    // codex only gets a -m its own models_cache.json confirms: give it one.
+    const fakeHome = tempDir("zevet-chatwork-home-");
+    mkdirSync(path.join(fakeHome.dir, ".codex"));
+    writeFileSync(path.join(fakeHome.dir, ".codex", "models_cache.json"), JSON.stringify({ models: [{ slug: "gpt-5.5" }] }));
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    Object.assign(process.env, { HOME: fakeHome.dir, USERPROFILE: fakeHome.dir });
+    try {
+      cli.createCli({ agent: "codex", id: "codex-cli", startConsole: f.startConsole })
+        .open({ chat: chats.read(c.id), model: "gpt-5.5", mode: "dangerous", onEvent() {} });
+    } finally {
+      for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+    }
     const { args, cwd } = f.calls[0];
     assert.deepEqual(args.slice(0, 1), ["exec"]);
     assert.ok(args.join(" ").includes("--sandbox read-only"), "plain chat stays read-only whatever the posture");
@@ -227,13 +237,13 @@ describe("the rail is Code's rail", () => {
 });
 
 describe("every provider is offered", () => {
-  test("Chat lists all three CLIs and Gemini; a missing one is a Connect chip, not a missing group", () => {
+  test("Chat offers the rows Code does — the agents it can run, and Zevet — with no Connect-chip branch", () => {
     const c = src("board", "src", "components", "composercontrols.tsx");
-    assert.match(c, /CHAT_AGENTS as readonly string\[\]\)\.includes\(a\.name\)/);
-    assert.match(c, /name: "gemini", ok: false/);
+    assert.match(c, /a\.ok && \(CHAT_AGENTS as readonly string\[\]\)\.includes\(a\.name\)/);
+    assert.ok(!/name: "gemini", ok: false/.test(c), "the synthetic gemini row is back");
     const m = src("board", "src", "components", "model-choice.tsx");
-    assert.match(m, /data-slot="connect-chip"/);
-    assert.match(m, /disabled: Boolean\(resetAt\) \|\| !a\.ok/);
+    assert.ok(!/connect-chip|PROVIDER_LABEL/.test(m), "Chat's divergent group heading / chip is back");
+    assert.match(m, /disabled: Boolean\(resetAt\),/);
   });
 
   test("the pick drives the run: the store sends the agent and model, not a claude-only fallback", () => {

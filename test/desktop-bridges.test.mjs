@@ -49,9 +49,9 @@ function stripComments(src) {
 
 /** The body of one `ipcMain.handle("channel", …)`, up to the next handler. */
 function handlerBody(channel) {
-  const start = main.indexOf(`ipcMain.handle("${channel}"`);
+  const start = main.indexOf(`bridge.handle("${channel}"`);
   assert.ok(start >= 0, `main.js has no handler for ${channel}`);
-  const after = main.indexOf("ipcMain.handle(", start + 10);
+  const after = main.indexOf("bridge.handle(", start + 10);
   return main.slice(start, after < 0 ? main.length : after);
 }
 
@@ -101,7 +101,7 @@ describe("the bridge surface the renderer is written against", () => {
     // registered for 'local:stats'" — which reaches the renderer as an
     // exception from a call that looks perfectly well formed.
     const invoked = [...preload.matchAll(/ipcRenderer\.invoke\("([^"]+)"/g)].map((m) => m[1]);
-    const handled = new Set([...main.matchAll(/ipcMain\.handle\("([^"]+)"/g)].map((m) => m[1]));
+    const handled = new Set([...main.matchAll(/bridge\.handle\("([^"]+)"/g)].map((m) => m[1]));
     assert.ok(invoked.length >= 15, `only found ${invoked.length} invoke calls — did the scrape break?`);
     for (const channel of new Set(invoked)) {
       assert.ok(handled.has(channel), `preload invokes "${channel}" and main.js handles nothing of that name`);
@@ -117,6 +117,14 @@ describe("the bridge surface the renderer is written against", () => {
       // the renderer did not ask for, and the renderer here is a page served by
       // the hub. Adding one is a decision, so it costs an edit to this line and
       // a sentence saying why.
+      //   local:agentAttached — one console the board did not start (API spawn or a
+      //   schedule), same content the agentEvent stream and `local:consoles` already
+      //   carry; it only says the console exists.
+      //   local:boardRequest — the loopback agent API (desktop/agent-api.js,
+      //   `via: "board"`) asking the board to start or message an agent through
+      //   its own actions. Carries what the API caller sent (agent, folder,
+      //   prompt, model), which only a holder of the 0600 token file can
+      //   send; the answer is an invoke (boardReply) carrying a console id.
       //   local:indexEvent — code-index progress. Model download bytes and
       //   refresh counts, so an 86MB fetch is not a frozen button. Carries no
       //   file contents and no paths outside the workspace the user opened.
@@ -154,7 +162,7 @@ describe("the bridge surface the renderer is written against", () => {
       //   after a save/toggle/remove round-trip it initiated itself. Carries
       //   the same schedule records local:schedules already returns to an
       //   invoke, from a click — no new data crosses the boundary here.
-      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentEvent", "local:askRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
+      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentAttached", "local:agentEvent", "local:askRequest", "local:boardRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {
@@ -264,7 +272,7 @@ describe("the key, the secret and the socket stay in the main process", () => {
       "closing the board window leaves its agents running",
     );
     assert.match(main, /app\.on\("before-quit", stopAllConsoles\)/, "quitting leaves agents running");
-    assert.match(main, /ipcMain\.handle\("local:consoles"/, "a reloaded board cannot ask for its consoles");
+    assert.match(main, /bridge\.handle\("local:consoles"/, "a reloaded board cannot ask for its consoles");
     assert.match(preload, /consoles: \(\) => ipcRenderer\.invoke\("local:consoles"\)/);
     assert.match(preload, /forgetAgent: \(id\) => ipcRenderer\.invoke\("local:forgetAgent", id\)/);
   });
@@ -343,6 +351,24 @@ describe("the auth migration: one resolver, no raw credentials", () => {
     );
   });
 
+  test("a Finish click that types nothing new can never drop an existing session", () => {
+    // Real incident: Kai signed in with GitHub, main.js wrote a working
+    // `session` — then a stale value already sitting in the "Other" manual
+    // key field (autocomplete="off" does not stop a browser's own
+    // password-manager autofill reaching a type="password" input) made
+    // Finish's save() call fall into a branch that wrote a bare
+    // {hub, token, actor} literal, dropping `session` and `secret` both.
+    // The fix spreads `existing` instead of naming fields, so nothing already
+    // on disk can be dropped by a save that typed nothing NEW and valid.
+    const body = stripComments(handlerBody("zevet:save"));
+    assert.match(body, /writeConfig\(\{\s*\.\.\.existing,\s*hub,\s*actor:/, "the keep-what-you-have path no longer spreads `existing`");
+    assert.doesNotMatch(
+      body,
+      /writeConfig\(\{\s*hub,\s*token:\s*typed/,
+      "a legacy-token branch still writes a bare {hub, token, actor} literal that drops session/secret",
+    );
+  });
+
   test("the credential resolver never loads secret.mjs from the hub's update directory", () => {
     // ~/.zevet/client is where the HUB pushes client files. A secret.mjs from
     // there could make deriveAuthToken return the master secret itself.
@@ -413,7 +439,7 @@ describe("the workspace guard is still in front of every new handler", () => {
 });
 
 describe("every module main.js requires is actually in the installer", () => {
-  test("nothing main.js requires is left out of build.files", () => {
+  test("nothing main.js requires is left out of payload.files", () => {
     // ⚠️ THIS ONE FAILS ONLY IN A PACKAGED BUILD, which is the worst place for
     // a failure to first appear. `electron-builder` treats `files` as an
     // allowlist: a module that is required at the top of main.js and absent
@@ -426,11 +452,11 @@ describe("every module main.js requires is actually in the installer", () => {
     // written. Asserted from the require statements rather than from a list,
     // so the next module added needs no one to remember this file exists.
     const pkg = JSON.parse(readFileSync(path.join(DESKTOP, "package.json"), "utf8"));
-    const packaged = new Set(pkg.build.files);
-    const required = [...stripComments(main).matchAll(/require\("\.\/([^"]+)"\)/g)].map((m) => m[1]);
+    const packaged = new Set(pkg.payload.files);
+    const required = [...stripComments(main).matchAll(/(?<![.\w])require\("\.\/([^"]+)"\)/g)].map((m) => m[1]);
     assert.ok(required.length >= 4, `only found ${required.length} local requires — did the scrape break?`);
     for (const file of new Set(required)) {
-      assert.ok(packaged.has(file), `main.js requires ./${file} and build.files does not ship it`);
+      assert.ok(packaged.has(file), `main.js requires ./${file} and payload.files does not ship it`);
     }
   });
 
@@ -447,11 +473,11 @@ describe("every module main.js requires is actually in the installer", () => {
     // from __dirname, and the requires of every local module that is packaged,
     // transitively.
     const pkg = JSON.parse(readFileSync(path.join(DESKTOP, "package.json"), "utf8"));
-    const packaged = new Set(pkg.build.files);
+    const packaged = new Set(pkg.payload.files);
 
     const byPath = [...stripComments(main).matchAll(/__dirname,\s*"([^"]+\.(?:js|mjs|cjs|json|html))"/g)].map((m) => m[1]);
     for (const file of new Set(byPath)) {
-      assert.ok(packaged.has(file), `main.js reaches ./${file} by path and build.files does not ship it`);
+      assert.ok(packaged.has(file), `main.js reaches ./${file} by path and payload.files does not ship it`);
     }
 
     // Transitive: what the shipped modules themselves pull in.
@@ -467,10 +493,10 @@ describe("every module main.js requires is actually in the installer", () => {
       } catch {
         continue; // a glob or a directory entry, not a file we can read
       }
-      for (const [, dep] of stripComments(src).matchAll(/require\("\.\/([^"]+)"\)/g)) {
+      for (const [, dep] of stripComments(src).matchAll(/(?<![.\w])require\("\.\/([^"]+)"\)/g)) {
         assert.ok(
           packaged.has(dep),
-          `${file} requires ./${dep} and build.files does not ship it`,
+          `${file} requires ./${dep} and payload.files does not ship it`,
         );
         if (!seen.has(dep)) queue.push(dep);
       }
@@ -514,5 +540,78 @@ describe("the file watcher is wired to the window, not to the app", () => {
     assert.doesNotMatch(body, /if \(!dir\) return/, "an unknown root still skips the removal");
     assert.match(body, /fileWatch\.unwatch\(/, "nothing is ever unwatched");
     assert.match(body, /dir \|\|/, "there is no fallback for a root that left the allowlist");
+  });
+});
+
+describe("the hub domain migration never blocks or overreaches", () => {
+  function fnBody(signature) {
+    const start = main.indexOf(signature);
+    assert.ok(start >= 0, `${signature} not found in main.js`);
+    // Balance braces from the first `{` after the signature, rather than a
+    // fixed-line slice: this file's functions are not a stable length, and a
+    // slice that stopped short (or ran long, into the NEXT function) would
+    // pass or fail these assertions for a reason that has nothing to do with
+    // migrateHubDomain itself.
+    const open = main.indexOf("{", start);
+    let depth = 0;
+    for (let i = open; i < main.length; i++) {
+      if (main[i] === "{") depth++;
+      else if (main[i] === "}") {
+        depth--;
+        if (depth === 0) return main.slice(start, i + 1);
+      }
+    }
+    throw new Error(`${signature}: unbalanced braces`);
+  }
+
+  test("only a config still on the legacy default is ever touched", () => {
+    const body = stripComments(fnBody("async function migrateHubDomain"));
+    assert.match(body, /\[LEGACY_HUB, DOMAIN_HUB\]\.includes\(.*\)\)\s*return cfg/, "a hub the user or an admin set on purpose must be an immediate no-op");
+  });
+
+  test("the probe is short and bounded, and a failure of any kind keeps the old hub", () => {
+    const body = stripComments(fnBody("async function migrateHubDomain"));
+    assert.match(body, /setTimeout\(\(\) => ac\.abort\(\), 2000\)/, "the probe must not be allowed to hang");
+    assert.match(body, /catch\s*\{\s*return cfg;\s*\}/, "any probe failure (no DNS yet, no route, non-200) must keep cfg untouched");
+    assert.match(body, /if \(!res\.ok\) return cfg/, "a non-200 from the new host must not be treated as success");
+  });
+
+  test("success rewrites cfg.hub to hostedHub() and persists it", () => {
+    const body = stripComments(fnBody("async function migrateHubDomain"));
+    assert.match(body, /writeConfig\(migrated\)/);
+    assert.match(body, /hub:\s*hostedHub\(\)/);
+  });
+
+  test("openBoard runs before the migration check, never after it", () => {
+    // The same reasoning as the updater a few lines above it in main.js: a
+    // network check — even a bounded, 2-second one — has no business
+    // delaying a window that could have opened already.
+    const openIdx = main.indexOf("if (cfg) openBoard(cfg);");
+    const migrateIdx = main.indexOf("void migrateHubDomain(cfg)");
+    assert.ok(openIdx >= 0 && migrateIdx >= 0, "both call sites must exist in app.whenReady");
+    assert.ok(openIdx < migrateIdx, "migrateHubDomain must be fired after openBoard, not before it");
+  });
+
+  test("a migration moves the open board to the new hub (the IPC guard reads config.json live)", () => {
+    // 0.2.103: the board opened on hub.usemasora.com, the migration wrote app.usemasora.com/hub 2 s later, and
+    // every bridge call from the still-open board was refused as a foreign sender until a restart.
+    const at = main.indexOf("void migrateHubDomain(cfg)");
+    const tail = stripComments(main.slice(at, at + 700));
+    assert.match(tail, /cfg\.hub = m\.hub/, "openBoard's reconnect closure must follow the new hub");
+    assert.match(tail, /boardWindow\.loadURL\(`\$\{m\.hub/, "the open board must be navigated to the migrated hub");
+  });
+});
+
+describe("agents the board did not start are pushed to it, not only replayed on reload", () => {
+  test("the API spawn and a scheduled run announce their console; the board attaches it once", () => {
+    assert.match(main, /toBoard\("local:agentAttached", entry\)/, "no push: an API-spawned agent is invisible outside its repo until a reload");
+    const api = main.slice(main.indexOf("async function startAgentApi("));
+    assert.match(api, /announceConsole\(r\.id\)/, "API spawns are never announced");
+    const sched = main.slice(main.indexOf("async function runDueSchedules("), main.indexOf("\nlet scheduleTimer"));
+    assert.match(sched, /announceConsole\(started\.id\)/, "scheduled runs are never announced");
+    assert.match(preload, /onAgentAttached: \(fn\) => subscribe\("local:agentAttached", fn\)/);
+    const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
+    assert.match(board, /bridge\.local\.onAgentAttached\(\(h\) => reattachConsoles\(\[h\]\)\)/);
+    assert.match(board, /myConsoles\.some\(\(x\) => x\.id === h\.id\)\) continue/, "reattach must skip a console the board already holds");
   });
 });

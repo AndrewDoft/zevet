@@ -1,9 +1,9 @@
 {
   "name": "zevet-desktop",
-  "version": "0.2.70",
+  "version": "0.2.118",
   "private": true,
   "description": "zevet — watch your team's coding agents",
-  "main": "main.js",
+  "main": "bootstrap.js",
   "author": "Andrew Doft",
   "scripts": {
     "start": "electron .",
@@ -11,32 +11,34 @@
     "dist": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --publish never",
     "dist:win": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --win --publish never",
     "dist:mac": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --mac --publish never",
-    "smoke:mac": "node ../scripts/smoke-macos.mjs"
+    "smoke:mac": "node ../scripts/smoke-macos.mjs",
+    "smoke:win": "node ../scripts/smoke-windows.mjs",
+    "repro:fresh-silent": "node ../scripts/repro-fresh-silent-install.mjs"
+  },
+  "dependencies": {
+    "@masora/desktop-kit": "github:AndrewDoft/desktop-kit#v0.2.3",
+    "@sentry/electron": "7.20.0"
   },
   "devDependencies": {
     "@electron/osx-sign": "1.3.1",
-    "electron": "38.1.2",
-    "electron-builder": "25.1.8"
+    "electron": "44.4.5",
+    "electron-builder": "26.17.0"
   },
   "optionalDependencies": {
     "@huggingface/transformers": "4.3.0"
   },
-  "build": {
-    "afterPack": "./sign-macos.cjs",
-    "appId": "com.andrewdoft.zevet",
-    "productName": "zevet",
-    "copyright": "Copyright © 2026 Andrew Doft",
-    "directories": {
-      "output": "out",
-      "buildResources": "build"
-    },
+  "payload": {
     "files": [
       "main.js",
+      "payload-swap.js",
       "runtime.js",
       "preload.js",
       "local-fs.js",
       "agent-console.js",
+      "zevet-router.js",
       "console-log.js",
+      "board-ask.js",
+      "console-persistence.js",
       "agent-worktree.js",
       "auto-title.js",
       "doc-sync.js",
@@ -47,30 +49,65 @@
       "ask-server.js",
       "computer.js",
       "zevet-mcp.js",
+      "permit-grants.js",
       "embedder.js",
       "index-capability.js",
       "code-index.js",
-      "app-update.js",
       "zevet-voice.js",
       "agent-sessions.js",
+      "workspace-root.js",
+      "api-root-lease.js",
       "agent-catalogs.js",
       "github-signin.js",
       "hub-target.js",
+      "reconnect.js",
       "google-signin.js",
       "masora.js",
       "masora-link.js",
+      "open-safe.js",
+      "zevet-home.js",
+      "ipc-guard.js",
+      "ipc-table.js",
       "family.js",
+      "reporting-health.js",
+      "family-index.js",
+      "idle-install.js",
       "masora-connect.js",
       "masora-push.js",
       "credentials.js",
       "credential-ladder.js",
       "credential-usage.js",
+      "agent-engine.js",
+      "agent-api.js",
       "chat.js",
       "chat-claude.js",
       "chat-cli.js",
+      "chat-zevet.js",
+      "repo-privacy.js",
+      "sentry.js",
+      "user-report.js",
       "setup.html",
       "fonts/**",
-      "build/icon.png",
+      "build/icon.png"
+    ]
+  },
+  "build": {
+    "afterPack": "./sign-macos.cjs",
+    "afterSign": "./staple-macos.cjs",
+    "afterAllArtifactBuild": "./notarize-dmg.cjs",
+    "appId": "com.andrewdoft.zevet",
+    "productName": "zevet",
+    "copyright": "Copyright © 2026 Andrew Doft",
+    "directories": {
+      "output": "out",
+      "buildResources": "build"
+    },
+    "files": [
+      "bootstrap.js",
+      "payload-config.js",
+      "update-signing.js",
+      "app-update.js",
+      "update-rollback.js",
       "!out/**",
       "!make-icon.mjs",
       "!node_modules/onnxruntime-web/**",
@@ -78,6 +115,10 @@
       "!node_modules/onnxruntime-node/bin/napi-v6/*/*/{DirectML.dll,dxcompiler.dll,dxil.dll}"
     ],
     "extraResources": [
+      {
+        "from": "app-core",
+        "to": "app-core"
+      },
       {
         "from": "../client",
         "to": "client",

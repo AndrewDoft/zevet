@@ -58,32 +58,50 @@ describe("Disconnect GitHub/Google appears for an actually signed-in person (P1)
   });
 });
 
-describe("email invitations: a standing per-row fallback (Copy invite / mailto) beside the mailer", () => {
-  const settings = src("board/src/components/settings.tsx");
-  const account = settings.slice(settings.indexOf("function AccountSection"));
+// Andrew, verbatim: "the copy invite is different from what is actually
+// emailed, since the copy invite doesnt contain the key." Replaced the old
+// per-provider mailto fallback (Copy invite/Email, google-only, no key) with
+// PendingRow: every pending row — any provider — gets Resend, which is the
+// SAME /auth/allow call the mailer runs on, so Copy can only ever hand back
+// exactly what would be (or was) emailed.
+describe("email invitations: Resend/Copy are the mailer's own call, for every provider", () => {
+  // The invite UI lives in invite.tsx, shared by Settings and the rail's "+".
+  const invite = src("board/src/components/invite.tsx");
+  const settings = src("board/src/components/settings.tsx") + invite;
+  const row = invite.slice(invite.indexOf("function PendingRow"), invite.indexOf("export function handle"));
 
-  test("only a PENDING email identity (provider google, not yet signed in) gets delivery controls", () => {
-    assert.match(account, /const emailInvite = p\.pending && p\.provider === "google" \? p\.login : "";/);
+  test("no per-provider gate: Resend is offered on any pending row, not just a google identity", () => {
+    assert.doesNotMatch(row, /provider === "google"/);
+    assert.match(row, /canManage && pending/);
   });
 
-  test("Copy invite writes to the clipboard, and Email is a mailto: link — a client-side fallback, not the mailer's own send", () => {
-    assert.match(account, /onClick=\{\(\) => copyInvite\(teamLabel\)\}/);
-    assert.match(account, /href=\{mailtoInvite\(emailInvite, teamLabel\)\}/);
+  test("Resend and Copy both come from /auth/allow's own response — no client-built invite string", () => {
+    assert.match(row, /fetch\("\/auth\/allow"/);
+    assert.match(row, /copyText\(state\.text\)/);
+    // The old client-side composer (a bare "Join <team> on Zevet" line with
+    // no key) is gone outright, not just unused.
+    assert.doesNotMatch(settings, /function inviteLine/);
+    assert.doesNotMatch(settings, /function mailtoInvite/);
   });
 
-  test("the mailto and the copied line both carry the download link, no SHA or size", () => {
-    assert.match(settings, /https:\/\/usemasora\.com\/zevet/);
-    const helpers = settings.slice(settings.indexOf("function inviteLine"), settings.indexOf("function AccountSection"));
-    assert.doesNotMatch(helpers, /sha256|\bsize\b/i);
+  test("a failed send is shown as failed, never silently folded into Sent", () => {
+    assert.match(row, /phase === "failed"/);
+    assert.match(row, /var\(--bad\)/);
+  });
+
+  test("the download link, team name and key are generated in ONE place (hub/mailer.mjs), not duplicated client-side", () => {
+    const mailer = src("hub/mailer.mjs");
+    assert.match(mailer, /https:\/\/usemasora\.com\/zevet/);
+    assert.match(mailer, /Key: \$\{key\}/);
+    assert.doesNotMatch(mailer, /sha256|\bsize\b/i);
   });
 });
 
 describe("creating a team via Google Workspace: the owner's domain toggle", () => {
-  const settings = src("board/src/components/settings.tsx");
-  const account = settings.slice(settings.indexOf("function AccountSection"));
+  const account = src("board/src/components/invite.tsx");
 
   test("the toggle only ever appears for the owner, and only once Google has offered a domain", () => {
-    assert.match(account, /if \(owner && availableDomain\) \{/);
+    assert.match(account, /owner && availableDomain \? \(/);
   });
 
   test("checked reflects the ACTIVE rule (googleDomain), not merely that one is available", () => {

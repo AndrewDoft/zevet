@@ -12,10 +12,11 @@
  */
 import { appendAgentPayload, appendUserText, closeTranscript, emptyTranscript } from "./transcript.mjs";
 import { usageOf } from "./usage.mjs";
+import { runningModelName } from "./models.mjs";
 
 /** @returns {import("./chat-stream.d.mts").ChatThread} */
 export function emptyChatThread() {
-  return { transcript: emptyTranscript(), draft: "", busy: false, usage: null, slashCommands: null, model: null, agent: "claude" };
+  return { transcript: emptyTranscript(), draft: "", busy: false, usage: null, slashCommands: null, model: null, agent: "claude", route: "" };
 }
 
 /** A saved chat ({role, text}[]) as a closed thread. */
@@ -29,7 +30,7 @@ export function fromStored(messages) {
       t = closeTranscript(t, { code: 0 });
     }
   }
-  return { transcript: t, draft: "", busy: false, usage: null, slashCommands: null, model: null, agent: "claude" };
+  return { transcript: t, draft: "", busy: false, usage: null, slashCommands: null, model: null, agent: "claude", route: "" };
 }
 
 let turns = 0;
@@ -49,7 +50,10 @@ let turns = 0;
  *  `agent` is the CLI the turn went to (claude|codex|opencode): each speaks its
  *  own JSONL, and it picks the vocabulary transcript.mjs reads it with. */
 export function sendUser(thread, text, model, agent) {
-  const t = appendUserText(thread.transcript, text);
+  // The switch rule (transcript.mjs appendUserText) names the model this
+  // prompt goes to: "Zevet" for the router, else the model's display name.
+  const on = (agent || thread.agent) === "zevet" ? "Zevet" : model ? runningModelName("", model) : "";
+  const t = appendUserText(thread.transcript, text, on);
   const messages = t.messages.concat({ id: `zc-${++turns}`, role: "assistant", content: [], status: { type: "running" } });
   return {
     ...thread,
@@ -60,12 +64,18 @@ export function sendUser(thread, text, model, agent) {
     slashCommands: thread.slashCommands,
     model: model ?? thread.model ?? null,
     agent: agent || thread.agent || "claude",
+    route: "",
   };
 }
 
 /** One `chat:event` evt from the desktop side. */
 export function chatEvent(thread, evt) {
   if (!evt || typeof evt !== "object") return thread;
+  // A routed turn that ended on codex or opencode (zevet-router.js): no
+  // process exit follows, so this is its end. Same close as a clean exit.
+  if (evt.type === "turn_end") {
+    return { ...thread, transcript: thread.busy ? closeTranscript(thread.transcript, { code: 0 }) : thread.transcript, draft: "", busy: false };
+  }
   if (evt.type === "exit") {
     // Mid-turn and not stopped by the person: the process died before its
     // `result`. That lands on the thread even when nothing was said yet.
@@ -87,20 +97,22 @@ export function chatEvent(thread, evt) {
     return { ...thread, slashCommands: p.slash_commands.filter((n) => typeof n === "string") };
   }
   if (p.type === "stream_event") {
-    const d = p.event && p.event.type === "content_block_delta" ? p.event.delta : null;
-    return d && d.type === "text_delta" && typeof d.text === "string"
-      ? { ...thread, draft: thread.draft + d.text }
-      : thread;
+    const draft = draftAfter(thread.draft, p);
+    return draft === thread.draft ? thread : { ...thread, draft };
   }
-  const transcript = appendAgentPayload(thread.transcript, p, { agent: thread.agent, model: thread.model || "" });
+  /* A routed thread (agent "zevet") speaks several CLIs' dialects; the router
+     tags each event with the one that produced it, as board.ts does for Code. */
+  const route = p.type === "zevet_route" ? String(p.label || "") : thread.route;
+  const routeWhy = p.type === "zevet_route" ? String(p.reason || "") : thread.routeWhy;
+  const transcript = appendAgentPayload(thread.transcript, p, { agent: evt.agent || thread.agent, model: evt.model || thread.model || "" });
   let usage = thread.usage;
   const u = usageOf(p);
   if (u) usage = u;
-  if (p.type === "result") return { ...thread, transcript, draft: "", busy: false, usage };
-  if (p.type === "assistant") return { ...thread, transcript, draft: "", usage };
+  if (p.type === "result") return { ...thread, transcript, draft: "", busy: false, usage, route, routeWhy };
+  if (p.type === "assistant") return { ...thread, transcript, draft: "", usage, route, routeWhy };
   /* `/clear` lands as `conversation_reset`: the transcript empties (transcript.mjs)
      and any streamed draft must go with it, or the screen keeps old tokens. */
-  return transcript === thread.transcript ? thread : { ...thread, transcript, usage, draft: "" };
+  return transcript === thread.transcript && route === thread.route && routeWhy === thread.routeWhy ? thread : { ...thread, transcript, usage, draft: "", route, routeWhy };
 }
 
 /** A failure to even start the turn, drawn where the reply would be. */
@@ -108,11 +120,28 @@ export function failTurn(thread, error) {
   return { ...thread, transcript: closeTranscript(thread.transcript, { error }), draft: "", busy: false };
 }
 
+/** The draft after one agent payload, for a Code console as well as a chat:
+ *  text deltas grow it, and the block that carries the same words whole (or the
+ *  end of the turn, or `/clear`) replaces it. A subagent's tokens are not this
+ *  thread's, so anything tagged with a parent tool call is left out. */
+export function draftAfter(draft, p) {
+  if (!p || typeof p !== "object" || p.parent_tool_use_id) return draft;
+  if (p.type === "stream_event") {
+    const d = p.event && p.event.type === "content_block_delta" ? p.event.delta : null;
+    return d && d.type === "text_delta" && typeof d.text === "string" ? draft + d.text : draft;
+  }
+  return p.type === "assistant" || p.type === "result" || p.type === "conversation_reset" ? "" : draft;
+}
+
 /** What the runtime renders: the transcript with the draft laid over it. */
 export function visibleMessages(thread) {
-  const { messages, openIndex } = thread.transcript;
-  if (!thread.draft) return messages;
-  const part = { type: "text", text: thread.draft };
+  return overlayDraft(thread.transcript, thread.draft);
+}
+
+export function overlayDraft(transcript, draft) {
+  const { messages, openIndex } = transcript;
+  if (!draft) return messages;
+  const part = { type: "text", text: draft };
   if (openIndex >= 0) {
     const out = messages.slice();
     const open = out[openIndex];

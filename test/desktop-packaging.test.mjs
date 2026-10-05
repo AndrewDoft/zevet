@@ -14,6 +14,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,6 +76,9 @@ describe("the installer makes it findable", () => {
 
 describe("the icon is the current masora theme", () => {
   const iconPath = path.join(DESKTOP, "build", "icon.png");
+  // build/icon.png is gitignored (a build product). Generate it the way
+  // `npm run icon` does rather than fail on every fresh clone.
+  if (!existsSync(iconPath)) execFileSync(process.execPath, ["make-icon.mjs"], { cwd: DESKTOP });
 
   /** Decode enough of the PNG to read real pixels — no image dependency. */
   function decode(file) {
@@ -149,6 +153,6 @@ describe("the icon is the current masora theme", () => {
   test("both platforms are pointed at it, and it is packaged", () => {
     assert.equal(pkg.build.win.icon, "build/icon.png");
     assert.equal(pkg.build.mac.icon, "build/icon.png");
-    assert.ok(pkg.build.files.includes("build/icon.png"), "the icon is not in build.files");
+    assert.ok(pkg.payload.files.includes("build/icon.png"), "the icon is not in build.files");
   });
 });

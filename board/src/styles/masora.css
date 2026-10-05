@@ -39,6 +39,13 @@
     --who-2: #42693e;
     --who-3: #715287;
     --who-4: #805725;
+    /* Removal variants of --who-N: the same hue, darker, so -N reads as the
+       same person's work. Contrast-checked in test/author-color.test.mjs. */
+    --who-0-del: #1e455a;
+    --who-1-del: #5f3522;
+    --who-2-del: #2e4a2b;
+    --who-3-del: #4f395f;
+    --who-4-del: #5a3d1a;
     --syntax-string: #42693e;
     --syntax-number: #874c30;
     --syntax-function: #715287;
@@ -70,6 +77,12 @@
     --who-2: #a4cd9d;
     --who-3: #c3aed9;
     --who-4: #dfbd82;
+    /* Dark theme: muted (dimmed toward the paper) rather than darker. */
+    --who-0-del: #7698ae;
+    --who-1-del: #b08c76;
+    --who-2-del: #7e9b7b;
+    --who-3-del: #9d8daf;
+    --who-4-del: #a78f68;
     --syntax-string: #a4cd9d;
     --syntax-number: #dcad8d;
     --syntax-function: #c3aed9;
@@ -175,7 +188,7 @@
   /* The window controls float over the top-right of the page: the rightmost
      header (the detail pane's) gets out from under them. (This used to live
      on the removed teammates column.) */
-  .detail > .pane-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
+  .detail > .pane-title { padding-right: calc(16px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)); }
   .scope { color: var(--ink-muted); font-size: 12.5px; letter-spacing: 0.02em; }
   .spacer { flex: 1 1 auto; }
 
@@ -200,7 +213,17 @@
   .shell {
     display: grid;
     grid-template-columns: var(--rail) 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
+  }
+  /* Left-side native controls (Mac traffic lights) get a row above the app.
+     Overlay bounds follow page zoom; browser tabs, fullscreen and right-side
+     controls reserve no space. Keep this row even when the rail is hidden. */
+  .shell::before {
+    content: "";
+    grid-column: 1 / -1;
+    height: min(env(titlebar-area-x, 0px), env(titlebar-area-height, 0px));
+    -webkit-app-region: drag;
   }
   .middle { display: grid; grid-template-columns: var(--tree) 1fr; min-height: 0; min-width: 0; }
   .treecol { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
@@ -250,6 +273,14 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .person-row[data-idle="true"] .person-row-name { color: var(--ink-muted); }
+  /* MY name while it is being renamed (double-click the row): same footprint,
+     an underline instead of a box, so the row does not jump. */
+  .person-row-edit {
+    font: inherit; letter-spacing: inherit; background: none;
+    border: 0; border-bottom: 1px solid var(--who); border-radius: 0; outline: none;
+    padding: 0 0 1px;
+  }
+  .person-row-edit[aria-invalid="true"] { border-bottom-color: var(--bad); }
   .person-row-state {
     flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle);
   }
@@ -347,7 +378,7 @@
   }
   .agent-sub-note { cursor: default; font-style: italic; }
 
-  /* The launcher, as a plus in the People header rather than a row of its own. */
+  /* A plus in a pane header (Team: invite; Conversation: start an agent) rather than a row of its own. */
   .rail-new {
     margin-left: auto; margin-right: 8px;
     width: 18px; height: 18px; flex: none;
@@ -356,6 +387,7 @@
     color: var(--ink-muted); background: none; border: 0; cursor: pointer;
     border-radius: 4px;
   }
+  .rail-new.rail-new-label { width: auto; padding: 0 6px; font-size: 12px; white-space: nowrap; }
   .rail-new:hover { color: var(--ink); background: var(--raise-soft); }
   .pane-title.row > .rail-new + .follow { margin-left: 0; }
 
@@ -489,11 +521,11 @@
   .node {
     display: flex; align-items: center; gap: 9px;
     width: 100%; text-align: left;
-    /* Right padding is 16px plus a fixed 18px reserved for the agent sprite
+    /* Right padding is 16px plus a fixed 40px reserved for the agent sprite
        (see .fsprite) — reserved on EVERY row, sprite or not, so a row never
        resizes when an agent starts or stops touching that file. A per-row
        padding change would jump the name in exactly that moment. */
-    padding: 4px 34px 4px 0;
+    padding: 4px 56px 4px 0;
     font-size: 13.5px;
     position: relative;
   }
@@ -528,8 +560,21 @@
      jumps the filename. tinted via `color` on this span, which currentColor
      inside the injected SVG then inherits. */
   .fsprite { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
-             width: 16px; height: 14px; pointer-events: none; }
+             width: 44px; height: 22px; pointer-events: none; }
   .fsprite svg { width: 100%; height: 100%; }
+  .fsprite, .agent-sprite { --zevet-sprite-eye: var(--paper); }
+
+  /* The live agent's figure on the rail row and in the conversation header:
+     22x11 grid at an integer scale (3 = 66x33), so every cell is whole pixels.
+     Coloured by `--who`, which the row / header sets. */
+  .agent-sprite { flex: none; display: inline-block; line-height: 0; }
+  .agent-sprite svg { width: 100%; height: 100%; display: block; }
+  /* A console row is always tall enough for its figure, running or not, so
+     the list never jumps when a run starts or ends. */
+  .agent-row[data-console="true"] { min-height: 41px; }
+  /* Taller than the title's text line, so it takes the padding's room instead
+     of growing the header. */
+  .pane-title .agent-sprite-head { margin: -9px 0 -9px 4px; }
   .node[data-collide="true"] { background: color-mix(in srgb, var(--alert) 9%, transparent); }
   .node[data-collide="true"] .name { color: var(--alert); }
 
@@ -594,8 +639,9 @@
      open the conversation, while selecting a file restores the detail pane. */
   body[data-view="ide"][data-surface="conversation"] .chatcol { display: flex; border-right: 0; }
   body[data-view="ide"][data-surface="conversation"] .detail { display: none; }
-  /* The tree stays in both views now that the changed-file list is gone:
-     hiding it in agent view would leave no way to reach a file. */
+  /* The tree is the Files view's: it opens there and starts shut here (see
+     treeHiddenFor in lib/board.ts). Shut is not gone - Strip's "Open tree" and
+     Ctrl+B bring it back, and the agent's own file links open the editor. */
   /* ΓÜá∩╕Å THESE TRACKS ARE MATCHED TO DOM ORDER, WHICH IS treecol, chatcol,
      detail. There is no `grid-area` here, so the second track is whichever
      element comes second in the markup. Moving an element inside .middle
@@ -772,6 +818,8 @@
   .srow .k { color: var(--ink-muted); flex: 0 0 140px; }
   .srow .v { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
   .srow .v.mono { font-family: var(--font-mono); font-size: 11.5px; }
+  /* The Team popup has no label column to line up with: the name takes the row instead of wrapping in 140px. */
+  #inviteDialog .srow .k { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .snote { font-size: 11.5px; color: var(--ink-muted); line-height: 1.65; margin-top: 8px; max-width: 52ch; }
   .sbtn {
     font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 2px;
@@ -895,6 +943,15 @@
   .stat .add { color: var(--success); }
   .stat .del { color: var(--alert); }
   .stat .new { color: var(--cerulean); }
+
+  /* Change colour = author colour. authorStyle(actor) (lib/authorcolor.mjs)
+     sets --diff-* on the element; with no author they are unset and these
+     fall back to the generic green/red. Every +N/-N and diff line uses these
+     classes, never a colour of its own. */
+  .d-add { color: var(--diff-add, var(--success)); }
+  .d-del { color: var(--diff-del, var(--alert)); }
+  .d-add-bg { background: var(--diff-add-bg, color-mix(in srgb, var(--success) 8%, transparent)); color: var(--diff-add, var(--success)); }
+  .d-del-bg { background: var(--diff-del-bg, color-mix(in srgb, var(--alert) 5%, transparent)); color: var(--diff-del, var(--alert)); }
   .node[data-sel="true"] .stat .loc { color: var(--subtle); }
   /* A directory gets no badge. Summing a folder's lines invites the question
      of whether it counts what is collapsed underneath it, and either answer is
@@ -1025,6 +1082,13 @@
     border-left: 2px solid transparent;
   }
   .session-row:hover { background: var(--raise-soft); }
+  .session-row-continue {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    padding: 0 12px 6px 30px; font-size: 10.5px; color: var(--cerulean);
+    background: none; border: 0; border-bottom: 1px solid var(--line);
+  }
+  .session-row-continue:hover { text-decoration: underline; }
+  .session-row-line > .session-row:has(+ .session-row-continue) { border-bottom: 0; }
   .session-row[data-active="true"] {
     background: var(--raise); border-left-color: var(--cerulean);
   }
@@ -1088,29 +1152,6 @@
   /* The bar above a session in the conversation column. It is the only thing
      saying this is a recording rather than a run, so it does not scroll with
      the transcript. */
-  .session-banner {
-    flex: none; display: flex; align-items: center; gap: 8px;
-    padding: 7px 12px; border-bottom: 1px solid var(--line);
-    background: var(--raise-soft);
-  }
-  .session-banner-title {
-    flex: 0 1 auto; min-width: 0; font-size: 12.5px; color: var(--ink);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .session-banner-meta {
-    flex: 1 1 auto; min-width: 0; font-size: 10.5px; color: var(--subtle);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  /* The subagents one session spawned, under its banner. A separate row
-     rather than a dropdown over the transcript: opening one REPLACES what is
-     below, so the list has to stay where the thing it replaced was. */
-
-  .session-banner-close {
-    flex: none; font-size: 11px; padding: 3px 7px; border-radius: 2px;
-    color: var(--cerulean); background: none;
-    border: 1px solid var(--line); cursor: pointer;
-  }
-  .session-banner-close:hover { border-color: var(--cerulean); }
 
   /* TWO SUBTLE BUTTONS AND THEIR CARDS, at either end of the composer's own
      action row. The card is ABSOLUTELY POSITIONED above its button, so
@@ -1197,6 +1238,15 @@
   .chat-thread [data-slot="aui_thread-viewport"] > div.justify-center {
     justify-content: flex-end;
   }
+
+  /* The empty-conversation activity card, centred in the WHOLE pane (both axes,
+     any size) rather than stacked at its top-left. An overlay, so it takes no
+     height and the composer does not move; only the card takes pointer events. */
+  .startup-activity {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    display: grid; place-items: center; padding: 16px;
+  }
+  .startup-activity > * { pointer-events: auto; }
 
   .chat-thread-body { flex: 1 1 auto; min-height: 0; position: relative; }
   .chat-thread-body [data-slot="conversation-map"] {
@@ -1456,7 +1506,7 @@
   body[data-mode="chat"] .split[data-pane="tree"] { display: none !important; }
   body[data-mode="chat"] .chatrail { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   body[data-mode="chat"] .chatmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .chatmain-title { padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw)); }
+  .chatmain-title { padding-right: calc(16px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)); }
   .chatmain-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chatsearch {
     display: flex; align-items: center; gap: 7px;
@@ -1497,8 +1547,6 @@
   body[data-tree="hidden"] { --tree: 0px; }
   body[data-tree="hidden"] .treecol { visibility: hidden; overflow: hidden; border-right: 0; }
   body[data-tree="hidden"] .split[data-pane="tree"] { display: none !important; }
-  .tree-toggle { margin-left: 4px; margin-right: 8px; }
-  .pane-title.row > .follow + .tree-toggle { margin-left: 6px; }
 
   /* Chat + Work: a teammate's work, read-only. */
   .tm-thread { overflow-y: auto; padding: 12px 16px; gap: 10px; }
@@ -1508,3 +1556,45 @@
   .tm-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
   .tm-end { font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle); }
   .tm-tool > span:first-of-type { color: var(--ink); }
+
+  /* The subagents panel (components/subagents-panel.tsx): every running
+     console with the detail People deliberately omits. Fixed in a corner so
+     it costs nothing collapsed, and never fights the rail or detail columns
+     for width. */
+  .subagents-panel {
+    position: fixed; right: 16px; bottom: 16px; z-index: 30;
+    font-family: var(--font-mono); font-size: 11.5px;
+  }
+  .subagents-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 999px;
+    background: var(--raise); border: 1px solid var(--line); color: var(--ink);
+    cursor: pointer; white-space: nowrap;
+  }
+  .subagents-toggle:hover { background: var(--raise-soft); }
+  .subagents-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--success);
+  }
+  .subagents-list {
+    margin-top: 6px; padding: 6px;
+    background: var(--raise); border: 1px solid var(--line); border-radius: 10px;
+    max-width: 60vw; max-height: 40vh; overflow: auto;
+  }
+  .subagents-row {
+    display: grid;
+    grid-template-columns: minmax(80px, 1fr) minmax(120px, 1.4fr) minmax(60px, auto) 44px 48px;
+    gap: 4px 12px; align-items: baseline;
+    padding: 5px 8px; border-radius: 6px;
+    white-space: nowrap; overflow: hidden;
+  }
+  .subagents-row[data-state="idle"] { opacity: 0.65; }
+  .subagents-row:hover { background: var(--raise-soft); }
+  .subagents-name { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+  .subagents-meta, .subagents-tool { color: var(--subtle); overflow: hidden; text-overflow: ellipsis; }
+  .subagents-elapsed, .subagents-tokens { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+/* Agent sprites are deliberately readable at integer pixel scale in the rail
+   and conversation header, while the file-tree rider stays compact. */
+.agent-sprite { display: inline-flex; flex: 0 0 auto; color: var(--who); line-height: 0; }
+.agent-sprite svg { display: block; shape-rendering: crispEdges; }
+.agent-sprite-rail, .agent-sprite-header { width: 44px; min-width: 44px; }
+.agent-sprite-tree { width: 24px; min-width: 24px; }

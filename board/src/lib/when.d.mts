@@ -3,3 +3,6 @@ export function cadenceLabel(id: string): string;
 
 /** A moment relative to now, in both directions: "in 12m" / "12m ago". */
 export function whenText(ms: number, now?: number): string;
+
+/** A rate-limit window as [label, percent, time-to-reset]: ["5h", "42%", "3h"]. */
+export function windowParts(w: { key: string; utilization: number; resetsAt: number }, now?: number): [string, string, string];

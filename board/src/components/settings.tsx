@@ -12,6 +12,8 @@ import { updateCommand, updatePercent, updateStatusText } from "../lib/update.mj
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { Twist } from "./twist";
 import { GithubMark, GoogleMark } from "./logos";
+import { IdentityRows } from "./identity";
+import { TeamInvite, handle } from "./invite";
 
 function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   return (
@@ -116,7 +118,7 @@ function PermissionSection() {
   );
 }
 
-function GithubConnectBox({ onDone }: { onDone: () => void }) {
+function GithubConnectBox({ team, onDone }: { team: string; onDone: () => void }) {
   const [state, setState] = useState<
     | { phase: "idle" }
     | { phase: "starting" }
@@ -132,7 +134,7 @@ function GithubConnectBox({ onDone }: { onDone: () => void }) {
       return;
     }
     setState({ phase: "starting" });
-    window.zevet?.githubStart?.().then((r) => {
+    window.zevet?.githubStart?.(null, team || undefined).then((r) => {
       if (!r || !r.ok) {
         setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
         return;
@@ -195,7 +197,28 @@ function GithubDisconnectRow({ onDone }: { onDone: () => void }) {
   );
 }
 
-function GoogleConnectBox({ onDone }: { onDone: () => void }) {
+function TeamSignOutRow() {
+  const [state, setState] = useState<"idle" | "busy" | "fail">("idle");
+
+  function click() {
+    setState("busy");
+    window.zevet?.signOutTeam?.().then(
+      (r) => { if (!r || !r.ok) setState("fail"); },
+      () => setState("fail"),
+    );
+  }
+
+  return (
+    <div className="srow">
+      <button className={MAKE_BTN} type="button" disabled={state === "busy"} onClick={click}>
+        {state === "busy" ? "Signing out…" : state === "fail" ? "Retry" : "Sign out"}
+      </button>
+      <span className="v">{state === "fail" ? "Could not sign out." : "Leave this team on this machine."}</span>
+    </div>
+  );
+}
+
+function GoogleConnectBox({ team, onDone }: { team: string; onDone: () => void }) {
   const [state, setState] = useState<
     | { phase: "idle" }
     | { phase: "starting" }
@@ -211,7 +234,7 @@ function GoogleConnectBox({ onDone }: { onDone: () => void }) {
       return;
     }
     setState({ phase: "starting" });
-    window.zevet?.googleStart?.().then((r) => {
+    window.zevet?.googleStart?.(null, team || undefined).then((r) => {
       if (!r || !r.ok) {
         setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
         return;
@@ -288,117 +311,23 @@ function GoogleDisconnectRow({ onDone }: { onDone: () => void }) {
   );
 }
 
-/** /auth/allow now mints and emails a per-invitee key itself (hub/mailer.mjs),
- *  so this generic line is a fallback for re-sharing the invite by hand — it
- *  carries no key, because the one that was minted is one-time and either
- *  already emailed or already shown once at invite time (see `inviteResult`
- *  below). */
-function inviteLine(team: string): string {
-  return `Join ${team || "the team"} on Zevet — https://usemasora.com/zevet`;
-}
-
-function copyInvite(team: string) {
-  navigator.clipboard?.writeText(inviteLine(team)).catch(() => {});
-}
-
-function copyText(t: string) {
-  navigator.clipboard?.writeText(t).catch(() => {});
-}
-
-function mailtoInvite(email: string, team: string): string {
-  const subject = `Join ${team || "the team"} on Zevet`;
-  const body = `${team ? `${team}\n` : ""}https://usemasora.com/zevet`;
-  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-}
-
 function AccountSection() {
   const whoState = useBoard((s) => s.who.state) as unknown as Record<string, unknown> | null;
   const who = useBoard((s) => s.who);
   const refreshWhoami = useBoard((s) => s.refreshWhoami);
-  const invite = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [whoErr, setWhoErr] = useState("");
-  const [inviteResult, setInviteResult] = useState<{ login: string; emailSent: boolean; key?: string } | null>(null);
-
   useEffect(() => {
     if (!who.state) refreshWhoami();
   }, [who.state, refreshWhoami]);
 
-  function changePeople(route: string, login: string) {
-    setBusy(true);
-    setWhoErr("");
-    if (route === "/auth/allow") setInviteResult(null);
-    fetch(route, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ login }),
-    })
-      .then((r) =>
-        r.json().then((b) => ({
-          status: r.status,
-          body: b as { people?: Array<Record<string, unknown>>; error?: string; email_sent?: boolean; key?: string },
-        })),
-      )
-      .then(
-        (r) => {
-          setBusy(false);
-          if (r.status === 200 && r.body.people) {
-            useBoard.setState({ who: { state: { ...(whoState || {}), people: r.body.people } as never, busy: false } });
-            // The invited login is whatever was typed, including a paired
-            // email ("octocat andrew@x.com") — the roster's own row is keyed
-            // on the GitHub login or the email alone, not this compound
-            // string, so this result is shown standalone rather than matched
-            // back to a row.
-            if (route === "/auth/allow") {
-              setInviteResult({ login, emailSent: Boolean(r.body.email_sent), key: r.body.key });
-            }
-          } else {
-            setWhoErr(r.body.error || ("Could not sign in."));
-          }
-        },
-        () => {
-          setBusy(false);
-          setWhoErr("Could not connect.");
-        },
-      );
-  }
-
-  /** The owner's "Anyone at <domain>" toggle — /auth/domain, not /auth/allow:
-   *  its response is {domain}, not {people}, so this refetches whoami rather
-   *  than patching state by hand the way changePeople does. */
-  function changeDomain(domain: string) {
-    setBusy(true);
-    setWhoErr("");
-    fetch("/auth/domain", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ domain }),
-    })
-      .then((r) => r.json().then((b) => ({ status: r.status, body: b as { error?: string } })))
-      .then(
-        (r) => {
-          setBusy(false);
-          if (r.status === 200) refreshWhoami();
-          else setWhoErr(r.body.error || "Could not change this.");
-        },
-        () => {
-          setBusy(false);
-          setWhoErr("Could not connect.");
-        },
-      );
-  }
-
   if (!whoState) {
     return (
-      <SSection title="Account" summary="loading…">{null}</SSection>
+      <SSection title="Account & Team" summary="loading…">{null}</SSection>
     );
   }
 
   if (whoState.ok === false) {
     return (
-      <SSection title="Account" summary="Error">
+      <SSection title="Account & Team" summary="Error">
                 <button className={MAKE_BTN} type="button" onClick={() => refreshWhoami()}>
           Retry
         </button>
@@ -410,11 +339,26 @@ function AccountSection() {
   const shared = Boolean(whoState.shared);
   const owner = Boolean(whoState.owner);
   const people = Array.isArray(whoState.people)
-    ? (whoState.people as Array<{ login: string; provider?: string; owner?: boolean; pending?: boolean }>)
+    ? (whoState.people as Array<{
+        login: string;
+        key?: string;
+        provider?: string;
+        owner?: boolean;
+        pending?: boolean;
+        state?: string;
+        invitedAt?: string | null;
+        emailSentAt?: string | null;
+        emailError?: string | null;
+        acceptedAt?: string | null;
+        lastSeen?: number | null;
+      }>)
     : [];
-  const teamLabel = typeof whoState.teamName === "string" ? whoState.teamName : "";
-  const googleDomain = typeof whoState.googleDomain === "string" ? whoState.googleDomain : "";
-  const availableDomain = typeof whoState.availableDomain === "string" ? whoState.availableDomain : "";
+  // The SLUG (whoami's `team`), not teamLabel: passed through to
+  // githubStart/googleStart below so a reconnect from a NON-default team
+  // claims an identity on THAT team, not the hub's default one. Omitted
+  // (falsy), the desktop IPC layer's own default already lands on the
+  // default team, so an empty string here changes nothing for it.
+  const teamSlug = typeof whoState.team === "string" ? whoState.team : "";
   const githubSignIn = Boolean(whoState.githubSignIn);
   const googleSignIn = Boolean(whoState.googleSignIn);
   const local = Boolean(bridge.local);
@@ -441,116 +385,36 @@ function AccountSection() {
     if (local && window.zevet && typeof window.zevet.googleLogout === "function") {
       out.push(<GoogleDisconnectRow key="disc-google" onDone={() => refreshWhoami()} />);
     }
-  } else if (shared) {
-    if (canConnect) out.push(<GithubConnectBox key="connect-github" onDone={() => refreshWhoami()} />);
-    if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" onDone={() => refreshWhoami()} />);
-  }
-
-  const list: ReactNode[] = [];
-  if (people.length) {
-    people.forEach((p) => {
-      // Delivery is a copy/paste and a mailto: the hub has no mailer. Only an
-      // email invite (provider "google" — see accounts.mjs's `allow`) still
-      // pending has anywhere to send: a pending GitHub invite is a login, not
-      // an address, and once someone has signed in there is nothing left to
-      // invite.
-      const emailInvite = p.pending && p.provider === "google" ? p.login : "";
-      list.push(
-        <div className="srow" key={p.login}>
-          <span className="k">
-            {handle(p.login) + (p.owner ? "  \u00b7 owner" : p.pending ? "  \u00b7 invited" : "")}
-          </span>
-          <span className="v">
-            {emailInvite ? (
-              <>
-                <button className={MAKE_BTN} type="button" onClick={() => copyInvite(teamLabel)}>
-                  Copy invite
-                </button>
-                <a className={MAKE_BTN} href={mailtoInvite(emailInvite, teamLabel)}>
-                  Email
-                </a>
-              </>
-            ) : null}
-            {owner && !p.owner ? (
-              <button className={MAKE_BTN} type="button" disabled={busy} onClick={() => changePeople("/auth/revoke", p.login)}>
-                Remove
-              </button>
-            ) : null}
-          </span>
-        </div>,
-      );
-    });
-  }
-  if (list.length) {
-    out.push(
-      <div key="people" style={{ marginTop: "8px" }}>
-        {list}
-      </div>,
-    );
-  }
-
-  if (owner && availableDomain) {
-    out.push(
-      <div className="srow" key="domain">
-        <span className="k">Anyone at {availableDomain}</span>
-        <span className="v">
-          <label>
-            <input
-              type="checkbox"
-              checked={googleDomain === availableDomain}
-              disabled={busy}
-              onChange={(ev) => changeDomain(ev.target.checked ? availableDomain : "")}
-            />
-          </label>
-        </span>
-      </div>,
-    );
-  }
-
-  if (owner) {
-    out.push(
-      <form
-        key="invite"
-        className="sinvite"
-        onSubmit={(ev) => {
-          ev.preventDefault();
-          const v = (invite.current && invite.current.value.trim()) || "";
-          if (v) changePeople("/auth/allow", v);
-        }}
-      >
-        <input className="mono" id="settingsInvite" type="text" ref={invite} aria-label="GitHub username or email" placeholder="GitHub username or email" autoComplete="off" spellCheck={false} />
-        <button className={MAKE_BTN} type="submit" disabled={busy}>
-          Invite
-        </button>
-      </form>,
-    );
-    if (inviteResult) {
-      out.push(
-        <div className="srow" key="invite-result">
-          <span className="k">{handle(inviteResult.login.split(/\s+/)[0])}</span>
-          <span className="v">
-            {inviteResult.emailSent ? (
-              "Emailed"
-            ) : inviteResult.key ? (
-              <>
-                <code className="mono">{inviteResult.key}</code>
-                <button className={MAKE_BTN} type="button" onClick={() => copyText(inviteResult.key as string)}>
-                  Copy
-                </button>
-              </>
-            ) : (
-              "Invited"
-            )}
-          </span>
-        </div>,
-      );
+    if (local && window.zevet && typeof window.zevet.signOutTeam === "function") {
+      out.push(<TeamSignOutRow key="team-signout" />);
     }
+  } else if (shared) {
+    if (canConnect) out.push(<GithubConnectBox key="connect-github" team={teamSlug} onDone={() => refreshWhoami()} />);
+    if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" team={teamSlug} onDone={() => refreshWhoami()} />);
   }
 
-  if (whoErr) out.push(<SNote key="err">{whoErr}</SNote>);
+  // One person, many sign-ins: what is linked to me, link another, and the
+  // owner's combine. Only for a real personal session.
+  const me = whoState.me as { identities: Array<{ provider: string; login: string }> } | null | undefined;
+  if (login && me) {
+    out.push(
+      <IdentityRows
+        key="identities"
+        identities={me.identities}
+        owner={owner}
+        people={people.filter((p) => !p.pending)}
+        githubSignIn={githubSignIn}
+        googleSignIn={googleSignIn}
+        onChanged={() => refreshWhoami()}
+      />,
+    );
+  }
+
+  out.push(<ReportingLine key="reporting" />);
+  out.push(<TeamInvite key="team" />);
 
   return (
-    <SSection title="Account" summary={login ? handle(login) : "not signed in"}>
+    <SSection title="Account & Team" summary={login ? handle(login) : "not signed in"}>
       {out}
     </SSection>
   );
@@ -583,6 +447,7 @@ const CREDENTIAL_KINDS: Array<{ provider: string; kind: string; label: string; t
   { provider: "anthropic", kind: "api_key", label: "Anthropic — API key", teamOk: true },
   { provider: "anthropic", kind: "subscription_token", label: "Anthropic — subscription token", teamOk: false },
   { provider: "openai", kind: "api_key", label: "OpenAI — API key", teamOk: true },
+  { provider: "meta", kind: "api_key", label: "Meta — API key", teamOk: true },
 ];
 
 function credentialLine(c: CredentialMeta): string {
@@ -963,6 +828,9 @@ function VersionSection() {
       <span className="v">{status}</span>
     </div>,
   );
+  if (s && s.next && s.next.build) {
+    out.push(<SRow key="next" k="Next" v={`${s.next.build} (${s.next.when})`} />);
+  }
   if (s && s.phase === "downloading") {
     const pct = updatePercent(s);
     out.push(
@@ -1003,7 +871,7 @@ function VersionSection() {
   }
   out.push(<SRow key="updates" k="Updates" v={<div className="update-actions">{actions}</div>} />);
   return (
-    <SSection title="Version" summary={s && s.current ? s.current : "unknown"}>{out}</SSection>
+    <SSection title="Version" summary={bridge.cfg?.version || (s && s.running) || "unknown"}>{out}</SSection>
   );
 }
 
@@ -1018,7 +886,7 @@ type MasoraLinkState = { phase: string; paired?: boolean; code?: string; error?:
 
 const LINK_SUMMARY: Record<string, string> = {
   waiting: "waiting for approval",
-  unreachable: "not running",
+  unreachable: "offline",
   error: "error",
 };
 
@@ -1207,6 +1075,24 @@ function FamilyCard({ row, onClose, onChange }: { row: FamilyRow; onClose: () =>
   );
 }
 
+/** One red line when this machine's agents are not reaching the hub; nothing when they are. */
+function ReportingLine() {
+  const [problem, setProblem] = useState("");
+  useEffect(() => {
+    const ask = () => window.zevet?.reportingStatus?.().then((r) => setProblem((r && r.problem) || ""));
+    ask();
+    const t = setInterval(ask, 15000);
+    return () => clearInterval(t);
+  }, []);
+  if (!problem) return null;
+  return (
+    <div className="srow" id="settingsReporting">
+      <span className="k">Reporting</span>
+      <span className="v" style={{ color: "var(--bad)" }}>{problem}</span>
+    </div>
+  );
+}
+
 function FamilySection() {
   const [rows, setRows] = useState<FamilyRow[] | null>(null);
   const [card, setCard] = useState("");
@@ -1340,19 +1226,12 @@ function ConnectionsSection() {
   );
 }
 
-/** "@octocat" for a GitHub login; a Google login is already an address. */
-function handle(login: string) {
-  return login.includes("@") ? login : "@" + login;
-}
-
 export function SettingsSheet() {
   const sheetOpen = useBoard((s) => s.sheetOpen);
   const closeSettings = useBoard((s) => s.closeSettings);
   const viewMode = useBoard(selectViewMode);
   const setView = useBoard((s) => s.setView);
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
-  const myActor = useBoard((s) => s.myActor);
-  const teamName = useBoard((s) => (s.who.state as { teamName?: string } | null)?.teamName || "");
 
   const sheetRef = useRef<HTMLDivElement>(null);
   const wasOpen = useRef(false);
@@ -1464,10 +1343,6 @@ export function SettingsSheet() {
         <MasoraSection />
         <FamilySection />
         <ConnectionsSection />
-
-        <SSection title="Team" summary={teamName}>
-          <SRow k="You" v={myActor || "unknown"} />
-        </SSection>
 
         <VersionSection />
       </div>

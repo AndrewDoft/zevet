@@ -6,15 +6,16 @@
 // feature — and is NOT trusted to choose where the bytes come from, where they
 // land, or whether they are run before they have been checked.
 //
-// ⚠️ AND ONE THING THESE TESTS DO NOT SHOW. The sha256 is published by the
-// same host as the file, so none of this survives that host being taken over.
-// See the header of desktop/app-update.js: what the checksum buys is integrity
-// against corruption, not authenticity. The tests below are about the updater
-// obeying its own rules, not about the rules being sufficient.
+// The feed is signed (desktop/update-signing.js), so a host takeover alone no
+// longer publishes a build: "a feed that is not signed by a pinned key" below
+// is the test of that. Every other case serves a feed signed with a throwaway
+// key the updater is told to trust (TEST_KEYS), so it exercises the rules it
+// names rather than the signature.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { createHash, randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { createHash, randomBytes, generateKeyPairSync } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -22,7 +23,8 @@ import { tempDir, ROOT } from "./helpers.mjs";
 
 const require = createRequire(import.meta.url);
 const {
-  AppUpdater,
+  AppUpdater: RealAppUpdater,
+  INSTALL_ARGS,
   QUIT_INSTALL_ARGS,
   EVERY_MS,
   compareVersions,
@@ -30,7 +32,30 @@ const {
   safeArtifactName,
   artifactUrl,
   readManifest,
+  winInstallLocation,
+  winInstallArgs,
+  readSignedFeed,
+  loopbackProofKeys,
 } = require(path.join(ROOT, "desktop", "app-update.js"));
+
+const { signDocument, UPDATE_DOMAIN } = require(path.join(ROOT, "desktop", "update-signing.js"));
+
+const TEST_PAIR = generateKeyPairSync("ed25519");
+const TEST_PEM = TEST_PAIR.privateKey.export({ format: "pem", type: "pkcs8" });
+const TEST_KEYS = { "zevet-test": TEST_PAIR.publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64") };
+
+/** The feed as make-feed.mjs writes it: legacy top-level fields, plus a signed payload. */
+function signedFeed(m, pem = TEST_PEM) {
+  const payload = JSON.parse(JSON.stringify({ schema: 1, type: "zevet-update", ...m }));
+  return { ...m, payload, signature: signDocument(UPDATE_DOMAIN, payload, pem, "zevet-test") };
+}
+
+/** Trusts the throwaway key; the publisher check reports "unsigned" (log-only) unless a test says otherwise. */
+class AppUpdater extends RealAppUpdater {
+  constructor(o) {
+    super({ trustedKeys: TEST_KEYS, inspectImpl: async () => ({ valid: false, publisher: null }), ...o });
+  }
+}
 
 const KEY = "win32-x64";
 const FILE = "zevet-0.2.0-windows-x64-setup.exe";
@@ -57,7 +82,7 @@ async function fakeHost({ manifest, files = {}, onRequest = null } = {}) {
         return;
       }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(typeof m === "string" ? m : JSON.stringify(m));
+      res.end(typeof m === "string" ? m : JSON.stringify(m.raw ? m.raw : signedFeed(m)));
       return;
     }
     const name = decodeURIComponent(req.url.replace(/^\/download\//, ""));
@@ -443,6 +468,55 @@ describe("the updater, end to end", () => {
   });
 });
 
+describe("Windows install scope and directory (the masora2 sibling-install fix)", () => {
+  const originalLAD = process.env.LOCALAPPDATA;
+  const win = (...parts) => path.win32.join(...parts);
+  const restoreLocalAppData = () => { process.env.LOCALAPPDATA = originalLAD; };
+
+  test("a per-user execPath resolves /currentuser", (t) => {
+    process.env.LOCALAPPDATA = win("C:", "Users", "andre", "AppData", "Local");
+    t.after(restoreLocalAppData);
+    const execPath = win(process.env.LOCALAPPDATA, "Programs", "zevet", "zevet.exe");
+    const { scope, dir } = winInstallLocation(execPath);
+    assert.equal(scope, "/currentuser");
+    assert.equal(dir, path.win32.dirname(execPath));
+  });
+
+  test("a per-machine execPath (Program Files, or anywhere else) resolves /allusers", (t) => {
+    process.env.LOCALAPPDATA = win("C:", "Users", "andre", "AppData", "Local");
+    t.after(restoreLocalAppData);
+    // Exactly the masora2 incident's shape: a per-machine copy registered in
+    // an arbitrary temp directory, nowhere near either standard default.
+    const execPath = win("C:", "Users", "andre", "AppData", "Local", "Temp", "masora-real-install-JiPJgP", "zevet", "zevet.exe");
+    assert.equal(winInstallLocation(execPath).scope, "/allusers");
+  });
+
+  test("an unset LOCALAPPDATA cannot be mistaken for a per-user match", (t) => {
+    delete process.env.LOCALAPPDATA;
+    t.after(restoreLocalAppData);
+    assert.equal(winInstallLocation(win("C:", "Program Files", "zevet", "zevet.exe")).scope, "/allusers");
+  });
+
+  test("winInstallArgs appends scope then /D= LAST, after the base args, in that order", () => {
+    // Mutation check: swap the push order below (or in winInstallArgs itself)
+    // and this goes red -- NSIS reads everything after `/D=` to the end of
+    // the line as the directory, so anything placed after it is silently
+    // swallowed into the path instead of being its own switch.
+    const execPath = win("C:", "Program Files", "zevet", "zevet.exe");
+    const args = winInstallArgs(["--updated", "/S"], execPath);
+    assert.deepEqual(args, ["--updated", "/S", "/allusers", `/D=${path.win32.dirname(execPath)}`]);
+    assert.equal(args[args.length - 1].startsWith("/D="), true, "/D= must be the last argument");
+  });
+
+  test("winInstallArgs never quotes the /D= value itself — that's spawn's job via windowsVerbatimArguments, not string content", () => {
+    const execPath = win("C:", "Program Files (x86)", "zevet team", "zevet.exe");
+    const args = winInstallArgs(["--updated", "/S"], execPath);
+    const dArg = args[args.length - 1];
+    assert.ok(!dArg.includes('"'), `winInstallArgs must never embed quotes itself: ${dArg}`);
+    assert.equal(dArg, `/D=${path.win32.dirname(execPath)}`);
+  });
+});
+
 describe("installing", () => {
   test("nothing downloaded means nothing to install", async () => {
     const t = tempDir("zevet-upd-");
@@ -474,18 +548,29 @@ describe("installing", () => {
     }
   });
 
-  test("on Windows the installer is run silently and the app then quits", async () => {
-    const t = tempDir("zevet-upd-");
+  test("on Windows the installer is run silently, targeting THIS running install by path, and the app then quits", async () => {
+    // A space in the prefix, not incidental: /D=<dir> is the one argument
+    // Node must never quote (see windowsVerbatimArguments below), and a path
+    // without a space in it can't prove that.
+    const t = tempDir("zevet upd ");
+    const originalLAD = process.env.LOCALAPPDATA;
     try {
       const file = path.join(t.dir, "setup.exe");
       writeFileSync(file, "not really an installer");
       const calls = [];
       let quit = 0;
+      // A per-user install: execPath under %LOCALAPPDATA%\Programs, exactly
+      // the shape multiUser.nsh's own per-user default and installer.nsh's
+      // customInit both already assume.
+      const localAppData = path.win32.join(t.dir, "AppData", "Local");
+      const runningExe = path.win32.join(localAppData, "Programs", "zevet", "zevet.exe");
+      process.env.LOCALAPPDATA = localAppData;
       const u = new AppUpdater({
         currentVersion: "0.1.2",
         platform: "win32",
         dir: t.dir,
         platformKey: KEY,
+        execPath: runningExe,
         spawnImpl: (...a) => {
           calls.push(a);
           return { unref() {} };
@@ -508,12 +593,23 @@ describe("installing", () => {
       // electron-builder's installSection.nsh relaunches an assisted silent
       // install only when isForceRun is set. Without it the app quits to
       // install and never returns, after a button that said "restart".
-      assert.deepEqual(calls[0][1], ["--updated", "/S", "--force-run"]);
+      //
+      // /currentuser and /D=<runningExe's own dir> are the fix for the
+      // masora2 sibling-install incident: without them, NSIS's multiUser.nsh
+      // decides scope and directory from the registry, which a stray
+      // per-machine entry anywhere else can hijack away from the copy that
+      // is actually running.
+      assert.deepEqual(calls[0][1], ["--updated", "/S", "--force-run", "/currentuser", `/D=${path.win32.dirname(runningExe)}`]);
       assert.equal(calls[0][2].detached, true);
+      // /D= must reach NSIS unquoted even when the path has a space (which
+      // t.dir, under the "zevet upd " tempDir prefix, already does) --
+      // windowsVerbatimArguments is what stops Node quoting it for us.
+      assert.equal(calls[0][2].windowsVerbatimArguments, true);
       // The quit is on a short timer so the child is running before we go.
       await new Promise((r2) => setTimeout(r2, 900));
       assert.equal(quit, 1);
     } finally {
+      process.env.LOCALAPPDATA = originalLAD;
       t.cleanup();
     }
   });
@@ -676,11 +772,16 @@ describe("installing on quit", () => {
       writeFileSync(file, "not really an installer");
       const calls = [];
       let quit = 0;
+      // A per-machine install this time: execPath NOT under %LOCALAPPDATA%\
+      // Programs, so winInstallLocation must resolve /allusers -- covering
+      // the branch the install() test above doesn't.
+      const runningExe = path.win32.join(t.dir, "Program Files", "zevet", "zevet.exe");
       const u = new AppUpdater({
         currentVersion: "0.1.2",
         platform: "win32",
         dir: t.dir,
         platformKey: KEY,
+        execPath: runningExe,
         spawnImpl: (...a) => {
           calls.push(a);
           return { unref() {} };
@@ -701,9 +802,10 @@ describe("installing on quit", () => {
       // Mutation check: put --force-run back into QUIT_INSTALL_ARGS (or this
       // assertion) and this goes red — the whole point of the quit path is
       // that it must NOT ask the installer to bring the app back.
-      assert.deepEqual(calls[0][1], QUIT_INSTALL_ARGS);
+      assert.deepEqual(calls[0][1], [...QUIT_INSTALL_ARGS, "/allusers", `/D=${path.win32.dirname(runningExe)}`]);
       assert.ok(!QUIT_INSTALL_ARGS.includes("--force-run"), "the quit path must never force a relaunch");
       assert.equal(calls[0][2].detached, true);
+      assert.equal(calls[0][2].windowsVerbatimArguments, true);
       assert.equal(quit, 0, "installOnQuit must not itself quit — the app called it because it was already leaving");
     } finally {
       t.cleanup();
@@ -815,13 +917,43 @@ describe("self-replacing a Mac bundle", () => {
       });
       const steps = u._macReplaceSteps(path.join(t.dir, MAC_FILE), bundle, 4242);
       const staged = `${bundle}.update`;
-      assert.equal(steps.length, 7);
+      assert.equal(steps.length, 8);
       assert.match(steps[0], /kill -0 4242/, "waits for the running app to exit first");
       assert.deepEqual([steps[2][0], steps[2][1][0]], ["hdiutil", "attach"]);
       assert.deepEqual([steps[3][0], steps[3][1][1]], ["ditto", staged], "copies to a staging bundle, never over the live one");
       assert.deepEqual([steps[4][0], steps[4][1][0]], ["hdiutil", "detach"]);
       assert.match(steps[5], /^rm -rf '.*zevet\.app'$/);
       assert.deepEqual(steps[6], ["mv", [staged, bundle]]);
+      // Leave exactly one app bundle (P1 — "on mac when you download a new
+      // version it keeps the old"): the final step sweeps sibling
+      // zevet*.app / zevet*.app.update in the bundle's own folder plus both
+      // Applications directories, but never the bundle just installed.
+      assert.match(steps[7], /for d in .*Applications.* \/Applications; do/);
+      assert.match(steps[7], /zevet\*\.app.*zevet\*\.app\.update/);
+      assert.match(steps[7], new RegExp(`!= '${bundle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`), "must never delete the bundle it just installed");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("the cleanup step exits 0 even when there is nothing to sweep, so the relaunch after it still runs", { skip: process.platform === "win32" }, () => {
+    const t = tempDir("zevet-mac-cleanup-");
+    try {
+      const bundle = path.join(t.dir, "zevet.app");
+      const u = new AppUpdater({
+        currentVersion: "0.1.2",
+        platform: "darwin",
+        dir: t.dir,
+        platformKey: MAC_KEY,
+        bundlePath: bundle,
+      });
+      const cleanup = u._macReplaceSteps(path.join(t.dir, MAC_FILE), bundle, process.pid)[7];
+      // The bundle's own dir, ~/Applications, and /Applications have nothing
+      // named zevet* to sweep here, so the loop's last `[ -e "$f" ]` is false.
+      // Every step is joined with `&&` (_spawnMacReplace), so a step that
+      // exits non-zero on the harmless "nothing to clean up" case would
+      // silently cancel the `open` (relaunch) chained after it.
+      execFileSync("/bin/sh", ["-c", cleanup]);
     } finally {
       t.cleanup();
     }
@@ -948,6 +1080,250 @@ describe("old installers are pruned", () => {
     } finally {
       await host.close();
       t.cleanup();
+    }
+  });
+});
+
+describe("a signed feed and a signed installer", () => {
+  const body = randomBytes(2048);
+  const good = { version: "0.2.0", notes: "n", platforms: { [KEY]: { file: FILE, sha256: sha(body), bytes: body.length } } };
+  const andrew = { valid: true, publisher: "CN=Andrew Doft, O=Andrew Doft, L=New York, S=ny, C=US" };
+
+  async function checked(context, manifest, opts = {}) {
+    const t = tempDir("zevet signed ");
+    const host = await fakeHost({ manifest, files: { [FILE]: body } });
+    context.after(async () => {
+      await host.close();
+      t.cleanup();
+    });
+    const u = updaterFor(host, t.dir, { platform: "win32", ...opts });
+    return { u, host, t, status: await u.check() };
+  }
+  const fetchedInstaller = (host) => host.seen.some((p) => p.endsWith(FILE));
+
+  test("an unsigned feed is rejected and nothing is downloaded", async (t) => {
+    const r = await checked(t, { raw: good });
+    assert.equal(r.status.phase, "error");
+    assert.match(r.status.error, /not validly signed/);
+    assert.equal(fetchedInstaller(r.host), false);
+  });
+
+  test("a feed signed by a key that is not pinned is rejected (real pinned keys, throwaway signer)", async (t) => {
+    const r = await checked(t, good, { trustedKeys: undefined });
+    assert.equal(r.status.phase, "error");
+    assert.match(r.status.error, /untrusted key/);
+    assert.equal(fetchedInstaller(r.host), false);
+  });
+
+  test("editing the signed payload after signing is rejected", async (t) => {
+    const feed = signedFeed(good);
+    feed.payload.platforms[KEY].sha256 = "0".repeat(64);
+    const r = await checked(t, { raw: feed });
+    assert.equal(r.status.phase, "error");
+    assert.match(r.status.error, /does not match the document/);
+    assert.equal(fetchedInstaller(r.host), false);
+  });
+
+  test("the legacy top-level fields are ignored: the signed payload decides", async (t) => {
+    const evil = "zevet-9.9.9-windows-x64-setup.exe";
+    const feed = {
+      ...signedFeed(good),
+      version: "9.9.9",
+      platforms: { [KEY]: { file: evil, sha256: "f".repeat(64), bytes: 1 } },
+    };
+    const r = await checked(t, { raw: feed });
+    assert.equal(r.status.phase, "ready");
+    assert.equal(r.status.version, "0.2.0");
+    assert.equal(fetchedInstaller(r.host), true);
+    assert.equal(r.host.seen.some((p) => p.includes("9.9.9")), false);
+  });
+
+  test("readSignedFeed hands back only the payload", () => {
+    const ok = readSignedFeed(signedFeed(good), TEST_KEYS);
+    assert.deepEqual(ok.payload.platforms, good.platforms);
+    assert.match(readSignedFeed({ version: "0.2.0" }, TEST_KEYS).error, /not signed|not validly signed/);
+    assert.match(readSignedFeed(null).error, /not an object/);
+  });
+
+  test("a running app signed by Andrew refuses an installer that is unsigned", async (t) => {
+    const r = await checked(t, good, {
+      inspectImpl: async (_p, file) => (file === FILE || file.endsWith(FILE) ? { valid: false, publisher: null } : andrew),
+    });
+    assert.equal(r.status.phase, "error");
+    assert.match(r.status.error, /not signed as Authenticode CN=Andrew Doft/);
+    assert.equal(existsSync(path.join(r.t.dir, FILE)), false, "the rejected installer was left on disk");
+    assert.equal(r.status.canInstall, false);
+  });
+
+  test("a running app signed by Andrew refuses an installer signed by somebody else", async (t) => {
+    const r = await checked(t, good, {
+      inspectImpl: async (_p, file) => (file.endsWith(FILE) ? { valid: true, publisher: "CN=Mallory" } : andrew),
+    });
+    assert.equal(r.status.phase, "error");
+    assert.equal(existsSync(path.join(r.t.dir, FILE)), false);
+  });
+
+  test("a properly signed installer is offered", async (t) => {
+    const r = await checked(t, good, { inspectImpl: async () => andrew });
+    assert.equal(r.status.phase, "ready");
+    assert.equal(r.status.canInstall, true);
+  });
+
+  test("an unsigned running app (dev build) only logs the publisher check", async (t) => {
+    const r = await checked(t, good);
+    assert.equal(r.status.phase, "ready");
+    assert.ok(r.u.logs.some((l) => /publisher check is log-only/.test(l)), r.u.logs.join(" | "));
+  });
+
+  test("a cached installer is publisher-checked too, not trusted for having been verified once", async (t) => {
+    const r = await checked(t, good, { inspectImpl: async () => andrew });
+    assert.equal(r.status.phase, "ready");
+    const again = updaterFor(r.host, r.t.dir, {
+      platform: "win32",
+      inspectImpl: async (_p, file) => (file.endsWith(FILE) ? { valid: false, publisher: null } : andrew),
+    });
+    assert.equal((await again.check()).phase, "error");
+    assert.equal(existsSync(path.join(r.t.dir, FILE)), false);
+  });
+
+  test("the loopback proof key applies to a loopback feed only", () => {
+    const env = { ZEVET_APP_FEED_TRUSTED_KEY: "zevet-test:AAAA" };
+    assert.deepEqual(loopbackProofKeys("http://127.0.0.1:9/zevet-latest.json", env), { "zevet-test": "AAAA" });
+    assert.equal(loopbackProofKeys("https://usemasora.com/download/zevet-latest.json", env), undefined);
+    assert.equal(loopbackProofKeys("http://evil.example/zevet-latest.json", env), undefined);
+    assert.equal(loopbackProofKeys("http://127.0.0.1.evil.example/x.json", env), undefined);
+    assert.equal(loopbackProofKeys("http://127.0.0.1:9/x.json", {}), undefined);
+    assert.equal(loopbackProofKeys(undefined, env), undefined);
+  });
+});
+
+describe("rollback wiring (update-rollback.js)", () => {
+  const { createRollback, STATE_FILE } = require(path.join(ROOT, "desktop", "update-rollback.js"));
+  const mkRollback = (dir, spawned = []) => createRollback({
+    dir, running: "0.1.2", spawn: (f) => { spawned.push(f); return { unref() {} }; },
+    verifyPublisher: async () => true, verifiedOnDisk: async () => true, stopRuntime: async () => {}, quit: () => {},
+  });
+
+  test("the Windows installer run records what the next launch must prove, BEFORE it spawns", async () => {
+    const t = tempDir("zevet-rb-");
+    try {
+      const file = path.join(t.dir, "setup.exe");
+      writeFileSync(file, "not really an installer");
+      const rollback = mkRollback(t.dir);
+      let atSpawn = null;
+      const u = new AppUpdater({
+        currentVersion: "0.1.2", platform: "win32", dir: t.dir, platformKey: KEY, rollback,
+        execPath: path.win32.join(t.dir, "zevet", "zevet.exe"),
+        spawnImpl: () => { atSpawn = rollback.state().pending; return { unref() {} }; },
+        quitImpl() {},
+      });
+      u.state.phase = "ready";
+      u.state.version = "0.2.0";
+      u.state.file = file;
+      u._readyEntry = { file: "setup.exe", bytes: statSync(file).size, sha256: sha(readFileSync(file)) };
+      assert.equal((await u.install()).ok, true);
+      assert.equal(atSpawn.to, "0.2.0");
+      assert.equal(atSpawn.entry.file, "setup.exe");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("the silent install on quit is covered too, with QUIT_INSTALL_ARGS and no --force-run", () => {
+    const t = tempDir("zevet-rb-");
+    try {
+      const file = path.join(t.dir, "setup.exe");
+      writeFileSync(file, "not really an installer");
+      const rollback = mkRollback(t.dir);
+      const calls = [];
+      const u = new AppUpdater({
+        currentVersion: "0.1.2", platform: "win32", dir: t.dir, platformKey: KEY, rollback,
+        execPath: path.win32.join(t.dir, "zevet", "zevet.exe"),
+        spawnImpl: (...a) => { calls.push(a); return { unref() {} }; },
+      });
+      u.state.phase = "ready";
+      u.state.version = "0.2.0";
+      u.state.file = file;
+      u._readyEntry = { file: "setup.exe", bytes: statSync(file).size, sha256: sha(readFileSync(file)) };
+      assert.equal(u.installOnQuit().ok, true);
+      assert.equal(rollback.state().pending.to, "0.2.0");
+      assert.deepEqual(calls[0][1].slice(0, QUIT_INSTALL_ARGS.length), QUIT_INSTALL_ARGS);
+      assert.equal(calls[0][1].includes("--force-run"), false);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("the rollback target and its state file survive every prune; other installers do not", async () => {
+    const t = tempDir("zevet-rb-");
+    const body = randomBytes(2048);
+    const host = await fakeHost({
+      manifest: { version: "0.2.2", platforms: { [KEY]: { file: "zevet-0.2.2-windows-x64-setup.exe", sha256: sha(body), bytes: body.length } } },
+      files: { "zevet-0.2.2-windows-x64-setup.exe": body },
+    });
+    try {
+      writeFileSync(path.join(t.dir, STATE_FILE), JSON.stringify({ bad: [], pending: null, lastGood: { version: "0.1.2", file: "zevet-0.1.2-windows-x64-setup.exe", bytes: 1, sha256: "x" } }));
+      writeFileSync(path.join(t.dir, "zevet-0.1.2-windows-x64-setup.exe"), "the installer that produced the running version");
+      writeFileSync(path.join(t.dir, "zevet-0.0.9-windows-x64-setup.exe"), "stale");
+      const u = updaterFor(host, t.dir, { rollback: mkRollback(t.dir) });
+      assert.equal((await u.check()).phase, "ready");
+      assert.deepEqual(readdirSync(t.dir).sort(), [STATE_FILE, "zevet-0.1.2-windows-x64-setup.exe", "zevet-0.2.2-windows-x64-setup.exe"]);
+    } finally {
+      await host.close();
+      t.cleanup();
+    }
+  });
+
+  test("a withdrawn version is not an update: not downloaded, not an error", async () => {
+    const t = tempDir("zevet-rb-");
+    const body = randomBytes(2048);
+    const host = await fakeHost({
+      manifest: { version: "0.2.2", platforms: { [KEY]: { file: "zevet-0.2.2-windows-x64-setup.exe", sha256: sha(body), bytes: body.length } } },
+      files: { "zevet-0.2.2-windows-x64-setup.exe": body },
+    });
+    try {
+      writeFileSync(path.join(t.dir, STATE_FILE), JSON.stringify({ bad: ["0.2.2"], pending: null, lastGood: null }));
+      const u = updaterFor(host, t.dir, { rollback: mkRollback(t.dir) });
+      const s = await u.check();
+      assert.equal(s.phase, "current");
+      assert.equal(s.error, null);
+      assert.equal(s.canInstall, false);
+      assert.equal(host.seen.some((r) => r.endsWith("setup.exe")), false, "a withdrawn installer was downloaded");
+    } finally {
+      await host.close();
+      t.cleanup();
+    }
+  });
+
+  test("an already-downloaded withdrawn installer is deleted, and a NEWER version is still offered", async () => {
+    const t = tempDir("zevet-rb-");
+    const body = randomBytes(2048);
+    const file = "zevet-0.2.2-windows-x64-setup.exe";
+    const host = await fakeHost({
+      manifest: { version: "0.2.2", platforms: { [KEY]: { file, sha256: sha(body), bytes: body.length } } },
+      files: { [file]: body },
+    });
+    try {
+      writeFileSync(path.join(t.dir, file), body);
+      writeFileSync(path.join(t.dir, STATE_FILE), JSON.stringify({ bad: ["0.2.2"], pending: null, lastGood: null }));
+      const u = updaterFor(host, t.dir, { rollback: mkRollback(t.dir) });
+      assert.equal((await u.check()).phase, "current");
+      assert.equal(existsSync(path.join(t.dir, file)), false);
+    } finally {
+      await host.close();
+      t.cleanup();
+    }
+    const host2 = await fakeHost({
+      manifest: { version: "0.2.3", platforms: { [KEY]: { file: "zevet-0.2.3-windows-x64-setup.exe", sha256: sha(body), bytes: body.length } } },
+      files: { "zevet-0.2.3-windows-x64-setup.exe": body },
+    });
+    const t2 = tempDir("zevet-rb-");
+    try {
+      writeFileSync(path.join(t2.dir, STATE_FILE), JSON.stringify({ bad: ["0.2.2"], pending: null, lastGood: null }));
+      assert.equal((await updaterFor(host2, t2.dir, { rollback: mkRollback(t2.dir) }).check()).phase, "ready");
+    } finally {
+      await host2.close();
+      t2.cleanup();
     }
   });
 });

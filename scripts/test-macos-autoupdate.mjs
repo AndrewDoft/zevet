@@ -38,7 +38,7 @@ const X1 = feed.version;
 assert.notEqual(X, X1, "the feed must advertise a version newer than X");
 console.log(`X = ${X}, X+1 = ${X1}`);
 
-const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: "utf8", timeout: 60_000, ...opts });
+const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: "utf8", timeout: 60_000, windowsHide: true, ...opts });
 const BUNDLE = path.join(os.homedir(), "Applications", "zevet.app");
 const BIN = path.join(BUNDLE, "Contents/MacOS/zevet");
 // Null while the updater has the bundle moved aside mid-swap.
@@ -157,6 +157,7 @@ function launch(port, extraEnv) {
   const outLog = fs.openSync(path.join(base, "stdout.log"), "w");
   const errLog = fs.openSync(path.join(base, "stderr.log"), "w");
   const child = spawn(BIN, [`--remote-debugging-port=${port}`, `--user-data-dir=${path.join(base, "user-data")}`], {
+    windowsHide: true,
     env: {
       ...process.env,
       HOME: base,
@@ -180,6 +181,10 @@ async function main() {
   server = await serveFeed(feedDir);
   const feedUrl = `http://127.0.0.1:${server.address().port}/zevet-latest.json`;
   console.log(`serving ${feedDir} at ${feedUrl}`);
+  // The feed was signed with a throwaway key (make-feed --test-key); the app
+  // honours its public half only because the feed URL is loopback.
+  const testKey = JSON.parse(fs.readFileSync(path.join(feedDir, "test-key.json"), "utf8"));
+  const feedEnv = { ZEVET_APP_FEED: feedUrl, ZEVET_APP_FEED_TRUSTED_KEY: `${testKey.key_id}:${testKey.public_key}` };
 
   assert.equal(pgrepBin().length, 0, "a zevet process is already running before the test starts");
 
@@ -190,7 +195,7 @@ async function main() {
   fs.writeFileSync(SENTINEL, "x");
 
   let port = 9500 + Math.floor(Math.random() * 500);
-  let app = launch(port, { ZEVET_APP_FEED: feedUrl });
+  let app = launch(port, { ...feedEnv });
   started.push(app.pid);
   await waitForCDP(port);
   const readyA = await waitForReady(port, 120_000);
@@ -236,7 +241,7 @@ async function main() {
   fs.writeFileSync(SENTINEL, "x");
 
   port = 9500 + Math.floor(Math.random() * 500) + 1000;
-  app = launch(port, { ZEVET_APP_FEED: feedUrl, ZEVET_HOME: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "zevet-home-")), "h") });
+  app = launch(port, { ...feedEnv, ZEVET_HOME: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "zevet-home-")), "h") });
   started.push(app.pid);
   await waitForCDP(port);
   await waitForReady(port, 120_000);
@@ -255,6 +260,13 @@ async function main() {
     relaunched = pgrepBin().filter((pid) => pid !== app.pid);
     if (relaunched.length) break;
     await delay(1000);
+  }
+  if (!(relaunched && relaunched.length)) {
+    console.log(`DIAG bundle version: ${plistVersion()}; old pid alive: ${alive(app.pid)}`);
+    try { console.log("DIAG ps: " + run("sh", ["-c", "ps -axo pid,ppid,stat,command | grep -i zevet | grep -v grep"])); } catch (e) { console.log("DIAG ps: none"); }
+    try { console.log("DIAG open: " + run("open", ["-n", BUNDLE], { stdio: ["ignore", "pipe", "pipe"] })); } catch (e) { console.log(`DIAG open failed: ${e.stderr || e.message}`); }
+    await delay(10_000);
+    console.log(`DIAG pids after manual open: ${pgrepBin().join(",") || "none"}`);
   }
   assert.ok(relaunched && relaunched.length, "no new zevet process appeared after Restart now");
   assert.equal(plistVersion(), X1, "the relaunched bundle is not X+1");

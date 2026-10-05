@@ -1,6 +1,7 @@
 // The Masora link runs in the background and reports; it never blocks or throws.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
 import { createRequire } from "node:module";
 import { ROOT } from "./helpers.mjs";
 
@@ -13,13 +14,13 @@ async function until(pred, n = 100) {
 }
 
 /** A Masora that is up or down, and approves when `approved.on` is set. */
-function world({ up = true } = {}) {
+function world({ up = true, url = "http://m", fetchImpl, retryMs = 20 } = {}) {
   const w = { up, approved: { on: false }, saved: [], opened: [], pairs: 0 };
-  w.cfg = { url: "http://m", paired: false };
-  w.fetchImpl = async () => {
+  w.cfg = { url, paired: false };
+  w.fetchImpl = fetchImpl || (async () => {
     if (!w.up) throw new Error("ECONNREFUSED");
     return { ok: true };
-  };
+  });
   w.MasoraPair = class {
     constructor() {
       this.cancelled = false;
@@ -51,12 +52,55 @@ function world({ up = true } = {}) {
     host: "h",
     platform: "win32",
     fetchImpl: w.fetchImpl,
-    retryMs: 20,
+    retryMs,
   });
   return w;
 }
 
+async function healthOrigin(t, apiStatus, legacyStatus) {
+  const hits = [];
+  const server = http.createServer((req, res) => {
+    hits.push(req.url);
+    res.writeHead(req.url === "/api/health" ? apiStatus : req.url === "/healthz" ? legacyStatus : 404);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  return { url: `http://127.0.0.1:${server.address().port}`, hits };
+}
+
 describe("MasoraLink", () => {
+  test("cloud API reachability starts pairing even when the desktop-only page route is unavailable", async (t) => {
+    const origin = await healthOrigin(t, 200, 404);
+    const w = world({ url: origin.url, fetchImpl: fetch, retryMs: 60_000 });
+    t.after(() => w.link.cancel());
+    w.link.start();
+    await until(() => w.link.status().phase === "waiting");
+    assert.deepEqual(origin.hits, ["/api/health"]);
+    assert.equal(w.pairs, 1);
+    assert.deepEqual(w.opened, [], "checking reachability must not approve or open a browser");
+  });
+
+  test("older local runtimes can still pair through their legacy health route", async (t) => {
+    const origin = await healthOrigin(t, 404, 200);
+    const w = world({ url: origin.url, fetchImpl: fetch, retryMs: 60_000 });
+    t.after(() => w.link.cancel());
+    w.link.start();
+    await until(() => w.link.status().phase === "waiting");
+    assert.deepEqual(origin.hits, ["/api/health", "/healthz"]);
+    assert.equal(w.pairs, 1);
+  });
+
+  test("an unhealthy API is not mistaken for a reachable pairing service by the page health route", async (t) => {
+    const origin = await healthOrigin(t, 503, 200);
+    const w = world({ url: origin.url, fetchImpl: fetch, retryMs: 60_000 });
+    t.after(() => w.link.cancel());
+    w.link.start();
+    await until(() => w.link.status().phase === "unreachable");
+    assert.deepEqual(origin.hits, ["/api/health"]);
+    assert.equal(w.pairs, 0);
+  });
+
   test("start() returns at once, before Masora has answered", () => {
     const w = world();
     const r = w.link.start();

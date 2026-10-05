@@ -240,6 +240,8 @@ export function readIdToken(idToken, { clientId, domain = "", now = () => Date.n
     id: sub,
     login: email,
     display: email,
+    // Verified above (email_verified), so it is evidence for linking.
+    emails: [email],
     hd,
   };
 }

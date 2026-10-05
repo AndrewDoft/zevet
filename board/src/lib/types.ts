@@ -1,4 +1,5 @@
 import type { TranscriptState } from "./transcript.d.mts";
+import type { AgentRow } from "./agents.d.mts";
 
 export type Conn = "init" | "live" | "down";
 export type ViewMode = "ide" | "agent";
@@ -20,6 +21,7 @@ export interface HubEvent {
   detail?: string;
   agent?: string;
   machine?: string;
+  session?: string;
 }
 
 export interface RosterEntry {
@@ -50,6 +52,7 @@ export interface Collision {
 export interface Snapshot {
   now: number;
   roster: RosterEntry[];
+  agents?: AgentRow[];
   collisions: Collision[];
   events: HubEvent[];
   windowMs: number;
@@ -65,6 +68,10 @@ export interface ConsoleEntry {
   key: number;
   id: string | null;
   agent: string;
+  /** Zevet-routed consoles: the model that answered the latest turn. */
+  route?: string;
+  /** ...and why the router chose it ("edit → Codex Luna (tier 1, seed 3/4)"). */
+  routeWhy?: string;
   /** The flat view: what classifyAgentPayloadLine produced, plus the process's
    *  own stderr.
    *
@@ -89,6 +96,9 @@ export interface ConsoleEntry {
    *  process — the first moment a new process is free. Null (the normal
    *  case) means the next turn runs with the same posture as this one. */
   nextMode?: LaunchMode | null;
+  /** A model picked while this console was in front, same agent: applied by
+   *  `sendPrompt` exactly as `nextMode` is (resume on the new model). */
+  nextModel?: string | null;
   model: string;
   root: string;
   hue: number;
@@ -101,7 +111,13 @@ export interface ConsoleEntry {
    *  `startedAt` is when the process was launched, `exitCode` how it ended. */
   usage: ConsoleUsage;
   startedAt: number;
+  /** When it last said anything (board.ts § agent events); orders the agents tree. */
+  lastAt?: number;
   exitCode: number | null;
+  /** Text streamed so far for the block claude is still writing (claude only,
+   *  `--include-partial-messages`). View-only: the complete block replaces it.
+   *  See chat-stream.mjs `draftAfter`. */
+  draft?: string;
   /** The provider's own rate-limit windows, when the agent reports them.
    *  Empty for an agent that does not — see `limitsOf` in lib/board.ts. */
   limits: RateWindow[];
@@ -118,6 +134,12 @@ export interface ConsoleEntry {
   /** Slash commands the agent CLI announced in its init line (claude does;
    *  the others do not, and stay empty). Drives the composer's `/` menu. */
   slashCommands: string[];
+  /** Which Claude account this ran on, only set when a launch named one
+   *  (desktop/agent-engine.js). Absent for an ordinary UI-started console. */
+  engine?: string;
+  /** Set only for a console the local control API spawned (desktop/
+   *  agent-api.js), never for one the board's own UI started. */
+  label?: string;
   /** The console this one was forked from, by `key`.
    *
    *  ⚠️ IT HAS TO BE RECORDED HERE, because it cannot be recovered. Both CLIs
@@ -206,7 +228,12 @@ export interface LocalFileData {
 export interface UpdateState {
   phase: "checking" | "current" | "downloading" | "ready" | "error";
   version?: string;
+  /** The INSTALLER's version — what the feed is compared against. */
   current?: string;
+  /** The payload build actually running (desktop/main.js withRunningBuild). */
+  running?: string;
+  /** A verified payload build waiting to apply. */
+  next?: { build: string; when: string };
   percent?: number;
   canInstall?: boolean;
   manual?: boolean;

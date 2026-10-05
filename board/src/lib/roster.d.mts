@@ -23,6 +23,10 @@ export function spritesByPath(
     idleAfterMs: number;
   },
 ): Record<string, { actor: string; tool: string | undefined; ts: number }>;
+export function latestToolForActor(
+  events: EventLike[],
+  opts: { repoName: string | null | undefined; actor: string; now: number; liveAfterMs: number },
+): EventLike | null;
 export function turnTrace(events: EventLike[], actor: string): {
   prompt: EventLike | null;
   tools: EventLike[];

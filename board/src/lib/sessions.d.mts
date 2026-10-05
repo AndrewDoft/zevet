@@ -13,6 +13,8 @@ export interface SessionSummary {
   sessionId?: string;
   /** The directory the session ran in, when the file says so. */
   cwd: string;
+  /** The repo `cwd` is in; a worktree answers its origin (agent-sessions.js § repoOf). */
+  repo?: string;
   /** The git branch at the time, when the CLI recorded one. claude does. */
   branch: string;
   /** The CLI's version string. */
@@ -100,8 +102,9 @@ export function sessionTranscript(
   opts?: { cwd?: string | null; source?: string },
 ): TranscriptState;
 export function unwrapEnvelope(prompt: string): string;
-export function sessionBlurb(session: { title?: string; prompt?: string; id?: string; source?: string }): string;
-export function sessionLabel(session: { title?: string; prompt?: string; id?: string; source?: string }): string;
+export function sessionBlurb(session: { title?: string; label?: string; prompt?: string; id?: string; source?: string }): string;
+export function sessionLabel(session: { title?: string; prompt?: string; label?: string; id?: string; source?: string; branch?: string; cwd?: string; updated?: number; started?: number }, listed?: readonly object[]): string;
 export function sessionWhere(session: { surface?: string; origin?: string }): string;
 export function sessionProject(session: { cwd?: string; slug?: string }): string;
 export function sessionMatches(session: Record<string, unknown>, query: string): boolean;
+export function foldRepoGroups<T>(bucket: Map<string, { rows: T[]; resolved: boolean }>): Map<string, T[]>;

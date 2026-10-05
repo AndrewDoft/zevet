@@ -12,6 +12,8 @@ import { ROOT } from "./helpers.mjs";
 const src = (file) => readFileSync(path.join(ROOT, "board", "src", file), "utf8");
 const board = src("lib/board.ts");
 const bridge = src("lib/bridge.ts");
+// The bridge members are generated from desktop/ipc-table.js.
+const bridgeMembers = src("lib/bridge.generated.d.ts");
 const main = src("main.tsx");
 
 describe("new users land on Agent view; an existing choice survives", () => {
@@ -58,8 +60,8 @@ describe("every zevet.* preference goes through the mirrored store", () => {
   });
 
   test("the desktop bridge type carries the prefs mirror pair", () => {
-    assert.match(bridge, /prefs\?:\s*\(\)\s*=>\s*Promise<Record<string,\s*string>>/);
-    assert.match(bridge, /setPref\?:\s*\(key:\s*string,\s*value:\s*string \| null\)\s*=>\s*Promise<unknown>/);
+    assert.match(bridgeMembers, /prefs\?:\s*\(\)\s*=>\s*Promise<Record<string,\s*string>>/);
+    assert.match(bridgeMembers, /setPref\?:\s*\(key:\s*string,\s*value:\s*string \| null\)\s*=>\s*Promise<unknown>/);
   });
 });
 

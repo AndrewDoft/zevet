@@ -302,3 +302,63 @@ added a "cross-team room isolation" describe (4 tests: no cross-traffic, no
 replay leak across teams, default-vs-created team, same-team relay still
 works), mutation-checked by flattening `roomKey()` to ignore `team` and
 watching it go red. Needs a hub redeploy to reach the live hub.
+
+---
+
+## INSUF-009 — Muse Code's hook payload and Muse Spark's direct execution path are unverified
+
+**What is missing.** Two related gaps, both about Meta's Muse family (added this session — Muse
+Spark in the model picker, Muse Code detected as an agent):
+
+1. Meta's docs (`dev.meta.ai/docs/muse-code/extending`, `/configuration`, `/session-messaging`,
+   fetched 2026-09-27) publish Muse Code's hook EVENT NAMES and where hooks are configured
+   (`<repo>/.muse/hooks.json`, `~/.config/muse/settings.json`), but nowhere reachable in this
+   session shows the exact JSON payload a hook command receives on stdin, or the exact path/format
+   of a retained session transcript. `codex-hooks.md` needed a real `codex` install and two rounds
+   of live probing to get its own payload shape right (a wrong guess there shipped silently
+   broken for a while); there is no `muse` binary on this machine to do the same for Muse Code.
+2. Zevet has no direct HTTP client for any model provider — every model it can run today is run
+   by spawning a CLI. Muse Spark (the Meta Model API) is listed in the composer's model picker
+   (`board/src/lib/muse-models.mjs`) exactly the way Gemini already is: shown, described, but with
+   `ok: false` — no adapter behind it. Building one (either a direct HTTP client against
+   `https://api.meta.ai/v1`, or wiring Muse Code as a fourth spawnable CLI) is unstarted.
+
+**What was tried and observed.** `client/detect.mjs` gained a `muse-code` entry with `hooks:
+false` specifically because of (1) — see the comment there and `docs/contracts/muse-code-hooks.md`.
+Detection was verified live: `node client/doctor.mjs` on this machine correctly reports
+`[--] muse-code    not installed` (Muse Code is not installed here), and a synthetic PATH test
+(`test/detect.test.mjs`, "Muse Code on PATH...") confirms installed+signed-in detection and the
+"no hook contract" report together, with a mutation check proving the assertion can fail.
+
+**Smallest thing that unblocks it.** (1) Install `muse` on a real machine, register one hook per
+event with a marker command (same technique `codex-hooks.md` used), and read the captured stdin
+JSON back — then `client/detect.mjs`'s `muse-code` entry can flip to `hooks: true` and
+`client/install.mjs` can gain a `.muse/hooks.json` writer mirroring `installClaude()`. (2) Confirm
+the Responses API's exact streaming/tool-call JSON shape against a live call with a real
+`MODEL_API_KEY` (`/docs/api-reference/responses/create-response`), then either write a small
+`fetch`-based adapter or verify Codex/Muse Code CLI's own custom-provider config against the base
+URL.
+
+**Blast radius.** Muse Spark's own free path (via opencode's zen tier, `muse-spark-1.2/1.3-
+contributor-free` in `board/src/lib/models.generated.mjs`) is unaffected and already works with no
+key — this only blocks a DIRECT, non-opencode Muse Spark run and Muse Code's live-board wiring.
+Nobody is blocked from using Muse Spark today; they use it through opencode, same as before this
+session.
+
+## INSUF-010 — Payload swap: what the packaged proof does not reach — **OPEN (narrowed)**
+
+**Proven.** GitHub Actions `build` run 36630981357 (both legs green): the REAL packaged app on Windows and on
+macOS took a second payload from a loopback pulse without the installer (one blob fetched for a one-file change,
+`app.asar` byte-identical), confirmed it after the window loaded and the agent API answered, and reverted a
+payload whose `main.js` throws after three strikes, never re-applying it. The proof found two real defects on the
+way (fixed): `startAgentApi` wrote into a home directory that did not exist yet, and pointer movement from a
+window opening under a still cursor counted as "input", which would have held every swap for 2 minutes.
+
+**Not proven.** (1) Codemagic `macos-autoupdate` runs the same script but has not been run. (2) The idle gate
+is proven by unit tests and by the swap happening with no input; no packaged run holds a live agent or a typing
+person and watches the swap wait. (3) The proof sets `ZEVET_PAYLOAD_INPUT_QUIET_MS=0`, so it does not exercise
+the 2-minute input window itself. (4) Electron 44's `input-event` for mouse buttons and wheel is assumed from the
+docs; only pointer *movement* and keyboard were seen. (5) A real update from usemasora.com: nothing is published there.
+
+**Blast radius.** A wrong idle gate relaunches under a reader, never under a running agent. A boot the proof
+would have caught costs the three-strike revert, then the seed, so an install is never left without a runnable tree.

@@ -62,7 +62,7 @@ const path = require("node:path");
  * (see `extraResources` in desktop/package.json). Development: the checkout.
  */
 function cryptoModulePaths(name) {
-  const out = [];
+  const out = [path.join(__dirname, "client", name)]; // the payload's own copy (payload-tree.cjs)
   if (process.resourcesPath) out.push(path.join(process.resourcesPath, "client", name));
   out.push(path.join(__dirname, "..", "client", name));
   return out;
@@ -98,7 +98,7 @@ function socketUrl(hub, room) {
   if (u.protocol === "https:") u.protocol = "wss:";
   else if (u.protocol === "http:") u.protocol = "ws:";
   else throw new Error(`hub must be http or https, got ${u.protocol}`);
-  u.pathname = "/ws";
+  u.pathname = `${u.pathname.replace(/\/+$/, "")}/ws`; // a hub under a path (/hub) keeps it
   // The token goes in the query string. The hub accepts it there as a last
   // resort (the cookie path is for the browser, the header for the hook), and a
   // WebSocket client cannot set request headers — the browser API has no

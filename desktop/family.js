@@ -6,6 +6,8 @@
 //   <family dir>/family.key   the pairing secret                                (Masora writes)
 //   <family dir>/zevet.json   heartbeat, every 60 s                             (we write)
 //   <family dir>/zevet.request.json {"action":"update"|"connect"}               (others write; we delete)
+//   <family dir>/zevet.credentials.json  cloud mode only (masora.json runtime "masora-cloud"): {cloud, token:"palct_…",
+//                                        kind:"connector_device", member_email, issued_at}  (Masora writes; we consume + delete)
 //
 // Nothing here throws into the caller: every failure is a state, retried on
 // the next tick. The token goes to the same safeStorage store the device-code
@@ -15,11 +17,19 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const kit = require("@masora/desktop-kit");
+const familyIndex = require("./family-index.js");
 
 const TICK_MS = 60_000;
 const REQUEST_POLL_MS = 3_000;
 const FEED_TTL_MS = 60 * 60 * 1000;
-const STALE_MS = 3 * 60 * 1000; // a heartbeat older than this is not "running"
+const INDEX_FIRST_MS = 2 * 60 * 1000;
+const INDEX_EVERY_MS = 60 * 60 * 1000;
+/** One Zevet version the index names is acted on once per this long (a check that found nothing is not retried hourly). */
+const INDEX_RENUDGE_MS = 6 * 60 * 60 * 1000;
+const { STALE_MS, familyDir, readJson } = kit; // STALE_MS: a heartbeat older than this is not "running"
+const CRED_MAX_AGE_MS = 10 * 60 * 1000;
+const cloudKey = (u) => String(u || "").trim().replace(/\/+$/, "");
 const DOWNLOADS = "https://usemasora.com/download/";
 
 const APPS = {
@@ -37,21 +47,6 @@ const APPS = {
     installed: "Zevet Voice",
   },
 };
-
-function familyDir(env = process.env, platform = process.platform, home = os.homedir()) {
-  if (env.MASORA_FAMILY_DIR) return env.MASORA_FAMILY_DIR;
-  if (platform === "darwin") return path.join(home, "Library", "Application Support", "Masora", "family");
-  return path.join(env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "Masora", "family");
-}
-
-function readJson(file) {
-  try {
-    const v = JSON.parse(fs.readFileSync(file, "utf8"));
-    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
-  } catch {
-    return null;
-  }
-}
 
 /** -1 / 0 / 1 for dotted numeric versions; unparseable parts count as 0. */
 function cmpVersion(a, b) {
@@ -126,6 +121,10 @@ class Family {
     clearToken, // () => void
     openExternal,
     runUpdate, // async () => void : the normal self-update
+    // The signed family index (family-index.js): keys it may be signed with ({} = poll off) and what to do when
+    // it names a newer Zevet -- main.js passes appUpdater.check(), never an install.
+    indexKeys = {},
+    onIndexNewer = () => {},
     fetchImpl,
     detect = osDetect,
     // D-603: this machine's Zevet TEAM name, e.g. main.js's `fetchTeamName`
@@ -135,9 +134,21 @@ class Family {
     // throws by contract, but a throw is still swallowed below since this is
     // a label, not something pairing may depend on.
     readTeam = async () => "",
+    // D-615: joins a hub team by name+key on THIS machine's behalf, using no
+    // session at all (there may be none yet) -- main.js's own zevet:teamJoin
+    // handler, factored out so a relayed join and a typed one run identical
+    // code. async (team, key) => {ok, error?, login?, owner?, teamName?}.
+    joinTeam = async () => ({ ok: false, error: "not configured" }),
+    joinHub = async () => ({ ok: false, error: "not configured" }), // (hubUrl, assertion) => {ok}: Masora's one-login hub sign-in (main.js)
     readHubAuth, // () => {hub, token} | null : this machine's OWN hub session (main.js's authFor)
+    // What Zevet genuinely knows about the person, e.g. the GitHub login or
+    // email their own hub sign-in used -- never guessed. () => {email?,
+    // github_login?, google_email?} | null; null/empty means Zevet knows
+    // nothing, and no `identity` is sent (see #identity below).
+    readIdentity = () => null,
     version,
     installPath,
+    allowLoopbackCloud = false, // tests only: lets a cloud of http://127.0.0.1 / localhost count as https
     host = os.hostname(),
     platform = process.platform,
     pid = process.pid,
@@ -145,7 +156,7 @@ class Family {
     tickMs = TICK_MS,
     pollMs = REQUEST_POLL_MS,
   } = {}) {
-    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, detect, readTeam, readHubAuth, version, installPath, host, platform, pid, now, tickMs, pollMs });
+    Object.assign(this, { dir, readMasora, saveUrl, saveToken, clearToken, openExternal, runUpdate, indexKeys, onIndexNewer, detect, readTeam, joinTeam, joinHub, readHubAuth, readIdentity, version, installPath, allowLoopbackCloud, host, platform, pid, now, tickMs, pollMs });
     this.fetch = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
     this.pairing = "idle"; // idle | pairing | no_owner | unreachable | error
     this.team = ""; // last-known team name; refreshed each tick, best-effort
@@ -174,14 +185,31 @@ class Family {
     return null;
   }
 
+  /** `identity` for the pair POST: only string, non-empty fields, and never
+   *  fabricated -- `readIdentity()` returning null/`{}` means Zevet knows
+   *  nothing, and this returns null so the field is left off the wire
+   *  entirely rather than sent as `{}` or with blank values. */
+  #identity() {
+    let raw;
+    try {
+      raw = this.readIdentity();
+    } catch {
+      return null;
+    }
+    if (!raw || typeof raw !== "object") return null;
+    const out = {};
+    for (const k of ["email", "github_login", "google_email"]) {
+      if (typeof raw[k] === "string" && raw[k]) out[k] = raw[k];
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
 
   /* ── heartbeat ─────────────────────────────────────────────────────────── */
 
   heartbeat(running = true) {
     const m = this.readMasora();
     try {
-      fs.mkdirSync(this.dir, { recursive: true });
-      const file = path.join(this.dir, "zevet.json");
       const body = {
         app: "zevet",
         version: this.version,
@@ -189,7 +217,9 @@ class Family {
         updated_at: new Date(this.now()).toISOString(),
         install_path: this.installPath,
         running,
-        masora: { connected: !!m.paired, member_email: m.member || null },
+        // hub_email: whose hub session this machine holds, only while a whoami has resolved a team (this.roster) -- the
+        // cloud shell reads it to know whether Zevet still needs its hub login from Masora's sign-in.
+        masora: { connected: !!m.paired, member_email: m.member || null, account_email: (m.paired && m.account_email) || null, hub_email: (this.roster && (this.readIdentity() || {}).email) || null },
       };
       // `this.roster` is only ever set from a whoami that actually resolved a
       // team (see #refreshRoster) — never guessed, so signed-out and
@@ -200,8 +230,7 @@ class Family {
         body.team_name = this.roster.team_name;
         body.people = this.roster.people;
       }
-      fs.writeFileSync(`${file}.tmp`, JSON.stringify(body));
-      fs.renameSync(`${file}.tmp`, file);
+      kit.writeHeartbeat(this.dir, "zevet", body);
     } catch {
       /* an unwritable family dir must not hurt Zevet */
     }
@@ -244,8 +273,7 @@ class Family {
     if (this.busy) return this.pairing;
     this.busy = true;
     try {
-      const mj = readJson(path.join(this.dir, "masora.json"));
-      const web = mj && mj.runtime === "masora-desktop" && typeof mj.web === "string" ? mj.web.replace(/\/+$/, "") : "";
+      const web = kit.masoraWeb(this.dir);
       if (!web) return (this.pairing = "unreachable");
       let health = null;
       try {
@@ -255,15 +283,11 @@ class Family {
         /* down */
       }
       if (!health || health.runtime !== "masora-desktop") return (this.pairing = "unreachable");
-      let secret = "";
-      try {
-        secret = fs.readFileSync(path.join(this.dir, "family.key"), "utf8").trim();
-      } catch {
-        /* Masora has not written it yet */
-      }
+      const secret = kit.readKey(this.dir) || ""; // "" until Masora has written it
       if (!secret) return (this.pairing = "unreachable");
       this.pairing = "pairing";
       await this.refreshTeam();
+      const identity = this.#identity();
       let res;
       try {
         res = await this.fetch(`${web}/api/family/pair`, {
@@ -272,6 +296,7 @@ class Family {
           body: JSON.stringify({
             app: "zevet", secret, device_name: this.host, platform: this.platform,
             ...(this.team ? { team_name: this.team } : {}),
+            ...(identity ? { identity } : {}),
           }),
           signal: AbortSignal.timeout(15000),
         });
@@ -289,7 +314,15 @@ class Family {
       if (!body || typeof body.token !== "string" || !body.token) return (this.pairing = "error");
       try {
         this.saveUrl(web);
-        this.saveToken(body.token, typeof body.member_email === "string" ? body.member_email : "");
+        this.saveToken(
+          body.token,
+          typeof body.member_email === "string" ? body.member_email : "",
+          // `canonical`: the real identity of the paired owner, replacing
+          // `member_email` for display -- see masora.js's readConfig(). An
+          // older Masora that hasn't shipped it omits the field, and null
+          // here is what keeps that fallback working.
+          body.canonical && typeof body.canonical === "object" ? body.canonical : null,
+        );
       } catch {
         return (this.pairing = "error");
       }
@@ -301,6 +334,77 @@ class Family {
     }
   }
 
+  /**
+   * Cloud mode: Masora's shell drops <dir>/zevet.credentials.json for the person it is signed in as. Stored exactly
+   * as the loopback pair stores its token (saveUrl + saveToken), then the file is deleted. Never throws; the token
+   * is never logged. Returns "connected" | "ignored" | "failed" | "none".
+   */
+  consumeCredentials() {
+    const file = path.join(this.dir, "zevet.credentials.json");
+    const drop = () => { try { fs.unlinkSync(file); } catch { /* already gone */ } };
+    let raw;
+    try {
+      raw = fs.readFileSync(file, "utf8");
+    } catch {
+      return "none";
+    }
+    const desc = readJson(path.join(this.dir, "masora.json")) || {};
+    const cloud = cloudKey(desc.cloud);
+    const httpsOk = /^https:\/\/[^\s/]+/i.test(cloud) || (this.allowLoopbackCloud && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(cloud));
+    const upd = Date.parse(desc.updated_at);
+    if (desc.runtime !== "masora-cloud" || !httpsOk || !(this.now() - upd <= STALE_MS)) return "ignored";
+    let c = null;
+    try {
+      c = JSON.parse(raw);
+    } catch {
+      /* malformed: dropped below */
+    }
+    const age = c && typeof c === "object" ? this.now() - Date.parse(c.issued_at) : NaN;
+    if (!c || typeof c !== "object" || typeof c.token !== "string" || !c.token.startsWith("palct_") || c.kind !== "connector_device" || !(age <= CRED_MAX_AGE_MS)) {
+      drop();
+      return "ignored";
+    }
+    if (cloudKey(c.cloud) !== cloud) return "ignored";
+    const email = typeof c.member_email === "string" ? c.member_email : "";
+    try {
+      this.saveUrl(cloud);
+      this.saveToken(c.token, email, email ? { email } : null);
+    } catch {
+      return "failed"; // file kept: retried on the next poll
+    }
+    drop();
+    this.pairing = "idle";
+    this.heartbeat();
+    if (c.hub) void this.#signInHub(cloud, c.hub);
+    return "connected";
+  }
+
+  /**
+   * One login for everyone: the credentials file's `hub` block is Masora's signed statement that this person belongs
+   * to a workspace, redeemed at the hub for a team session (main.js `joinHub`). The hub must be on the cloud's own
+   * https origin, so the assertion never goes anywhere else. Fire-and-forget like every relayed action: the
+   * assertion is single use, and a failure shows as a missing `hub_email`, which makes Masora issue a fresh one.
+   */
+  async #signInHub(cloud, hub) {
+    let url = "";
+    try {
+      const h = new URL(hub.url);
+      const same = h.origin === new URL(cloud).origin;
+      if (same && (h.protocol === "https:" || this.allowLoopbackCloud) && typeof hub.assertion === "string" && hub.assertion) url = hub.url.replace(/\/+$/, "");
+    } catch {
+      /* malformed url: ignored below */
+    }
+    if (!url) return;
+    try {
+      const r = await this.joinHub(url, hub.assertion);
+      if (!r || !r.ok) console.error(`zevet: hub sign-in from Masora failed (${(r && r.error) || "unknown"})`);
+    } catch (err) {
+      console.error(`zevet: hub sign-in from Masora threw (${err.message})`);
+    }
+    await this.#refreshRoster();
+    this.heartbeat();
+  }
+
   /** A 401 from Masora: the token is dead, so drop it and pair again. */
   repair() {
     try {
@@ -308,24 +412,56 @@ class Family {
     } catch {
       /* nothing stored */
     }
+    this.heartbeat(); // connected:false now, so the shell can issue a fresh credential
     return this.connect();
+  }
+
+  /** One index pass: a newer Zevet than this one triggers the normal update check. Never throws. */
+  async checkIndex() {
+    const to = await familyIndex.newerZevet({ fetchImpl: this.fetch, keys: this.indexKeys, version: this.version, log: (m) => console.log(`[family] ${m}`) });
+    if (!to) return null;
+    if (this.indexNudged && this.indexNudged.to === to && this.now() - this.indexNudged.at < INDEX_RENUDGE_MS) return null;
+    this.indexNudged = { to, at: this.now() };
+    try {
+      await Promise.resolve(this.onIndexNewer(to));
+    } catch (err) {
+      console.log(`[family] update check after the index failed: ${err.message}`);
+    }
+    return to;
   }
 
   /* ── requests from siblings ────────────────────────────────────────────── */
 
   async pollRequest() {
-    const file = path.join(this.dir, "zevet.request.json");
-    const req = readJson(file);
+    this.consumeCredentials();
+    const req = kit.takeRequest(this.dir, "zevet"); // read, then deleted: run once
     if (!req) return;
-    try {
-      fs.rmSync(file, { force: true });
-    } catch {
-      return; // cannot delete it, so cannot promise to run it only once
-    }
     if (req.action === "connect") await this.connect();
     else if (req.action === "update") await Promise.resolve(this.runUpdate()).catch(() => {});
     else if (req.action === "team.invite" || req.action === "team.revoke") await this.#relayTeamAction(req.action, req.login);
     else if (req.action === "team.domain") await this.#relayTeamDomain(req.value);
+    else if (req.action === "team.join") await this.#relayTeamJoin(req.team, req.key);
+  }
+
+  /**
+   * Masora's onboarding relays an invite it was given for a hub team --
+   * {team, key} -- so a fresh machine can join with no separate Zevet setup.
+   * Unlike team.invite/team.revoke this needs no existing hub session (there
+   * may be none: Zevet has not joined ANY team yet), so it goes through
+   * `joinTeam` (main.js), the exact function `zevet:teamJoin` already calls
+   * for desktop/setup.html's own Join button -- a relayed join is
+   * indistinguishable from a typed one. Fire-and-forget, same as every other
+   * relayed action here: no reply channel, so a failure is only ever logged.
+   */
+  async #relayTeamJoin(team, key) {
+    try {
+      const r = await this.joinTeam(team, key);
+      if (!r || !r.ok) console.error(`zevet: team.join relay failed (${(r && r.error) || "unknown"})`);
+    } catch (err) {
+      console.error(`zevet: team.join relay threw (${err.message})`);
+    }
+    await this.#refreshRoster();
+    this.heartbeat();
   }
 
   /**
@@ -402,10 +538,14 @@ class Family {
     };
     add(tick, this.tickMs);
     add(() => void this.pollRequest(), this.pollMs);
+    const first = setTimeout(() => void this.checkIndex(), INDEX_FIRST_MS);
+    if (typeof first.unref === "function") first.unref();
+    this.timers.push(first);
+    add(() => void this.checkIndex(), INDEX_EVERY_MS);
   }
 
   stop() {
-    for (const t of this.timers) clearInterval(t);
+    for (const t of this.timers) { clearInterval(t); clearTimeout(t); }
     this.timers = [];
     this.heartbeat(false);
   }
@@ -436,7 +576,7 @@ class Family {
   }
 
   async #row(app) {
-    const hb = readJson(path.join(this.dir, `${app}.json`));
+    const hb = kit.readHeartbeat(this.dir, app);
     let version = hb && typeof hb.version === "string" ? hb.version : null;
     let installed = !!hb;
     if (!installed) {
@@ -450,8 +590,7 @@ class Family {
         version = f.hit.version || null;
       }
     }
-    const beat = hb && Date.parse(hb.updated_at);
-    const running = !!(hb && hb.running !== false && beat && this.now() - beat < STALE_MS);
+    const running = kit.isRunning(hb, this.now(), STALE_MS);
     const feed = await this.#latest(app);
     const mine = this.readMasora();
     const connected = app === "masora" ? !!mine.paired : !!(hb && hb.masora && hb.masora.connected);
@@ -508,8 +647,7 @@ class Family {
 
   #request(app, body) {
     try {
-      fs.mkdirSync(this.dir, { recursive: true });
-      fs.writeFileSync(path.join(this.dir, `${app}.request.json`), JSON.stringify({ ...body, requested_by: "zevet", at: new Date(this.now()).toISOString() }));
+      kit.writeRequest(this.dir, app, { ...body, requested_by: "zevet", at: new Date(this.now()).toISOString() });
       return { requested: true };
     } catch {
       return { requested: false };
