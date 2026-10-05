@@ -203,7 +203,8 @@ describe("3. continuing a terminal session", () => {
 
   test("the sessions list offers Continue in Zevet only to sessions that are not SDK-started", () => {
     const ui = readFileSync(path.join(ROOT, "board", "src", "components", "sessions.tsx"), "utf8");
-    assert.match(ui, /s\.surface !== "sdk" && Boolean\(resumeIdForSession\(s\)\)/);
+    assert.match(ui, /const resumeId = resumeIdForSession\(s\);/);
+    assert.match(ui, /if \(s\.surface === "sdk" \|\| !canContinue\) return null;/);
     assert.match(ui, /Continue in Zevet/);
     assert.match(ui, /<ContinueInZevet s=\{s\} \/>/);
   });
