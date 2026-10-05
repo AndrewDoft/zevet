@@ -33,6 +33,7 @@ import { brotliDecompressSync } from "node:zlib";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { acquireLock, decide, nextDNumber, notesFrom, recordHeader, renderRecord, runSteps } from "./ship-lib.mjs";
+import { uploadSentrySourcemaps } from "./sentry-sourcemaps.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(HERE, "..");
@@ -297,9 +298,10 @@ export function buildSteps(ctx) {
         if (d.hubFiles.some((f) => f.startsWith("board/"))) {
           if (!existsSync(path.join(wt, "board", "node_modules"))) io.run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: path.join(wt, "board"), stream: true });
           io.run("npm", ["run", "build"], { cwd: path.join(wt, "board"), stream: true });
+          uploadSentrySourcemaps({ root: wt, version: v, run: io.run });
         }
         io.run("node", ["scripts/run-tests.mjs"], { cwd: wt, stream: true });
-        io.git(["add", "package.json", "package-lock.json", "desktop/package.json", "desktop/package-lock.json", "hub/client-manifest.signed.json", "hub/public/board.js", "hub/public/board.js.map", "hub/public/board.js.srchash", "hub/public/board.css"], { cwd: wt });
+        io.git(["add", "package.json", "package-lock.json", "desktop/package.json", "desktop/package-lock.json", "hub/client-manifest.signed.json", "hub/public/board.js", "hub/public/board.js.map", "hub/public/board.js.srchash", "hub/public/board.css", "hub/public/editor.js", "hub/public/editor.js.map"], { cwd: wt });
         io.git(["commit", "-q", "-m", `release: ${v}`], { cwd: wt });
         io.run("node", ["scripts/release-check.mjs"], { cwd: wt });
         io.git(["tag", "-d", tag], { cwd: wt, allow: [0, 1] });
