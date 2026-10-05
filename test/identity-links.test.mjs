@@ -55,5 +55,5 @@ test("hub: Masora sign-in of the linked person lands on the GitHub owner, not a 
   const { token } = await r.json();
   const w = await fetch(`${h.base}/auth/whoami`, { headers: { "x-zevet-token": token } }).then((x) => x.json());
   assert.equal(w.people.length, 1);
-  assert.equal(w.me.display, "Andrew");
+  assert.equal(w.me.name, "Andrew");
 });
