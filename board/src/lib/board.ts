@@ -1,8 +1,6 @@
-import type { CSSProperties } from "react";
 import { create } from "zustand";
 import { bridge, zStorage, type AgentEvent, type AgentSchedule, type AgentSettings, type AskRequest, type HeldConsole, type MemoryNote, type PermitRequest, type RepoCommit, type StatusResult } from "./bridge";
 import { shortInput } from "./fmt";
-import { authorStyle as authorStyleOf } from "./authorcolor.mjs";
 import {
   appendAgentPayload,
   appendUserText,
@@ -11,15 +9,9 @@ import {
   plainError,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
-import { foldAgent } from "./agents.mjs";
-import type { AgentRow } from "./agents.d.mts";
-import { draftAfter } from "./chat-stream.mjs";
-import { answerBoardRequest } from "./board-requests.mjs";
-import { isNotOpen, shownError } from "./workspace-root.mjs";
 import { classifyEnding, noteModelLimit as noteLimitFromStatus } from "./model-limits.mjs";
-import { learnModels, runningModelName } from "./models.mjs";
+import { learnModels } from "./models.mjs";
 import { usageOf, type UsageReading } from "./usage.mjs";
-import { initBoardSentry } from "./sentry";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
 import type { TranscriptState } from "./transcript.d.mts";
 import { mainSurface, repoToFollow, showConversation, showFile } from "./view.mjs";
@@ -136,10 +128,6 @@ interface LiveStrip {
 interface Strip {
   live: LiveStrip;
   machine: StatusResult | null;
-  /** The account's 5h/7d windows, from the latest `rate_limit_event` any
-   *  console reported. Account-wide, so the strip shows them once. */
-  limits: RateWindow[];
-  limitsAt: number;
 }
 
 /**
@@ -161,17 +149,12 @@ export interface ForkLaunch {
   /** The model and posture of the run it came from, so the two answers differ
    *  by the prompt and nothing else. */
   model?: string;
+  effort?: string;
   mode?: LaunchMode;
   /** The `key` of the console being branched. Recorded on the new console as
    *  `forkedFrom`; a fork's own session id is new, so this is the only link
    *  between two answers to the same question. */
   fromKey?: number;
-  /** A start the loopback agent API asked for (lib/board-requests.mjs): it runs in
-   *  `root`, takes none of the launcher's own picks, and does not take the screen. */
-  background?: boolean;
-  root?: string;
-  engine?: string;
-  label?: string;
 }
 
 interface BoardState {
@@ -182,8 +165,6 @@ interface BoardState {
 
   events: HubEvent[];
   roster: RosterEntry[];
-  /** Everyone's agents (folded by the hub, kept live by pushEvent); state is derived at render. */
-  teamAgents: AgentRow[];
   collisions: Collision[];
 
   selectedActor: string | null;
@@ -202,8 +183,6 @@ interface BoardState {
 
   localRoot: string | null;
   localCheckout: string | null;
-  /** The open folder's origin repo root (a worktree's main checkout), from local:tree. */
-  localOrigin: string | null;
   localEntries: LocalEntry[] | null;
   localError: string | null;
   /** The tree was cut short. NOT an error - see openLocalRoot. */
@@ -266,10 +245,6 @@ interface BoardState {
    *  across model switches; the selector only shows it for a model that
    *  declares support, so it is carried even while it does not apply. */
   launchEffort: string;
-  /** Next start only: `claude --continue`, the latest session in this folder. */
-  launchContinue: boolean;
-  /** Next starts: extra folders claude may touch (`--add-dir`), one path per line. */
-  launchAddDirs: string;
   launchMode: LaunchMode;
   /** The posture this user chose as their default, or "" if they never did.
    *  Read from ~/.zevet/config.json at boot; see desktop/main.js storedMode. */
@@ -343,7 +318,6 @@ interface BoardState {
   setFollowMode: (m: "mine" | "all" | "off") => void;
   setView: (v: ViewMode) => void;
   toggleTree: () => void;
-  setTreeHidden: (hidden: boolean) => void;
   setTheme: (t: Theme) => void;
   clearSelectedPath: () => void;
 
@@ -351,13 +325,11 @@ interface BoardState {
   setDefaultMode: (m: string) => Promise<{ ok: boolean; error?: string }>;
   setLaunchModel: (m: string) => void;
   setLaunchEffort: (e: string) => void;
-  setLaunchContinue: (on: boolean) => void;
-  setLaunchAddDirs: (dirs: string) => void;
   setLaunchAgent: (a: string) => void;
   adoptDefaultAgent: () => void;
   /** Start an agent. `launch` is for a FORK: the session to branch from, the
    *  prompt to ask it, and the model/posture of the run it came from. */
-  startAgent: (name: string, launch?: ForkLaunch) => Promise<{ ok: boolean; id?: string; engine?: string; error?: string }>;
+  startAgent: (name: string, launch?: ForkLaunch) => void;
   closeConsole: (key: number) => void;
   setActiveConsole: (key: number | null) => void;
   openLauncher: () => void;
@@ -367,8 +339,6 @@ interface BoardState {
    *  mid-turn (see `ConsoleEntry.nextMode`), so this only ever writes
    *  `mode` directly for a console that is not running. */
   setConsoleMode: (key: number, mode: string) => void;
-  /** Change a console's model mid-thread; takes effect on the next prompt. */
-  setConsoleModel: (key: number, model: string) => void;
 
   openLocalRoot: (dir: string) => void;
   unsetLocalRoot: () => void;
@@ -416,35 +386,6 @@ interface BoardState {
   bumpTick: () => void;
 }
 
-/** Every name (lower-cased) the hub knows a person by: what they are called now,
- *  what they were called, and each login they have linked. */
-export function myActorNames(me: { name: string; identities?: Array<{ login: string }>; aliases?: string[] }): string[] {
-  return [me.name, ...(me.aliases || []), ...(me.identities || []).map((i) => i.login)].map((n) => String(n).toLowerCase().replace(/^@/, ""));
-}
-
-const claimedActors = new Set<string>();
-
-/** Change MY display name on the hub. Yourself only (the hub refuses otherwise;
- *  the owner renames others from Settings). `actor` is the string this machine's
- *  hook reports, so the events already in the log follow the new name. */
-export async function renameSelf(name: string): Promise<{ ok: boolean; error?: string }> {
-  const actor = (bridge.cfg && bridge.cfg.actor) || useBoard.getState().myActor || undefined;
-  try {
-    const r = await fetch("/auth/rename", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, actor }),
-    });
-    const b = (await r.json().catch(() => ({}))) as { error?: string };
-    if (!r.ok) return { ok: false, error: b.error || `Could not rename (${r.status})` };
-    useBoard.getState().refreshWhoami();
-    return { ok: true };
-  } catch {
-    return { ok: false, error: "Could not connect." };
-  }
-}
-
 export type UsableAgentShape = {
   name: string;
   ok: boolean;
@@ -456,21 +397,11 @@ interface WhoStateShape {
   ok?: boolean;
   actor?: string;
   login?: string;
-  teamName?: string;
   owner?: boolean;
   allow?: string[];
   shared?: boolean;
   githubSignIn?: boolean;
-  people?: Array<{
-    login: string;
-    key?: string;
-    owner?: boolean;
-    pending?: boolean;
-    identities?: Array<{ provider: string; login: string }>;
-    aliases?: string[];
-  }>;
-  /** Me: my display name and every identity linked to me (see hub `profile`). */
-  me?: { name: string; login: string; owner: boolean; identities: Array<{ provider: string; login: string }>; aliases: string[] } | null;
+  people?: Array<{ login: string; owner?: boolean; pending?: boolean }>;
 }
 
 export interface EditorViewState {
@@ -498,13 +429,6 @@ function pref(key: string, fallback: string): string {
 }
 function setPref(key: string, value: string): void {
   zStorage.setItem("zevet." + key, value);
-}
-/* The file tree belongs to the view: Files has it open, Agent has it shut
-   (the conversation is the page; Strip's "Open tree" brings it back). Each
-   view remembers its own fold, so switching never drags one's choice into the
-   other. */
-function treeHiddenFor(v: ViewMode): boolean {
-  return pref("treeHidden." + v, v === "agent" ? "1" : "0") === "1";
 }
 
 let ed: EditorSession | null = null;
@@ -540,7 +464,6 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   events: [],
   roster: [],
-  teamAgents: [],
   collisions: [],
 
   selectedActor: null,
@@ -555,12 +478,11 @@ export const useBoard = create<BoardState>((set, get) => ({
   })(),
   // New users land on Agent — IDE is for people who already asked for it.
   viewMode: (pref("view", "agent") === "ide" ? "ide" : "agent") as ViewMode,
-  treeHidden: treeHiddenFor((pref("view", "agent") === "ide" ? "ide" : "agent") as ViewMode),
+  treeHidden: pref("treeHidden", "0") === "1",
   theme: (pref("theme", "light") === "dark" ? "dark" : "light") as Theme,
 
   localRoot: null,
   localCheckout: null,
-  localOrigin: null,
   localEntries: null,
   localError: null,
   localTruncated: null,
@@ -589,8 +511,6 @@ export const useBoard = create<BoardState>((set, get) => ({
   // the next agent — restored here so a reload doesn't reset them to nothing.
   launchModel: pref("launchModel", ""),
   launchEffort: "",
-  launchContinue: false,
-  launchAddDirs: pref("launchAddDirs", ""),
   launchMode: (() => {
     const saved = pref("launchMode", "auto");
     return (MODES.some((m) => m.id === saved) ? saved : "auto") as LaunchMode;
@@ -600,7 +520,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   edView: null,
   docStatus: Object.create(null) as Record<string, { state: string; detail?: string }>,
 
-  strip: { live: { model: null, context: null, cacheHit: null, cost: null }, machine: null, limits: [], limitsAt: 0 },
+  strip: { live: { model: null, context: null, cacheHit: null, cost: null }, machine: null },
 
   who: { state: null, busy: false },
   index: { state: null, barPct: 0, progressText: "ready" },
@@ -651,7 +571,6 @@ export const useBoard = create<BoardState>((set, get) => ({
     set((g) => ({
       skewMs: skew,
       roster: s.roster || [],
-      teamAgents: s.agents || [],
       collisions: s.collisions || [],
       idleAfterMs: s.idleAfterMs || IDLE_FALLBACK,
       events: s.events || [],
@@ -683,9 +602,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       r.lastTs = e.ts;
       r.lastEvent = e;
     }
-    const agents = new Map(g.teamAgents.map((a) => [a.key, { ...a }]));
-    foldAgent(agents, e);
-    const patch: Partial<BoardState> = { events, roster, teamAgents: [...agents.values()] };
+    const patch: Partial<BoardState> = { events, roster };
     if (!g.selectedRepo) patch.selectedRepo = e.repo || null;
     set(patch);
     followEvent(e);
@@ -713,15 +630,15 @@ export const useBoard = create<BoardState>((set, get) => ({
   /* Hidden, not unmounted: the tree keeps its open folders and its scroll
      position (it is only `visibility: hidden` at zero width, see masora.css),
      so unfolding it puts it back exactly as it was. */
-  toggleTree: () => get().setTreeHidden(!get().treeHidden),
-  setTreeHidden: (hidden) => {
-    setPref("treeHidden." + get().viewMode, hidden ? "1" : "0");
-    set({ treeHidden: hidden });
+  toggleTree: () => {
+    const next = !get().treeHidden;
+    setPref("treeHidden", next ? "1" : "0");
+    set({ treeHidden: next });
     requestMeasureEditor();
   },
   setView: (v) => {
     setPref("view", v);
-    set({ viewMode: v, treeHidden: treeHiddenFor(v) });
+    set({ viewMode: v });
     requestMeasureEditor();
   },
   setTheme: (t) => {
@@ -753,26 +670,20 @@ export const useBoard = create<BoardState>((set, get) => ({
     set({ launchModel: m });
   },
   setLaunchEffort: (e) => set({ launchEffort: e }),
-  setLaunchContinue: (on) => set({ launchContinue: on }),
-  setLaunchAddDirs: (dirs) => {
-    setPref("launchAddDirs", dirs);
-    set({ launchAddDirs: dirs });
-  },
   setLaunchAgent: (a) => set({ launchAgent: a }),
 
-  startAgent: (name, launch): Promise<{ ok: boolean; id?: string; engine?: string; error?: string }> => {
+  startAgent: (name, launch) => {
     const br = bridge.local;
-    const background = Boolean(launch && launch.background);
-    const root: string | null = (background && launch!.root) || get().localRoot;
-    if (!br || !root) return Promise.resolve({ ok: false, error: "no folder open" });
+    const root = useBoard.getState().localRoot;
+    if (!br || !root) return;
     /* A fork carries the model and posture of the run it came from, not the
        launcher's current pick — otherwise "ask that again" would quietly ask a
        different model, and the two answers would not be comparable. */
     const from = launch && launch.forkFrom ? launch : null;
     // A start with no fork still carries a prompt: that is the composer
     // starting a run because somebody pressed Send with nothing running.
-    const model = launch && launch.model !== undefined && (from || background) ? launch.model : get().launchModel;
-    const mode = launch && launch.mode !== undefined && (from || background) ? launch.mode : get().launchMode;
+    const model = from && from.model !== undefined ? from.model : get().launchModel;
+    const mode = from && from.mode !== undefined ? from.mode : get().launchMode;
     const c: ConsoleEntry = {
       key: ++consoleSeq,
       id: null,
@@ -788,7 +699,6 @@ export const useBoard = create<BoardState>((set, get) => ({
       usage: { context: null, cacheHit: null, cost: null, model: null, input: null, cachedInput: null, output: null, window: null, series: [] },
       limits: [],
       sessionId: null,
-      ...(launch && launch.label ? { label: launch.label } : {}),
       slashCommands: [],
       // Which console this is a branch of, if any — see `forkedFrom` in
       // types.ts for why it cannot be worked out after the fact.
@@ -796,47 +706,35 @@ export const useBoard = create<BoardState>((set, get) => ({
       startedAt: Date.now(),
       exitCode: null,
     };
-    // A background start joins the rail without moving the person off what they are reading.
     set((g) => ({
       myConsoles: [...g.myConsoles, c],
-      ...(background ? {} : { activeConsole: c.key, launching: false, ...showConversation() }),
+      activeConsole: c.key,
+      launching: false,
+      ...showConversation(),
     }));
-    // claude-only flags; desktop/agent-console.js extrasFrom re-validates them.
-    // Effort, dirs and continue are the person's launcher picks, not a background start's.
-    const claude = name === "claude" && !background;
-    const st = get();
-    const addDirs = st.launchAddDirs.split(/\r?\n/).map((d) => d.trim()).filter(Boolean);
-    const continueLatest = claude && st.launchContinue && !(launch && launch.forkFrom);
-    if (continueLatest) set({ launchContinue: false });
-    return br.startAgent(name, root, {
+    br.startAgent(name, root, {
       model,
       mode,
-      ...(claude && st.launchEffort ? { effort: st.launchEffort } : {}),
-      ...(claude && addDirs.length ? { addDirs } : {}),
-      ...(continueLatest ? { continueLatest: true } : {}),
+      effort: get().launchEffort,
       ...(launch && launch.forkFrom ? { forkFrom: launch.forkFrom } : {}),
       // C2/C4: when a first prompt is already known (a fork's queued
       // question), it goes to the main process too, so it can ask Masora for
       // a brief before the CLI starts -- not just be sent to it afterward.
       ...(launch && launch.prompt ? { prompt: launch.prompt } : {}),
-      ...(launch && launch.engine ? { engine: launch.engine } : {}),
-      ...(launch && launch.label ? { label: launch.label } : {}),
     }).then((r) => {
       if (!r || !r.ok) {
         c.running = false;
-        c.error = shownError(r && r.error, "could not start");
+        c.error = (r && r.error) || "could not start";
         pushConsoleLine(c, "err", c.error);
       } else {
-        if (closedMeanwhile(c, r.id)) return { ok: false, error: "closed before it started" };
+        if (closedMeanwhile(c, r.id)) return;
         c.id = r.id ? String(r.id) : null;
-        if (r.engine) c.engine = r.engine;
         // The prompt a fork was started to ask. It goes only after the spawn
         // succeeded, because a prompt sent to a console with no process is the
         // one case where the composer's own guard cannot help.
         if (launch && launch.prompt) get().sendPrompt(c.key, launch.prompt);
       }
       signalConsolesChanged();
-      return r ? { ok: r.ok, id: r.id, engine: r.engine, error: r.error } : { ok: false, error: "could not start" };
     }).catch((err: unknown) => {
       // Same failure shape as the `!r.ok` branch above -- a rejected IPC call
       // left the optimistic `running: true` console spinning forever with no
@@ -845,7 +743,6 @@ export const useBoard = create<BoardState>((set, get) => ({
       c.error = err instanceof Error ? err.message : "could not start";
       pushConsoleLine(c, "err", c.error);
       signalConsolesChanged();
-      return { ok: false, error: c.error };
     });
   },
 
@@ -918,12 +815,6 @@ export const useBoard = create<BoardState>((set, get) => ({
     }));
   },
 
-  setConsoleModel: (key, model) => {
-    set((g) => ({
-      myConsoles: g.myConsoles.map((x) => (x.key !== key ? x : { ...x, nextModel: model === x.model ? null : model })),
-    }));
-  },
-
   sendPrompt: (key, text) => {
     const before = get().myConsoles.find((x) => x.key === key);
     if (!before) return;
@@ -942,24 +833,17 @@ export const useBoard = create<BoardState>((set, get) => ({
        than mutating the old one — so `c` below is re-read AFTER calling it,
        not the `before` reference the swap condition was computed from, which
        is stale the instant `stopConsole` runs. */
-    const modeChange = Boolean(before.nextMode) && before.nextMode !== before.mode;
-    const modelChange = before.nextModel != null && before.nextModel !== before.model;
-    const swapping = before.running && (modeChange || modelChange) && Boolean(before.sessionId);
+    const swapping =
+      before.running && Boolean(before.nextMode) && before.nextMode !== before.mode && Boolean(before.sessionId);
     if (swapping) get().stopConsole(key);
     const c = swapping ? get().myConsoles.find((x) => x.key === key)! : before;
-    if (modeChange && (swapping || !c.running)) {
+    if (swapping) {
       c.mode = c.nextMode!;
       c.nextMode = null;
     }
-    // A model change on a live process with no session to resume waits; an
-    // idle console just takes it, and the resume below starts on it.
-    if (modelChange && (swapping || !c.running)) {
-      c.model = c.nextModel!;
-      c.nextModel = null;
-    }
 
     pushConsoleLine(c, "you", text);
-    c.transcript = appendUserText(c.transcript, text, consoleModelName(c));
+    c.transcript = appendUserText(c.transcript, text);
 
     /* ⚠️ A FOLLOW-UP TO A FINISHED RUN IS A NEW PROCESS, NOT A WRITE TO A DEAD
        PIPE. codex and opencode close stdin after one prompt, so their console
@@ -975,10 +859,10 @@ export const useBoard = create<BoardState>((set, get) => ({
       signalConsolesChanged();
       // `continues` keeps the app's copy of this thread as ONE thread across
       // the new process, so a reload brings back one entry, not two.
-      bridge.local.resumeAgent(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode, ...(c.id ? { continues: c.id } : {}) }).then((r) => {
+      bridge.local.resumeAgent(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode, effort: c.effort, ...(c.id ? { continues: c.id } : {}) }).then((r) => {
         if (!r || !r.ok) {
           c.running = false;
-          pushConsoleLine(c, "err", shownError(r && r.error, "could not continue"));
+          pushConsoleLine(c, "err", (r && r.error) || "could not continue");
           signalConsolesChanged();
           return;
         }
@@ -1025,7 +909,6 @@ export const useBoard = create<BoardState>((set, get) => ({
       stats: { lines: Object.create(null) as Stats["lines"], diff: null, root: null },
       localRoot: dir,
       localCheckout: null,
-      localOrigin: null,
       localEntries: null,
       localFile: null,
       localError: null,
@@ -1033,9 +916,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       selectedPath: g.selectedPath,
     }));
     checkoutId(dir).then((id) => {
-      // Not over a worktree's origin fingerprint, if local:tree answered first.
-      const o = get().localOrigin;
-      if (get().localRoot === dir && (!o || o === dir)) set({ localCheckout: id });
+      if (get().localRoot === dir) set({ localCheckout: id });
     }).catch(() => {}); // Same-machine checkout events wait for a matching fingerprint.
     bridge.local?.tree(dir).then((r) => {
       if (r && r.ok) {
@@ -1050,15 +931,7 @@ export const useBoard = create<BoardState>((set, get) => ({
            failures, the tree says its own list is partial, and provenance.tsx
            - which rightly treats BOTH as "the tree cannot confirm this path"
            - reads them together. */
-        // A worktree's events carry its ORIGIN's repo and fingerprint.
-        const origin = typeof r.origin === "string" && r.origin ? r.origin : dir;
-        if (origin !== dir) {
-          void checkoutId(origin).then((id) => {
-            if (get().localRoot === dir) set({ localCheckout: id });
-          });
-        }
         set({
-          localOrigin: origin,
           localEntries: r.entries || null,
           collapsed: collapseForEntries(dir, r.entries || []),
           localError: null,
@@ -1066,12 +939,6 @@ export const useBoard = create<BoardState>((set, get) => ({
             ? `showing the first ${(r.entries || []).length} entries`
             : null,
         });
-      } else if (isNotOpen(r)) {
-        /* A root that is no longer an opened workspace (removed since, or a
-           remembered one) is not a fault to print: fall back to the no-folder
-           state. Main now accepts worktrees and subfolders of an opened
-           workspace, so this is only a folder the person really has not opened. */
-        if (get().localRoot === dir) get().unsetLocalRoot();
       } else {
         set({
           localEntries: [],
@@ -1090,7 +957,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   unsetLocalRoot: () => {
     closeEditor();
     zStorage.removeItem(LAST_ROOT_KEY);
-    set({ localRoot: null, localCheckout: null, localOrigin: null, localEntries: null, localFile: null, selectedPath: null });
+    set({ localRoot: null, localCheckout: null, localEntries: null, localFile: null, selectedPath: null });
   },
 
   addWorkspace: () => {
@@ -1177,20 +1044,6 @@ export const useBoard = create<BoardState>((set, get) => ({
         // a network error -- AccountSection renders that as an explicit
         // error with a Retry, rather than the comment here just claiming one.
         set({ who: { state: r && r.ok ? r : { ok: false }, busy: false } });
-        // My machine reports an actor string (config, OS user). When the hub has
-        // tied that string to me, the roster and every event now carry my
-        // display name instead, so that is what "me" has to be compared to.
-        const me = r && r.ok ? r.me : null;
-        const actor = bridge.cfg && bridge.cfg.actor;
-        if (me && actor && myActorNames(me).includes(actor.toLowerCase()) && get().myActor !== me.name) set({ myActor: me.name });
-        // A signed-in person's own machine reports this actor string (desktop sign-in
-        // sets it to the login, the hook to the OS user), so the hub is told it is
-        // theirs and the events under it join their row. Once per actor: the hub may
-        // refuse a name somebody else already holds, and asking again would loop.
-        if (me && actor && !myActorNames(me).includes(actor.toLowerCase()) && !claimedActors.has(actor.toLowerCase())) {
-          claimedActors.add(actor.toLowerCase());
-          void renameSelf(me.name);
-        }
       })
       .catch(() => set({ who: { state: { ok: false }, busy: false } }));
   },
@@ -1480,8 +1333,8 @@ export const useBoard = create<BoardState>((set, get) => ({
     br.resumeAgent(c.agent, c.root, resumeId, { model: c.model, mode: c.mode }).then((r) => {
       if (!r || !r.ok) {
         c.running = false;
-        c.error = shownError(r && r.error, "could not continue");
-        pushConsoleLine(c, "err", c.error);
+        c.error = (r && r.error) || "could not continue";
+        pushConsoleLine(c, "err", (r && r.error) || "could not continue");
         signalConsolesChanged();
         return;
       }
@@ -1533,9 +1386,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       // so it is read when the sha moves and never on the 4s poll itself.
       if (moved) void refreshCommits();
       return {
-        strip: { ...g.strip, machine: m,
-          ...(m && Array.isArray((m as any).rateLimits) && (m as any).rateLimitsAt >= g.strip.limitsAt
-            ? { limits: (m as any).rateLimits, limitsAt: (m as any).rateLimitsAt } : {}) },
+        strip: { ...g.strip, machine: m },
         checkpoints: moved
           ? [...g.checkpoints, { sha, branch: String((repo && repo.branch) || ""), ts: Date.now() }].slice(-40)
           : g.checkpoints,
@@ -1602,17 +1453,6 @@ export function hueOf(actor: string | null | undefined): string {
   return "var(--who-" + ((i < 0 ? 0 : i) % HUES) + ")";
 }
 
-/** Colour tokens for a change made by `actor` — spread onto the element that
- *  holds the +N/−N or diff lines. {} (generic green/red) for an unknown author. */
-export function authorStyle(actor: string | null | undefined): CSSProperties {
-  return authorStyleOf(actor, useBoard.getState().roster) as CSSProperties;
-}
-
-/** My own changes: my colour, like anyone else's. */
-export function myAuthorStyle(): CSSProperties {
-  return authorStyle(useBoard.getState().myActor);
-}
-
 export function isIdle(r: { actor: string; lastTs: number }, now: number): boolean {
   return now - r.lastTs > useBoard.getState().idleAfterMs;
 }
@@ -1642,8 +1482,7 @@ async function checkoutId(root: string): Promise<string> {
 
 function localActivity(e: HubEvent): boolean {
   const g = useBoard.getState();
-  // The origin's name: a worktree's events say "masora2", not "masora2-w125".
-  const repo = (g.localOrigin || g.localRoot)?.replaceAll("\\", "/").replace(/\/+$/, "").split("/").pop();
+  const repo = g.localRoot?.replaceAll("\\", "/").replace(/\/+$/, "").split("/").pop();
   if (!repo || e.repo !== repo || !e.target || /[\\:]|^\//.test(e.target) ||
     e.target.split("/").some((part) => !part || part === "." || part === "..")) return false;
   // Teammates have different checkout paths. Only this machine's fingerprint
@@ -1713,11 +1552,6 @@ export function collisionSet(): Record<string, boolean> {
  * PAIRWISE HELPERS USED BY CONSOLES
  * ------------------------------------------------------------------------- */
 
-
-/** What the switch rule calls a console's model: "Zevet" for a routed one. */
-function consoleModelName(c: ConsoleEntry): string {
-  return c.agent === "zevet" ? "Zevet" : c.model ? runningModelName("", c.model) : "";
-}
 
 function pushConsoleLine(c: ConsoleEntry, kind: ConsoleLine["kind"], text: string): void {
   c.lines.push({ kind, text: String(text) });
@@ -1798,8 +1632,6 @@ function closedMeanwhile(c: ConsoleEntry, id: string | null | undefined): boolea
  */
 function reattachConsoles(held: HeldConsole[]): void {
   for (const h of held) {
-    // Exact id, not consoleById: that one falls back to a pending launch.
-    if (useBoard.getState().myConsoles.some((x) => x.id === h.id)) continue;
     const c: ConsoleEntry = {
       key: ++consoleSeq,
       id: h.id,
@@ -1820,8 +1652,6 @@ function reattachConsoles(held: HeldConsole[]): void {
       startedAt: h.startedAt,
       exitCode: null,
       ...(h.title ? { autoTitle: h.title } : {}),
-      ...(h.engine ? { engine: h.engine } : {}),
-      ...(h.label ? { label: h.label } : {}),
     };
     useBoard.setState((g) => ({ myConsoles: [...g.myConsoles, c] }));
     for (const evt of h.events) ingressAgentEvent(evt);
@@ -1896,7 +1726,6 @@ function ingressAgentEvent(evt: AgentEvent): void {
         signalConsolesChanged();
       }
     }
-    if (limits) useBoard.setState((g) => ({ strip: { ...g.strip, limits, limitsAt: Date.now() } }));
 
     const u = usageOf(payload);
     const cost = typeof payload.total_cost_usd === "number" ? payload.total_cost_usd : null;
@@ -1931,7 +1760,6 @@ function ingressAgentEvent(evt: AgentEvent): void {
     c.exitCode = evt.code ?? null;
     pushConsoleLine(c, "meta", `agent exited (${evt.code === null ? "signal " + evt.signal : "code " + evt.code})`);
     c.transcript = closeTranscript(c.transcript, { code: evt.code ?? null, stopped: Boolean(evt.stopped) });
-    c.draft = "";
   } else if (evt.type === "stderr") {
     /* ⚠️ STDERR IS NOT THE AGENT SPEAKING, and it used to be rendered as if it
        were. This called `appendRaw`, which appends to the OPEN ASSISTANT
@@ -1975,24 +1803,12 @@ function ingressAgentEvent(evt: AgentEvent): void {
       terminal_reason?: string;
       subtype?: string;
     };
-    c.lastAt = Date.now();
     const localRoot = useBoard.getState().localRoot;
     for (const [k, text] of classifyAgent(payload, localRoot)) {
       pushConsoleLine(c, k as ConsoleLine["kind"], text);
     }
-    /* A routed console (agent "zevet") speaks several CLIs' dialects; the
-       router tags each event with the one that produced it. */
-    const said = evt as AgentEvent & { agent?: string; model?: string };
-    const zp = evt.payload as { type?: string; label?: string } | undefined;
-    if (zp && zp.type === "zevet_route") {
-      c.route = String(zp.label || "");
-      c.routeWhy = String((zp as { reason?: string }).reason || "");
-    }
-    c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: said.agent || c.agent, localRoot, model: said.model || c.model });
-    c.draft = draftAfter(c.draft ?? "", evt.payload);
-    // "zevet:auto" is not a model: a routed run's limit is the router's to
-    // handle, and graying the picker's Zevet row over it would be wrong.
-    if (c.agent !== "zevet") noteModelLimit(c, evt.payload);
+    c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: c.agent, localRoot, model: c.model });
+    noteModelLimit(c, evt.payload);
   } else if (evt.type === "stdout-line") {
     // Update banners and notices, not the conversation: the raw view only.
     pushConsoleLine(c, "out", evt.text || "");
@@ -2051,6 +1867,7 @@ function recordUsage(c: ConsoleEntry, u: UsageReading | null, cost: number | nul
     next.context = u.context;
     if (u.cacheHit != null) next.cacheHit = u.cacheHit;
     if (u.model) next.model = u.model;
+    if (u.model && !c.model) c.model = u.model;
     next.input = u.input;
     next.cachedInput = u.cachedInput;
     next.output = u.output;
@@ -2080,6 +1897,9 @@ export async function pollConsoleFiles(): Promise<void> {
       c.title = r.title;
       changed = true;
     }
+    if (r.model && r.model !== c.model) { c.model = r.model; changed = true; }
+    if (r.effort && r.effort !== c.effort) { c.effort = r.effort; changed = true; }
+    if (r.account && r.account !== c.account) { c.account = r.account; changed = true; }
     if (r.context != null && r.context !== c.usage.context) {
       const cached = r.cached ?? 0;
       recordUsage(
@@ -2785,7 +2605,7 @@ function drawRiders(): void {
     rider.style.setProperty("--zevet-sprite-eye", "var(--paper)");
     rider.style.transform = y;
     const sprite = window.zevetSprites && window.zevetSprites.spriteFor
-      ? window.zevetSprites.spriteFor({ tool: w.tool, width: 44, height: 22 })
+      ? window.zevetSprites.spriteFor({ tool: w.tool, width: 35, height: 16 })
       : "";
     rider.innerHTML = sprite;
     const who = document.createElement("span");
@@ -2905,23 +2725,8 @@ function pollStatus(): void {
  * CONNECT (SSE)
  * ------------------------------------------------------------------------- */
 
-let stream: EventSource | null = null;
-let dropTimer: ReturnType<typeof setTimeout> | undefined;
-/** A dropped stream reads "Reconnecting" for this long before it reads "Offline": the board stays up either way. */
-const OFFLINE_AFTER_MS = 8000;
-
-let onlineBound = false;
-
 export function connect(): void {
-  stream?.close();
-  const es = (stream = new EventSource("/events"));
-  // The network coming back, or the window coming forward, is worth a try now rather than at the browser's next retry.
-  if (!onlineBound) {
-    onlineBound = true;
-    const again = () => { if (stream && stream.readyState !== EventSource.OPEN) connect(); };
-    window.addEventListener("online", again);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) again(); });
-  }
+  const es = new EventSource("/events");
   es.addEventListener("hello", (m) => {
     useBoard.getState().setConn("live");
     useBoard.getState().applySnapshot(JSON.parse((m as MessageEvent).data));
@@ -2929,30 +2734,10 @@ export function connect(): void {
   es.addEventListener("activity", (m: Event) => {
     useBoard.getState().pushEvent(JSON.parse((m as MessageEvent).data) as HubEvent);
   });
-  // The roster (settings.tsx's Account & Team section) changes on someone
-  // else's machine — an invite, a resend, a sign-in, a removal — and this is
-  // the push that replaces polling for it. The payload carries nothing
-  // (whoami is per-caller session state, not broadcastable); refetching it
-  // is the whole point of the event.
-  es.addEventListener("people", () => {
-    useBoard.getState().refreshWhoami();
-    // A rename, a link or a merge changes what the roster CALLS people, and the
-    // roster is folded from the events, so take a fresh snapshot with it.
-    void fetch("/api/state", { credentials: "same-origin" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((s) => {
-        if (s) useBoard.getState().applySnapshot(s);
-      })
-      .catch(() => undefined);
-  });
   es.onopen = () => {
     useBoard.getState().setConn("live");
   };
   es.onerror = () => {
-    if (es !== stream) return;
-    if (useBoard.getState().conn === "live") useBoard.getState().setConn("init");
-    clearTimeout(dropTimer);
-    dropTimer = setTimeout(() => { if (es === stream && es.readyState !== EventSource.OPEN) useBoard.getState().setConn("down"); }, OFFLINE_AFTER_MS);
     fetch("/api/state", { credentials: "same-origin" })
       .then((r) => {
         if (r.status === 401) {
@@ -2964,10 +2749,11 @@ export function connect(): void {
           useBoard.getState().setConn("down");
           useBoard.getState().setNeedsToken(false);
         } else {
+          useBoard.getState().setConn("down");
           useBoard.getState().setNeedsToken(false);
         }
       })
-      .catch(() => undefined);
+      .catch(() => useBoard.getState().setConn("down"));
   };
 }
 
@@ -3024,7 +2810,6 @@ export function boot(): void {
       if (MODES.some((m) => m.id === saved)) {
         useBoard.setState({ defaultMode: saved, launchMode: saved as LaunchMode });
       }
-      initBoardSentry({ actor: c.actor, version: c.version });
     });
   }
 
@@ -3079,26 +2864,6 @@ export function boot(): void {
       br.onAgentEvent(ingressAgentEvent);
     }
   }
-  const asked = bridge.local;
-  if (asked && typeof asked.onBoardRequest === "function" && typeof asked.boardReply === "function") {
-    asked.onBoardRequest((req) => {
-      // Accepted before any await: main falls back to a direct start only for a
-      // request nobody took, never for one this board is still starting.
-      void asked.boardReply!(req.reqId, { accepted: true });
-      const s = useBoard.getState();
-      void answerBoardRequest(req, {
-        startAgent: s.startAgent,
-        sendPrompt: s.sendPrompt,
-        findConsole: (id: string) => useBoard.getState().myConsoles.find((x) => x.id === id),
-        agents: () => useBoard.getState().localAgents,
-      })
-        .catch((err: unknown) => ({ ok: false, error: err instanceof Error ? err.message : "board failed" }))
-        .then((r) => asked.boardReply!(req.reqId, r));
-    });
-  }
-  if (bridge.local && typeof bridge.local.onAgentAttached === "function") {
-    bridge.local.onAgentAttached((h) => reattachConsoles([h]));
-  }
   void g.refreshLocalWorkspaces().then(restoreLastRoot);
   void g.refreshLocalAgents();
 
@@ -3140,8 +2905,6 @@ interface ZevetConfigLike {
   machine?: string;
   /** This user's default permission posture; see desktop/main.js storedMode. */
   mode?: string;
-  /** electron-builder's version string; see lib/sentry.ts. */
-  version?: string;
 }
 
 /* ---------------------------------------------------------------------------
@@ -3253,12 +3016,12 @@ export async function answerAsk(id: string, picked: string[]): Promise<void> {
   }
 }
 
-export async function answerPermit(id: string, allow: boolean, reason?: string, always?: boolean): Promise<void> {
+export async function answerPermit(id: string, allow: boolean, reason?: string): Promise<void> {
   const br = bridge.local;
   useBoard.setState((g) => ({ permits: g.permits.filter((p) => p.id !== id) }));
   if (!br || typeof br.permitAnswer !== "function") return;
   try {
-    await br.permitAnswer(id, allow, reason, always);
+    await br.permitAnswer(id, allow, reason);
   } catch {
     // The agent's own timeout denies it. Failing to deliver a "yes" costs an
     // action; failing to deliver a "no" costs nothing, because no is default.
@@ -3380,20 +3143,8 @@ export function buildSplits(): Array<HTMLElement> {
       d.dataset.on = "true";
       const move = (me: PointerEvent) => {
         const lim = PANE_LIMITS[pane];
-        const raw = paneEdgeWidth(pane, me.clientX);
-        /* Only the tree collapses by drag — the rail has nothing that reads
-           "hidden" for it to snap to. Below half its own floor, let go
-           entirely rather than pin it at the floor: `setTreeHidden` is the
-           same flag the keyboard shortcut flips, `--tree: 0` in masora.css
-           already does the visual collapse, and `panes.tree` is left exactly
-           where it was — that's the "last open width" §3 restores to. */
-        if (pane === "tree" && raw < lim[0] / 2) {
-          if (!useBoard.getState().treeHidden) useBoard.getState().setTreeHidden(true);
-        } else {
-          if (pane === "tree" && useBoard.getState().treeHidden) useBoard.getState().setTreeHidden(false);
-          const w = clampPaneWidth(raw, lim[0], lim[1]);
-          useBoard.getState().setPanes({ ...useBoard.getState().panes, [pane]: w });
-        }
+        const w = clampPaneWidth(paneEdgeWidth(pane, me.clientX), lim[0], lim[1]);
+        useBoard.getState().setPanes({ ...useBoard.getState().panes, [pane]: w });
         applyPanes();
         positionSplits();
       };

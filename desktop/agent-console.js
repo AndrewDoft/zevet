@@ -39,9 +39,7 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { clientFile } = require("./runtime.js");
 const { randomUUID } = require("node:crypto");
-const agentCatalogs = require("./agent-catalogs.js");
 
 const IS_WINDOWS = process.platform === "win32";
 
@@ -346,9 +344,7 @@ const MODES = {
   auto: {
     label: "Auto",
     claude: ["--permission-mode", "acceptEdits"],
-    // MEASURED 2026-09-24, codex-cli 0.155.0-alpha.9.2: --approve-for-me carries the
-    // workspace-write sandbox itself and exits 2 if --sandbox is also given.
-    codex: ["--approve-for-me"],
+    codex: ["--sandbox", "workspace-write", "--approve-for-me"],
     opencode: ["--auto"],
   },
   dangerous: {
@@ -413,70 +409,14 @@ const CAN_FORK = new Set(["claude", "codex"]);
  */
 const CAN_RESUME = new Set(["claude", "codex", "opencode"]);
 
-/**
- * `codex exec resume` takes neither --sandbox nor --approve-for-me (measured
- * 2026-09-24, codex-cli 0.155.0-alpha.9.2: exit 2, "unexpected argument"); it
- * takes -m, --dangerously-bypass-approvals-and-sandbox and -c key=value. So the
- * postures become the config keys those flags set. The value is left a bare
- * string, which codex reads as a literal when it is not TOML, so no quote ever
- * reaches a cmd.exe shim's argv.
- */
-function resumeSafe(extra) {
-  const out = [];
-  for (let i = 0; i < extra.length; i++) {
-    if (extra[i] === "--sandbox") out.push("-c", `sandbox_mode=${extra[++i]}`);
-    else if (extra[i] === "--approve-for-me") out.push("-c", "sandbox_mode=workspace-write", "-c", "approval_policy=never");
-    else out.push(extra[i]);
-  }
-  return out;
-}
-
-/** `claude --help`: --effort <level> (low, medium, high, xhigh, max). */
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-
-/**
- * The launch options a renderer may ask for beyond model and mode, reduced to
- * what is safe to put on argv. The renderer is the untrusted side of the
- * bridge: an extra directory must be an absolute path to a directory that
- * exists, and effort must be one of the CLI's own levels — anything else is
- * dropped rather than passed on. claude only; the other CLIs have no flag.
- */
-function extrasFrom(opts) {
-  const o = opts || {};
-  const addDirs = [];
-  for (const d of Array.isArray(o.addDirs) ? o.addDirs : []) {
-    if (typeof d !== "string" || !path.isAbsolute(d) || addDirs.includes(d)) continue;
-    try {
-      if (fs.statSync(d).isDirectory()) addDirs.push(d);
-    } catch {
-      // Missing or unreadable: not a directory claude could use either.
-    }
-  }
-  return {
-    ...(addDirs.length ? { addDirs } : {}),
-    ...(EFFORTS.includes(o.effort) ? { effort: o.effort } : {}),
-    ...(o.continueLatest === true ? { continueLatest: true } : {}),
-  };
-}
-
 function invocationFor(agent, opts) {
   const o = opts || {};
   const extra = [];
   // A model is only passed when one was chosen; the CLI's own default is a
   // better answer than a value zevet guessed.
-  if (typeof o.model === "string" && o.model.trim()) {
-    const model = o.model.trim();
-    // codex forwards -m straight to OpenAI with no local validation of its own,
-    // and the list the picker offers when this machine has never talked to
-    // codex (no ~/.codex/models_cache.json yet) is agent-models.generated.mjs's
-    // shipped snapshot from whoever last ran the sync script -- not proof the
-    // id exists on THIS account's plan. Sending an id codex does not recognize
-    // is a provider 400 with no reply at all (this is how a brand-new install's
-    // very first Codex message can fail before the real cache ever gets
-    // written). Only trust a codex model against its own cache; with none, or
-    // the id missing from it, say nothing and let codex's own default answer.
-    const trusted = agent !== "codex" || (agentCatalogs.codexModels(o.home) || []).some((m) => m.id === model);
-    if (trusted) extra.push(agent === "claude" ? "--model" : "-m", model);
+  if (typeof o.model === "string" && o.model.trim()) extra.push(agent === "claude" ? "--model" : "-m", o.model.trim());
+  if (agent === "codex" && typeof o.effort === "string" && o.effort.trim()) {
+    extra.push("-c", `model_reasoning_effort=${JSON.stringify(o.effort.trim())}`);
   }
   extra.push(...modeFlags(agent, o.mode).flags);
 
@@ -488,7 +428,6 @@ function invocationFor(agent, opts) {
       : null;
 
   if (agent === "claude") {
-    const hookSettings = claudeHookSettings(o);
     // Standing instructions for this repo, if the person set any. claude is
     // the only one of the three with a flag for it; see desktop/main.js's
     // `local:agentSettings`, which is where the text comes from.
@@ -506,10 +445,6 @@ function invocationFor(agent, opts) {
     if (typeof o.permissionTool === "string" && o.permissionTool.trim()) {
       extra.push("--permission-prompt-tool", o.permissionTool.trim());
     }
-    // Repeated rather than variadic: `--add-dir a b` would swallow whatever
-    // positional follows. See extrasFrom for what reaches here.
-    for (const d of Array.isArray(o.addDirs) ? o.addDirs : []) extra.push("--add-dir", d);
-    if (EFFORTS.includes(o.effort)) extra.push("--effort", o.effort);
     return [
       "-p",
       "--input-format",
@@ -517,27 +452,20 @@ function invocationFor(agent, opts) {
       "--output-format",
       "stream-json",
       "--verbose",
-      /* PARTIAL MESSAGES ARE ON, and the thing they used to break is now
-       * handled on the reading side. History: with this flag claude wraps every
-       * raw SSE event in a `stream_event` payload, transcript.mjs had no reader
-       * for one, and each printed the literal text `[claude: stream_event]` into
-       * the assistant's message (measured in the running app 2026-09-21).
-       * transcript.mjs still DROPS them — they are never transcript content.
-       * Instead lib/chat-stream.mjs's `draftAfter` grows a view-only `draft`
-       * from the text deltas, and the complete `assistant` block replaces it, so
-       * nothing is counted twice. desktop/console-log.js does not keep them
-       * (hundreds per answer would push real events out of a reload's replay).
-       * test/agent-console.test.mjs and test/transcript.test.mjs pin both halves. */
-      "--include-partial-messages",
+      /* ⚠️ NO --include-partial-messages. It makes claude wrap every raw SSE
+       * event in a `stream_event` payload, and zevet has never had a reader
+       * for one: each arrived at transcript.mjs's "unknown but real" branch
+       * and was printed as the literal text `[claude: stream_event]` INTO THE
+       * ASSISTANT'S MESSAGE. Measured in the running app 2026-09-21 — a
+       * one-sentence question answered with dozens of them, and nothing else.
+       *
+       * Asking for them buys nothing either way: the same content arrives
+       * complete as an `assistant` payload PER CONTENT BLOCK, which is what
+       * the board renders and what it rendered before this flag was added.
+       * The partials would only be useful token-by-token, and using them that
+       * way means de-duplicating against the block that follows. */
       "--replay-user-messages",
-      ...(forkFrom
-        ? ["--resume", forkFrom, "--fork-session"]
-        : resumeFrom
-        ? ["--resume", resumeFrom]
-        : o.continueLatest === true
-        ? ["--continue"]
-      : []),
-      ...(hookSettings ? ["--settings", JSON.stringify(hookSettings)] : []),
+      ...(forkFrom ? ["--resume", forkFrom, "--fork-session"] : resumeFrom ? ["--resume", resumeFrom] : []),
       ...extra,
     ];
   }
@@ -557,60 +485,8 @@ function invocationFor(agent, opts) {
   // so it goes immediately after `exec` — before the flags and before the `-`,
   // which is still the prompt and still last.
   if (forkFrom) return ["exec", "fork", forkFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
-  if (resumeFrom) return ["exec", "resume", resumeFrom, "--skip-git-repo-check", "--json", ...resumeSafe(extra), "-"];
+  if (resumeFrom) return ["exec", "resume", resumeFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
   return ["exec", "--skip-git-repo-check", "--json", ...extra, "-"];
-}
-
-/* The command client/install.mjs writes for a wired repo, spelled here rather
-   than required: in the packaged app client/ sits INSIDE this directory
-   (payload-tree.cjs), so requiring client/ by a parent-relative path works in a checkout but
-   throws at load there and takes every agent launch with it. */
-function quoteArg(p, platform = process.platform) {
-  if (platform !== "win32") return `"${String(p).replace(/[\\"$`]/g, "\\$&")}"`;
-  if (String(p).includes('"')) throw new Error(`path contains a quote: ${p}`);
-  return `"${p}"`;
-}
-function hookCommand({ node, hook, repo, platform = process.platform }) {
-  return `${quoteArg(node, platform)} ${quoteArg(hook, platform)} --zevet-hook --zevet-agent claude-code --zevet-repo ${quoteArg(repo, platform)}`;
-}
-const { hasStaleHook } = require("./reporting-health.js");
-function hasHookMarker(settings) {
-  return JSON.stringify((settings && settings.hooks) || {}).includes("--zevet-hook");
-}
-
-function claudeHookSettings(options) {
-  const repo = typeof options.repoRoot === "string" && options.repoRoot.trim() ? options.repoRoot : "";
-  if (!repo || repoHasZevetHook(options)) return null;
-  const hook = options.hookPath || clientFile("hook.mjs", options);
-  if (!hook) return null;
-  const node = options.nodePath || process.env.ZEVET_NODE || (process.versions.electron ? findNode() : process.execPath);
-  if (!node) return null;
-  const command = hookCommand({ node, hook, repo });
-  const entry = { type: "command", command, timeout: 10 };
-  return { hooks: {
-    UserPromptSubmit: [{ hooks: [entry] }],
-    PreToolUse: [{ matcher: "*", hooks: [entry] }],
-    Stop: [{ hooks: [entry] }],
-  } };
-}
-
-function repoHasZevetHook(options) {
-  let cfg;
-  try {
-    const raw = options.repoSettings || fs.readFileSync(path.join(options.repoRoot, ".claude", "settings.json"), "utf8");
-    cfg = typeof raw === "string" ? JSON.parse(raw) : raw;
-  } catch { return false; }
-  // A marked hook whose script is gone is not a hook: it fails silently on every
-  // tool call, so the launch must still inject a working one.
-  return hasHookMarker(cfg) && !hasStaleHook(cfg);
-}
-
-function findNode() {
-  for (const dir of String(process.env.PATH || "").split(path.delimiter)) {
-    const candidate = path.join(dir, process.platform === "win32" ? "node.exe" : "node");
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
 }
 
 /**
@@ -860,7 +736,7 @@ function startConsole(opts) {
     return { ok: false, error: `Could not start ${agent}: spawn returned nothing.` };
   }
 
-  const id = options.id || randomUUID();
+  const id = randomUUID();
   let exited = false;
   let stopped = false;
   // Set before the kill, not after: taskkill /F ends the process with code 1,
@@ -1031,7 +907,6 @@ module.exports = {
   MODES,
   modeFlags,
   invocationFor,
-  extrasFrom,
   resolveAgent,
   startConsole,
   // Exported for the suite, which tests these directly rather than inferring
@@ -1039,7 +914,6 @@ module.exports = {
   // changed by someone who has not read the measurements above.
   _internals: {
     AGENTS,
-    claudeHookSettings,
     CMD_METACHARACTERS,
     buildShimInvocation,
     encodePrompt,
