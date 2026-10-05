@@ -399,7 +399,6 @@ function describeCodex(slug, id, stat, titles) {
   // `cwd` in session_meta is a plain path; inside a CommandExecution it is a
   // file:// URL. Only the meta one is used here.
   const cwd = str(meta.cwd);
-  const provenance = meta.provenance && typeof meta.provenance === "object" ? meta.provenance : {};
 
   return {
     source: "codex",
@@ -410,9 +409,6 @@ function describeCodex(slug, id, stat, titles) {
     branch: "",
     version: str(meta.cli_version),
     origin: str(meta.originator),
-    model: str(provenance.model) || str(meta.model),
-    effort: str(provenance.reasoning_effort) || str(meta.reasoning_effort),
-    account: str(provenance.account) || str(provenance.plan),
     surface: codexSurface(meta.originator, meta.source),
     title: title || prompt || sessionId,
     prompt,
@@ -814,9 +810,7 @@ function live(source, id) {
   const all = records(head).concat(tail ? records(tail, { fromOffset: true }) : []);
   if (source === "codex") {
     let usage = null;
-    let meta = {};
     for (const r of all) {
-      if (r.type === "session_meta" && r.payload) meta = r.payload;
       const p = r.type === "event_msg" && r.payload;
       if (p && p.type === "token_count" && p.info && p.info.last_token_usage) usage = p.info;
     }
@@ -830,9 +824,6 @@ function live(source, id) {
       cached: last ? n(last.cached_input_tokens) : null,
       output: last ? n(last.output_tokens) : null,
       window: usage && n(usage.model_context_window) ? n(usage.model_context_window) : null,
-      ...(str(meta.provenance?.model) || str(meta.model) ? { model: str(meta.provenance?.model) || str(meta.model) } : {}),
-      ...(str(meta.provenance?.reasoning_effort) || str(meta.reasoning_effort) ? { effort: str(meta.provenance?.reasoning_effort) || str(meta.reasoning_effort) } : {}),
-      ...(str(meta.provenance?.account) || str(meta.provenance?.plan) ? { account: str(meta.provenance?.account) || str(meta.provenance?.plan) } : {}),
     };
   }
   let title = "";

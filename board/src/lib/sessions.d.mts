@@ -4,9 +4,6 @@ import type { TranscriptEvent, TranscriptState } from "./transcript.d.mts";
 export interface SessionSummary {
   /** Which CLI wrote it. */
   source: "claude" | "codex";
-  model?: string;
-  effort?: string;
-  account?: string;
   /** The file's own name, without `.jsonl`. Half of the read handle. */
   id: string;
   /** The other half: claude's project directory, or codex's `YYYY/MM/DD`. */

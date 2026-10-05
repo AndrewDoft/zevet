@@ -47,12 +47,14 @@
  * which is a column built for a long list rather than a 250px rail. The plus
  * is in this pane's own title row (App.tsx).
  */
-import { type CSSProperties, useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { Twist } from "./twist";
 import {
   hueOf,
   isIdle,
+  myActorNames,
   pollConsoleFiles,
+  renameSelf,
   resumeIdForSession,
   selectActiveConsole,
   selectMyConsoles,
@@ -64,13 +66,17 @@ import type { RosterEntry } from "../lib/types";
 import type { SessionAgent, SessionSummary } from "../lib/sessions.d.mts";
 import type { ConsoleEntry } from "../lib/types";
 import { missionOf } from "../lib/text";
+import { withState } from "../lib/agents.mjs";
 import { agoLabel } from "../lib/fmt";
-import { sessionBlurb, sessionProject } from "../lib/sessions.mjs";
+import { foldRepoGroups, sessionBlurb, sessionProject } from "../lib/sessions.mjs";
 import { plainError } from "../lib/transcript.mjs";
+import { consoleSprite } from "../lib/roster.mjs";
 import { AgentLogo } from "./brand";
+import { Sprite } from "./sprite";
 import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
+import { AgentSprite } from "./agent-sprite";
 
 function expandedStored(): string[] {
   try {
@@ -102,7 +108,7 @@ function TeammateRow({ login, invited, hue }: { login: string; invited: boolean;
       data-invited={String(invited)}
     >
       <span className="person-away-dot" aria-hidden="true" />
-      <span className="person-away-name">{"@" + login}</span>
+      <span className="person-away-name">{login}</span>
       <span className="person-away-state">{invited ? "invited" : "active"}</span>
     </div>
   );
@@ -143,7 +149,7 @@ function SubagentRow({ a, hue }: { a: SessionAgent; hue: number }) {
           same agent, which reads as two different things rather than one
           agent and its children. */}
       <AgentLogo agent="claude" model={a.model} hue={hue} className="agent-sub-mark size-3" />
-      <span className="agent-sub-name">{a.title || "Agent"}</span>
+      <span className="agent-sub-name">{sessionBlurb({ title: a.title, id: a.id, source: "claude" })}</span>
     </button>
   );
 }
@@ -163,8 +169,11 @@ type Row = {
   key: string;
   agent: string;
   model?: string;
-  effort?: string;
-  account?: string;
+  /** Which Claude account this ran on, only set when the launch named one
+   *  (desktop/agent-engine.js). Absent for a disk session or an ordinary
+   *  console that never named one -- shown only in the row's tooltip, never
+   *  as a badge, per the "no tool use in People" rule at the top of this file. */
+  engine?: string;
   blurb: string;
   updated: number;
   console: ConsoleEntry | null;
@@ -194,11 +203,7 @@ function firstPrompt(c: ConsoleEntry): string {
 
 /** A console's title for anywhere it is listed. */
 export function consoleBlurb(c: ConsoleEntry): string {
-  return sessionBlurb({ title: c.title || c.autoTitle, prompt: firstPrompt(c), source: c.agent });
-}
-
-function agentDetail(row: Row): string {
-  return [row.agent, row.model, row.effort, row.account].filter(Boolean).join(" · ");
+  return sessionBlurb({ title: c.title || c.autoTitle, prompt: firstPrompt(c), label: c.label, source: c.agent });
 }
 
 /** A run that ended badly: it never started, or its last message was cut off. */
@@ -254,6 +259,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
     <div className="agent-row-wrap">
       <div
         className="agent-row"
+        data-console={String(Boolean(c))}
         data-active={String(isOpen)}
         style={{ "--who": `var(--who-${((hue % HUES) + HUES) % HUES})` } as CSSProperties}
       >
@@ -263,16 +269,21 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
           aria-current={isOpen ? "true" : undefined}
           aria-expanded={hasKids ? isOpen : undefined}
           onClick={() => (c ? setActiveConsole(c.key) : openSession(s!))}
-          title={row.blurb}
+          title={row.engine ? `${row.blurb} · ${row.engine}` : row.blurb}
         >
           {hasKids ? <Twist open={isOpen} /> : <span className="agent-row-gap" aria-hidden="true" />}
+          <AgentSprite repo={c?.root ? consoleProject(c) : sessionProject(s!)} />
           <AgentLogo agent={row.agent} model={row.model} hue={hue} className="agent-row-mark size-3" />
-          <span className="agent-row-copy">
-            <span className="agent-row-name">{row.blurb}</span>
-            <span className="agent-row-detail">{agentDetail(row)}</span>
-          </span>
+          <span className="agent-row-name">{row.blurb}</span>
           {c && c.running ? (
-            <span className="agent-row-live" role="img" aria-label="Running" />
+            /* The figure IS the running indicator: in this row's colour,
+               holding the tool the agent is using right now. The dot is the
+               fallback when the sprite script did not load. */
+            window.zevetSprites?.spriteFor ? (
+              <Sprite {...consoleSprite(c)} title="Running" />
+            ) : (
+              <span className="agent-row-live" role="img" aria-label="Running" />
+            )
           ) : unseen ? (
             <span
               className="agent-row-unseen"
@@ -313,6 +324,28 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
   );
 }
 
+/** A teammate's agent, as the hub reports it: what it was asked, what it is doing
+ *  now, and where. Read-only — their session lives on their machine. */
+function TeamAgentRow({ a, hue, now }: { a: { key: string; agent: string; repo: string; branch: string; mission: string; current: string; lastTs: number; state?: string }; hue: number; now: number }) {
+  const where = a.repo ? a.repo + (a.branch ? " · " + a.branch : "") : "";
+  return (
+    <div className="agent-row-wrap" data-teammate-agent={a.key}>
+      <div className="agent-row" data-state={a.state} style={{ "--who": `var(--who-${((hue % HUES) + HUES) % HUES})` } as CSSProperties}>
+        <div className="agent-row-pick" title={[where, a.current].filter(Boolean).join(" — ")}>
+          <span className="agent-row-gap" aria-hidden="true" />
+          <AgentLogo agent={a.agent === "claude-code" ? "claude" : a.agent} hue={hue} className="agent-row-mark size-3" />
+          <span className="agent-row-name">{a.mission || where || "working"}</span>
+          {a.state === "working" ? (
+            <span className="agent-row-live" role="img" aria-label="Running" />
+          ) : (
+            <span className="agent-row-ago">{agoLabel(a.lastTs, now)}</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** One repo, and the agents running in it. */
 function RepoGroup({
   repo,
@@ -344,12 +377,94 @@ function RepoGroup({
   );
 }
 
-export function PeoplePane() {
+/**
+ * MY name, as an input. Double-clicking your own row turns the name into this:
+ * Enter saves, Escape (or clicking away) cancels. It is a `div`, not part of the
+ * row's `button` — an input inside a button does not take a space in every
+ * browser. A refusal (the name is somebody else's, or empty) is said in place
+ * and the edit stays open, so nothing typed is lost.
+ */
+function NameEditor({ initial, hue, onDone }: { initial: string; hue: string; onDone: () => void }) {
+  const [draft, setDraft] = useState(initial);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  // A ref as well as state: disabling the input can blur it, and that blur
+  // must not read a stale `busy` and cancel the save it just started.
+  const inflight = useRef(false);
+
+  function save() {
+    const name = draft.trim();
+    if (!name || name === initial) return onDone();
+    setBusy(true);
+    inflight.current = true;
+    void renameSelf(name).then((r) => {
+      inflight.current = false;
+      setBusy(false);
+      if (r.ok) return onDone();
+      setErr(r.error || "Could not rename.");
+      // A disabled input drops focus, and a blur cancels — put it back.
+      setTimeout(() => input.current?.focus(), 0);
+    });
+  }
+
+  return (
+    <div className="person-row" style={{ "--who": hue } as CSSProperties} data-idle="false">
+      <span className="person-row-dot" aria-hidden="true" />
+      <input
+        ref={input}
+        className="person-row-name person-row-edit"
+        aria-label="Your name"
+        aria-invalid={Boolean(err)}
+        title={err || "Enter to save, Esc to cancel"}
+        value={draft}
+        maxLength={40}
+        disabled={busy}
+        autoFocus
+        onFocus={(ev) => ev.currentTarget.select()}
+        onChange={(ev) => {
+          setDraft(ev.target.value);
+          setErr("");
+        }}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter") save();
+          else if (ev.key === "Escape") onDone();
+        }}
+        onBlur={() => {
+          if (!inflight.current) onDone();
+        }}
+      />
+      <span className="person-row-state" style={err ? { color: "var(--bad)" } : undefined}>
+        {err || "you"}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * `threads` swaps what hangs under MY row: Code's repo -> agent tree by default,
+ * Chat + Work's threads when it is given. Everything else — the roster, the
+ * invited rows, hue, follow, the mission line — is this one pane either way,
+ * so the team reads the same on both sides of the switch. `onPerson` sees a
+ * plain click on a row (Chat + Work opens a teammate's work read-only there).
+ */
+export function PeoplePane({
+  threads,
+  onPerson,
+}: {
+  threads?: (hue: number) => ReactNode;
+  onPerson?: (actor: string, me: boolean) => void;
+} = {}) {
   const roster = useBoard(selectRoster);
   const myActor = useBoard((s) => s.myActor);
   const who = useBoard((s) => s.who.state) as
-    | { login?: string; people?: Array<{ login: string; owner?: boolean; pending?: boolean }> }
+    | {
+        login?: string;
+        people?: Array<{ login: string; key?: string; owner?: boolean; pending?: boolean; identities?: Array<{ login: string }>; aliases?: string[] }>;
+        me?: { name: string; identities?: Array<{ login: string }>; aliases?: string[] } | null;
+      }
     | null;
+  const [editing, setEditing] = useState(false);
   const selectedActor = useBoard((s) => s.selectedActor);
   const setSelectedActor = useBoard((s) => s.setSelectedActor);
   const list = useBoard((s) => s.sessions.list);
@@ -358,6 +473,8 @@ export function PeoplePane() {
   const localRoot = useBoard((s) => s.localRoot);
   const [expanded, setExpanded] = useState<string[]>(() => expandedStored());
   const [shut, setShut] = useState<Record<string, boolean>>({});
+  const teamAgents = useBoard((s) => s.teamAgents);
+  const idleAfterMs = useBoard((s) => s.idleAfterMs);
   const [now, setNow] = useState(() => serverNow());
 
   useEffect(() => {
@@ -368,18 +485,18 @@ export function PeoplePane() {
   /* A running console's title is whatever its CLI has written to its session
      file by now — claude rewrites its `ai-title` as the work goes. */
   useEffect(() => {
-    if (!bridge.local) return;
+    if (!bridge.local || threads) return; // Code's instance already polls
     const t = setInterval(() => void pollConsoleFiles(), 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [threads]);
 
   /* ⚠️ THE FETCH LIVES HERE NOW, not in the history list. This pane is always
      mounted; the history is in the repo column and only renders while nothing
      is selected, so leaving the refresh there meant the live tree went stale
      the moment somebody clicked a file. */
   useEffect(() => {
-    if (bridge.local) refreshSessions(true);
-  }, [refreshSessions, localRoot]);
+    if (bridge.local && !threads) refreshSessions(true);
+  }, [refreshSessions, localRoot, threads]);
 
   function toggleExpanded(actor: string, on: boolean) {
     const next = expanded.filter((x) => x !== actor);
@@ -397,14 +514,25 @@ export function PeoplePane() {
      send, and showing them twice beats hiding a live teammate. */
   const accounts = Array.isArray(who?.people) ? who.people : [];
   const mine = new Set(
-    [who?.login, bridge.cfg && bridge.cfg.login].map((x) => String(x || "").toLowerCase()).filter(Boolean),
+    [who?.login, bridge.cfg && bridge.cfg.login, bridge.cfg && bridge.cfg.actor, ...(who?.me ? myActorNames(who.me) : [])]
+      .map((x) => String(x || "").toLowerCase())
+      .filter(Boolean),
   );
   const liveActors = new Set(roster.map((r) => r.actor.toLowerCase()));
+  // A person is already on screen if the roster has a row under ANY name the hub
+  // knows them by — their display name, a linked login, an alias.
   const away = accounts.filter((p) => {
-    const l = p.login.toLowerCase();
-    return l && !mine.has(l) && !liveActors.has(l);
+    const names = [p.login, p.key, ...(p.identities || []).map((i) => i.login), ...(p.aliases || [])]
+      .map((x) => String(x || "").toLowerCase().replace(/^@/, ""))
+      .filter(Boolean);
+    return names.length > 0 && !names.some((n) => mine.has(n) || liveActors.has(n));
   });
-  const inRoster = roster.some((r) => r.actor === myActor);
+  /* ⚠️ ANY OF MY NAMES, NOT `myActor` ALONE. The hub files my events under my
+     display name; `myActor` only catches up when whoami answers, so after a
+     rename or a combine the roster said "andrew" while this said "AndrewDoft"
+     and I showed twice (Andrew, 2026-09-30: "separate once more"). */
+  const isMe = (actor: string) => actor === myActor || mine.has(actor.toLowerCase());
+  const inRoster = roster.some((r) => isMe(r.actor));
 
   /* Every session written to inside the live window, newest first, bucketed by
      the repo it ran in — merged with every console zevet itself has running,
@@ -432,7 +560,18 @@ export function PeoplePane() {
      already claimed is skipped. */
   const groups: Array<{ repo: string; rows: Row[] }> = [];
   if (bridge.local) {
-    const bucket = new Map<string, Row[]>();
+    /* Keyed by the REPO, not the folder: a worktree (masora2-w125-fixb,
+       .claude/worktrees/x) files under its origin — foldRepoGroups. A console
+       borrows the name its own session file was given, when there is one. */
+    const bucket = new Map<string, { rows: Row[]; resolved: boolean }>();
+    const put = (repo: string, row: Row, resolved: boolean) => {
+      const g = bucket.get(repo);
+      if (g) {
+        g.rows.push(row);
+        g.resolved = g.resolved || resolved;
+      } else bucket.set(repo, { rows: [row], resolved });
+    };
+    const repoByDir = new Map(list.filter((s) => s.repo && s.cwd).map((s) => [s.cwd.toLowerCase(), s.repo as string]));
     const claimed = new Set(myConsoles.filter((c) => c.sessionId).map((c) => `${c.agent}:${c.sessionId}`));
 
     for (const c of myConsoles) {
@@ -440,17 +579,15 @@ export function PeoplePane() {
         key: `console:${c.key}`,
         agent: c.agent,
         model: c.model,
-        effort: c.effort,
-        account: c.account,
+        engine: c.engine,
         blurb: consoleBlurb(c),
-        updated: c.startedAt,
+        // Last heard from, not launched: the tree is ordered by activity.
+        updated: c.lastAt ?? c.startedAt,
         console: c,
         session: null,
       };
-      const key = consoleProject(c);
-      const g = bucket.get(key);
-      if (g) g.push(row);
-      else bucket.set(key, [row]);
+      const known = repoByDir.get(c.root.toLowerCase());
+      put(known || consoleProject(c), row, Boolean(known));
     }
 
     for (const s of list) {
@@ -460,21 +597,15 @@ export function PeoplePane() {
       const row: Row = {
         key: `session:${s.source}:${s.id}`,
         agent: s.source,
-        model: s.model,
-        effort: s.effort,
-        account: s.account,
         blurb: sessionBlurb(s as unknown as Record<string, unknown>),
         updated: Number(s.updated || 0),
         console: null,
         session: s,
       };
-      const key = sessionProject(s as unknown as Record<string, unknown>) || "elsewhere";
-      const g = bucket.get(key);
-      if (g) g.push(row);
-      else bucket.set(key, [row]);
+      put(s.repo || sessionProject(s as unknown as Record<string, unknown>) || "elsewhere", row, Boolean(s.repo));
     }
 
-    for (const [repo, rows] of bucket) {
+    for (const [repo, rows] of foldRepoGroups(bucket)) {
       rows.sort((a, b) => b.updated - a.updated);
       groups.push({ repo, rows });
     }
@@ -484,7 +615,7 @@ export function PeoplePane() {
   /* Open unless the group was shut by hand: a tree whose branches all start
      closed makes you click twice to learn what is already known. */
   const myRepos = (hue: number) =>
-    groups.map((g) => (
+    threads ? threads(hue) : groups.map((g) => (
       <RepoGroup
         key={g.repo}
         repo={g.repo}
@@ -497,25 +628,33 @@ export function PeoplePane() {
 
   return (
     <>
-      {roster.map((r) => {
+      {[...roster].sort((a, b) => b.lastTs - a.lastTs).map((r) => {
         const idle = isIdle(r, now);
         const open = expanded.indexOf(r.actor) >= 0;
-        const me = r.actor === myActor;
+        const me = isMe(r.actor);
         return (
           <div className="person-wrap" key={r.actor}>
+            {me && editing ? (
+              <NameEditor initial={r.actor} hue={hueOf(r.actor)} onDone={() => setEditing(false)} />
+            ) : (
             <button
               className="person-row"
+              title={me ? "Double-click to rename" : undefined}
+              onDoubleClick={me && who?.login ? () => setEditing(true) : undefined}
               style={{ "--who": hueOf(r.actor) } as CSSProperties}
               data-idle={String(idle)}
               data-sel={String(selectedActor === r.actor)}
               aria-expanded={open}
               onClick={(ev) => {
+                // The second click of a double-click (rename) is not a toggle.
+                if (ev.detail > 1) return;
                 // Shift-click has always meant "show me only this person's
                 // work"; a plain click opens what they are doing.
                 if (ev.shiftKey) {
                   setSelectedActor(selectedActor === r.actor ? null : r.actor);
                   return;
                 }
+                onPerson?.(r.actor, me);
                 toggleExpanded(r.actor, !open);
               }}
             >
@@ -523,8 +662,11 @@ export function PeoplePane() {
               <span className="person-row-name">{r.actor}</span>
               <span className="person-row-state">{me ? "you" : idle ? "idle" : "working"}</span>
             </button>
+            )}
             {open ? <PersonDetail r={r} /> : null}
-            {me ? myRepos(r.hue) : null}
+            {me ? myRepos(r.hue) : withState(teamAgents.filter((a) => a.actor === r.actor), now, idleAfterMs).slice(0, 12).map((a) => (
+              <TeamAgentRow key={a.key} a={a} hue={r.hue} now={now} />
+            ))}
           </div>
         );
       })}
@@ -537,7 +679,7 @@ export function PeoplePane() {
         <div className="person-wrap">
           <div className="person-row" style={{ "--who": "var(--who-0)" } as CSSProperties} data-idle="false">
             <span className="person-row-dot" aria-hidden="true" />
-            <span className="person-row-name">{myActor}</span>
+            <span className="person-row-name">{who?.me?.name || myActor}</span>
             <span className="person-row-state">you</span>
           </div>
           {myRepos(0)}
