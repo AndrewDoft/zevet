@@ -19,6 +19,8 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
+import { spawnSync } from "node:child_process";
+import { injectSentryDebugIds } from "../scripts/sentry-sourcemaps.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(HERE, "src");
@@ -29,6 +31,11 @@ const STAMP = path.join(HERE, "..", "hub", "public", "board.js.srchash");
 
 try {
   await build({ configFile: path.join(HERE, "vite.config.ts") });
+  injectSentryDebugIds(path.join(HERE, ".."), (command, args, options) => {
+    const result = spawnSync(command, args, { ...options, stdio: "inherit", windowsHide: true });
+    if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with ${result.status}`);
+    return result;
+  });
 
   const srcHash = createHash("sha256");
   function hashDir(dir) {
