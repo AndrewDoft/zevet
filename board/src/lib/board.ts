@@ -149,6 +149,7 @@ export interface ForkLaunch {
   /** The model and posture of the run it came from, so the two answers differ
    *  by the prompt and nothing else. */
   model?: string;
+  effort?: string;
   mode?: LaunchMode;
   /** The `key` of the console being branched. Recorded on the new console as
    *  `forkedFrom`; a fork's own session id is new, so this is the only link
@@ -714,6 +715,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     br.startAgent(name, root, {
       model,
       mode,
+      effort: get().launchEffort,
       ...(launch && launch.forkFrom ? { forkFrom: launch.forkFrom } : {}),
       // C2/C4: when a first prompt is already known (a fork's queued
       // question), it goes to the main process too, so it can ask Masora for
@@ -857,7 +859,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       signalConsolesChanged();
       // `continues` keeps the app's copy of this thread as ONE thread across
       // the new process, so a reload brings back one entry, not two.
-      bridge.local.resumeAgent(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode, ...(c.id ? { continues: c.id } : {}) }).then((r) => {
+      bridge.local.resumeAgent(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode, effort: c.effort, ...(c.id ? { continues: c.id } : {}) }).then((r) => {
         if (!r || !r.ok) {
           c.running = false;
           pushConsoleLine(c, "err", (r && r.error) || "could not continue");
@@ -1865,6 +1867,7 @@ function recordUsage(c: ConsoleEntry, u: UsageReading | null, cost: number | nul
     next.context = u.context;
     if (u.cacheHit != null) next.cacheHit = u.cacheHit;
     if (u.model) next.model = u.model;
+    if (u.model && !c.model) c.model = u.model;
     next.input = u.input;
     next.cachedInput = u.cachedInput;
     next.output = u.output;
@@ -1894,6 +1897,9 @@ export async function pollConsoleFiles(): Promise<void> {
       c.title = r.title;
       changed = true;
     }
+    if (r.model && r.model !== c.model) { c.model = r.model; changed = true; }
+    if (r.effort && r.effort !== c.effort) { c.effort = r.effort; changed = true; }
+    if (r.account && r.account !== c.account) { c.account = r.account; changed = true; }
     if (r.context != null && r.context !== c.usage.context) {
       const cached = r.cached ?? 0;
       recordUsage(

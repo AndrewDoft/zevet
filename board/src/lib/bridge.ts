@@ -205,7 +205,7 @@ export interface LocalBridge {
   /* C1's per-repo opt-in, keyed by resolved folder path; default none. */
   masoraRepos?: () => Promise<Record<string, boolean>>;
   masoraRepoToggle?: (root: string, on: boolean) => Promise<{ ok: boolean; error?: string; repos?: Record<string, boolean> }>;
-  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string }) => Promise<StartAgentResult>;
+  startAgent: (name: string, root: string, opts: { model: string; mode: string; effort?: string; forkFrom?: string; prompt?: string }) => Promise<StartAgentResult>;
   /** A follow-up to a console whose process has exited. All three CLIs can
    *  resume a session by id (measured 2026-09-21); codex and opencode need a
    *  new process to do it, which is what this is. Optional: an older desktop
@@ -214,7 +214,7 @@ export interface LocalBridge {
     name: string,
     root: string,
     resumeFrom: string,
-    opts: { model: string; mode: string; continues?: string },
+    opts: { model: string; mode: string; effort?: string; continues?: string },
   ) => Promise<StartAgentResult>;
   sendToAgent: (id: string, text: string) => Promise<{ ok: boolean; error?: string }>;
   stopAgent: (id: string) => Promise<unknown>;

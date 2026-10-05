@@ -2163,6 +2163,7 @@ async function runDueSchedules() {
           cwd: place.cwd,
           model: s.model,
           mode: s.mode,
+          effort: s.effort || "",
           env,
           onEvent: (evt) => {
             if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
@@ -2945,6 +2946,7 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
     agent: String(agent || ""),
     cwd: place.cwd,
     model: opts && typeof opts.model === "string" ? opts.model : "",
+    effort: opts && typeof opts.effort === "string" ? opts.effort : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt,
     env,
@@ -2992,6 +2994,7 @@ function consoleMeta(agent, dir, opts, place) {
     root: dir,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
+    effort: opts && typeof opts.effort === "string" ? opts.effort : "",
     startedAt: Date.now(),
     ...(place && place.worktree ? { worktree: place.worktree.dir, branch: place.worktree.branch } : {}),
   };
@@ -3042,6 +3045,7 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
     cwd: place.cwd,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
+    effort: opts && typeof opts.effort === "string" ? opts.effort : "",
     systemPrompt: settings.systemPrompt,
     resumeFrom: resumeFrom.trim(),
     env,

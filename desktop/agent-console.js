@@ -415,6 +415,9 @@ function invocationFor(agent, opts) {
   // A model is only passed when one was chosen; the CLI's own default is a
   // better answer than a value zevet guessed.
   if (typeof o.model === "string" && o.model.trim()) extra.push(agent === "claude" ? "--model" : "-m", o.model.trim());
+  if (agent === "codex" && typeof o.effort === "string" && o.effort.trim()) {
+    extra.push("-c", `model_reasoning_effort=${JSON.stringify(o.effort.trim())}`);
+  }
   extra.push(...modeFlags(agent, o.mode).flags);
 
   const forkFrom =

@@ -90,6 +90,8 @@ export interface ConsoleEntry {
    *  case) means the next turn runs with the same posture as this one. */
   nextMode?: LaunchMode | null;
   model: string;
+  effort?: string;
+  account?: string;
   root: string;
   hue: number;
   /** What this console has spent, as IT reported it.

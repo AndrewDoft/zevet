@@ -163,6 +163,8 @@ type Row = {
   key: string;
   agent: string;
   model?: string;
+  effort?: string;
+  account?: string;
   blurb: string;
   updated: number;
   console: ConsoleEntry | null;
@@ -193,6 +195,10 @@ function firstPrompt(c: ConsoleEntry): string {
 /** A console's title for anywhere it is listed. */
 export function consoleBlurb(c: ConsoleEntry): string {
   return sessionBlurb({ title: c.title || c.autoTitle, prompt: firstPrompt(c), source: c.agent });
+}
+
+function agentDetail(row: Row): string {
+  return [row.agent, row.model, row.effort, row.account].filter(Boolean).join(" · ");
 }
 
 /** A run that ended badly: it never started, or its last message was cut off. */
@@ -261,7 +267,10 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
         >
           {hasKids ? <Twist open={isOpen} /> : <span className="agent-row-gap" aria-hidden="true" />}
           <AgentLogo agent={row.agent} model={row.model} hue={hue} className="agent-row-mark size-3" />
-          <span className="agent-row-name">{row.blurb}</span>
+          <span className="agent-row-copy">
+            <span className="agent-row-name">{row.blurb}</span>
+            <span className="agent-row-detail">{agentDetail(row)}</span>
+          </span>
           {c && c.running ? (
             <span className="agent-row-live" role="img" aria-label="Running" />
           ) : unseen ? (
@@ -431,6 +440,8 @@ export function PeoplePane() {
         key: `console:${c.key}`,
         agent: c.agent,
         model: c.model,
+        effort: c.effort,
+        account: c.account,
         blurb: consoleBlurb(c),
         updated: c.startedAt,
         console: c,
@@ -449,6 +460,9 @@ export function PeoplePane() {
       const row: Row = {
         key: `session:${s.source}:${s.id}`,
         agent: s.source,
+        model: s.model,
+        effort: s.effort,
+        account: s.account,
         blurb: sessionBlurb(s as unknown as Record<string, unknown>),
         updated: Number(s.updated || 0),
         console: null,
