@@ -36,8 +36,8 @@
  * vendor's character for both would be wrong twice over, once about whose agent
  * it is and once about whose artwork it is.
  *
- * ⚠️ NOT VERIFIED: nobody has seen these on a real board next to real events.
- * The grids are eyeballed against a render, and that is all.
+ * ⚠️ CHECKED AGAINST HIS SHEET BY RENDERING the SVGs this module emits next to
+ * it (2026-10-05). Not yet checked live on a board by him.
  */
 (function (global) {
   "use strict";
@@ -64,7 +64,7 @@
   var TOOL = "t";
 
   var W = 22;
-  var H = 10;
+  var H = 11;
   var BODY_COLS = 12;
 
   /**
@@ -73,38 +73,43 @@
    * It is the constant on purpose. The figure is the PERSON; the tool is what
    * their agent is doing this second. If a figure changed between tools, a
    * board with four people on it would look like eight.
+   *
+   * ⚠️ MATCHED AGAINST ANDREW'S SHEET (2026-09-18) BY RENDERING BOTH SIDE BY
+   * SIDE. The first pass here had 2x2 eyes in the middle of the face and short
+   * legs; his are single-pixel eyes set high and wide, and the legs are thin
+   * and long (two rows). The eyes being small is most of the character.
    */
   var FIGURE = [
-    // Eight rows of body, then two of legs. The body is a rounded OVAL -- the
-    // widths step 8, 10, 12, 12, 12, 12, 10, 8. An earlier version stepped
-    // 6, 10, 12 and pinched the head at both ends, which at a glance read as a
-    // creature with ears. Rounder is not a nicety here; it is what makes the
-    // two light squares read as eyes in a face rather than as gaps in a shape.
     "..########..",
     ".##########.",
     "############",
-    // And the eyes sit a third of the way down, not against the top edge, for
-    // the same reason.
-    "###oo##oo###",
-    "###oo##oo###",
+    "###o####o###",
+    "############",
+    "############",
     "############",
     ".##########.",
     "..########..",
-    "...#....#...",
-    "..##....##..",
+    "....#..#....",
+    "....#..#....",
   ];
+
+  /** Pad a tool drawing down to the figure's height; each entry is one row. */
+  function tool(rows) {
+    var out = rows.slice();
+    while (out.length < H) out.push("..........");
+    return out;
+  }
 
   /**
    * The right-hand 10 columns, one set per tool, drawn as OUTLINES.
    *
    * Outlines rather than filled shapes because at this size a filled rectangle
-   * is a rectangle whatever it is meant to be — the first version's "page" and
-   * "eraser" were indistinguishable, which is how the reference's approach
-   * proved itself.
+   * is a rectangle whatever it is meant to be. The ones Andrew drew solid
+   * (wrench, pencil's hatching, the document's two slots) are solid here too.
    */
   var TOOLS = {
     /** Magnifier: reading around, searching, globbing. */
-    lens: [
+    lens: tool([
       "...tttt...",
       "..t....t..",
       ".t......t.",
@@ -114,84 +119,98 @@
       "..tt......",
       ".tt.......",
       "tt........",
+    ]),
+    /** Pencil, tip down toward the hand, hatched. Editing existing text. */
+    pencil: tool([
+      ".......ttt",
+      "......t.tt",
+      ".....t.tt.",
+      "....t.tt..",
+      "...t.tt...",
+      "..t.tt....",
+      ".t.tt.....",
+      "tttt......",
+      "tt........",
+    ]),
+    /** A blank page. Writing a new file. His fifth figure: just a square held
+     *  low against the body. */
+    page: tool([
       "..........",
-    ],
-    /** Pencil, tip down toward the hand. Editing existing text. */
-    pencil: [
-      "........tt",
-      ".......tt.",
-      "......tt..",
-      ".....tt...",
-      "....tt....",
-      "...tt.....",
-      "..tt......",
-      ".tt.......",
-      "t.........",
       "..........",
-    ],
+      "ttttttt...",
+      "t.....t...",
+      "t.....t...",
+      "t.....t...",
+      "t.....t...",
+      "t.....t...",
+      "ttttttt...",
+    ]),
     /** An eraser, held at an angle. Removing. Nothing on the wire says
      *  "delete", so this one is only ever chosen by an explicit hint.
      *
-     *  ⚠️ IT IS A PARALLELOGRAM ON PURPOSE. It was an upright rectangle with a
-     *  band across it, and at board size that is the same handful of pixels as
-     *  `doc` -- two rectangles side by side in a roster told you nothing. The
-     *  slant is the only thing distinguishing them at 20px, so do not
-     *  straighten it. */
-    eraser: [
+     *  ⚠️ IT IS A PARALLELOGRAM ON PURPOSE, so it never reads as `page`. */
+    eraser: tool([
       "..........",
       ".....tttt.",
       "....t...t.",
       "...t...t..",
       "..t...t...",
       "..tttt....",
+    ]),
+    /** An open book, held up in front: two pages, a spine, text lines.
+     *  Reading a file properly, as opposed to searching. */
+    book: tool([
       "..........",
       "..........",
       "..........",
+      ".ttt..ttt.",
+      ".t.tttt.t.",
+      ".t..tt..t.",
+      ".t..tt..t.",
+      ".tttttttt.",
+    ]),
+    /** A document with two filled slots. A todo list, a checklist. */
+    doc: tool([
       "..........",
-    ],
-    /** An open book. Reading a file properly, as opposed to searching. */
-    book: [
-      "..........",
-      ".ttttttttt",
-      ".t...t...t",
-      ".t...t...t",
-      ".t...t...t",
-      ".t...t...t",
-      ".ttttttttt",
-      "..........",
-      "..........",
-      "..........",
-    ],
-    /** A sheet with ruled lines. Writing a new file. */
-    doc: [
-      "..tttttt..",
-      "..t....t..",
-      "..t.tt.t..",
-      "..t....t..",
-      "..t.tt.t..",
-      "..t....t..",
-      "..tttttt..",
+      ".ttttttt..",
+      ".t.....t..",
+      ".t.ttt.t..",
+      ".t.ttt.t..",
+      ".t.....t..",
+      ".t.ttt.t..",
+      ".t.ttt.t..",
+      ".t.....t..",
+      ".ttttttt..",
+    ]),
+    /** An open laptop: a slanted screen on a flat base. A PowerShell session. */
+    laptop: tool([
       "..........",
       "..........",
       "..........",
-    ],
+      "...ttttttt",
+      "..t.....t.",
+      "..t.....t.",
+      ".t.....t..",
+      ".t.....t..",
+      "tttttttttt",
+    ]),
     /** A spanner. Running a command. */
-    wrench: [
-      "...t..t...",
-      "...t..t...",
+    wrench: tool([
+      "..t....t..",
+      "..t....t..",
+      "..tt..tt..",
       "...tttt...",
       "....tt....",
       "....tt....",
       "....tt....",
+      "....tt....",
       "...tttt...",
-      "..........",
-      "..........",
-      "..........",
-    ],
+      "...t..t...",
+    ]),
     /** A speech bubble. zevet's `prompt` event — somebody just asked for
      *  something, and this is the only sprite that is about a person rather
      *  than about a tool. */
-    bubble: [
+    bubble: tool([
       "tttttttttt",
       "t........t",
       "t.t.t.t..t",
@@ -199,36 +218,20 @@
       "tttttttttt",
       "..tt......",
       ".tt.......",
-      "..........",
-      "..........",
-      "..........",
-    ],
+    ]),
     /** Angle brackets. A generic "working on code" with no better answer. */
-    code: [
+    code: tool([
+      "..........",
+      "..........",
       "..........",
       "...t...t..",
       "..t.....t.",
       ".t.......t",
       "..t.....t.",
       "...t...t..",
-      "..........",
-      "..........",
-      "..........",
-      "..........",
-    ],
+    ]),
     /** Empty-handed. Idle, turn over, or a tool we have no drawing for. */
-    none: [
-      "..........",
-      "..........",
-      "..........",
-      "..........",
-      "..........",
-      "..........",
-      "..........",
-      "..........",
-      "..........",
-      "..........",
-    ],
+    none: tool([]),
   };
 
   /**
@@ -261,12 +264,13 @@
     applypatch: "pencil",
     strreplaceeditor: "pencil",
     update: "pencil",
-    write: "doc",
-    createfile: "doc",
+    write: "page",
+    createfile: "page",
+    todowrite: "doc",
     bash: "wrench",
     shell: "wrench",
     run: "wrench",
-    powershell: "wrench",
+    powershell: "laptop",
     exec: "wrench",
     task: "code",
     agent: "code",
@@ -294,7 +298,7 @@
     return BY_TOOL[String(toolName).toLowerCase().replace(/[\s_-]/g, "")] || "none";
   }
 
-  /** Stitch the fixed figure and a tool column into one 22x10 grid. */
+  /** Stitch the fixed figure and a tool column into one 22x11 grid. */
   function gridFor(kind) {
     var tool = TOOLS[kind] || TOOLS.none;
     var rows = [];
@@ -304,7 +308,7 @@
 
   /**
    * Runs of identical pixels on a row become ONE rect rather than one rect per
-   * pixel. A 22x10 sprite is 220 cells; drawn naively that is 220 nodes per
+   * pixel. A 22x11 sprite is 242 cells; drawn naively that is 220 nodes per
    * figure, and a busy board can hold a dozen figures that move every time an
    * event lands. Run-length encoding takes a typical sprite to about 40 rects
    * and costs six lines.

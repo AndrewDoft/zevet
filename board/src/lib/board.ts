@@ -2764,7 +2764,7 @@ function drawRiders(): void {
     rider.style.setProperty("--zevet-sprite-eye", "var(--paper)");
     rider.style.transform = y;
     const sprite = window.zevetSprites && window.zevetSprites.spriteFor
-      ? window.zevetSprites.spriteFor({ tool: w.tool, width: 35, height: 16 })
+      ? window.zevetSprites.spriteFor({ tool: w.tool, width: 44, height: 22 })
       : "";
     rider.innerHTML = sprite;
     const who = document.createElement("span");

@@ -23,6 +23,7 @@ export function spritesByPath(
     idleAfterMs: number;
   },
 ): Record<string, { actor: string; tool: string | undefined; ts: number }>;
+export function consoleSprite(c: { transcript?: { messages?: ReadonlyArray<unknown> } } | null | undefined): { tool?: string; kind?: string };
 export function turnTrace(events: EventLike[], actor: string): {
   prompt: EventLike | null;
   tools: EventLike[];

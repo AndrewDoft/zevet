@@ -61,6 +61,23 @@ export function spritesByPath(events, { repoName, followMode, myActor, now, idle
   return out;
 }
 
+/**
+ * What a LIVE console's figure is doing this second: the tool of the newest
+ * call in the newest assistant message, a speech bubble while the last word is
+ * still the person's prompt (or nothing has been said yet), empty-handed when
+ * the turn has produced no tool call. Returns the options `spriteFor` takes.
+ */
+export function consoleSprite(c) {
+  const msgs = (c && c.transcript && c.transcript.messages) || [];
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role === "user") return { kind: "prompt" };
+  const parts = Array.isArray(last.content) ? last.content : [];
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i] && parts[i].type === "tool-call") return { tool: parts[i].toolName };
+  }
+  return {};
+}
+
 /** Everything of an actor's since their most recent prompt. */
 export function turnTrace(events, actor) {
   const mine = (events || []).filter((e) => e && e.actor === actor);

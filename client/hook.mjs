@@ -389,6 +389,28 @@ function repoRelative(file, root, cwd = root) {
 }
 
 /**
+ * The same, for a file in ANOTHER worktree of this repo.
+ *
+ * ⚠️ MEASURED 2026-10-05: of 300 events on Andrew's hub, 8 were Edit/Write/Read
+ * and ALL 8 had `target: null`, so no file-tree sprite could ever draw. His
+ * agents start in the main checkout and edit a sibling worktree
+ * (`zevet-sprites2/...` from a session whose cwd is `zevet/`), and
+ * `repoRelative` rightly refuses a path outside `root`. But a file in a linked
+ * worktree of the SAME repo is `src/db.ts` to every teammate just as much as
+ * one in the main checkout is, so it is resolved against its own worktree's
+ * root. A path in an unrelated repo still has no target.
+ */
+function siblingRelative(file, cwd, repo) {
+  try {
+    const abs = path.resolve(cwd || process.cwd(), file);
+    const other = repoInfo(path.dirname(abs));
+    return other.root && repo && other.repo === repo ? repoRelative(abs, other.root) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Never put a credential on the wire or on three screens.
  *
  * This reports what people type: prompts, and shell commands verbatim. That is
@@ -495,7 +517,7 @@ async function main() {
     let shown = "";
     if (detailLevel === "full") shown = scrub(detail);
     else if (detailLevel === "brief") shown = String(detail || "").trim().split(/\s+/)[0] || "";
-    body = { kind: "tool", tool, target: file ? repoRelative(file, root, cwd) : null, detail: shown };
+    body = { kind: "tool", tool, target: file ? repoRelative(file, root, cwd) ?? siblingRelative(file, cwd, repo) : null, detail: shown };
   }
 
   let machine = "";

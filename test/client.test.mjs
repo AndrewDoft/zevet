@@ -252,6 +252,22 @@ describe("what the hook reports", () => {
     }
   });
 
+  test("an agent in the MAIN checkout editing a file in a SIBLING worktree still reports the file", async () => {
+    // Andrew's real shape (measured 2026-10-05: 8 of 8 file events on his hub had
+    // target null, so no sprite could ever ride a file): the session starts in
+    // the main checkout and edits `../repo-fix/...`. The path is outside `root`,
+    // but it is the same repo, and `src/db.ts` means the same file to everyone.
+    const wtDir = path.join(path.dirname(repo.dir), `${path.basename(repo.dir)}-siblingwt`);
+    execFileSync("git", ["worktree", "add", "-q", "-b", "sibling-wt", wtDir], { cwd: repo.dir, stdio: "pipe" });
+    try {
+      const e = await send({ cwd: repo.dir, hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: path.join(wtDir, "src", "db.ts") } });
+      assert.equal(e.repo, path.basename(repo.dir));
+      assert.equal(e.target, "src/db.ts");
+    } finally {
+      execFileSync("git", ["worktree", "remove", "-f", wtDir], { cwd: repo.dir, stdio: "pipe" });
+    }
+  });
+
   test("relative file paths resolve from the agent working directory", async () => {
     const e = await send({ cwd: path.join(repo.dir, "src"), hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: "db.ts" } });
     assert.equal(e.target, "src/db.ts");
