@@ -527,7 +527,7 @@
        (see .fsprite) — reserved on EVERY row, sprite or not, so a row never
        resizes when an agent starts or stops touching that file. A per-row
        padding change would jump the name in exactly that moment. */
-    padding: 4px 56px 4px 0;
+    padding: 4px 16px 4px 0;
     font-size: 13.5px;
     position: relative;
   }
@@ -561,14 +561,13 @@
      appearing and disappearing never reflows .label/.stat/.marks and never
      jumps the filename. tinted via `color` on this span, which currentColor
      inside the injected SVG then inherits. */
-  .fsprite { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
-             width: 44px; height: 22px; pointer-events: none; }
+  .fsprites { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; flex: none; pointer-events: none; }
+  .fsprite { display: inline-block; width: 14px; height: 12px; pointer-events: none; }
   .fsprite svg { width: 100%; height: 100%; }
   .fsprite, .agent-sprite { --zevet-sprite-eye: var(--paper); }
 
-  /* The live agent's figure on the rail row and in the conversation header:
-     22x11 grid at an integer scale (3 = 66x33), so every cell is whole pixels.
-     Coloured by `--who`, which the row / header sets. */
+  .fsprite-more { font-size: 11px; color: var(--ink-muted); }
+  /* Agent sprites belong only in file rows. */
   .agent-sprite { flex: none; display: inline-block; line-height: 0; }
   .agent-sprite svg { width: 100%; height: 100%; display: block; }
   /* A console row is always tall enough for its figure, running or not, so

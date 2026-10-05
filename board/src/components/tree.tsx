@@ -19,7 +19,6 @@ import type { TreeNode } from "../lib/board";
 import { spritesByPath } from "../lib/roster.mjs";
 import { bridge } from "../lib/bridge";
 import { ago } from "../lib/text";
-import { authorChangeTokens } from "../lib/change-colors.mjs";
 
 function StatBadge({ path }: { path: string }) {
   const stats = useBoard(selectStats);
@@ -27,7 +26,6 @@ function StatBadge({ path }: { path: string }) {
   const local = Boolean(bridge.local);
   if (!local || stats.root !== localRoot) return null;
   const d = stats.diff && stats.diff[path];
-  const roster = useBoard((s) => s.roster);
   if (!d) return null;
 
   // The diff-stat treatment is elements/file-tree's: tabular numerals, its
@@ -50,13 +48,13 @@ function StatBadge({ path }: { path: string }) {
     } else {
       if (d.added)
         parts.push(
-          <span style={{ ...authorChangeTokens(lastActorForPath(path), roster, "added"), backgroundColor: "var(--change-bg)" }} className="text-[color:var(--change-fg)]" key="a">
+          <span className="text-emerald-600 dark:text-emerald-400" key="a">
             +{d.added}
           </span>,
         );
       if (d.removed)
         parts.push(
-          <span style={{ ...authorChangeTokens(lastActorForPath(path), roster, "removed"), backgroundColor: "var(--change-bg)" }} className="text-[color:var(--change-fg)]" key="d">
+          <span className="text-red-600 dark:text-red-400" key="d">
             {"\u2212" + d.removed}
           </span>,
         );
@@ -64,14 +62,6 @@ function StatBadge({ path }: { path: string }) {
   }
   if (!parts.length) return null;
   return <span className={cn(mono, "stat shrink-0 tabular-nums")}>{parts}</span>;
-}
-
-function lastActorForPath(path: string): string | undefined {
-  const events = fileEvents();
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].target === path || events[i].target?.endsWith("/" + path)) return events[i].actor;
-  }
-  return undefined;
 }
 
 type SpriteMap = ReturnType<typeof spritesByPath>;
@@ -89,7 +79,7 @@ type SpriteMap = ReturnType<typeof spritesByPath>;
 function AgentSprite({ actor, tool }: { actor: string; tool?: string }) {
   const spriteFor = window.zevetSprites?.spriteFor;
   if (!spriteFor) return null; // no bundle script, or a plain browser tab
-  const svg = spriteFor({ tool, width: 16, height: 14 });
+  const svg = spriteFor({ tool, width: 14, height: 12 });
   if (!svg) return null;
   return (
     <span
@@ -117,7 +107,7 @@ function NodeRow({
     .filter((a) => !selectedActor || a === selectedActor)
     .sort((a, b) => node.who[b] - node.who[a])
     .slice(0, 4);
-  const sprite = !isDir ? sprites[path] : undefined;
+  const spritesForRow = !isDir ? sprites[path] : undefined;
 
   return (
     <>
@@ -168,7 +158,12 @@ function NodeRow({
             />
           ))}
         </span>
-        {sprite ? <AgentSprite actor={sprite.actor} tool={sprite.tool} /> : null}
+        {spritesForRow ? (
+          <span className="fsprites" aria-label={spritesForRow.map((s) => s.actor).join(", ") + " working on " + path}>
+            {spritesForRow.slice(0, 3).map((s) => <AgentSprite key={s.actor} actor={s.actor} tool={s.tool} />)}
+            {spritesForRow.length > 3 ? <span className="fsprite-more">+{spritesForRow.length - 3}</span> : null}
+          </span>
+        ) : null}
       </button>
       {isDir && open ? (
         <TreeChildren node={node} depth={depth + 1} prefix={path} now={now} sprites={sprites} />
@@ -257,7 +252,6 @@ function TreeChildren({
  *  was already in the store and the old tree never said it. */
 function TreeSummary() {
   const stats = useBoard(selectStats);
-  const roster = useBoard((s) => s.roster);
   const diff = stats.diff || {};
   const paths = Object.keys(diff);
   if (!paths.length) return null;
@@ -273,8 +267,8 @@ function TreeSummary() {
     <div className="flex items-baseline justify-between px-4 pt-1 pb-2">
       <span className="text-[12.5px] font-medium">{paths.length} files changed</span>
       <span className={cn(mono, "tabular-nums")}>
-        <span style={{ ...authorChangeTokens(undefined, roster, "added"), backgroundColor: "var(--change-bg)" }} className="text-[color:var(--change-fg)]">+{added}</span>{" "}
-        <span style={{ ...authorChangeTokens(undefined, roster, "removed"), backgroundColor: "var(--change-bg)" }} className="text-[color:var(--change-fg)]">{"\u2212"}{removed}</span>
+        <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>{" "}
+        <span className="text-red-600 dark:text-red-400">{"\u2212"}{removed}</span>
       </span>
     </div>
   );

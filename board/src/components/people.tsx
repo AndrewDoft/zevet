@@ -70,13 +70,10 @@ import { withState } from "../lib/agents.mjs";
 import { agoLabel } from "../lib/fmt";
 import { foldRepoGroups, sessionBlurb, sessionProject } from "../lib/sessions.mjs";
 import { plainError } from "../lib/transcript.mjs";
-import { consoleSprite } from "../lib/roster.mjs";
 import { AgentLogo } from "./brand";
-import { Sprite } from "./sprite";
 import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
-import { AgentSprite } from "./agent-sprite";
 
 function expandedStored(): string[] {
   try {
@@ -278,21 +275,13 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
           title={row.engine ? `${row.blurb} · ${row.engine}` : row.blurb}
         >
           {hasKids ? <Twist open={isOpen} /> : <span className="agent-row-gap" aria-hidden="true" />}
-          <AgentSprite repo={c?.root ? consoleProject(c) : sessionProject(s!)} />
           <AgentLogo agent={row.agent} model={row.model} hue={hue} className="agent-row-mark size-3" />
           <span className="agent-row-copy">
             <span className="agent-row-name">{row.blurb}</span>
             <span className="agent-row-detail">{agentDetail(row)}</span>
           </span>
           {c && c.running ? (
-            /* The figure IS the running indicator: in this row's colour,
-               holding the tool the agent is using right now. The dot is the
-               fallback when the sprite script did not load. */
-            window.zevetSprites?.spriteFor ? (
-              <Sprite {...consoleSprite(c)} title="Running" />
-            ) : (
-              <span className="agent-row-live" role="img" aria-label="Running" />
-            )
+            <span className="agent-row-live" role="img" aria-label="Running" />
           ) : unseen ? (
             <span
               className="agent-row-unseen"
