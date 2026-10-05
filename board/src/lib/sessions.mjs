@@ -316,7 +316,10 @@ function sessionTitle(s) {
 }
 
 function sessionFallback(s) {
-  return s.source === "codex" ? "Codex session" : s.source === "claude" ? "Claude session" : "Session";
+  const repo = String(s.repo || s.cwd || "").split(/[\\/]/).filter(Boolean).pop() || "repo";
+  const date = new Date(Number(s.updated || s.started || 0));
+  const time = Number.isNaN(date.getTime()) ? "00:00" : date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${repo} ${time}`;
 }
 
 /* ⚠️ THE FIRST SENTENCE, NOT THE FIRST THREE WORDS. A three-word cut titled
@@ -324,26 +327,56 @@ function sessionFallback(s) {
    working…", all alike. A sentence is what tells them apart; the row's own
    ellipsis trims it to what fits, so the cap here only bounds a pasted wall. */
 export function sessionBlurb(session) {
-  const s = session || {};
-  const one = firstSentence(sessionTitle(s)) || firstSentence(unwrapEnvelope(text(s.prompt)));
-  if (!one) return sessionFallback(s);
-  return one.length > 80 ? `${one.slice(0, 79)}…` : one;
+  return sessionLabel(session);
 }
 
 function firstSentence(said) {
   return said.trim().split(/\n|(?<=[.!?])\s+(?=[A-Z])/)[0].replace(/\s+/g, " ").trim();
 }
 
-export function sessionLabel(session) {
+function cleanTitle(value) {
+  let cleaned = unwrapEnvelope(text(value)).replace(/\s+/g, " ").trim();
+  cleaned = cleaned.replace(/^RULES\s*\(hard\):\s*/i, "");
+  cleaned = cleaned.replace(/^#?\s*RESUME\s*[—:-]\s*/i, "");
+  cleaned = cleaned.replace(/^you were\s+/i, "");
+  cleaned = cleaned.replace(/^TASK:\s*/i, "");
+  cleaned = cleaned.replace(/^#+\s*/, "").replace(/^>\s*/, "");
+  cleaned = cleaned.replace(/\bClaude session\b|\bUntitled\b/gi, "");
+  cleaned = cleaned.replace(/https?:\/\/\S+|(?:[A-Za-z]:)?[\\/]\S+/g, "");
+  return cleaned.replace(/\s+/g, " ").trim().replace(/[.!?…]+$/, "");
+}
+
+const STOPWORDS = new Set(["the", "a", "an", "for", "of", "and", "to", "in", "on", "with", "after"]);
+
+function shortWords(value, limit = 20) {
+  const words = value.split(/\s+/).filter(Boolean).map((word) => word.replace(/[-_]+/g, " ")).flatMap((word) => word.split(/\s+/));
+  const useful = words.filter((word) => !STOPWORDS.has(word.toLowerCase()));
+  let out = "";
+  for (const word of useful.length ? useful : words) {
+    const next = out ? `${out} ${word}` : word;
+    if (next.length <= limit) out = next;
+    else if (!out) return word.slice(0, limit);
+    else break;
+  }
+  return out || "repo";
+}
+
+function titleCase(value) {
+  return value.replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
+export function sessionLabel(session, listed = []) {
   const s = session || {};
-  // Each candidate is peeled on its own, so a title that is ALL envelope falls
-  // through to the prompt rather than taking the whole chain down with it.
-  const raw =
-    sessionTitle(s) ||
-    unwrapEnvelope(text(s.prompt)) ||
-    sessionFallback(s);
-  const one = raw.replace(/\s+/g, " ").trim();
-  return one.length > 72 ? `${one.slice(0, 71)}…` : one;
+  const raw = cleanTitle(s.label) || cleanTitle(sessionTitle(s)) || cleanTitle(s.prompt) || sessionFallback(s);
+  let name = titleCase(shortWords(raw));
+  const collisions = listed.filter((other) => other && other !== s && titleCase(shortWords(cleanTitle(other.label) || cleanTitle(sessionTitle(other)) || cleanTitle(other.prompt) || sessionFallback(other))) === name);
+  if (collisions.length) {
+    const branch = String(s.branch || "").split(/[\\/]/).filter(Boolean).pop();
+    const repo = String(s.repo || s.cwd || "").split(/[\\/]/).filter(Boolean).pop();
+    const diff = branch || repo || String(listed.indexOf(s) + 1).padStart(2, "0");
+    name = shortWords(`${name} ${diff}`).slice(0, 20).trim();
+  }
+  return name;
 }
 
 /**

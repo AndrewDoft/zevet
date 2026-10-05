@@ -1116,29 +1116,6 @@
   /* The bar above a session in the conversation column. It is the only thing
      saying this is a recording rather than a run, so it does not scroll with
      the transcript. */
-  .session-banner {
-    flex: none; display: flex; align-items: center; gap: 8px;
-    padding: 7px 12px; border-bottom: 1px solid var(--line);
-    background: var(--raise-soft);
-  }
-  .session-banner-title {
-    flex: 0 1 auto; min-width: 0; font-size: 12.5px; color: var(--ink);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .session-banner-meta {
-    flex: 1 1 auto; min-width: 0; font-size: 10.5px; color: var(--subtle);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  /* The subagents one session spawned, under its banner. A separate row
-     rather than a dropdown over the transcript: opening one REPLACES what is
-     below, so the list has to stay where the thing it replaced was. */
-
-  .session-banner-close {
-    flex: none; font-size: 11px; padding: 3px 7px; border-radius: 2px;
-    color: var(--cerulean); background: none;
-    border: 1px solid var(--line); cursor: pointer;
-  }
-  .session-banner-close:hover { border-color: var(--cerulean); }
 
   /* TWO SUBTLE BUTTONS AND THEIR CARDS, at either end of the composer's own
      action row. The card is ABSOLUTELY POSITIONED above its button, so

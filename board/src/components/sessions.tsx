@@ -34,7 +34,7 @@ import {
 } from "../lib/sessions.mjs";
 import type { SessionSummary } from "../lib/sessions.d.mts";
 
-function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
+function SessionRow({ s, hue, listed }: { s: SessionSummary; hue?: number; listed: SessionSummary[] }) {
   // Reuse the board clock; all rows advance together once a minute.
   useBoard((st) => Math.floor(st.tick / 60));
   const open = useBoard((st) => st.sessions.open);
@@ -49,7 +49,7 @@ function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
       data-active={String(isOpen)}
       aria-current={isOpen ? "true" : undefined}
       onClick={() => openSession(s)}
-      title={sessionLabel(s)}
+      title={s.title || s.prompt || sessionLabel(s)}
     >
       {/* ⚠️ THE OWNER'S COLOUR, NOT THE CLI'S. It used to take the agent's own
           mark ("a session has no seat in the roster"), which was true of the
@@ -59,7 +59,7 @@ function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
           with it. `hue` is undefined for any other caller, which restores the
           old behaviour exactly. */}
       <AgentLogo agent={s.source} hue={hue} className="session-row-logo size-3" />
-      <span className="session-row-title">{sessionLabel(s)}</span>
+      <span className="session-row-title">{sessionLabel(s, listed)}</span>
       <span className={cn(mono, "session-row-meta")}>
         {project ? <span className="session-row-project">{project}</span> : null}
         <span className="session-row-ago">{agoLabel(s.updated, Date.now())}</span>
@@ -237,7 +237,7 @@ export function SessionsPane({ hue }: { hue?: number } = {}) {
                 <span className="session-group-count">{g.rows.length}</span>
               </summary>
               {g.rows.map((s) => (
-                <SessionRow key={`${s.source}:${s.id}`} s={s} hue={hue} />
+                <SessionRow key={`${s.source}:${s.id}`} s={s} hue={hue} listed={shown} />
               ))}
             </details>
           );
@@ -248,68 +248,6 @@ export function SessionsPane({ hue }: { hue?: number } = {}) {
             {sessions.list.length} sessions
           </div>
         ) : null}
-      </div>
-    </>
-  );
-}
-
-/**
- * The bar above an open session, in the conversation column.
- *
- * It carries the one thing the transcript itself cannot say: that this is a
- * recording, whose, and how to get back to the live console.
- */
-export function SessionBanner() {
-  const open = useBoard((st) => st.sessions.open);
-  const openAgent = useBoard((st) => st.sessions.openAgent);
-  const truncated = useBoard((st) => st.sessions.openTruncated);
-  const loading = useBoard((st) => st.sessions.openLoading);
-  const closeSession = useBoard((st) => st.closeSession);
-  const continueSession = useBoard((st) => st.continueSession);
-  if (!open) return null;
-
-  // `resumeIdForSession` is the SAME function `continueSession` guards on in
-  // board.ts — asked here rather than re-deriving the claude/codex split, so
-  // the button and the action can never disagree about what is resumable.
-  const resumeId = resumeIdForSession(open);
-  // A recording without a resumable id, or a build with no local bridge,
-  // honestly offers no Continue — clicking one would start a fresh session
-  // wearing the old one's title.
-  const canContinue =
-    Boolean(resumeId) && Boolean(bridge.local) && typeof bridge.local?.resumeAgent === "function";
-  return (
-    <>
-      <div className="session-banner">
-        <AgentLogo agent={open.source} className="size-3.5" />
-        <span className="session-banner-title">
-          {openAgent ? openAgent.title || "Agent" : sessionLabel(open)}
-        </span>
-        <span className={cn(mono, "session-banner-meta")}>
-          {open.source === "codex" ? "Codex" : "Claude"}
-          {!openAgent && open.branch ? ` · ${open.branch}` : ""}
-          {loading ? " · reading…" : ""}
-          {truncated ? " · earliest turns trimmed" : ""}
-        </span>
-        {/* ⚠️ ONE CONTROL, NOT THREE. The subagent dropdown and "Back to
-            session" both lived here and are gone: the People tree shows the
-            same subagents under the agent that spawned them, and clicking the
-            parent there is how you go back up. Andrew: "you can click on them
-            there. this should get rid of the nav at the top that says x agents
-            and back to session."
-            "Back to live" stays, because leaving a recording entirely is not
-            something the tree expresses — every row in it opens something. */}
-        {canContinue ? (
-          <button
-            type="button"
-            className="session-banner-close"
-            onClick={() => continueSession(open)}
-          >
-            {open.surface !== "sdk" ? "Continue in Zevet" : "Continue"}
-          </button>
-        ) : null}
-        <button type="button" className="session-banner-close" onClick={() => closeSession()}>
-          Back to live
-        </button>
       </div>
     </>
   );

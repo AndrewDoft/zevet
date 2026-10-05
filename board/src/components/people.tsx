@@ -145,7 +145,7 @@ function SubagentRow({ a, hue }: { a: SessionAgent; hue: number }) {
           same agent, which reads as two different things rather than one
           agent and its children. */}
       <AgentLogo agent="claude" model={a.model} hue={hue} className="agent-sub-mark size-3" />
-      <span className="agent-sub-name">{a.title || "Agent"}</span>
+      <span className="agent-sub-name">{sessionBlurb({ title: a.title, id: a.id, source: "claude" })}</span>
     </button>
   );
 }
