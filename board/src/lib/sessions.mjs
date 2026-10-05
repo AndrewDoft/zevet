@@ -319,10 +319,11 @@ function sessionFallback(s) {
   if (!s.cwd && !s.repo && (s.source === "claude" || s.source === "codex")) {
     return `${s.source === "claude" ? "Claude" : "Codex"} session`;
   }
+  if (!s.cwd && !s.repo) return "Session";
   const repo = String(s.repo || s.cwd || "").split(/[\\/]/).filter(Boolean).pop() || "repo";
   const date = new Date(Number(s.updated ?? s.started ?? 0));
   const time = Number.isNaN(date.getTime()) ? "00:00" : date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-  return `${repo} ${time}`;
+  return `${titleCase(repo)} ${time}`;
 }
 
 /* ⚠️ THE FIRST SENTENCE, NOT THE FIRST THREE WORDS. A three-word cut titled
@@ -330,7 +331,9 @@ function sessionFallback(s) {
    working…", all alike. A sentence is what tells them apart; the row's own
    ellipsis trims it to what fits, so the cap here only bounds a pasted wall. */
 export function sessionBlurb(session) {
-  return sessionLabel(session);
+  const s = session || {};
+  const one = firstSentence(unwrapEnvelope(text(sessionTitle(s))) || unwrapEnvelope(text(s.prompt)));
+  return one ? (one.length > 80 ? `${one.slice(0, 79)}…` : one) : sessionFallback(s);
 }
 
 function firstSentence(said) {
@@ -355,7 +358,7 @@ function cleanTitle(value) {
   cleaned = cleaned.replace(/^#+\s*(?:Track\s*\d*\s*:\s*|Track\s*:\s*)?/i, "");
   cleaned = cleaned.replace(/^#+\s*/, "").replace(/^>\s*/, "");
   cleaned = cleaned.replace(/\bClaude session\b|\bUntitled\b/gi, "");
-  cleaned = cleaned.replace(/https?:\/\/\S+|(?:[A-Za-z]:)?[\\/]\S+/g, "");
+  cleaned = cleaned.replace(/https?:\/\/\S+|[A-Za-z]:[\\/]\S+|\\(?:[^\\/\s]+[\\/])+\S+/g, "");
   return cleaned.replace(/\s+/g, " ").trim().replace(/[.!?…—:-]+$/, "").trim();
 }
 
@@ -367,7 +370,7 @@ function shortWords(value, limit = 20) {
     .flatMap((word) => word.split(/\s+/))
     .map((word) => /[A-Z].*-[A-Z].*-/.test(word) ? word : word.replace(/-+/g, " "))
     .flatMap((word) => word.split(/\s+/));
-  const useful = words.filter((word) => !STOPWORDS.has(word.toLowerCase()));
+  const useful = words;
   let out = "";
   for (const word of useful.length ? useful : words) {
     const next = out ? `${out} ${word}` : word;
@@ -388,13 +391,17 @@ export function sessionLabel(session, listed = []) {
   const rawTitle = cleanTitle(sessionTitle(s));
   const rawPrompt = cleanTitle(s.prompt);
   const raw = label || rawTitle || rawPrompt || sessionFallback(s);
-  let name = /^(?:Claude|Codex) session$/.test(raw) ? raw : titleCase(shortWords(raw));
-  const collisions = listed.filter((other) => other && other !== s && titleCase(shortWords(cleanTitle(other.label) || cleanTitle(sessionTitle(other)) || cleanTitle(other.prompt) || sessionFallback(other))) === name);
+  const humanize = Boolean(s.label) || /^(?:RULES|#\s*RESUME)\b/i.test(text(s.title));
+  let name = /^(?:Claude|Codex) session$/.test(raw) ? raw : (humanize ? titleCase(shortWords(raw)) : shortWords(raw));
+  const collisions = listed.filter((other) => other && other !== s && (
+    String(other.label || "") === String(s.label || "") && String(other.title || "") === String(s.title || "") && String(other.prompt || "") === String(s.prompt || "")
+  ));
   if (collisions.length) {
     const branch = String(s.branch || "").split(/[\\/]/).filter(Boolean).pop();
     const repo = String(s.repo || s.cwd || "").split(/[\\/]/).filter(Boolean).pop();
     const diff = branch || repo || String(listed.indexOf(s) + 1).padStart(2, "0");
-    name = shortWords(`${name} ${diff}`).slice(0, 20).trim();
+    const room = Math.max(1, 20 - String(diff).length - 1);
+    name = `${name.slice(0, room).trim()} ${diff}`.trim();
   }
   return name;
 }

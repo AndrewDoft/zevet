@@ -75,9 +75,9 @@ function SessionRow({ s, hue, listed }: { s: SessionSummary; hue?: number; liste
  *  IDE one does not. Not offered without an id to resume by, or a bridge. */
 function ContinueInZevet({ s }: { s: SessionSummary }) {
   const continueSession = useBoard((st) => st.continueSession);
-  const canMove =
-    s.surface !== "sdk" && Boolean(resumeIdForSession(s)) && typeof bridge.local?.resumeAgent === "function";
-  if (!canMove) return null;
+  const resumeId = resumeIdForSession(s);
+  const canContinue = Boolean(resumeId) && Boolean(bridge.local) && typeof bridge.local?.resumeAgent === "function";
+  if (s.surface === "sdk" || !canContinue) return null;
   return (
     <button
       type="button"
