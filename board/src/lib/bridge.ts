@@ -243,7 +243,7 @@ declare global {
     zevetDoc?: { available?: boolean } & Record<string, unknown>;
     zevetEditor?: Record<string, unknown>;
     zevetHighlight?: { highlight?: (t: string, l: string) => string; languageFor?: (p: string) => string };
-    zevetSprites?: { spriteFor?: (o: { tool?: string | null; width: number; height: number }) => string };
+    zevetSprites?: { spriteFor?: (o: { tool?: string | null; kind?: string | null; width: number; height: number }) => string };
     zevet?: Partial<ZevetBridge>;
     __zevetCfg?: ZevetConfig;
     __zevetHub?: string;

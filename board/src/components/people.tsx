@@ -73,6 +73,7 @@ import { AgentLogo } from "./brand";
 import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
+import { AgentSprite } from "./agent-sprite";
 
 function expandedStored(): string[] {
   try {
@@ -267,6 +268,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
           title={row.engine ? `${row.blurb} · ${row.engine}` : row.blurb}
         >
           {hasKids ? <Twist open={isOpen} /> : <span className="agent-row-gap" aria-hidden="true" />}
+          <AgentSprite repo={c?.root ? consoleProject(c) : sessionProject(s!)} />
           <AgentLogo agent={row.agent} model={row.model} hue={hue} className="agent-row-mark size-3" />
           <span className="agent-row-name">{row.blurb}</span>
           {c && c.running ? (

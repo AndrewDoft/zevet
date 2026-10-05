@@ -1566,3 +1566,9 @@
   .subagents-name { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
   .subagents-meta, .subagents-tool { color: var(--subtle); overflow: hidden; text-overflow: ellipsis; }
   .subagents-elapsed, .subagents-tokens { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+/* Agent sprites are deliberately readable at integer pixel scale in the rail
+   and conversation header, while the file-tree rider stays compact. */
+.agent-sprite { display: inline-flex; flex: 0 0 auto; color: var(--who); line-height: 0; }
+.agent-sprite svg { display: block; shape-rendering: crispEdges; }
+.agent-sprite-rail, .agent-sprite-header { width: 44px; min-width: 44px; }
+.agent-sprite-tree { width: 24px; min-width: 24px; }

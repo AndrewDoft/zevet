@@ -61,6 +61,16 @@ export function spritesByPath(events, { repoName, followMode, myActor, now, idle
   return out;
 }
 
+export function latestToolForActor(events, { repoName, actor, now, liveAfterMs }) {
+  let latest = null;
+  (events || []).forEach((ev) => {
+    if (!ev || ev.repo !== repoName || ev.actor !== actor) return;
+    if (now - ev.ts > liveAfterMs) return;
+    if (!latest || ev.ts >= latest.ts) latest = ev;
+  });
+  return latest;
+}
+
 /** Everything of an actor's since their most recent prompt. */
 export function turnTrace(events, actor) {
   const mine = (events || []).filter((e) => e && e.actor === actor);
