@@ -108,12 +108,12 @@ describe("follow mode", () => {
 });
 
 describe("roster rendering", () => {
-  test("live agent rows and conversation headers carry readable sprites", () => {
+  test("sprites are tree-only and stay within a text-height bound", () => {
     const people = readFileSync(path.join(ROOT, "board", "src", "components", "people.tsx"), "utf8");
     const sessions = readFileSync(path.join(ROOT, "board", "src", "components", "sessions.tsx"), "utf8");
-    assert.match(people, /<AgentSprite[^>]*repo=/);
-    assert.match(sessions, /<AgentSprite[^>]*size="header"/);
-    assert.match(readFileSync(path.join(ROOT, "board", "src", "components", "tree.tsx"), "utf8"), /width: 24, height: 16/);
+    assert.doesNotMatch(people, /AgentSprite|agent-sprite/);
+    assert.doesNotMatch(sessions, /AgentSprite|agent-sprite/);
+    assert.match(readFileSync(path.join(ROOT, "board", "src", "components", "tree.tsx"), "utf8"), /width: 14, height: 12/);
   });
   test("the rail says who and what is running, and never a tool call", () => {
     const people = src("components/people.tsx");
@@ -274,13 +274,16 @@ describe("agent hunk seating", () => {
 describe("file-tree sprite map", () => {
   const opts = { repoName: "zevet", followMode: "all", myActor: "andrew", now: NOW, idleAfterMs: 60_000 };
 
-  test("the most recent actor wins when two people touch one path", () => {
+  test("several active actors share one path, newest first", () => {
     const events = [
       ev({ actor: "andrew", tool: "Read", target: "src/db.ts", ts: NOW - 5000 }),
       ev({ actor: "kai", tool: "Edit", target: "src/db.ts", ts: NOW - 1000 }),
     ];
     const map = spritesByPath(events, opts);
-    assert.deepEqual(map["src/db.ts"], { actor: "kai", tool: "Edit", ts: NOW - 1000 });
+    assert.deepEqual(map["src/db.ts"], [
+      { actor: "kai", tool: "Edit", ts: NOW - 1000 },
+      { actor: "andrew", tool: "Read", ts: NOW - 5000 },
+    ]);
     assert.equal(Object.keys(map).length, 1);
   });
 
@@ -294,7 +297,7 @@ describe("file-tree sprite map", () => {
     assert.deepEqual(spritesByPath(events, { ...opts, followMode: "off" }), {});
     assert.deepEqual(spritesByPath(events, { ...opts, followMode: "mine", myActor: "andrew" }), {});
     assert.equal(
-      spritesByPath(events, { ...opts, followMode: "mine", myActor: "kai" })["src/db.ts"].actor,
+      spritesByPath(events, { ...opts, followMode: "mine", myActor: "kai" })["src/db.ts"][0].actor,
       "kai",
     );
   });

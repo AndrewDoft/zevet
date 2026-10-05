@@ -33,7 +33,6 @@ import {
   sessionProject,
 } from "../lib/sessions.mjs";
 import type { SessionSummary } from "../lib/sessions.d.mts";
-import { AgentSprite } from "./agent-sprite";
 
 function SessionRow({ s, hue }: { s: SessionSummary; hue?: number }) {
   // Reuse the board clock; all rows advance together once a minute.
@@ -281,7 +280,6 @@ export function SessionBanner() {
   return (
     <>
       <div className="session-banner">
-        <AgentSprite repo={open.cwd ? sessionProject(open) : undefined} size="header" />
         <AgentLogo agent={open.source} className="size-3.5" />
         <span className="session-banner-title">
           {openAgent ? openAgent.title || "Agent" : sessionLabel(open)}

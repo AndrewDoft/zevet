@@ -8,7 +8,6 @@ import { ConnBanner } from "./components/conn";
 import { Palette } from "./components/palette";
 import { UpdateRow } from "./components/updaterow";
 import { Conversation } from "./components/conversation";
-import { ActiveSprite } from "./components/sprite";
 import { ConsoleRuntimeProvider } from "./lib/runtime";
 import { FollowControl, TreeFill } from "./components/tree";
 import { DetailPane } from "./components/detail";
@@ -271,7 +270,6 @@ function App() {
           <div className="chatcol">
             <div className="pane-title row">
               <span>Conversation</span>
-              <ActiveSprite />
               {bridge.local && localRoot ? (
                 <button type="button" className="rail-new rail-new-label" aria-label="New agent" title="New agent" onClick={openLauncher}>
                   New agent +

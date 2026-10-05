@@ -55,8 +55,12 @@ export function spritesByPath(events, { repoName, followMode, myActor, now, idle
     if (repoName && ev.repo !== repoName) return;
     if (!followAllows(followMode, ev.actor, myActor)) return;
     if (now - ev.ts > idleAfterMs) return;
-    const prev = out[ev.target];
-    if (!prev || ev.ts >= prev.ts) out[ev.target] = { actor: ev.actor, tool: ev.tool, ts: ev.ts };
+    const row = out[ev.target] || [];
+    const prior = row.find((item) => item.actor === ev.actor);
+    if (!prior) row.push({ actor: ev.actor, tool: ev.tool, ts: ev.ts });
+    else if (ev.ts >= prior.ts) Object.assign(prior, { tool: ev.tool, ts: ev.ts });
+    row.sort((a, b) => b.ts - a.ts);
+    out[ev.target] = row;
   });
   return out;
 }
