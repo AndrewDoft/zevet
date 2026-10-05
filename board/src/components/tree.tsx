@@ -79,7 +79,7 @@ type SpriteMap = ReturnType<typeof spritesByPath>;
 function AgentSprite({ actor, tool }: { actor: string; tool?: string }) {
   const spriteFor = window.zevetSprites?.spriteFor;
   if (!spriteFor) return null; // no bundle script, or a plain browser tab
-  const svg = spriteFor({ tool, width: 16, height: 14 });
+  const svg = spriteFor({ tool, width: 24, height: 16 });
   if (!svg) return null;
   return (
     <span

@@ -1,4 +1,4 @@
-import { PanelLeftClose, PanelLeftOpen, SettingsIcon } from "lucide-react";
+import { SettingsIcon } from "lucide-react";
 import { useEffect } from "react";
 import { PeoplePane } from "./components/people";
 import { WorkspacesPane } from "./components/workspaces";
@@ -11,8 +11,9 @@ import { ConsoleRuntimeProvider } from "./lib/runtime";
 import { FollowControl, TreeFill } from "./components/tree";
 import { DetailPane } from "./components/detail";
 import { SettingsSheet } from "./components/settings";
-import { UpdateDialog } from "./components/updatedialog";
+import { UpdateBanner } from "./components/updatebanner";
 import { VoiceDialog } from "./components/voicedialog";
+import { SubagentsPanel } from "./components/subagents-panel";
 import {
   applyPanes,
   applyTheme,
@@ -28,28 +29,7 @@ import {
 import { bridge } from "./lib/bridge";
 import { ChatMain, ChatRail, ModeSwitch } from "./components/chatmode";
 import { useChat, wireChat } from "./lib/chat";
-
-/** Folds the file tree away, leaving the rail. Ctrl/Cmd+B, like an editor's
- *  sidebar. */
-function TreeToggle() {
-  const hidden = useBoard((s) => s.treeHidden);
-  const toggleTree = useBoard((s) => s.toggleTree);
-  const label = hidden ? "Show files" : "Hide files";
-  const Icon = hidden ? PanelLeftOpen : PanelLeftClose;
-  return (
-    <button
-      type="button"
-      className="rail-new tree-toggle"
-      id="treeToggle"
-      aria-label={label}
-      aria-pressed={hidden}
-      title={label + " (" + (navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl+") + "B)"}
-      onClick={toggleTree}
-    >
-      <Icon className="size-3.5" aria-hidden="true" />
-    </button>
-  );
-}
+import { CHECK_MS, createStaleReload } from "./lib/stale-build.mjs";
 
 function RailFoot() {
   const theme = useBoard(selectTheme);
@@ -91,6 +71,16 @@ function RailFoot() {
   );
 }
 
+/** The team's name, under the mode switch. Nothing until the hub has answered. */
+function TeamName() {
+  const name = useBoard((s) => (s.who.state as { teamName?: string } | null)?.teamName);
+  return name ? (
+    <div className="rail-team" id="railTeam" title="Team">
+      {name}
+    </div>
+  ) : null;
+}
+
 function App() {
   const viewMode = useBoard(selectViewMode);
   const theme = useBoard(selectTheme);
@@ -111,6 +101,33 @@ function App() {
   useEffect(() => {
     boot();
     wireChat();
+    useBoard.getState().refreshWhoami();
+  }, []);
+
+  /* A hub deploy reaches an open board: see lib/stale-build.mjs. */
+  useEffect(() => {
+    const mine = document.querySelector<HTMLMetaElement>('meta[name="zevet-build"]')?.content ?? "";
+    const stale = createStaleReload({
+      mine,
+      fetchBuild: async () => ((await (await fetch("/version", { cache: "no-store" })).json()) as { build?: string }).build ?? "",
+      doc: document,
+      now: Date.now,
+      editorDirty: () => Boolean(useBoard.getState().edView?.dirty),
+      reload: () => window.location.reload(),
+    });
+    const tick = () => void stale.tick();
+    const touch = () => stale.touch();
+    const timer = setInterval(tick, CHECK_MS);
+    const inputs = ["pointerdown", "keydown", "wheel"] as const;
+    inputs.forEach((e) => window.addEventListener(e, touch, { passive: true, capture: true }));
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      inputs.forEach((e) => window.removeEventListener(e, touch, { capture: true }));
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", tick);
+    };
   }, []);
 
   useEffect(() => {
@@ -162,6 +179,7 @@ function App() {
       <div className="shell" inert={sheetOpen ? true : undefined}>
         <aside className="pane rail">
           <ModeSwitch />
+          <TeamName />
           <ChatRail />
           <div className="rail-code">
           {/* The follow control sits here now, not in the Files column's own
@@ -198,7 +216,16 @@ function App() {
               </button>
             ) : null}
             <FollowControl blanked={blanked} />
-            <TreeToggle />
+            {/* ⚠️ NO FOLD BUTTON HERE ANY MORE. It was `#treeToggle`, and at a
+                narrow rail width (180px, see masora.css's max-width: 1100px
+                rule) this row is wider than its column — the button rendered
+                behind the treecol next door, which painted over it in DOM
+                order, so it was there but unclickable. The tree still folds
+                the same way (`treeHidden`, `Ctrl+B`/`Cmd+B` below): now by
+                dragging its edge shut (see buildSplits in lib/board.ts) or the
+                "Open tree" button beside the repo picker in Strip when it is
+                closed. One working way to close it and one to reopen it,
+                instead of a second control drawn on top of the first. */}
           </div>
           <div className="pane-body" id="people">
             <PeoplePane />
@@ -266,8 +293,9 @@ function App() {
       </div>
       <SettingsSheet />
       <Palette />
-      <UpdateDialog />
+      <UpdateBanner />
       <VoiceDialog />
+      <SubagentsPanel />
     </ConsoleRuntimeProvider>
   );
 }

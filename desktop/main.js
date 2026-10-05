@@ -24,7 +24,27 @@
 // that root. See openBoard() for why the board is allowed a bridge at all
 // despite loading a remote origin, and local:write below for why a WRITE over
 // that same bridge is a bigger thing to hand out than a read.
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor } = require("electron");
+const { openSafe } = require("./open-safe.js");
+const { createLog, createIpcRegistry } = require("@masora/desktop-kit");
+// bootstrap.js (the asar entry) loaded this file; what only it can hand over is on this object.
+const bootShell = globalThis.__zevetShell;
+/** The payload build running, which is NOT app.getVersion() (that is the installer's). */
+const APP_VERSION = bootShell.build;
+// A packaged app has no console to read: warnings and errors from every module,
+// plus the updater's own lines, also go to a size-capped rotating file (logs/zevet.log, 3 x 1 MB).
+const fileLog = createLog({ dir: app.getPath("logs"), name: "zevet" });
+for (const level of ["warn", "error"]) {
+  const orig = console[level].bind(console);
+  console[level] = (...a) => { orig(...a); fileLog[level](...a); };
+}
+// Must run before the first ipcMain.handle below. readConfig is a hoisted function declaration.
+require("./ipc-guard.js").guardIpc(ipcMain, () => (readConfig() || {}).hub);
+// Every bridge handler below is registered through the IPC table (ipc-table.js), which also generates
+// preload.js: a channel that is not in the table is refused, and bridge.assertComplete() (after the last
+// handler) fails startup if a table call has no handler. ipcMain.handle is looked up per registration, so
+// the guard above still wraps each one.
+const bridge = createIpcRegistry(ipcMain, require("./ipc-table.js").tables);
 const localFs = require("./local-fs.js");
 const agentConsole = require("./agent-console.js");
 const repoStats = require("./repo-stats.js");
@@ -35,10 +55,13 @@ const indexCapability = require("./index-capability.js");
 const embedder = require("./embedder.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
-const { AppUpdater } = require("./app-update.js");
+const { AppUpdater, loopbackProofKeys } = bootShell.require("./app-update.js");
 const runtime = require("./runtime.js");
+const { createSwapper, confirmWhenHealthy } = require("./payload-swap.js");
 const askServer = require("./ask-server.js");
+const agentApi = require("./agent-api.js");
 const { GithubSignIn } = require("./github-signin.js");
+const { resolveHub, HOSTED_HUB, LEGACY_HUB } = require("./hub-target.js");
 const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
@@ -47,13 +70,19 @@ const { createConsoleLog } = require("./console-log.js");
 const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
+const { MasoraLink } = require("./masora-link.js");
+const { Family, familyDir, frameable, FRAME_URLS } = require("./family.js");
 const credentials = require("./credentials.js");
 const credentialLadder = require("./credential-ladder.js");
 const credentialUsage = require("./credential-usage.js");
+const agentEngine = require("./agent-engine.js");
 const masoraPush = require("./masora-push.js");
 const masoraConnect = require("./masora-connect.js");
 const chats = require("./chat.js");
 const { createClaudeCli } = require("./chat-claude.js");
+const { createCli: createChatCli } = require("./chat-cli.js");
+const sentry = require("./sentry.js");
+const Sentry = require("@sentry/electron/main");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
 // is a throw — at the top of this file that throw happens before any window
@@ -65,13 +94,50 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const os = require("node:os");
+const { zevetHome, atomicWriteJson } = require("./zevet-home.js");
 
 // Node, npm agent shims and the tools those agents launch need the same PATH
 // whether zevet was opened from Finder or from Terminal.
 const runtimeReady = runtime.preparePath();
 
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const CONFIG = path.join(HOME, "config.json");
+const AGENT_API_FILE = path.join(HOME, "agent-api.json");
+
+/**
+ * Error reporting, wired before anything else -- including the two windows --
+ * so a crash during startup is not a crash nobody hears about. What actually
+ * gets scrubbed and tagged lives in desktop/sentry.js; this only supplies the
+ * release name and the tags this MACHINE knows before any window exists.
+ * `member` is corrected the moment a real one is known (writeConfig, below).
+ */
+{
+  const startupCfg = readConfig();
+  sentry.initMain({
+    sentryMain: Sentry,
+    release: sentry.releaseName(APP_VERSION),
+    tags: {
+      platform: process.platform,
+      arch: process.arch,
+      member: (startupCfg && (startupCfg.actor || startupCfg.login)) || "unknown",
+    },
+  });
+}
+// ZEVET_SENTRY_TEST=1: one deliberate event proving the pipe works, distinct
+// from a real failure by its exact, unmistakable text.
+if (process.env.ZEVET_SENTRY_TEST === "1") sentry.sendTestMessage(Sentry);
+
+/**
+ * Every agent launch, Code's and Chat's alike, reports a failed run to Sentry
+ * without each of desktop/main.js's five call sites having to remember to —
+ * see desktop/sentry.js's own comment on `withAgentFailureCapture` for why
+ * this is one wrapper applied once rather than five copies of the same
+ * capture call.
+ */
+const instrumentedStartConsole = sentry.withAgentFailureCapture(agentConsole.startConsole, {
+  sentryMain: Sentry,
+  invocationFor: agentConsole.invocationFor,
+});
 
 /**
  * Test hook: record every `shell.openExternal` call instead of actually
@@ -111,6 +177,8 @@ app.setAppUserModelId(APP_ID);
 
 /** The icon, for the dev run and for Linux; a packaged .exe carries its own. */
 const ICON = path.join(__dirname, "build", "icon.png");
+/** The preload lives in the payload, outside the asar: it finds @sentry/electron from the shell's directory (see ipc-table.js). */
+const SHELL_DIR_ARG = `--zevet-shell-dir=${bootShell.dir}`;
 const iconOption = fs.existsSync(ICON) ? { icon: ICON } : {};
 const CLIENT_DIR = path.join(HOME, "client");
 // The eggshell the board is painted on. Used as the window background so there
@@ -319,6 +387,7 @@ let secretModule;
 function loadSecretModule() {
   if (secretModule !== undefined) return secretModule;
   const candidates = [];
+  candidates.push(path.join(__dirname, "client", "secret.mjs")); // the payload's own copy
   if (process.resourcesPath) candidates.push(path.join(process.resourcesPath, "client", "secret.mjs"));
   candidates.push(path.join(__dirname, "..", "client", "secret.mjs"));
   secretModule = null;
@@ -384,6 +453,10 @@ const CREDENTIAL_ENV = {
   "anthropic:api_key": "ANTHROPIC_API_KEY",
   "anthropic:subscription_token": "CLAUDE_CODE_OAUTH_TOKEN",
   "openai:api_key": "OPENAI_API_KEY",
+  // Meta's Model API (Muse Spark) — docs/contracts/meta-model-api.md. Stored
+  // the same as any other provider's key; nothing spawns using it yet, since
+  // zevet has no execution adapter for it (see that note).
+  "meta:api_key": "MODEL_API_KEY",
 };
 
 /** Every env var ANY entry in CREDENTIAL_ENV could set, deleted from the
@@ -391,7 +464,7 @@ const CREDENTIAL_ENV = {
  *  stray ANTHROPIC_API_KEY the person already had in their shell would
  *  silently outrank the credential they just picked in Settings — same
  *  bug shape as authFor's `env: {}`, a few lines up, and the same fix. */
-const ALL_CREDENTIAL_ENV_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY"];
+const ALL_CREDENTIAL_ENV_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "MODEL_API_KEY"];
 
 /**
  * One credential id, resolved to `{provider, kind, key}` — or null if it
@@ -434,7 +507,7 @@ async function resolveCredential(id, cfg, scope) {
     const body = await secretRes.json();
     return typeof body.key === "string" && body.key ? { provider: meta.provider, kind: meta.kind, key: body.key } : null;
   } catch (err) {
-    console.log(`zevet: could not reach the hub for a team credential (${err.message})`);
+    console.log(`zevet: could not reach the server for a team credential (${err.message})`);
     return null;
   }
 }
@@ -499,6 +572,23 @@ async function credentialEnvFor() {
 }
 
 /**
+ * The env to spawn an agent with, and which engine it ended up on --
+ * `{ok: true, env, engine}` or `{ok: false, error}`.
+ *
+ * A per-launch `engine` request (desktop/agent-engine.js: "engine1" |
+ * "engine2" | "auto") is a DIFFERENT axis from `credentialEnvFor`'s saved
+ * default above -- that one picks a hub-shared credential for this
+ * workspace; this one picks which of Andrew's own two Claude Max accounts
+ * runs the process. When a caller names an engine it wins outright, because
+ * it was asked for explicitly; with none named this is unchanged from
+ * before engine selection existed -- `credentialEnvFor()`'s own default.
+ */
+async function agentEnvFor(engine) {
+  if (!engine) return { ok: true, env: await credentialEnvFor(), engine: undefined };
+  return agentEngine.resolveEngine(engine, process.env);
+}
+
+/**
  * The saved config, or null.
  *
  * ⚠️ EITHER CREDENTIAL COUNTS. This used to demand a `token`, which was right
@@ -527,15 +617,67 @@ function readConfig() {
   return null;
 }
 
+/** The hub for this machine: see hub-target.js. Never taken from a renderer. */
+function targetHub() {
+  let raw = null;
+  try {
+    raw = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
+  } catch {
+    // No config yet: the hosted default.
+  }
+  return resolveHub({ env: process.env, cfg: raw });
+}
+
 function writeConfig(cfg) {
   fs.mkdirSync(HOME, { recursive: true });
-  fs.writeFileSync(CONFIG, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+  atomicWriteJson(CONFIG, cfg);
   try {
     // Best effort: the token is a shared secret sitting in a home directory.
     fs.chmodSync(CONFIG, 0o600);
   } catch {
     // Windows uses ACLs; there is nothing to do here and nothing to report.
   }
+  // The startup tag (above) is a guess made before anyone had signed in; a
+  // sign-in during THIS run corrects it immediately rather than waiting for
+  // the next launch.
+  Sentry.setTag("member", cfg.actor || cfg.login || "unknown");
+}
+
+/**
+ * D-0NN: hub.usemasora.com replaces the sslip.io address as HOSTED_HUB, so a
+ * network that blocks bare sslip.io domains (some corporate/school DNS
+ * filters do, on principle) is not the only way to reach the hub. The sslip
+ * address (LEGACY_HUB) is never decommissioned — Caddy serves the same hub
+ * on both names permanently — so this is a courtesy rewrite, never a cutover
+ * an install is forced through.
+ *
+ * Only fires when `cfg.hub` is EXACTLY the old default: a hub the user or an
+ * admin configured on purpose (self-hosting, `ZEVET_HUB`, a typed address) is
+ * never touched. And only rewrites once the new host actually answers — a
+ * quick, short-timeout probe, because DNS for a domain this fresh may not
+ * have reached this machine's resolver yet, and a slow or hanging network
+ * check has no business delaying the board opening. A probe that fails for
+ * any reason (no DNS yet, no route, a redirect, a non-200) leaves `cfg`
+ * untouched; the sslip address keeps working exactly as it always has.
+ */
+async function migrateHubDomain(cfg) {
+  if (!cfg || String(cfg.hub || "").replace(/\/+$/, "") !== LEGACY_HUB) return cfg;
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 2000);
+    let res;
+    try {
+      res = await fetch(`${HOSTED_HUB}/healthz`, { signal: ac.signal, redirect: "error" });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return cfg;
+  } catch {
+    return cfg;
+  }
+  const migrated = { ...cfg, hub: HOSTED_HUB };
+  writeConfig(migrated);
+  return migrated;
 }
 
 /** Bootstrap the bundled client on the first install; keep its hook path stable. */
@@ -548,6 +690,8 @@ function openBoard(cfg) {
     boardWindow.focus();
     return;
   }
+  // Background, after onboarding: never awaited, so it cannot gate the window.
+  masoraLink.start();
   boardWindow = new BrowserWindow({
     width: 1240,
     height: 820,
@@ -581,6 +725,7 @@ function openBoard(cfg) {
       // any other origin — a hub that redirects must not hand the bridge to
       // whoever it redirected to.
       preload: path.join(__dirname, "preload.js"),
+      additionalArguments: [SHELL_DIR_ARG],
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
@@ -618,7 +763,7 @@ function openBoard(cfg) {
     try {
       if (new URL(target).origin !== hubOrigin) {
         e.preventDefault();
-        shell.openExternal(target);
+        openSafe(target).catch(() => {});
       }
     } catch {
       e.preventDefault();
@@ -636,15 +781,34 @@ function openBoard(cfg) {
   // is down, and the two have nothing in common. Not an early return — the
   // window's own handlers below, `closed` above all, still have to be wired up
   // or the app is left holding a window it thinks is open.
+  // ZEVET_SENTRY_TEST=1: board/src's own Sentry init reads this off its URL
+  // and fires one captureMessage, since a remote-origin page has no other way
+  // to learn it should.
+  const sentryTestParam = process.env.ZEVET_SENTRY_TEST === "1" ? "&sentryTest=1" : "";
+
   const auth = authFor(cfg);
   if (auth.error) {
     boardWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(credentialPage(auth.error)));
   } else {
-    boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}`);
+    boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
   }
 
+  // A fresh network interface (Wi-Fi still associating, a VPN adapter still
+  // coming up) can lose the very first request without meaning the hub is
+  // actually unreachable — the same race a browser papers over with its own
+  // retry. One retry before reporting anything to the person; a second
+  // failure is treated as real.
+  let boardLoadAttempts = 0;
   boardWindow.webContents.on("did-fail-load", (_e, code, desc) => {
     if (code === -3) return; // aborted by a normal navigation
+    if (!auth.error && boardLoadAttempts < 1) {
+      boardLoadAttempts += 1;
+      setTimeout(() => {
+        if (!boardWindow || boardWindow.isDestroyed()) return;
+        boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
+      }, 1500);
+      return;
+    }
     boardWindow.loadURL(
       "data:text/html;charset=utf-8," +
         encodeURIComponent(unreachablePage(cfg.hub, `${desc} (${code})`)),
@@ -653,7 +817,7 @@ function openBoard(cfg) {
 
   // Anything that wants a new window is a link to the outside world.
   boardWindow.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (/^https?:/.test(target)) shell.openExternal(target);
+    openSafe(target).catch(() => {});
     return { action: "deny" };
   });
 
@@ -710,11 +874,17 @@ function statusPageStyle() {
 const STATUS_BRAND = `<div class="brand"><svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true" fill="currentColor"><circle cx="16" cy="8.2" r="3.5"/><circle cx="7" cy="23.8" r="3.5"/><circle cx="25" cy="23.8" r="3.5"/></svg>Zevet</div>`;
 
 function unreachablePage(hub, why) {
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Can't reach the hub</title>${statusPageStyle()}
-  <main>${STATUS_BRAND}<h1>Can't reach the hub.</h1>
-  <p>Tried <code>${hub.replace(/[<&]/g, "")}</code> and got: ${String(why).replace(/[<&]/g, "")}</p>
-  <p>Check your connection and hub address, then reload.
-  Change the address in <b>zevet &rsaquo; Change hub…</b>.</p></main></html>`;
+  let host = String(hub || "");
+  try {
+    host = new URL(hub).host || host;
+  } catch {
+    // Not a parseable URL: show whatever was configured, verbatim.
+  }
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Offline</title>${statusPageStyle()}
+  <main>${STATUS_BRAND}<h1>Offline</h1>
+  <p>Could not reach <code>${host.replace(/[<&]/g, "")}</code>: ${String(why).replace(/[<&]/g, "")}</p>
+  <p>A VPN, firewall, or a network with strict DNS filtering can block this address without
+  saying so. Try another network, or a quick reload once you're off it.</p></main></html>`;
 }
 
 /**
@@ -729,10 +899,10 @@ function unreachablePage(hub, why) {
  * which names the fault without ever containing the value.
  */
 function credentialPage(why) {
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Can't sign in</title>${statusPageStyle()}
-  <main>${STATUS_BRAND}<h1>This machine can't sign in.</h1>
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Signed out</title>${statusPageStyle()}
+  <main>${STATUS_BRAND}<h1>Signed out</h1>
   <p>${String(why).replace(/[<&]/g, "")}</p>
-  <p>Open <b>zevet &rsaquo; Change hub…</b> and sign in again, or check the team's secret.</p></main></html>`;
+  <p>zevet &rsaquo; Team…</p></main></html>`;
 }
 
 function openSetup(existing) {
@@ -742,20 +912,35 @@ function openSetup(existing) {
   }
   setupWindow = new BrowserWindow({
     width: 620,
-    height: 700,
+    height: 820,
     resizable: false,
     backgroundColor: PAPER,
     title: "Set up zevet",
     ...iconOption,
+    // The same frame as the board (openBoard): no accent-coloured outline. The
+    // page draws a drag bar; Windows keeps its native buttons through the
+    // overlay and macOS keeps its traffic lights.
+    titleBarStyle: "hidden",
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" }
+      : { titleBarOverlay: chromeFor("light", 0) }),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
+      additionalArguments: [SHELL_DIR_ARG],
       nodeIntegration: false,
       contextIsolation: true,
+      // The shared preload requires @sentry/electron, which a sandboxed
+      // preload cannot load: without this window.zevet never exists and every
+      // button on this page is dead (same as the board window above).
+      sandbox: false,
     },
   });
   setupWindow.loadFile(path.join(__dirname, "setup.html"), {
-    query: existing ? { hub: existing.hub, actor: existing.actor || "" } : {},
+    query: {
+      ...(existing ? { actor: existing.actor || "" } : {}),
+      ...(process.env.ZEVET_SENTRY_TEST === "1" ? { sentryTest: "1" } : {}),
+    },
   });
   setupWindow.on("closed", () => {
     setupWindow = null;
@@ -792,7 +977,7 @@ async function startCollisionWatch(cfg) {
         signal: controller.signal,
         headers: { accept: "text/event-stream" },
       });
-      if (!res.ok || !res.body) throw new Error(`hub answered ${res.status}`);
+      if (!res.ok || !res.body) throw new Error(`server answered ${res.status}`);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -857,9 +1042,13 @@ function buildMenu() {
           click: () => wireRepoFromMenu(),
         },
         {
-          label: "Change hub…",
+          label: "Team…",
           click: () => openSetup(readConfig()),
         },
+        { type: "separator" },
+        menuOffersRestart
+          ? { label: "Restart to update", click: () => appUpdater.install() }
+          : { label: "Check for Updates…", click: () => appUpdater.check() },
         { type: "separator" },
         { role: "reload" },
         { role: "toggleDevTools" },
@@ -976,7 +1165,7 @@ async function installHooks(repo) {
  * `c.actor` from this call and nothing else; it only ever WRITES a credential.
  * That was checked, not assumed.
  */
-ipcMain.handle("zevet:config", () => {
+bridge.handle("zevet:config", () => {
   const cfg = readConfig();
   if (!cfg) return null;
   const hasSecret = typeof cfg.secret === "string" && cfg.secret.length > 0;
@@ -998,6 +1187,10 @@ ipcMain.handle("zevet:config", () => {
     // nothing to derive a document key from. The editor cannot work there and
     // says so; see doc:join.
     legacy: !hasSecret,
+    // Not a credential -- electron-builder's own version string, read for the
+    // board's own Sentry release tag (board/src/lib/sentry.ts) so a renderer
+    // report reads "zevet@0.2.85" the same as a main-process one.
+    version: APP_VERSION,
   };
 });
 
@@ -1015,7 +1208,7 @@ ipcMain.handle("zevet:config", () => {
  * sent as an empty token and coming back as "the hub rejected that token" —
  * which would be true, useless, and point at the wrong end of the problem.
  */
-ipcMain.handle("zevet:test", async (_e, { hub, token }) => {
+bridge.handle("zevet:test", async (_e, { token }) => {
   const auth = authFor({ secret: String(token || "") });
   if (auth.error) return { ok: false, why: `That secret is not usable: ${auth.error}` };
   // An empty field resolves cleanly to an empty token — `resolveAuth` has
@@ -1023,13 +1216,13 @@ ipcMain.handle("zevet:test", async (_e, { hub, token }) => {
   // "it rejected that token", which is true and points at the wrong end.
   if (!auth.token) return { ok: false, why: "There is no secret to check yet." };
   try {
-    const base = String(hub).replace(/\/+$/, "");
+    const base = targetHub();
     const res = await fetch(`${base}/dist/manifest.json`, {
       headers: { "x-zevet-token": auth.token },
       signal: AbortSignal.timeout(8000),
     });
-    if (res.status === 401) return { ok: false, why: "The hub is there, but it rejected that token." };
-    if (!res.ok) return { ok: false, why: `The hub answered ${res.status}.` };
+    if (res.status === 401) return { ok: false, why: "Rejected" };
+    if (!res.ok) return { ok: false, why: `Server error ${res.status}` };
     const m = await res.json();
     return { ok: true, version: m.version };
   } catch (err) {
@@ -1064,8 +1257,8 @@ ipcMain.handle("zevet:test", async (_e, { hub, token }) => {
  * rather than at a blank board — but they are not TOLD which of the two it was,
  * because nothing here can know.
  */
-ipcMain.handle("zevet:save", (_e, cfg) => {
-  const hub = String(cfg.hub).replace(/\/+$/, "");
+bridge.handle("zevet:save", (_e, cfg) => {
+  const hub = targetHub();
   const actor = String(cfg.actor);
   // `token` is what setup.html still calls the field; what it holds is now the
   // master secret. The field name is not worth a coordinated rename across a
@@ -1074,19 +1267,7 @@ ipcMain.handle("zevet:save", (_e, cfg) => {
 
   const existing = readConfig();
 
-  /* ⚠️ AN EMPTY CREDENTIAL MEANS "KEEP THE ONE I HAVE", NOT "CLEAR IT".
-   *
-   * Since GitHub sign-in, the credential is established BEFORE the name is
-   * typed rather than at the same time, so setup calls this a second time with
-   * the secret field untouched purely to save an edited display name. Treating
-   * that as a request to write an empty config would sign the machine out at
-   * the last click of setting it up. */
-  if (!typed && existing && (existing.session || existing.secret || existing.token)) {
-    writeConfig({ ...existing, hub, actor: actor || existing.actor || "" });
-    return true;
-  }
-
-  const auth = authFor({ secret: typed });
+  const auth = typed ? authFor({ secret: typed }) : { error: "empty" };
   if (!auth.error && auth.secret) {
     // A pasted secret REPLACES a GitHub session deliberately: somebody typing a
     // master secret into the fallback field is telling us the session is not
@@ -1096,16 +1277,34 @@ ipcMain.handle("zevet:save", (_e, cfg) => {
     return true;
   }
 
-  if (existing && typeof existing.token === "string" && existing.token) {
-    writeConfig({ hub, token: typed || existing.token, actor });
+  /* ⚠️ WHATEVER WAS TYPED DID NOT PRODUCE A NEW, USABLE SECRET — empty, or
+   * garbage — KEEP THE ONE ALREADY THERE, WHICHEVER SHAPE IT IS.
+   *
+   * Since GitHub sign-in, the credential is established BEFORE the name is
+   * typed rather than at the same time, so setup calls this a second time with
+   * the manual key field untouched purely to save an edited display name.
+   * Treating a merely-empty field as "clear it" would sign the machine out at
+   * the last click of setting it up — and treating a NON-empty-but-invalid
+   * field the same as a deliberate new credential is worse: MEASURED, a stale
+   * value already sitting in that field (Chromium's own password-manager
+   * autofill reaches `type="password"` inputs even with autocomplete="off" —
+   * see setup.html's `signedIn()`, which now clears it) survived a GitHub
+   * sign-in that had just written a working `session`, and the old separate
+   * branch here (`existing.token ? writeConfig({hub, token, actor}) : ...`)
+   * threw that session away in favour of a legacy token field the OAuth path
+   * never even writes — a signed-in Finish click that quietly signed nobody
+   * in. Spreading `existing` wholesale is the fix: nothing already on disk is
+   * ever dropped by a Finish click that typed nothing new. */
+  if (existing && (existing.session || existing.secret || existing.token)) {
+    writeConfig({ ...existing, hub, actor: actor || existing.actor || "" });
     return true;
   }
 
-  // Neither a usable secret nor a machine with a legacy token to keep. Writing
-  // it anyway would produce a config that cannot authenticate and an editor
-  // that cannot start, and `readConfig` would call it valid — the worst of the
-  // available outcomes. Refused instead; `zevet:test` has already told the user
-  // why in the same words.
+  // Neither a usable secret nor a machine with anything to keep. Writing it
+  // anyway would produce a config that cannot authenticate and an editor
+  // that cannot start, and `readConfig` would call it valid — the worst of
+  // the available outcomes. Refused instead; `zevet:test` has already told
+  // the user why in the same words.
   return false;
 });
 
@@ -1122,19 +1321,18 @@ ipcMain.handle("zevet:save", (_e, cfg) => {
  */
 let signIn = null;
 
-ipcMain.handle("zevet:githubStart", async (_e, { hub, team } = {}) => {
+bridge.handle("zevet:githubStart", async (_e, { team } = {}) => {
   try {
     if (signIn) signIn.cancel();
-    signIn = new GithubSignIn({ hub: hub || (readConfig() || {}).hub, team });
+    signIn = new GithubSignIn({ hub: targetHub(), team });
     const r = await signIn.start();
     // Opened from the MAIN process, never by the renderer. The board window
     // loads remote HTML from the hub, and a renderer that could open arbitrary
     // URLs in the system browser is a hub that can too.
-    shell.openExternal(r.verificationUriComplete).catch(() => {
-      /* No browser, or none that would take it. The code is on screen; that is
-       * the entire reason it is on screen. */
-    });
-    return { ok: true, userCode: r.userCode, url: r.verificationUriComplete, expiresIn: r.expiresIn };
+    // No browser, or none that would take it: the code is on screen, that is the
+    // entire reason it is on screen, and `opened` lets the window say so.
+    const opened = await openSafe(r.verificationUriComplete).then(() => true, () => false);
+    return { ok: true, userCode: r.userCode, url: r.verificationUriComplete, expiresIn: r.expiresIn, opened };
   } catch (err) {
     signIn = null;
     return { ok: false, error: err.message };
@@ -1154,26 +1352,57 @@ ipcMain.handle("zevet:githubStart", async (_e, { hub, team } = {}) => {
  * flow racing is the same bug with two names, and each would try to write the
  * config over the other.
  */
-ipcMain.handle("zevet:googleStart", async (_e, { hub, team } = {}) => {
+bridge.handle("zevet:googleStart", async (_e, { team } = {}) => {
   try {
     if (signIn) signIn.cancel();
-    signIn = new GoogleSignIn({ hub: hub || (readConfig() || {}).hub, team });
+    signIn = new GoogleSignIn({ hub: targetHub(), team });
     const r = await signIn.start();
     // Opened from the MAIN process, never by the renderer — same rule as the
     // GitHub flow above, and it matters more here: this URL carries the pairing
     // code that a completed sign-in will be handed over for.
-    shell.openExternal(r.authUrl).catch(() => {
-      /* No browser, or none that would take it. The URL goes back to the window
-       * so it can offer a copyable link rather than being a dead end. */
-    });
+    // No browser, or none that would take it: the URL goes back to the window
+    // with `opened: false` so it can say so rather than wait on nothing.
+    const opened = await openSafe(r.authUrl).then(() => true, () => false);
     // No `userCode`: there is nothing for the person to read or type, which is
     // the whole reason this flow is the web one and not Google's device flow.
-    return { ok: true, url: r.authUrl, expiresIn: r.expiresIn, domain: r.domain };
+    return { ok: true, url: r.authUrl, expiresIn: r.expiresIn, domain: r.domain, opened };
   } catch (err) {
     signIn = null;
     return { ok: false, error: err.message };
   }
 });
+
+/** The team's name from the hub, for the setup window. "" when the hub is an
+ *  older build, or slow: the name is a label, never a reason to fail sign-in. */
+async function fetchTeamName(hub, token) {
+  try {
+    const res = await fetch(`${String(hub).replace(/\/+$/, "")}/auth/whoami`, {
+      headers: { "x-zevet-token": token },
+      signal: AbortSignal.timeout(4000),
+    });
+    const body = res.ok ? await res.json() : null;
+    return body && typeof body.teamName === "string" ? body.teamName : "";
+  } catch {
+    return "";
+  }
+}
+
+/** D-603: the team name family.js sends to Masora at pairing time -- same
+ *  `fetchTeamName` the setup window uses, cached for a few minutes so a 60s
+ *  connect attempt is not a whoami round trip every tick. The heartbeat's own
+ *  team_name/people come from a separate, roster-verified path (readHubAuth,
+ *  below).
+ *  ponytail: a module-level cache, not an LRU -- one machine has one team. */
+let teamNameCache = { at: 0, name: "" };
+async function currentTeamName() {
+  if (Date.now() - teamNameCache.at < 5 * 60 * 1000) return teamNameCache.name;
+  const cfg = readConfig();
+  const auth = authFor(cfg);
+  if (auth.error || !auth.token || !cfg.hub) return teamNameCache.name;
+  const name = await fetchTeamName(cfg.hub, auth.token);
+  teamNameCache = { at: Date.now(), name };
+  return name;
+}
 
 /**
  * What happens once a sign-in succeeds — ONE implementation, both providers.
@@ -1210,7 +1439,7 @@ async function awaitSignIn(what) {
       actor: existing.actor || String(r.login || "").split("@")[0],
       login: r.login,
     });
-    return { ok: true, login: r.login, owner: r.owner };
+    return { ok: true, login: r.login, owner: r.owner, teamName: await fetchTeamName(hub, r.token) };
   } catch (err) {
     return { ok: false, error: err.message, cancelled: err.message === "cancelled" };
   } finally {
@@ -1218,8 +1447,8 @@ async function awaitSignIn(what) {
   }
 }
 
-ipcMain.handle("zevet:githubWait", () => awaitSignIn("GitHub"));
-ipcMain.handle("zevet:googleWait", () => awaitSignIn("Google"));
+bridge.handle("zevet:githubWait", () => awaitSignIn("GitHub"));
+bridge.handle("zevet:googleWait", () => awaitSignIn("Google"));
 
 /* Cancelling is provider-blind — there is one attempt in flight and this ends
  * it, whichever kind it is. Registered under both names so the renderer can
@@ -1229,8 +1458,8 @@ const cancelSignIn = () => {
   signIn = null;
   return true;
 };
-ipcMain.handle("zevet:githubCancel", cancelSignIn);
-ipcMain.handle("zevet:googleCancel", cancelSignIn);
+bridge.handle("zevet:githubCancel", cancelSignIn);
+bridge.handle("zevet:googleCancel", cancelSignIn);
 
 /* ── Creating a team ───────────────────────────────────────────────────────
  *
@@ -1243,23 +1472,95 @@ ipcMain.handle("zevet:googleCancel", cancelSignIn);
  * hub's default one. Unauthenticated on the hub side — this call decides
  * nothing by itself, same as the sign-in "start" calls above.
  */
-ipcMain.handle("zevet:teamCreate", async (_e, { hub } = {}) => {
-  const base = String(hub || "").replace(/\/+$/, "");
-  if (!base) return { ok: false, error: "Enter a team address." };
+bridge.handle("zevet:teamCreate", async (_e, { name } = {}) => {
+  const base = targetHub();
+  const teamName = String(name || "").trim();
+  if (!teamName) return { ok: false, error: "Name the team." };
   try {
-    const res = await fetch(`${base}/team/create`, { method: "POST", signal: AbortSignal.timeout(15000) });
+    const res = await fetch(`${base}/team/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: teamName }),
+      signal: AbortSignal.timeout(15000),
+    });
     let body = null;
     try {
       body = await res.json();
     } catch {
-      return { ok: false, error: `The hub returned an invalid response (HTTP ${res.status}).` };
+      return { ok: false, error: `Server error ${res.status}` };
     }
-    if (!res.ok || !body || !body.ok) return { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
-    return { ok: true, team: body.team };
-  } catch (err) {
-    return { ok: false, error: `Could not reach the hub: ${err && err.message ? err.message : String(err)}` };
+    if (!res.ok || !body || !body.ok) {
+      return { ok: false, error: res.status === 409 ? "Taken" : (body && body.error) || `HTTP ${res.status}`, ...(body && body.suggest ? { suggest: body.suggest } : {}) };
+    }
+    return { ok: true, team: body.team, name: body.name || teamName };
+  } catch {
+    return { ok: false, error: "Offline" };
   }
 });
+
+/** Does a team by this name exist on the hub? `{ ok, exists, team }`. */
+bridge.handle("zevet:teamResolve", async (_e, { name } = {}) => {
+  const base = targetHub();
+  if (!String(name || "").trim()) return { ok: false, error: "Name?" };
+  try {
+    const res = await fetch(`${base}/team/resolve?name=${encodeURIComponent(String(name))}`, { signal: AbortSignal.timeout(15000) });
+    const body = await res.json();
+    if (!res.ok) return { ok: false, error: "Failed" };
+    return { ok: true, exists: body.exists === true, team: body.team || "" };
+  } catch {
+    return { ok: false, error: "Offline" };
+  }
+});
+
+/**
+ * Redeem an invite key — hub/server.mjs's `/team/join`. Mints a session and
+ * hands back the team's master secret exactly like a completed GitHub/Google
+ * sign-in (`awaitSignIn`, above), so this writes the config the same way and
+ * returns the same shape a caller already knows how to handle: a login and a
+ * yes, never the secret or the session (same bridge rule as
+ * `githubWait`/`googleWait`, and for the same reason — see preload.js).
+ *
+ * Factored out of the IPC handler (D-615) so `desktop/setup.html`'s own Join
+ * button and a relayed `team.join` from Masora's onboarding (family.js's
+ * `joinTeam`, below) run the identical call and config write — a machine
+ * cannot tell the two apart afterwards.
+ */
+async function teamJoin(team, key) {
+  const base = targetHub();
+  const t = String(team || "").trim();
+  const k = String(key || "").trim();
+  if (!t) return { ok: false, error: "Team?" };
+  if (!k) return { ok: false, error: "Key?" };
+  try {
+    const res = await fetch(`${base}/team/join`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ team: t, key: k }),
+      signal: AbortSignal.timeout(15000),
+    });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      return { ok: false, error: `Server error ${res.status}` };
+    }
+    if (!res.ok || !body || !body.ok) return { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
+
+    const existing = readConfig() || {};
+    writeConfig({
+      hub: base,
+      secret: body.secret || existing.secret || "",
+      session: body.token,
+      actor: existing.actor || String(body.login || "").split("@")[0],
+      login: body.login,
+    });
+    return { ok: true, login: body.login, owner: Boolean(body.owner), teamName: await fetchTeamName(base, body.token) };
+  } catch {
+    return { ok: false, error: "Offline" };
+  }
+}
+
+bridge.handle("zevet:teamJoin", (_e, { team, key } = {}) => teamJoin(team, key));
 
 /* ── Sign out of GitHub, from Settings ─────────────────────────────────────
  *
@@ -1300,20 +1601,70 @@ const signOut = async () => {
 };
 // Signing out ends a SESSION, and a session does not remember which provider
 // minted it — so this is one function, under the name each button expects.
-ipcMain.handle("zevet:githubLogout", signOut);
-ipcMain.handle("zevet:googleLogout", signOut);
+bridge.handle("zevet:githubLogout", signOut);
 
-ipcMain.handle("zevet:pickRepo", async () => {
+/* ── Sign out of the TEAM, from Settings (or the setup screen) ────────────
+ *
+ * `signOut` above ends one identity's session and keeps the team key
+ * working. This is the bigger button: it ends the hub session too, then
+ * drops `session`, `secret` AND `hub` — so `readConfig()` sees no hub and
+ * this machine falls straight back to first-run (Team + Key). The config is
+ * copied aside first, unconditionally, so "I signed into the wrong team" is
+ * recoverable by reading a file rather than by re-inviting the person.
+ */
+const signOutTeam = async () => {
+  const cfg = readConfig() || {};
+  const session = typeof cfg.session === "string" ? cfg.session : "";
+  const hub = String(cfg.hub || "").replace(/\/+$/, "");
+  if (session && hub) {
+    try {
+      await fetch(`${hub}/auth/logout`, {
+        method: "POST",
+        headers: { "x-zevet-token": session },
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch {
+      // Hub unreachable, or an older build without the route — the local
+      // config is cleared below regardless.
+    }
+  }
+  try {
+    fs.mkdirSync(HOME, { recursive: true });
+    fs.copyFileSync(CONFIG, path.join(HOME, `config.json.bak-${Date.now()}`));
+  } catch {
+    // No existing config file to back up.
+  }
+  const rest = { ...cfg };
+  delete rest.session;
+  delete rest.secret;
+  delete rest.hub;
+  writeConfig(rest);
+  if (boardWindow && !boardWindow.isDestroyed()) boardWindow.close();
+  openSetup(null);
+  return { ok: true };
+};
+bridge.handle("zevet:signOutTeam", signOutTeam);
+bridge.handle("zevet:googleLogout", signOut);
+
+bridge.handle("zevet:pickRepo", async () => {
   const picked = await dialog.showOpenDialog(setupWindow, {
     title: "Choose a project folder",
     properties: ["openDirectory"],
   });
+  pickedRepo = picked.canceled ? null : path.resolve(picked.filePaths[0]);
   return picked.canceled ? null : picked.filePaths[0];
 });
 
-ipcMain.handle("zevet:install", async (_e, repo) => installHooks(repo));
+// Only a folder the user opened as a workspace, or just picked in setup, may be
+// handed to the installer — never a path the renderer made up (audit B7).
+let pickedRepo = null;
+bridge.handle("zevet:install", async (_e, repo) => {
+  const root = knownRoot(repo) || (pickedRepo && path.resolve(String(repo || "")) === pickedRepo ? pickedRepo : null);
+  if (!root) return { ok: false, detail: "That folder is not one you opened in Zevet." };
+  return installHooks(root);
+});
 
-ipcMain.handle("zevet:done", () => {
+bridge.handle("zevet:done", () => {
   const cfg = readConfig();
   if (!cfg) return false;
   openBoard(cfg);
@@ -1321,62 +1672,100 @@ ipcMain.handle("zevet:done", () => {
   return true;
 });
 
-/* ── Pairing with Masora (T5, docs/contracts/cross_app_context.md) ─────────
+/* ── Linking with Masora (T5, docs/contracts/cross_app_context.md) ─────────
  *
- * Same two-call device-flow shape as GithubSignIn above, against masora2's
- * own /api/connector/register (the protocol its Go desktop connector uses --
- * read from apps/connector/internal/register/register.go, not guessed). The
- * token this ends with is a workspace-scoped connector bearer, encrypted at
- * rest with safeStorage (desktop/masora.js) -- never handed to a renderer.
+ * The device-code pairing against masora2's /api/connector/register runs in
+ * the BACKGROUND (masora-link.js), started by openBoard() and never awaited by
+ * onboarding. Settings reads `masoraLinkStatus`; the only browser open is
+ * `masoraLinkApprove`, from a click. The token ends in safeStorage
+ * (desktop/masora.js) -- never handed to a renderer.
  */
-let masoraPairSession = null;
-
-ipcMain.handle("zevet:masoraConfig", () => masora.readConfig());
-
-ipcMain.handle("zevet:masoraSaveUrl", (_e, { url } = {}) => masora.saveUrl(url));
-
-ipcMain.handle("zevet:masoraPairStart", async () => {
-  try {
-    if (masoraPairSession) masoraPairSession.cancel();
-    const { url } = masora.readConfig();
-    masoraPairSession = new masora.MasoraPair({ baseUrl: url });
-    const r = await masoraPairSession.start();
-    shell.openExternal(r.verifyUrl).catch(() => {});
-    return { ok: true, userCode: r.userCode, verifyUrl: r.verifyUrl };
-  } catch (err) {
-    return { ok: false, error: err && err.message ? err.message : String(err) };
-  }
-});
-
-ipcMain.handle("zevet:masoraPairWait", async () => {
-  if (!masoraPairSession) return { ok: false, error: "Start pairing first." };
-  try {
-    const { token } = await masoraPairSession.wait(os.hostname(), process.platform);
-    if (!safeStorage.isEncryptionAvailable()) {
-      return { ok: false, error: "This machine's OS keychain is unavailable." };
-    }
+const masoraLink = new MasoraLink({
+  readConfig: () => masora.readConfig(),
+  MasoraPair: masora.MasoraPair,
+  saveToken: (token) => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error("This machine's OS keychain is unavailable.");
     masora.saveToken(token, (s) => safeStorage.encryptString(s));
-    return { ok: true };
-  } catch (err) {
-    const cancelled = err && err.message === "cancelled";
-    return { ok: false, cancelled, error: cancelled ? null : (err && err.message) || String(err) };
-  } finally {
-    masoraPairSession = null;
-  }
+  },
+  openExternal: (url) => openSafe(url),
+  host: os.hostname(),
+  platform: process.platform,
 });
 
-ipcMain.handle("zevet:masoraPairCancel", () => {
-  if (masoraPairSession) masoraPairSession.cancel();
-  masoraPairSession = null;
-  return true;
+/* ── The family: Masora, Zevet and Voice find each other (desktop/family.js) ──
+ * Pairs with a Masora on this machine with no click; the device-code flow above
+ * stays the fallback for one on another machine. */
+const family = new Family({
+  dir: familyDir(),
+  readMasora: () => masora.readConfig(),
+  saveUrl: (url) => masora.saveUrl(url),
+  saveToken: (token, member, canonical) => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error("This machine's OS keychain is unavailable.");
+    masora.saveToken(token, (s) => safeStorage.encryptString(s), member, canonical);
+    masoraLink.cancel(); // paired: the code flow has nothing left to wait for
+  },
+  clearToken: () => masora.unpair(),
+  openExternal: (url) => openSafe(url),
+  // Zevet's OWN hub session — same readConfig()/authFor() the main process
+  // already uses for its own hub calls (see resolveCredential, above). Masora
+  // never receives this: the roster it reads is only the heartbeat's output.
+  readHubAuth: () => {
+    const cfg = readConfig();
+    if (!cfg) return null;
+    const auth = authFor(cfg);
+    if (auth.error || !auth.token) return null;
+    return { hub: cfg.hub.replace(/\/+$/, ""), token: auth.token };
+  },
+  // The one identity Zevet genuinely knows: whoever `cfg.login` says signed
+  // in to ITS OWN hub (awaitSignIn, above) -- a GitHub username, or a Google
+  // account's email (google-auth.mjs's `login: email`). Nothing else here
+  // is known reliably enough to send, and an empty login sends nothing.
+  readIdentity: () => {
+    const cfg = readConfig();
+    const login = cfg && typeof cfg.login === "string" ? cfg.login.trim() : "";
+    if (!login) return null;
+    return login.includes("@") ? { email: login } : { github_login: login };
+  },
+  // The normal self-update: look, and if a build is ready, install it.
+  runUpdate: async () => {
+    const s = await appUpdater.check();
+    if (s && s.phase === "ready" && s.canInstall) await appUpdater.install();
+  },
+  readTeam: () => currentTeamName(),
+  // D-615: Masora's onboarding relays a {team, key} invite via team.join;
+  // this runs the identical call/config-write desktop/setup.html's own Join
+  // button makes (teamJoin, above) — no separate hub credential of any kind
+  // is ever held by or sent to Masora.
+  joinTeam: (team, key) => teamJoin(team, key),
+  version: APP_VERSION,
+  installPath: path.dirname(app.getPath("exe")),
+});
+bridge.handle("zevet:familyStatus", () => family.status());
+bridge.handle("zevet:familyAct", (_e, { app: which, action } = {}) => family.act(String(which), String(action)));
+
+bridge.handle("zevet:masoraConfig", () => masora.readConfig());
+
+bridge.handle("zevet:masoraSaveUrl", (_e, { url } = {}) => {
+  const cfg = masora.saveUrl(url);
+  masoraLink.cancel();
+  masoraLink.start(); // a new address is a new attempt
+  return cfg;
 });
 
-ipcMain.handle("zevet:masoraUnpair", () => {
+bridge.handle("zevet:masoraLinkStatus", () => masoraLink.status());
+bridge.handle("zevet:masoraLinkStart", () => {
+  masoraLink.start();
+  return masoraLink.status();
+});
+bridge.handle("zevet:masoraLinkApprove", () => masoraLink.approve());
+
+bridge.handle("zevet:masoraUnpair", () => {
   masora.unpair();
+  masoraLink.cancel();
   return true;
 });
 
-ipcMain.handle("masora:sources", async () => {
+bridge.handle("masora:sources", async () => {
   const cfg = masora.readConfig();
   if (!cfg.paired) return { sources: [] };
   const token = masora.loadToken((b) => safeStorage.decryptString(b));
@@ -1387,6 +1776,7 @@ ipcMain.handle("masora:sources", async () => {
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(5000),
     });
+    if (res.status === 401) void family.repair(); // a revoked token: pair again
     if (!res.ok) return { error: "token" }; // 401/403 → auth issue
     const data = await res.json();
     if (!Array.isArray(data)) return { sources: [] };
@@ -1401,7 +1791,7 @@ ipcMain.handle("masora:sources", async () => {
   }
 });
 
-ipcMain.handle("masora:connect", async (_e, { provider } = {}) => {
+bridge.handle("masora:connect", async (_e, { provider } = {}) => {
   const cfg = masora.readConfig();
   if (!cfg.paired) {
     return { error: "Not paired with Masora" };
@@ -1435,7 +1825,7 @@ ipcMain.handle("masora:connect", async (_e, { provider } = {}) => {
  *  fetch that fails (no hub, no auth, hub down) degrades to "no team
  *  credentials" rather than failing the whole call — the personal list is
  *  still useful on its own. */
-ipcMain.handle("zevet:listCredentials", async () => {
+bridge.handle("zevet:listCredentials", async () => {
   const cfg = readConfig() || {};
   const personal = credentials.listCredentials().map((c) => ({ ...c, scope: "personal" }));
 
@@ -1461,7 +1851,7 @@ ipcMain.handle("zevet:listCredentials", async () => {
  *  Anthropic key shape, subscription tokens refused) all happens on the hub,
  *  same as it does for a board client talking to it directly — this is a
  *  second caller of the same route, not a second copy of the rule. */
-ipcMain.handle("zevet:addCredential", async (_e, { scope, label, provider, kind, key } = {}) => {
+bridge.handle("zevet:addCredential", async (_e, { scope, label, provider, kind, key } = {}) => {
   if (scope === "personal") {
     if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: "This machine's OS keychain is unavailable." };
     const { id } = credentials.addCredential({ label, provider, kind, key }, (s) => safeStorage.encryptString(s));
@@ -1471,7 +1861,7 @@ ipcMain.handle("zevet:addCredential", async (_e, { scope, label, provider, kind,
     const cfg = readConfig() || {};
     const auth = authFor(cfg);
     const hub = String(cfg.hub || "").replace(/\/+$/, "");
-    if (auth.error || !auth.token || !hub) return { ok: false, error: auth.error || "not connected to a hub" };
+    if (auth.error || !auth.token || !hub) return { ok: false, error: auth.error || "not connected" };
     try {
       const res = await fetch(`${hub}/team/credentials`, {
         method: "POST",
@@ -1489,13 +1879,13 @@ ipcMain.handle("zevet:addCredential", async (_e, { scope, label, provider, kind,
   return { ok: false, error: `unknown scope: ${scope}` };
 });
 
-ipcMain.handle("zevet:removeCredential", async (_e, { scope, id } = {}) => {
+bridge.handle("zevet:removeCredential", async (_e, { scope, id } = {}) => {
   if (scope === "personal") return { ok: credentials.removeCredential(id) };
   if (scope === "team") {
     const cfg = readConfig() || {};
     const auth = authFor(cfg);
     const hub = String(cfg.hub || "").replace(/\/+$/, "");
-    if (auth.error || !auth.token || !hub) return { ok: false, error: auth.error || "not connected to a hub" };
+    if (auth.error || !auth.token || !hub) return { ok: false, error: auth.error || "not connected" };
     try {
       const res = await fetch(`${hub}/team/credentials/${encodeURIComponent(String(id || ""))}`, {
         method: "DELETE",
@@ -1516,7 +1906,7 @@ ipcMain.handle("zevet:removeCredential", async (_e, { scope, id } = {}) => {
  *  `{scope: "auto"}` to walk `credentialLadder` (below) instead of a single
  *  fixed choice. `null`/omitted clears it — spawn exactly as today,
  *  inheriting process.env — see credentialEnvFor. */
-ipcMain.handle("zevet:setDefaultCredential", (_e, arg) => {
+bridge.handle("zevet:setDefaultCredential", (_e, arg) => {
   const cfg = readConfig() || {};
   const next = { ...cfg };
   if (arg && arg.scope === "auto") next.defaultCredential = { scope: "auto" };
@@ -1533,9 +1923,9 @@ ipcMain.handle("zevet:setDefaultCredential", (_e, arg) => {
  * that a member can edit the ladder while offline or before either
  * credential it names has been probed even once.
  */
-ipcMain.handle("zevet:credentialLadder", () => (readConfig() || {}).credentialLadder || []);
+bridge.handle("zevet:credentialLadder", () => (readConfig() || {}).credentialLadder || []);
 
-ipcMain.handle("zevet:setCredentialLadder", (_e, ladder) => {
+bridge.handle("zevet:setCredentialLadder", (_e, ladder) => {
   const cfg = readConfig() || {};
   const clean = Array.isArray(ladder)
     ? ladder
@@ -1562,8 +1952,7 @@ function readWorkspaces() {
 }
 function writeWorkspaces(list) {
   fs.mkdirSync(HOME, { recursive: true });
-  fs.writeFileSync(workspacesPath(), `${JSON.stringify(list, null, 2)}
-`, "utf8");
+  atomicWriteJson(workspacesPath(), list);
 }
 
 /**
@@ -1578,11 +1967,28 @@ function knownRoot(root) {
   return readWorkspaces().some((d) => path.resolve(d) === want) ? want : null;
 }
 
-ipcMain.handle("local:workspaces", () =>
+/**
+ * The `knownRoot` guard exists because the RENDERER is untrusted: a compromised
+ * web page could otherwise ask the main process to start a process anywhere on
+ * disk. The local control API (desktop/agent-api.js) is authenticated by a
+ * bearer secret only a user-only file on this machine holds, which is the same
+ * trust level as someone with a shell already has — so its `spawn` may target
+ * any directory that exists, not only a workspace opened through the UI.
+ */
+function trustedDir(root) {
+  const want = path.resolve(String(root || ""));
+  try {
+    return fs.statSync(want).isDirectory() ? want : null;
+  } catch {
+    return null;
+  }
+}
+
+bridge.handle("local:workspaces", () =>
   readWorkspaces().map((dir) => ({ dir, name: path.basename(dir), repo: localFs.isProbablyRepo(dir) })),
 );
 
-ipcMain.handle("local:addWorkspace", async () => {
+bridge.handle("local:addWorkspace", async () => {
   const picked = await dialog.showOpenDialog(boardWindow || setupWindow, {
     title: "Open a folder",
     properties: ["openDirectory"],
@@ -1597,21 +2003,21 @@ ipcMain.handle("local:addWorkspace", async () => {
 
 /** Per-repo opt-in for pushing agent sessions to Masora (C1: `zevet.masoraRepos`,
  *  default none -- nothing is sent for a folder until this returns true for it). */
-ipcMain.handle("local:masoraRepos", () => masora.reposFor());
+bridge.handle("local:masoraRepos", () => masora.reposFor());
 
-ipcMain.handle("local:masoraRepoToggle", (_e, { root, on } = {}) => {
+bridge.handle("local:masoraRepoToggle", (_e, { root, on } = {}) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   return { ok: true, repos: masora.setRepoOpted(dir, Boolean(on)) };
 });
 
-ipcMain.handle("local:tree", (_e, root) => {
+bridge.handle("local:tree", (_e, root) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   return localFs.listTree(dir, {});
 });
 
-ipcMain.handle("local:read", (_e, { root, relPath }) => {
+bridge.handle("local:read", (_e, { root, relPath }) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   return localFs.readTextFile(dir, String(relPath || ""), {});
@@ -1638,7 +2044,7 @@ ipcMain.handle("local:read", (_e, { root, relPath }) => {
  * why it gets a bridge at all; that argument is unchanged and is not revisited
  * here, but it was made about reading, and this is a write.
  */
-ipcMain.handle("local:write", (_e, { root, relPath, text, opts }) => {
+bridge.handle("local:write", (_e, { root, relPath, text, opts }) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   if (typeof text !== "string") return { ok: false, error: "nothing to write" };
@@ -1812,7 +2218,7 @@ async function ensureEmbedder() {
  * and pushing it into the page would make the app's appearance depend on an OS
  * setting the person did not touch, and the toggle they did touch would lose.
  */
-ipcMain.handle("ui:chrome", (_e, arg) => {
+bridge.handle("ui:chrome", (_e, arg) => {
   const theme = arg && arg.theme === "dark" ? "dark" : "light";
   lastChromeTheme = theme;
   const w = boardWindow;
@@ -1846,7 +2252,7 @@ ipcMain.handle("ui:chrome", (_e, arg) => {
   return { ok: true };
 });
 
-ipcMain.handle("local:indexStatus", async (_e, arg) => {
+bridge.handle("local:indexStatus", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
   const cap = indexCapability.assess({});
@@ -1873,7 +2279,7 @@ ipcMain.handle("local:indexStatus", async (_e, arg) => {
  * because the renderer is the one input this process does not trust and a UI
  * that has gone stale must not be able to start an 86MB download.
  */
-ipcMain.handle("local:indexEnable", async (_e, arg) => {
+bridge.handle("local:indexEnable", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
   if (!dir) return { ok: false, error: "not an opened workspace" };
@@ -1920,7 +2326,7 @@ function pathFilter(raw) {
   return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 }
 
-ipcMain.handle("local:indexSearch", async (_e, arg) => {
+bridge.handle("local:indexSearch", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
   if (!dir) return { ok: false, error: "not an opened workspace", hits: [] };
@@ -1951,7 +2357,7 @@ ipcMain.handle("local:indexSearch", async (_e, arg) => {
   }
 });
 
-ipcMain.handle("local:status", async (_e, arg) => {
+bridge.handle("local:status", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
 
@@ -2038,20 +2444,20 @@ function writeAgentSettingsFor(dir, patch) {
   };
   try {
     fs.mkdirSync(HOME, { recursive: true });
-    fs.writeFileSync(AGENT_SETTINGS, `${JSON.stringify(all, null, 2)}\n`, "utf8");
+    atomicWriteJson(AGENT_SETTINGS, all);
   } catch (err) {
     console.error(`zevet: could not save agent settings: ${err.message}`);
   }
   return all[key];
 }
 
-ipcMain.handle("local:agentSettings", (_e, arg) => {
+bridge.handle("local:agentSettings", (_e, arg) => {
   const dir = knownRoot(arg && arg.root);
   if (!dir) return { ok: false, settings: null };
   return { ok: true, settings: agentSettingsFor(dir) };
 });
 
-ipcMain.handle("local:saveAgentSettings", (_e, arg) => {
+bridge.handle("local:saveAgentSettings", (_e, arg) => {
   const dir = knownRoot(arg && arg.root);
   if (!dir) return { ok: false, settings: null };
   return { ok: true, settings: writeAgentSettingsFor(dir, arg && arg.patch) };
@@ -2083,15 +2489,15 @@ function readPrefs() {
 function writePrefs(all) {
   try {
     fs.mkdirSync(HOME, { recursive: true });
-    fs.writeFileSync(PREFS, `${JSON.stringify(all, null, 2)}\n`, "utf8");
+    atomicWriteJson(PREFS, all);
   } catch (err) {
     console.error(`zevet: could not save prefs: ${err.message}`);
   }
 }
 
-ipcMain.handle("local:prefs", () => readPrefs());
+bridge.handle("local:prefs", () => readPrefs());
 
-ipcMain.handle("local:setPref", (_e, arg) => {
+bridge.handle("local:setPref", (_e, arg) => {
   const key = String((arg && arg.key) || "");
   if (!key) return { ok: false };
   const all = readPrefs();
@@ -2105,7 +2511,7 @@ ipcMain.handle("local:setPref", (_e, arg) => {
 /** One round trip for many keys at once — prefs-mirror.mjs's
  *  `hydratePrefsMirror` seeding the mirror from an existing user's
  *  localStorage the first time it finds the mirror empty. */
-ipcMain.handle("local:setPrefs", (_e, arg) => {
+bridge.handle("local:setPrefs", (_e, arg) => {
   const entries = arg && arg.entries;
   if (!entries || typeof entries !== "object") return { ok: false };
   const all = readPrefs();
@@ -2130,7 +2536,7 @@ function readSchedules() {
 function writeSchedules(list) {
   try {
     fs.mkdirSync(HOME, { recursive: true });
-    fs.writeFileSync(SCHEDULES, `${JSON.stringify(list, null, 2)}\n`, "utf8");
+    atomicWriteJson(SCHEDULES, list);
   } catch (err) {
     console.error(`zevet: could not save schedules: ${err.message}`);
   }
@@ -2158,7 +2564,7 @@ async function runDueSchedules() {
         // `started` is assigned, so the id it needs is read off a mutable box.
         const handle = { id: null };
         const env = await credentialEnvFor();
-        const started = agentConsole.startConsole({
+        const started = instrumentedStartConsole({
           agent: s.agent,
           cwd: place.cwd,
           model: s.model,
@@ -2181,6 +2587,7 @@ async function runDueSchedules() {
           place.title = s.name;
           consoles.set(started.id, started);
           consoleLog.open(started.id, { ...consoleMeta(s.agent, dir, { model: s.model, mode: s.mode }, place), scheduled: s.id });
+          announceConsole(started.id);
           started.send(s.prompt);
           ok = true;
         }
@@ -2237,6 +2644,7 @@ async function runMasoraPushOnce() {
     await masoraPush.runOnce({
       repos, baseUrl: cfg.url, token,
       listSessions: agentSessions.list, readSession: agentSessions.read,
+      actor: chatAuthor(),
     });
   } catch (err) {
     console.error(`zevet: masora push failed: ${err.message}`);
@@ -2249,9 +2657,9 @@ function startMasoraPush() {
   if (typeof masoraPushTimer.unref === "function") masoraPushTimer.unref();
 }
 
-ipcMain.handle("local:schedules", () => ({ ok: true, schedules: readSchedules() }));
+bridge.handle("local:schedules", () => ({ ok: true, schedules: readSchedules() }));
 
-ipcMain.handle("local:scheduleSave", (_e, arg) => {
+bridge.handle("local:scheduleSave", (_e, arg) => {
   const incoming = schedule.sanitise(arg && arg.schedule);
   if (!incoming.prompt) return { ok: false, error: "a schedule needs a prompt" };
   if (!knownRoot(incoming.root)) return { ok: false, error: "not an opened workspace" };
@@ -2263,14 +2671,14 @@ ipcMain.handle("local:scheduleSave", (_e, arg) => {
   return { ok: true, schedules: list };
 });
 
-ipcMain.handle("local:scheduleRemove", (_e, arg) => {
+bridge.handle("local:scheduleRemove", (_e, arg) => {
   const id = String((arg && arg.id) || "");
   const list = readSchedules().filter((s) => s.id !== id);
   writeSchedules(list);
   return { ok: true, schedules: list };
 });
 
-ipcMain.handle("local:scheduleToggle", (_e, arg) => {
+bridge.handle("local:scheduleToggle", (_e, arg) => {
   const id = String((arg && arg.id) || "");
   const list = readSchedules().map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s));
   writeSchedules(list);
@@ -2279,7 +2687,7 @@ ipcMain.handle("local:scheduleToggle", (_e, arg) => {
 
 /** The last few commits in a folder the person has opened. Read only: it
  *  runs `git log` and nothing else, and there is no counterpart that writes. */
-ipcMain.handle("local:commits", async (_e, arg) => {
+bridge.handle("local:commits", async (_e, arg) => {
   const dir = knownRoot(arg && arg.root);
   if (!dir) return { ok: false, commits: [] };
   try {
@@ -2309,7 +2717,7 @@ const APP_STARTED = Date.now();
  * on the panel. An agent that does not write memories has an empty directory,
  * which is not an error.
  */
-ipcMain.handle("local:memories", async (_e, arg) => {
+bridge.handle("local:memories", async (_e, arg) => {
   const dir = knownRoot(arg && arg.root);
   if (!dir) return { ok: false, memories: [] };
   const slug = path.resolve(dir).replace(/[^A-Za-z0-9]/g, "-");
@@ -2350,7 +2758,7 @@ ipcMain.handle("local:memories", async (_e, arg) => {
   return { ok: true, dir: memDir, memories: out.slice(0, 40) };
 });
 
-ipcMain.handle("local:stats", async (_e, { root, relPaths }) => {
+bridge.handle("local:stats", async (_e, { root, relPaths }) => {
   // knownRoot FIRST, exactly as every handler above does it, and for the same
   // reason: without it `C:\` is a valid root and the counter walks the disk.
   const dir = knownRoot(root);
@@ -2381,7 +2789,7 @@ ipcMain.handle("local:stats", async (_e, { root, relPaths }) => {
 
 /** Added-line hunks for one file, so the board can seat an agent's sprite on
  *  the lines it just wrote. knownRoot first, like every sibling handler. */
-ipcMain.handle("local:diffHunks", async (_e, { root, relPath }) => {
+bridge.handle("local:diffHunks", async (_e, { root, relPath }) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, hunks: [], error: "not an opened workspace" };
   if (typeof relPath !== "string" || !relPath || relPath.includes("..")) {
@@ -2404,7 +2812,7 @@ const fileWatch = new FileWatch({
   onChange: (evt) => toBoard("local:fileChanged", evt),
 });
 
-ipcMain.handle("local:watch", (_e, { root, relPath, initialText }) => {
+bridge.handle("local:watch", (_e, { root, relPath, initialText }) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   // The resolved root is passed on, not the renderer's spelling, so the
@@ -2412,7 +2820,7 @@ ipcMain.handle("local:watch", (_e, { root, relPath, initialText }) => {
   return fileWatch.watch(dir, String(relPath || ""), initialText);
 });
 
-ipcMain.handle("local:unwatch", (_e, { root, relPath }) => {
+bridge.handle("local:unwatch", (_e, { root, relPath }) => {
   const dir = knownRoot(root);
   /* ⚠️ AN UNKNOWN ROOT STILL HAS TO BE UNWATCHED. The old line was
      `if (!dir) return { ok: true }`, and the reasoning above it was right —
@@ -2572,7 +2980,7 @@ function docMessage(room, payload) {
   return out;
 }
 
-ipcMain.handle("doc:join", (_e, room) => {
+bridge.handle("doc:join", (_e, room) => {
   const got = ensureDocSync();
   if (got.error) return { ok: false, error: got.error, code: got.code };
   try {
@@ -2585,7 +2993,7 @@ ipcMain.handle("doc:join", (_e, room) => {
   }
 });
 
-ipcMain.handle("doc:send", (_e, { room, bytes, opts }) => {
+bridge.handle("doc:send", (_e, { room, bytes, opts }) => {
   if (!docSync) return { ok: false, error: "not joined", code: "not-joined" };
   const u8 = toBytes(bytes);
   if (!u8) return { ok: false, error: "update must be bytes" };
@@ -2602,7 +3010,7 @@ ipcMain.handle("doc:send", (_e, { room, bytes, opts }) => {
   }
 });
 
-ipcMain.handle("doc:leave", (_e, room) => {
+bridge.handle("doc:leave", (_e, room) => {
   if (docSync) docSync.leave(String(room || ""));
   // Always ok. Leaving a room that was never joined is what a closing tab does
   // and there is nothing to report about it.
@@ -2639,7 +3047,7 @@ const consoles = new Map();
 
 /** What every console has already sent the board, so a reload can replay it.
  *  See console-log.js. */
-const consoleLog = createConsoleLog();
+const consoleLog = createConsoleLog({ onceDone: (id) => stopAgentCore(id) });
 
 const worktrees = createAgentWorktrees({ home: HOME });
 
@@ -2724,7 +3132,21 @@ function loadDetect() {
   return detectPromise;
 }
 
-ipcMain.handle("local:agents", async () => {
+/** Candidate path for Meta's own Mac chat app (ai.meta.com/meta-ai/download,
+ *  live since 2026-08-19). Listed as a candidate, not a fact — nobody has
+ *  installed it to confirm the bundle name, same discipline detect.mjs
+ *  already uses for codex/opencode's macOS paths. Presence only; never
+ *  launched. No Windows build has shipped as of this session (search turned
+ *  up Mac coverage only), so there is nothing to check for on win32. This is
+ *  a separate product from Muse Code (the CLI) and from the Model API — it
+ *  grants no API key, so it is informational (`detail`) only. */
+function metaAiAppDetail() {
+  if (process.platform !== "darwin") return null;
+  const candidate = "/Applications/Meta AI.app";
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+bridge.handle("local:agents", async () => {
   await runtimeReady;
   const detect = await loadDetect();
   const found = detect ? detect.detectAgents() : [];
@@ -2733,7 +3155,7 @@ ipcMain.handle("local:agents", async () => {
   // zevet release. null when there is no cache: the board then keeps the list
   // it shipped with (board/src/lib/agent-models.generated.mjs, same reader).
   const catalogs = { claude: agentCatalogs.claudeModels(), codex: agentCatalogs.codexModels() };
-  return ["claude", "codex", "opencode"].map((name) => {
+  const rows = ["claude", "codex", "opencode"].map((name) => {
     const r = agentConsole.resolveAgent(name);
     const id = name === "claude" ? "claude-code" : name;
     const d = found.find((a) => a.id === id) || {};
@@ -2748,6 +3170,32 @@ ipcMain.handle("local:agents", async () => {
       hooks: d.hooks === undefined ? null : d.hooks,
     };
   });
+
+  // Meta's Model API — no execution adapter (docs/contracts/meta-model-api.md),
+  // so `ok` is always false; `signedIn` is what composercontrols.tsx uses to
+  // decide whether to list it at all. Three legitimate sources, any one
+  // suffices: the documented env var, a key saved in Settings, or Muse Code
+  // itself being installed with that env var present (its own auth path is
+  // the same MODEL_API_KEY — see docs/contracts/muse-code-hooks.md).
+  const museCode = found.find((a) => a.id === "muse-code") || {};
+  const hasSavedKey = credentials.listCredentials().some((c) => c.provider === "meta");
+  const hasEnvKey = Boolean(process.env.MODEL_API_KEY);
+  const appDetail = metaAiAppDetail();
+  const metaDetails = [
+    hasEnvKey && "MODEL_API_KEY",
+    hasSavedKey && "saved in Settings",
+    museCode.installed && !hasEnvKey && !hasSavedKey && "Muse Code installed, no key",
+    appDetail && `Meta AI app: ${appDetail}`,
+  ].filter(Boolean);
+  rows.push({
+    name: "meta",
+    ok: false,
+    detail: metaDetails.join(", "),
+    signedIn: hasEnvKey || hasSavedKey,
+    models: undefined,
+    hooks: null,
+  });
+  return rows;
 });
 
 /* ---------------------------------------------------------------------------
@@ -2787,6 +3235,9 @@ const pendingPermits = new Map();
  *  map per ask-server route because a permit id and an ask id share no
  *  namespace and must never be answerable through the other's channel. */
 const pendingAsks = new Map();
+/** "Always allow" answers for Claude's own tools, per run. */
+const permitGrantsModule = require("./permit-grants.js");
+const permitGrants = { ...permitGrantsModule.createGrants(), ruleKey: permitGrantsModule.ruleKey };
 let permitSeq = 0;
 let askServerPromise = null;
 
@@ -2795,13 +3246,28 @@ function ensureAskServer() {
     askServerPromise = askServer.start({
       onPermit: (request) =>
         new Promise((resolve) => {
+          // "Always allow this" answered earlier in this run (permit-grants.js).
+          const run = request && typeof request.run === "string" ? request.run : "";
+          if (request && request.via === "claude" && permitGrants.allows(run, request.tool, request.arguments)) {
+            resolve({ ok: true });
+            return;
+          }
           const id = `p${++permitSeq}`;
-          pendingPermits.set(id, resolve);
+          pendingPermits.set(id, (answer) => {
+            if (answer.ok && answer.always && request && request.via === "claude") {
+              permitGrants.grant(run, request.tool, request.arguments);
+            }
+            resolve(answer);
+          });
           // The board decides. If no board is listening — the window is gone,
           // or it is an older build that does not know this event — nothing
           // resolves this and the ask-server's own timeout denies it, which is
           // the correct end for a question nobody can be asked.
-          toBoard("local:permitRequest", { id, ...(request || {}) });
+          toBoard("local:permitRequest", {
+            id,
+            ...(request || {}),
+            ...(request && request.via === "claude" ? { canAlways: permitGrants.ruleKey(request.tool, request.arguments) !== null } : {}),
+          });
         }),
       onAsk: (request) =>
         new Promise((resolve) => {
@@ -2815,17 +3281,17 @@ function ensureAskServer() {
 }
 
 /** The person's answer to one permit. */
-ipcMain.handle("local:permitAnswer", (_e, arg) => {
+bridge.handle("local:permitAnswer", (_e, arg) => {
   const id = arg && typeof arg.id === "string" ? arg.id : "";
   const resolve = pendingPermits.get(id);
   if (!resolve) return { ok: false, error: "no such request" };
   pendingPermits.delete(id);
-  resolve({ ok: arg && arg.allow === true, reason: (arg && arg.reason) || "refused" });
+  resolve({ ok: arg && arg.allow === true, reason: (arg && arg.reason) || "refused", always: Boolean(arg && arg.always) });
   return { ok: true };
 });
 
 /** The person's answer to one question. */
-ipcMain.handle("local:askAnswer", (_e, arg) => {
+bridge.handle("local:askAnswer", (_e, arg) => {
   const id = arg && typeof arg.id === "string" ? arg.id : "";
   const resolve = pendingAsks.get(id);
   if (!resolve) return { ok: false, error: "no such request" };
@@ -2850,27 +3316,37 @@ ipcMain.handle("local:askAnswer", (_e, arg) => {
  * handshake for that connection is the CLI's own job, not zevet's -- no
  * token is written here, unlike the `zevet` stdio entry below.
  */
-async function mcpConfigFor(dir) {
+async function mcpConfigFor(dir, mode) {
   const servers = {};
-  let computerUse = false;
-  if (agentSettingsFor(dir).computerUse && fs.existsSync(MCP_SERVER)) {
+  const computerUse = Boolean(agentSettingsFor(dir).computerUse);
+  /* The zevet server also carries `permission_prompt`, which is how a headless
+     claude asks the person instead of silently denying what would prompt. Every
+     posture but "skip permissions" needs it (nothing prompts under that one). */
+  const gate = mode !== "dangerous";
+  if ((computerUse || gate) && fs.existsSync(MCP_SERVER)) {
     const { url, token } = await ensureAskServer();
     servers.zevet = {
       command: process.execPath,
       args: [MCP_SERVER],
-      env: { ELECTRON_RUN_AS_NODE: "1", ZEVET_MCP_URL: url, ZEVET_MCP_TOKEN: token },
+      env: {
+        ELECTRON_RUN_AS_NODE: "1",
+        ZEVET_MCP_URL: url,
+        ZEVET_MCP_TOKEN: token,
+        ZEVET_MCP_RUN: `r${process.pid}-${++permitSeq}`,
+        // Without this the four computer tools are never listed, whatever the setting says.
+        ZEVET_MCP_COMPUTER: computerUse ? "1" : "0",
+      },
     };
-    computerUse = true;
   }
   const masoraCfg = masora.readConfig();
   if (masoraCfg.paired) Object.assign(servers, masora.mcpServerEntry(masoraCfg.url));
   if (!Object.keys(servers).length) return null;
   const file = path.join(app.getPath("temp"), `zevet-mcp-${process.pid}-${++permitSeq}.json`);
   fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }), "utf8");
-  // `computerUse` says whether the `zevet` tool server (and so its permission
+  // `permissions` says whether the `zevet` tool server (and so its permission
   // tool) is actually in this file -- a masora-only config must not claim a
   // permission tool that config does not register.
-  return { file, computerUse };
+  return { file, computerUse, permissions: Boolean(servers.zevet) };
 }
 
 /**
@@ -2890,10 +3366,12 @@ async function masoraBriefFor(dir, prompt) {
   return result ? result.brief : null;
 }
 
-ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
+/** The shared body of `local:startAgent` and the control API's `spawn` --
+ *  `trusted` is what tells the two apart (see `trustedDir` above). */
+async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
   await runtimeReady;
-  const dir = knownRoot(cwd);
-  if (!dir) return { ok: false, error: "not an opened workspace" };
+  const dir = trusted ? trustedDir(cwd) : knownRoot(cwd);
+  if (!dir) return { ok: false, error: trusted ? "cwd does not exist" : "not an opened workspace" };
 
   // A claude fork has to start where its source session ran — claude finds a
   // session only from that folder — so it joins its source's worktree rather
@@ -2901,8 +3379,15 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   // awaits below, so an agent started meanwhile sees this one.
   const forkFrom = opts && typeof opts.forkFrom === "string" ? opts.forkFrom : "";
   const source = forkFrom && String(agent || "") === "claude" ? [...placements].find((p) => p.session === forkFrom) : null;
-  const place = source ? { ...source, id: null, session: "", title: "" } : await placeAgent(dir);
-  if (source) placements.add(place);
+  /* `--continue` finds "the latest session in this folder", so it must start IN
+     the folder: a fresh worktree would have no sessions to continue. */
+  const inPlace = Boolean(opts && opts.continueLatest === true && String(agent || "") === "claude");
+  const place = source
+    ? { ...source, id: null, session: "", title: "" }
+    : inPlace
+    ? { id: null, root: dir, cwd: dir, worktree: null, session: "", title: "" }
+    : await placeAgent(dir);
+  if (source || inPlace) placements.add(place);
 
   // Standing instructions for this repo, if any were saved. Only claude has a
   // flag for them (agent-console.js § invocationFor); the other two ignore the
@@ -2928,7 +3413,7 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   let mcpConfig = null;
   if (String(agent || "") === "claude") {
     try {
-      mcpConfig = await mcpConfigFor(dir);
+      mcpConfig = await mcpConfigFor(dir, opts && typeof opts.mode === "string" ? opts.mode : "auto");
     } catch (err) {
       console.error(`zevet: could not set up MCP servers: ${err.message}`);
     }
@@ -2940,8 +3425,14 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   // zone — reading it throws a ReferenceError out of the error path, which is
   // the worst possible place to add a second failure.
   const handle = { id: null };
-  const env = await credentialEnvFor();
-  const started = agentConsole.startConsole({
+  const engineReq = opts && typeof opts.engine === "string" ? opts.engine : "";
+  const resolved = await agentEnvFor(engineReq);
+  if (!resolved.ok) {
+    void releasePlacement(place);
+    return { ok: false, error: resolved.error };
+  }
+  const env = resolved.env;
+  const started = instrumentedStartConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
     model: opts && typeof opts.model === "string" ? opts.model : "",
@@ -2953,7 +3444,7 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
           mcpConfig: mcpConfig.file,
           // claude names an MCP tool `mcp__<server>__<tool>`; the server is
           // registered as `zevet` above, only when computer use is actually on.
-          ...(mcpConfig.computerUse ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
+          ...(mcpConfig.permissions ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
         }
       : {}),
     /* ⚠️ ASKED FOR, AND ALLOWED, ARE TWO DIFFERENT THINGS. The renderer may
@@ -2961,6 +3452,7 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
        saved settings, because the renderer is the untrusted side of the
        bridge. Same rule the workspace guard follows above. */
     forkFrom,
+    ...(String(agent || "") === "claude" ? agentConsole.extrasFrom(opts) : {}),
     onEvent: (evt) => {
       // The status strip's rolling windows are fed HERE, in the main process,
       // and not in the renderer. The renderer shows the live figures off the
@@ -2980,19 +3472,34 @@ ipcMain.handle("local:startAgent", async (_e, { agent, cwd, opts }) => {
   handle.id = started.id;
   trackPlacement(place, started.id);
   consoles.set(started.id, started);
-  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place));
-  return { ok: true, id: started.id, agent, cwd: dir };
-});
+  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place, resolved.engine));
+  return { ok: true, id: started.id, agent, cwd: dir, engine: resolved.engine };
+}
+bridge.handle("local:startAgent", (_e, args) => startAgentCore(args));
 
 /** What a reloaded board needs to rebuild a console's rail entry. `root` is
- *  the repo the user picked even when the agent works in a worktree of it. */
-function consoleMeta(agent, dir, opts, place) {
+ *  the repo the user picked even when the agent works in a worktree of it.
+ *  `engineUsed` is only set when a caller named an engine (desktop/
+ *  agent-engine.js) -- absent, the card shows nothing new, exactly as before
+ *  engine selection existed. `opts.label` names an API-spawned console
+ *  (desktop/agent-api.js "spawn"); UI-started consoles never set it. */
+/** Show a console the board did not start (API spawn, schedule) in every
+ *  workspace: the board only learns of its own launches and of a reload's
+ *  snapshot, so without this it sees such an agent only via the repo-scoped disk scan. */
+function announceConsole(id) {
+  const entry = consoleLog.get(id);
+  if (entry) toBoard("local:agentAttached", entry);
+}
+
+function consoleMeta(agent, dir, opts, place, engineUsed) {
   return {
     agent: String(agent || ""),
     root: dir,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     startedAt: Date.now(),
+    ...(engineUsed ? { engine: engineUsed } : {}),
+    ...(opts && typeof opts.label === "string" && opts.label ? { label: opts.label } : {}),
     ...(place && place.worktree ? { worktree: place.worktree.dir, branch: place.worktree.branch } : {}),
   };
 }
@@ -3008,18 +3515,33 @@ function consoleMeta(agent, dir, opts, place) {
  * The board keeps the SAME console entry and swaps in the new process id, so
  * the transcript continues rather than starting a second thread beside it.
  */
-ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) => {
+bridge.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) => {
   await runtimeReady;
-  const dir = knownRoot(cwd);
-  if (!dir) return { ok: false, error: "not an opened workspace" };
   if (typeof resumeFrom !== "string" || !resumeFrom.trim()) {
     return { ok: false, error: "no session to resume" };
   }
+  /* A session started in a terminal resumes from the folder IT ran in, which
+     need not be an opened workspace. The renderer cannot choose that folder:
+     it is accepted only when it is the one the session's own transcript
+     recorded (agent-sessions.cwdOf) and still exists. Anything else is the
+     workspace rule, as before. */
+  let dir = knownRoot(cwd);
+  if (!dir && typeof cwd === "string") {
+    const own = agentSessions.cwdOf(String(agent || ""), resumeFrom.trim());
+    if (own && path.resolve(own) === path.resolve(cwd)) {
+      try {
+        if (fs.statSync(own).isDirectory()) dir = path.resolve(own);
+      } catch {
+        return { ok: false, error: `That session's folder no longer exists: ${own}` };
+      }
+    }
+  }
+  if (!dir) return { ok: false, error: "not an opened workspace" };
   const settings = agentSettingsFor(dir);
   let mcpConfig = null;
   if (String(agent || "") === "claude") {
     try {
-      mcpConfig = await mcpConfigFor(dir);
+      mcpConfig = await mcpConfigFor(dir, opts && typeof opts.mode === "string" ? opts.mode : "auto");
     } catch (err) {
       console.error(`zevet: could not set up computer use: ${err.message}`);
     }
@@ -3036,19 +3558,23 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
   }
 
   const handle = { id: null };
-  const env = await credentialEnvFor();
-  const started = agentConsole.startConsole({
+  const engineReq = opts && typeof opts.engine === "string" ? opts.engine : "";
+  const resolved = await agentEnvFor(engineReq);
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  const env = resolved.env;
+  const started = instrumentedStartConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt: settings.systemPrompt,
     resumeFrom: resumeFrom.trim(),
+    ...(String(agent || "") === "claude" ? agentConsole.extrasFrom({ ...opts, continueLatest: false }) : {}),
     env,
     ...(mcpConfig
       ? {
           mcpConfig: mcpConfig.file,
-          ...(mcpConfig.computerUse ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
+          ...(mcpConfig.permissions ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
         }
       : {}),
     onEvent: (evt) => {
@@ -3064,7 +3590,7 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
   consoles.set(started.id, started);
   // The same thread, a new process: its history moves over rather than
   // coming back after a reload as a second thread, and the old handle goes.
-  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place), continues);
+  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place, resolved.engine), continues);
   const prev = consoles.get(continues);
   if (prev) {
     try {
@@ -3075,10 +3601,12 @@ ipcMain.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts })
     }
     consoles.delete(continues);
   }
-  return { ok: true, id: started.id, agent, cwd: dir };
+  return { ok: true, id: started.id, agent, cwd: dir, engine: resolved.engine };
 });
 
-ipcMain.handle("local:sendToAgent", (_e, { id, text }) => {
+/** The shared body of `local:sendToAgent` and the control API's `spawn`
+ *  (which sends the prompt this same way, right after starting). */
+function sendToAgentCore(id, text) {
   const c = consoles.get(id);
   if (!c) return { ok: false, error: "no such console" };
   try {
@@ -3098,7 +3626,8 @@ ipcMain.handle("local:sendToAgent", (_e, { id, text }) => {
   } catch (err) {
     return { ok: false, error: err.message };
   }
-});
+}
+bridge.handle("local:sendToAgent", (_e, { id, text }) => sendToAgentCore(id, text));
 
 /**
  * A few generated words for a console's title, from its first prompt. Not
@@ -3123,7 +3652,8 @@ async function nameConsole(id, text) {
   }
 }
 
-ipcMain.handle("local:stopAgent", (_e, id) => {
+/** The shared body of `local:stopAgent` and the control API's `stop`. */
+function stopAgentCore(id) {
   const c = consoles.get(id);
   if (!c) return { ok: false, error: "no such console" };
   try {
@@ -3133,13 +3663,14 @@ ipcMain.handle("local:stopAgent", (_e, id) => {
   }
   consoles.delete(id);
   return { ok: true };
-});
+}
+bridge.handle("local:stopAgent", (_e, id) => stopAgentCore(id));
 
 /** Every console a reloaded board should show again, with what it has said. */
-ipcMain.handle("local:consoles", () => consoleLog.snapshot());
+bridge.handle("local:consoles", () => consoleLog.snapshot());
 
 /** The board closed a thread; a reload should not bring it back. */
-ipcMain.handle("local:forgetAgent", (_e, id) => {
+bridge.handle("local:forgetAgent", (_e, id) => {
   consoleLog.forget(String(id || ""));
   const place = placementOf(String(id || ""));
   if (place) void releasePlacement(place);
@@ -3164,6 +3695,81 @@ function stopAllConsoles() {
 }
 
 app.on("before-quit", stopAllConsoles);
+app.on("before-quit", () => {
+  // A stale discovery file pointing at a dead port is worse than none: a CLI
+  // that trusts it hangs on a connection nobody answers rather than failing
+  // fast with "zevet is not running".
+  fs.rmSync(AGENT_API_FILE, { force: true });
+  if (agentApiHandle) void agentApiHandle.close();
+});
+app.on("before-quit", () => family.stop());
+
+/* ==========================================================================
+ * PAYLOAD SWAP (bootstrap.js loaded this file from the current payload build)
+ *
+ * A staged payload replaces this process by relaunch, never while work is in
+ * flight (payload-swap.js has the whole gate). app.exit skips before-quit, so
+ * what before-quit tidies is done here by hand — and NOT appUpdater's
+ * installOnQuit, which would start an installer under the relaunch.
+ * ======================================================================== */
+let lastInputAt = 0;
+/** A window opening under a still cursor fires mouseEnter/mouseMove with nobody there (seen on the Windows runner the
+ *  moment a relaunch opened the setup window), so pointer movement alone is not "the person is here". */
+const NOT_INPUT = new Set(["mouseMove", "mouseEnter", "mouseLeave"]);
+app.on("web-contents-created", (_e, wc) => {
+  // before-input-event is keyboard; input-event (newer Electron) adds mouse buttons and wheel.
+  for (const ev of ["before-input-event", "input-event"]) {
+    wc.on(ev, (_e2, input) => {
+      if (input && NOT_INPUT.has(input.type)) return;
+      const now = Date.now();
+      if (now - lastInputAt > 2 * 60 * 1000) bootShell.log(`input (${ev}: ${input && input.type}): a payload swap waits 2 minutes`);
+      lastInputAt = now;
+    });
+  }
+});
+function releaseForRelaunch() {
+  stopChatRun();
+  fs.rmSync(AGENT_API_FILE, { force: true });
+  family.stop();
+}
+/** The agent API answers with the token the discovery file carries. */
+function agentApiAnswers() {
+  if (!agentApiHandle) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const req = require("node:http").get(`${agentApiHandle.url}/list`, { headers: { authorization: `Bearer ${agentApiHandle.token}` }, timeout: 3000 }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => { req.destroy(); resolve(false); });
+  });
+}
+if (bootShell.payload) {
+  const swapper = createSwapper({
+    payload: bootShell.payload,
+    app,
+    activity: () => consoleLog.activity(),
+    chatBusy: () => Boolean(chatRun && chatRun.turn),
+    lastInputAt: () => lastInputAt,
+    inputQuietMs: process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS ? Number(process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS) : undefined, // the packaged proof only
+    windows: () => BrowserWindow.getAllWindows().length,
+    release: releaseForRelaunch,
+    log: bootShell.log,
+  });
+  swapper.start();
+  let quitApplied = false;
+  app.on("will-quit", (e) => { // activate() is async: hold the quit until the staged build is current
+    if (quitApplied || !swapper.pending()) return;
+    e.preventDefault();
+    swapper.applyOnQuit().catch((err) => bootShell.log(`payload apply on quit failed: ${err && err.message}`)).finally(() => { quitApplied = true; app.quit(); });
+  });
+  if (bootShell.trial) {
+    const loaded = new Promise((resolve) => {
+      app.on("browser-window-created", (_e, w) => w.webContents.once("did-stop-loading", resolve));
+    });
+    void confirmWhenHealthy({ payload: bootShell.trial, loaded, apiAnswers: agentApiAnswers, app, log: bootShell.log });
+  }
+}
 
 /* ==========================================================================
  * ZEVET CHAT — conversations with no repository behind them (desktop/chat.js)
@@ -3174,7 +3780,7 @@ app.on("before-quit", stopAllConsoles);
  * board on `chat:event`, never `local:agentEvent`, so a chat is never drawn as
  * a console in Code's People pane.
  * ======================================================================== */
-let chatRun = null; // { id, console, turn: { user, reply } | null, model, provider }
+let chatRun = null; // { id, console, turn: { user, reply } | null, model, provider, want }
 
 function stopChatRun() {
   if (!chatRun) return;
@@ -3229,34 +3835,42 @@ async function nameChat(id, text) {
   if (renamed) toBoard("chat:event", { id, evt: { type: "saved", chat: renamed } });
 }
 
-/* Model providers (desktop/chat-claude.js documents the contract). One today;
-   a chat records which one answered each message. */
-const chatProviders = { "claude-cli": createClaudeCli({ startConsole: agentConsole.startConsole }) };
-const DEFAULT_CHAT_PROVIDER = "claude-cli";
+/* Model providers (desktop/chat-claude.js documents the contract), keyed by the
+   agent-console.js agent they drive. A chat records which one answered each
+   message. */
+const chatProviders = {
+  claude: createClaudeCli({ startConsole: instrumentedStartConsole }),
+  codex: createChatCli({ agent: "codex", id: "codex-cli", startConsole: instrumentedStartConsole }),
+  opencode: createChatCli({ agent: "opencode", id: "opencode-cli", startConsole: instrumentedStartConsole }),
+};
+const DEFAULT_CHAT_AGENT = "claude";
 
-async function spawnChat(chat, provider, opts = {}) {
+async function spawnChat(chat, provider, opts = {}, folder = "") {
   let mcpConfig = null;
   const cfg = masora.readConfig();
-  if (cfg.paired) {
+  // --mcp-config is claude's flag; the others get Masora as the C2 brief.
+  if (cfg.paired && provider.agent === "claude") {
     mcpConfig = path.join(app.getPath("temp"), `zevet-chat-mcp-${process.pid}.json`);
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: masora.mcpServerEntry(cfg.url) }), "utf8");
   }
-  const run = { id: chat.id, console: null, turn: null, model: chat.model || "", want: `${opts.model || ""}|${opts.mode || ""}`, provider: provider.id };
+  const run = { id: chat.id, console: null, turn: null, model: opts.model || chat.model || "", want: chatWant(provider, opts, folder), provider: provider.id };
   const opened = provider.open({
     chat,
     mcpConfig,
     model: opts.model,
     mode: opts.mode,
+    folder,
+    env: await credentialEnvFor(),
     onEvent: (evt) => {
       const p = evt && evt.type === "agent" ? evt.payload : null;
       if (p && p.type === "system" && p.subtype === "init" && p.model) run.model = String(p.model);
-      if (p && p.type === "assistant" && run.turn && p.message && Array.isArray(p.message.content)) {
-        const text = p.message.content.filter((b) => b && b.type === "text").map((b) => b.text).join("");
-        if (text) run.turn.reply = run.turn.reply ? [run.turn.reply, text].join(String.fromCharCode(10, 10)) : text;
-      }
-      if (p && p.type === "result" && run.turn) finishChatTurn(run, run.turn.reply, p.is_error);
+      const text = p && run.turn ? provider.replyOf(p) : "";
+      if (text) run.turn.reply = run.turn.reply ? [run.turn.reply, text].join(String.fromCharCode(10, 10)) : text;
+      if (p && run.turn && provider.endsTurn(p)) finishChatTurn(run, run.turn.reply, p.is_error);
       if (evt && evt.type === "exit") {
-        if (run.turn) finishChatTurn(run, "", true);
+        // A one-shot CLI ends its turn by exiting: a reply and a clean exit is
+        // an answer; anything else is a failed turn and is not saved.
+        if (run.turn) finishChatTurn(run, run.turn.reply, Boolean(evt.error) || (evt.code !== 0 && !evt.stopped) || !run.turn.reply);
         if (chatRun === run) chatRun = null;
       }
       toBoard("chat:event", { id: run.id, evt });
@@ -3282,25 +3896,46 @@ async function chatBrief(provider, text) {
   }
 }
 
-ipcMain.handle("chat:list", (_e, arg) => chats.list(arg && arg.query));
-ipcMain.handle("chat:get", (_e, id) => chats.read(String(id || "")));
+bridge.handle("chat:list", (_e, arg) => chats.list(arg && arg.query));
+bridge.handle("chat:get", (_e, id) => chats.read(String(id || "")));
 /** Who a chat belongs to: the hub login this app signs in as. */
 function chatAuthor() {
   const cfg = readConfig();
   return (cfg && typeof cfg.actor === "string" && cfg.actor) || os.userInfo().username;
 }
 
-ipcMain.handle("chat:create", () => chats.create(chatAuthor()));
-ipcMain.handle("chat:rename", (_e, arg) => chats.rename(arg && arg.id, arg && arg.title));
-ipcMain.handle("chat:remove", (_e, id) => {
+/** A folder a chat may work in: one the person opened (the same guard Code's
+ *  launches use), still on disk. "" detaches. */
+function chatFolder(dir) {
+  const d = String(dir || "");
+  if (!d) return "";
+  const known = knownRoot(d);
+  return known && fs.existsSync(known) ? known : null;
+}
+
+/** What a live process was started for; a different answer respawns it. */
+function chatWant(provider, opts, folder) {
+  return [provider.agent, opts.model || "", opts.mode || "", folder].join("|");
+}
+
+bridge.handle("chat:create", (_e, arg) => chats.create(chatAuthor(), chatFolder(arg && arg.folder) || ""));
+bridge.handle("chat:setFolder", (_e, arg) => {
+  const folder = chatFolder(arg && arg.folder);
+  if (folder === null) return null;
+  const id = String((arg && arg.id) || "");
+  if (chatRun && chatRun.id === id) stopChatRun(); // a new folder is a new posture
+  return chats.setFolder(id, folder);
+});
+bridge.handle("chat:rename", (_e, arg) => chats.rename(arg && arg.id, arg && arg.title));
+bridge.handle("chat:remove", (_e, id) => {
   if (chatRun && chatRun.id === id) stopChatRun();
   return chats.remove(String(id || ""));
 });
-ipcMain.handle("chat:stop", (_e, id) => {
+bridge.handle("chat:stop", (_e, id) => {
   if (chatRun && chatRun.id === id) stopChatRun();
   return { ok: true };
 });
-ipcMain.handle("chat:send", async (_e, arg) => {
+bridge.handle("chat:send", async (_e, arg) => {
   await runtimeReady;
   const id = String((arg && arg.id) || "");
   const text = String((arg && arg.text) || "");
@@ -3310,18 +3945,20 @@ ipcMain.handle("chat:send", async (_e, arg) => {
   if (!text.trim()) return { ok: false, error: "Nothing to send." };
   if (chatRun && chatRun.id === id && chatRun.turn) return { ok: false, error: "Still answering." };
   if (chatRun && chatRun.id !== id) stopChatRun();
-  // A different model or posture needs new flags: respawn (--resume keeps the
-  // conversation). Compared against what was ASKED, not run.model, which init
-  // overwrites with the resolved id.
-  if (chatRun && chatRun.want !== `${opts.model || ""}|${opts.mode || ""}`) stopChatRun();
-
-  const provider = chatProviders[chat.provider] || chatProviders[DEFAULT_CHAT_PROVIDER];
+  const provider = chatProviders[opts.agent] || chatProviders[DEFAULT_CHAT_AGENT];
+  // Set through chatFolder (an opened workspace); here it only has to still exist.
+  const folder = chat.folder && fs.existsSync(chat.folder) ? chat.folder : "";
+  if (chat.folder && !folder) return { ok: false, error: "Folder unavailable." };
+  // A different agent, model, posture or folder needs new flags: respawn
+  // (the session binding keeps the conversation). Compared against what was
+  // ASKED, not run.model, which init overwrites with the resolved id.
+  if (chatRun && chatRun.want !== chatWant(provider, opts, folder)) stopChatRun();
   // A slash command goes to claude bare: no Masora brief, no prior replay
   // (composeTurn drops both too; skipping the fetch here saves the round trip).
   const brief = chats.isSlashPrompt(text) ? null : await chatBrief(provider, text);
 
   if (!chatRun) {
-    const s = await spawnChat(chat, provider, opts);
+    const s = await spawnChat(chat, provider, opts, folder);
     if (!s.ok) return s;
     chatRun = s.run;
   }
@@ -3335,7 +3972,7 @@ ipcMain.handle("chat:send", async (_e, arg) => {
   return { ok: true, brief: Boolean(brief) };
 });
 
-ipcMain.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(arg && arg.on)));
+bridge.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(arg && arg.on)));
 
 // ---- lifecycle -------------------------------------------------------------
 
@@ -3356,19 +3993,47 @@ ipcMain.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(a
  *   - That the renderer is TOLD, and never asked. The board shows a row; the
  *     person clicks it or does not.
  * ======================================================================== */
+// Whether the menu item currently reads "Restart to update" — tracked outside
+// appUpdater.state so a download's percent ticks (also delivered through
+// onStatus) don't rebuild the native menu dozens of times for nothing.
+let menuOffersRestart = false;
+// Reported once per ENTRY into "error", not on every status poll while it
+// stays there — app-update.js re-announces the same state on a timer, and an
+// event per poll would flood one real failure into hundreds of duplicates.
+let lastUpdatePhase = null;
+/** Settings' Version reads `current`. The updater's is the INSTALLER's version
+ *  (what the feed is compared against); a payload swap moves the code without
+ *  moving that, so shown raw it read 0.2.89 while 0.2.91 ran. */
+function withRunningBuild(s) {
+  return s && typeof s === "object" ? { ...s, current: APP_VERSION } : s;
+}
 const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
+  trustedKeys: loopbackProofKeys(process.env.ZEVET_APP_FEED),
   dir: path.join(app.getPath("userData"), "updates"),
+  // Only meaningful on darwin; see canSelfReplaceMac() in app-update.js.
+  // /Applications/zevet.app from .../zevet.app/Contents/MacOS/zevet.
+  bundlePath: process.platform === "darwin" ? path.dirname(path.dirname(path.dirname(app.getPath("exe")))) : undefined,
   // toBoard() only reaches boardWindow, and a person stuck on setup — no hub
   // configured yet, or not signed in — has no board window at all. Sent to
   // setupWindow too, so "0.2.57 is ready" shows up on the screen a first-run
   // person is actually looking at, not just one that may never open.
-  onStatus: (s) => {
+  onStatus: (raw) => {
+    const s = withRunningBuild(raw);
     toBoard("app:update", s);
     if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send("app:update", s);
+    if (s.phase === "error" && lastUpdatePhase !== "error") {
+      sentry.captureUpdateFailure(Sentry, { stage: "auto-update", error: s.error || "unknown auto-update error" });
+    }
+    lastUpdatePhase = s.phase;
+    const canRestart = s.phase === "ready" && Boolean(s.canInstall);
+    if (canRestart !== menuOffersRestart) {
+      menuOffersRestart = canRestart;
+      buildMenu();
+    }
   },
-  log: (m) => console.log(`[zevet-app-update] ${m}`),
+  log: (m) => { console.log(`[zevet-app-update] ${m}`); fileLog.info(`[zevet-app-update] ${m}`); },
   openImpl: (f) => shell.openPath(f),
   quitImpl: () => {
     // ⚠️ NOT app.quit(): the board's beforeunload and the single-instance
@@ -3377,6 +4042,21 @@ const appUpdater = new AppUpdater({
     app.exit(0);
   },
 });
+
+/** No modal, no click required: if a build is already downloaded and verified
+ *  when the app is closed — window closed, Quit, or the OS logging the
+ *  machine off — put it on silently so the NEXT launch is already current.
+ *  `before-quit` does not fire for the Restart-now path above, which exits
+ *  via app.exit(0); that is deliberate, see quitImpl's own comment. */
+app.on("before-quit", () => {
+  if (appUpdater.state.phase === "ready") appUpdater.installOnQuit();
+});
+
+/** The on-focus recheck and the resume-from-sleep recheck share one gate so
+ *  neither adds a request on top of the ordinary hourly timer if the other
+ *  just ran one. */
+const UPDATE_RECHECK_MIN_GAP_MS = 60 * 1000;
+app.on("browser-window-focus", () => appUpdater.maybeCheck(UPDATE_RECHECK_MIN_GAP_MS));
 
 /* ========================================================================
  * MASORA VOICE
@@ -3390,8 +4070,8 @@ const appUpdater = new AppUpdater({
  * Read only; see desktop/agent-sessions.js. `cwd` scopes to one project and
  * is not a path the handler opens — it is matched as a string against the slug
  * and compared, so an unknown one simply matches nothing. */
-ipcMain.handle("local:sessions", (_e, arg) => agentSessions.list(arg || {}));
-ipcMain.handle("local:session", (_e, arg) =>
+bridge.handle("local:sessions", (_e, arg) => agentSessions.list(arg || {}));
+bridge.handle("local:session", (_e, arg) =>
   agentSessions.read(
     (arg && arg.source) || "",
     (arg && arg.slug) || "",
@@ -3402,25 +4082,54 @@ ipcMain.handle("local:session", (_e, arg) =>
 /* The subagents one session spawned. Separate from `local:sessions` because
  * it opens a metadata file per child, and a session can have ninety of them —
  * paid for once, for the session actually opened. */
-ipcMain.handle("local:sessionAgents", (_e, arg) =>
+bridge.handle("local:sessionAgents", (_e, arg) =>
   agentSessions.children((arg && arg.slug) || "", (arg && arg.id) || ""),
 );
-ipcMain.handle("local:sessionLive", (_e, arg) =>
+bridge.handle("local:sessionLive", (_e, arg) =>
   agentSessions.live((arg && arg.source) || "", (arg && arg.id) || ""),
 );
 
-ipcMain.handle("local:defaultMode", (_e, mode) => rememberMode(String(mode || "")));
+bridge.handle("local:defaultMode", (_e, mode) => rememberMode(String(mode || "")));
 
-ipcMain.handle("local:voiceStatus", () => masoraVoice.status());
-ipcMain.handle("local:voiceStart", () => masoraVoice.start());
-ipcMain.handle("local:voiceMic", () => masoraVoice.mic());
+bridge.handle("local:voiceStatus", () => masoraVoice.status());
+bridge.handle("local:voiceStart", () => masoraVoice.start());
+bridge.handle("local:voiceMic", () => masoraVoice.mic());
 
-ipcMain.handle("app:updateStatus", () => appUpdater.status());
-ipcMain.handle("app:updateCheck", () => appUpdater.check());
-ipcMain.handle("app:updateInstall", () => appUpdater.install());
+bridge.handle("app:updateStatus", () => withRunningBuild(appUpdater.status()));
+bridge.handle("app:updateCheck", () => appUpdater.check());
+bridge.handle("app:updateInstall", () => appUpdater.install());
+bridge.assertComplete();
+
+/**
+ * The local control API (desktop/agent-api.js) -- started eagerly on app
+ * ready, not lazily on first use like ask-server.js's permit gate, because
+ * its whole point is a terminal caller who is not otherwise touching the
+ * app at all. The discovery file is user-only (mode 0600, same discipline
+ * masora.js's own token file uses) since holding it is what makes a caller
+ * trusted -- see `trustedDir` above for what that buys `spawn`.
+ */
+let agentApiHandle = null;
+async function startAgentApi() {
+  agentApiHandle = await agentApi.start({
+    startAgentCore: async (args) => {
+      const r = await startAgentCore(args);
+      if (r.ok) announceConsole(r.id);
+      return r;
+    },
+    sendToAgentCore,
+    stopAgentCore,
+    setOnce: (id) => consoleLog.setOnce(id),
+    getConsole: (id) => consoleLog.get(id),
+    listConsoles: () => consoleLog.snapshot().consoles,
+  });
+  // HOME is otherwise created by whichever writer runs first; on a fresh profile that is not this one.
+  fs.mkdirSync(HOME, { recursive: true });
+  atomicWriteJson(AGENT_API_FILE, { url: agentApiHandle.url, token: agentApiHandle.token, pid: process.pid }, { mode: 0o600 });
+}
 
 app.whenReady().then(() => {
   buildMenu();
+  void startAgentApi();
   // No console outlives the app, so neither does a worktree made for one.
   void worktrees.prune();
   startScheduler();
@@ -3428,9 +4137,18 @@ app.whenReady().then(() => {
   // After the window, never before it: an update check that delayed the
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();
+  family.start();
+  // Only reliable after 'ready'; see the module's own docs.
+  powerMonitor.on("resume", () => appUpdater.maybeCheck(UPDATE_RECHECK_MIN_GAP_MS));
+  session.defaultSession.webRequest.onHeadersReceived({ urls: FRAME_URLS, types: ["subFrame"] }, (d, cb) => cb({ responseHeaders: frameable(d.responseHeaders) }));
   const cfg = readConfig();
   if (cfg) openBoard(cfg);
   else openSetup(null);
+  // Same reasoning as the updater above: never delay the board for this.
+  // The probe is quick (2s, bounded), but "quick" is still slower than a
+  // window that could have opened already — this runs alongside it and only
+  // ever changes what NEXT launch reads, never this one.
+  if (cfg) void migrateHubDomain(cfg);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -3468,16 +4186,12 @@ app.on("window-all-closed", () => {
  * shipped — which is the specific failure this codebase's Windows/macOS section
  * exists to complain about.
  */
-if (process.env.ZEVET_ALLOW_MULTI === "1") {
-  // Nothing to do: no lock requested, no `second-instance` handler wanted.
-} else if (!app.requestSingleInstanceLock()) {
-  app.quit();
-} else {
-  app.on("second-instance", () => {
-    const w = boardWindow || setupWindow;
-    if (w && !w.isDestroyed()) {
-      if (w.isMinimized()) w.restore();
-      w.focus();
-    }
-  });
-}
+// The lock itself is taken in bootstrap.js, with the ZEVET_ALLOW_MULTI escape hatch described above; this is
+// only what the first instance does when a second launch is attempted.
+bootShell.onSecondInstance = () => {
+  const w = boardWindow || setupWindow;
+  if (w && !w.isDestroyed()) {
+    if (w.isMinimized()) w.restore();
+    w.focus();
+  }
+};

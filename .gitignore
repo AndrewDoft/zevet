@@ -6,6 +6,7 @@ data/
 .DS_Store
 desktop/node_modules/
 desktop/out/
+desktop/app-core/
 desktop/build/icon.png
 
 # Local install artifacts: install.mjs writes these into whatever repo you wire,
@@ -53,3 +54,6 @@ zevet-*.tar.gz
 # and release-check.mjs refuses to publish from a tree that is not clean.
 gate-out.txt
 sprite-test.md
+
+# node scripts/codemagic.mjs --out writes build artifacts here.
+codemagic-out*/

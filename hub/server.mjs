@@ -10,15 +10,33 @@
 // installed. The same rule bought the same way twice.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Accounts, defaultAccountsFile, deriveAuthToken } from "./accounts.mjs";
-import { deviceStart, devicePoll, githubUser } from "./github-auth.mjs";
+import { Accounts, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
+import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedEmails } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
+import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
+import { initSentry } from "./sentry.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The id of the board this hub serves, so an open board can tell a deploy
+ * happened. It is the two committed source stamps (board.js.srchash and
+ * editor.js.srchash) folded together: they change exactly when board.js or
+ * editor.js is rebuilt from different source. HUB_BUILD_ID overrides it. Read
+ * once at boot — a deploy restarts the hub, and the stamps only change then.
+ */
+const BUILD_ID =
+  process.env.HUB_BUILD_ID ||
+  createHash("sha256")
+    .update(["board", "editor"].map((n) => {
+      try { return readFileSync(path.join(HERE, "public", `${n}.js.srchash`), "utf8").trim(); } catch { return ""; }
+    }).join("\n"))
+    .digest("hex")
+    .slice(0, 12);
 const PORT = Number(process.env.PORT || 8787);
 
 /* ── Who this hub lets in ────────────────────────────────────────────────────
@@ -66,6 +84,13 @@ const GOOGLE_CLIENT_SECRET = process.env.ZEVET_GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT = process.env.ZEVET_GOOGLE_REDIRECT || "";
 const GOOGLE_DOMAIN = process.env.ZEVET_GOOGLE_DOMAIN || "";
 const GOOGLE_OWNER = process.env.ZEVET_GOOGLE_OWNER || "";
+
+/** See hub/test-fake-idp.mjs's own header: undefined (real `fetch`, always)
+ *  unless ZEVET_TEST_HOOKS=1, which no real deployment or install ever sets. */
+const TEST_IDP_FETCH =
+  process.env.ZEVET_TEST_HOOKS === "1"
+    ? (await import("./test-fake-idp.mjs")).makeFakeIdpFetch({ googleClientId: GOOGLE_CLIENT_ID })
+    : undefined;
 const GOOGLE_ON = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REDIRECT);
 
 /**
@@ -79,6 +104,18 @@ const GOOGLE_ON = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_RED
 const ACCOUNTS_FILE = process.env.ZEVET_ACCOUNTS || (GITHUB_CLIENT_ID || GOOGLE_CLIENT_ID ? defaultAccountsFile(HERE) : null);
 
 const accounts = new Accounts({ file: ACCOUNTS_FILE, secret: process.env.ZEVET_SECRET || "" });
+
+/* ── Invite email (Resend, plain fetch — docs/resend.md) ────────────────────
+ *
+ * `RESEND_API_KEY` unset means email_sent is always false and /auth/allow
+ * hands the inviter the key instead — never a crash, see mailer.mjs's own
+ * header. `RESEND_FROM` must be an address on a domain verified in Resend, or
+ * every send 403s the same way (also handled: same fallback). */
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const RESEND_FROM = process.env.RESEND_FROM || "Masora <invites@usemasora.com>";
+const DOWNLOADS = "https://usemasora.com/download/"; // same constant as desktop/family.js
+const DOWNLOAD_MAC = `${DOWNLOADS}Zevet.dmg`;
+const DOWNLOAD_WIN = `${DOWNLOADS}Zevet-Setup.exe`;
 
 /**
  * The shared token — the credential that is NOT a GitHub session.
@@ -172,6 +209,7 @@ if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
 }
 
 const CLIENT_DIR = path.join(HERE, "..", "client");
+const SIGNED_CLIENT_MANIFEST = process.env.ZEVET_SIGNED_CLIENT_MANIFEST || path.join(HERE, "client-manifest.signed.json");
 /** Exactly what the update channel will serve. An allowlist, not a directory listing. */
 const CLIENT_FILES = [
   "hook.mjs",
@@ -201,6 +239,13 @@ const CLIENT_FILES = [
   // test/codex-trust.test.mjs is what makes that ordering enforceable rather
   // than remembered.
   "secret.mjs",
+  // zevet-home.mjs is imported BY hook.mjs, updater.mjs, doctor.mjs, install*.mjs
+  // and uninstall.mjs (ZEVET_HOME lookup, atomic JSON writes). The updater
+  // stages every listed file before replacing any, so they arrive together.
+  "zevet-home.mjs",
+  // signing.mjs is imported BY updater.mjs (pinned key, manifest signature check).
+  // An updater that imports it before the hub serves it dies on ERR_MODULE_NOT_FOUND.
+  "signing.mjs",
   // doc-crypto.mjs is NOT yet imported by anything in this list -- the editor
   // is what will use it. It is shipped anyway, deliberately: the alternative is
   // that the file arrives on teammates' machines in the same update as the code
@@ -255,7 +300,22 @@ async function buildManifest() {
     const buf = await readFile(path.join(CLIENT_DIR, name));
     files.push({ name, bytes: buf.length, sha256: createHash("sha256").update(buf).digest("hex") });
   }
-  return { version: pkg.version, files };
+  const live = { version: pkg.version, files };
+  // The signature is made offline at release time (scripts/sign-client-manifest
+  // .mjs, docs/RELEASING.md): the hub holds no private key. It is attached only
+  // when it covers exactly what is on disk; otherwise the unsigned live manifest
+  // is served, which current clients reject, so the update is withheld rather
+  // than silently unsigned. The legacy top-level fields stay for old clients.
+  try {
+    const signed = JSON.parse(await readFile(SIGNED_CLIENT_MANIFEST, "utf8"));
+    if (JSON.stringify(signed.payload) === JSON.stringify({ schema: 1, type: "zevet-client", ...live })) {
+      return { ...live, payload: signed.payload, signature: signed.signature };
+    }
+    console.warn("zevet: hub/client-manifest.signed.json is stale — serving an unsigned client manifest; re-sign at release");
+  } catch (err) {
+    if (err.code !== "ENOENT") console.warn(`zevet: cannot read the signed client manifest: ${err.message}`);
+  }
+  return live;
 }
 
 /**
@@ -329,7 +389,26 @@ function makeBoard(file) {
 
   const board = { events, listeners, file, warned: false };
 
-  board.record = function record(evt) {
+  /** Every SSE push on this board's listeners goes through here — `record`
+   *  below for the activity log, and `notifyPeopleChanged` (module scope)
+   *  for the roster — so the "stalled listener" handling is one copy, not
+   *  two drifting ones. */
+  board.emit = function emit(name, data) {
+    const frame = `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const res of listeners) {
+      if (res.destroyed || res.writableEnded) {
+        listeners.delete(res);
+        continue;
+      }
+      if (!res.write(frame) && res.writableLength > 1_000_000) {
+        console.error("zevet: dropping a listener that stopped draining (>1MB buffered)");
+        listeners.delete(res);
+        res.destroy();
+      }
+    }
+  };
+
+  board.record = function record(evt, resolve = (a) => a) {
     events.push(evt);
     while (events.length > MAX_EVENTS) events.shift();
     // Best effort, and deliberately synchronous: one small append per event, no
@@ -345,23 +424,21 @@ function makeBoard(file) {
         console.error(`zevet: event log unwritable (${err.message}) — board will not survive a restart`);
       }
     }
-    const frame = `event: activity\ndata: ${JSON.stringify(evt)}\n\n`;
-    for (const res of listeners) {
-      if (res.destroyed || res.writableEnded) {
-        listeners.delete(res);
-        continue;
-      }
-      if (!res.write(frame) && res.writableLength > 1_000_000) {
-        console.error("zevet: dropping a listener that stopped draining (>1MB buffered)");
-        listeners.delete(res);
-        res.destroy();
-      }
-    }
+    const shown = resolve(evt.actor);
+    board.emit("activity", shown === evt.actor ? evt : { ...evt, actor: shown });
   };
 
   /** Presence, collisions and recent files, derived fresh — nothing cached to drift. */
-  board.snapshot = function snapshot() {
+  board.snapshot = function snapshot(resolve = (a) => a) {
     const now = Date.now();
+    // Events name their actor as whatever string the machine reported. The
+    // person that string belongs to — after a rename, a linked identity or a
+    // merge — is decided by the accounts, at read time, so the archive follows
+    // without being rewritten.
+    const named = events.map((e) => {
+      const a = resolve(e.actor);
+      return a === e.actor ? e : { ...e, actor: a };
+    });
     // Prompt bodies and shell commands age out of the served board after
     // ZEVET_DETAIL_TTL_MS (0, the default, keeps everything). Structure —
     // who, what tool, what file, what repo — is the board's long memory and is
@@ -371,7 +448,7 @@ function makeBoard(file) {
     const show = (e) =>
       DETAIL_TTL_MS > 0 && now - e.ts > DETAIL_TTL_MS ? { ...e, detail: "" } : e;
     const actors = new Map();
-    for (const e of events) {
+    for (const e of named) {
       const a = actors.get(e.actor) || { actor: e.actor, hue: null, lastTs: 0, lastEvent: null, turns: 0, tools: 0 };
       a.lastTs = Math.max(a.lastTs, e.ts);
       if (!a.lastEvent || e.ts >= a.lastEvent.ts) a.lastEvent = show(e);
@@ -404,7 +481,7 @@ function makeBoard(file) {
     //   4. CASE. `src/DB.ts` and `src/db.ts` are one file on the case-insensitive
     //      filesystems Windows and macOS both ship by default, and were two keys.
     const byTarget = new Map();
-    for (const e of events) {
+    for (const e of named) {
       if (!e.target || e.kind !== "tool") continue;
       if (!WRITING_TOOLS.has(e.tool)) continue;
       if (now - e.ts > COLLISION_WINDOW_MS) continue;
@@ -434,7 +511,7 @@ function makeBoard(file) {
     }
     collisions.sort((x, y) => y.lastTs - x.lastTs);
 
-    return { now, roster, collisions, events: events.slice(-300).map(show), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
+    return { now, roster, collisions, events: named.slice(-300).map(show), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
   };
 
   return board;
@@ -476,6 +553,7 @@ const CREDENTIAL_ENV = {
   "anthropic:api_key": "ANTHROPIC_API_KEY",
   "anthropic:subscription_token": "CLAUDE_CODE_OAUTH_TOKEN",
   "openai:api_key": "OPENAI_API_KEY",
+  "meta:api_key": "MODEL_API_KEY",
 };
 
 /**
@@ -552,8 +630,8 @@ function tokenFrom(req, url) {
     const eq = part.indexOf("=");
     if (eq < 0) continue;
     if (part.slice(0, eq).trim() !== COOKIE) continue;
-    const value = decodeURIComponent(part.slice(eq + 1).trim());
-    if (tokenOk(value)) return value;
+    const value = safeDecode(part.slice(eq + 1).trim());
+    if (value !== null && tokenOk(value)) return value;
   }
 
   const q = url.searchParams.get("token");
@@ -654,6 +732,18 @@ function sessionCookie(req, token) {
 /** One board per team — see `makeBoard` above. */
 const boards = new Map([[DEFAULT_TEAM, makeBoard(EVENTS_FILE)]]);
 
+/** Reactive rosters (P3, "the member/invite list updates live"): pushed on
+ *  the SAME SSE connection board.ts already opens for the activity feed —
+ *  no second channel, no poll to replace it with. The payload carries
+ *  nothing (whoami is session-scoped per caller, a board-wide broadcast is
+ *  not); board.ts's own `people` listener just re-fetches whoami on it. Any
+ *  team not yet booted (nobody has opened its board) has no listeners to
+ *  reach and this is a no-op. */
+function notifyPeopleChanged(team) {
+  const board = boards.get(team);
+  if (board) board.emit("people", {});
+}
+
 /* ── Teams: more than one independent account/board on one hub ──────────────
  *
  * Until now this hub WAS a team: one Accounts, one master secret, one board.
@@ -717,22 +807,129 @@ function sweepUnclaimedTeams() {
 }
 setInterval(sweepUnclaimedTeams, 60 * 60 * 1000).unref(); // hourly is plenty against a 24h default
 
-function createTeam() {
+/**
+ * ⚠️ TEAMS SURVIVE A RESTART. `teamAccounts` used to be filled only by
+ * `createTeam`, so every redeploy forgot every team it hosted: the accounts
+ * file was still on disk, but the slug 404'd ("no such team") and every
+ * session the team's members held stopped resolving. Anyone who had created a
+ * team was locked out of it by the next deploy.
+ */
+function loadTeams() {
+  let files = [];
+  try {
+    files = readdirSync(TEAMS_DIR);
+  } catch {
+    return; // no directory yet: nothing has ever been created
+  }
+  for (const f of files) {
+    const m = /^accounts-([a-z0-9-]+)\.json$/.exec(f); // named slugs, and the random ones from before names
+    if (!m || m[1] === DEFAULT_TEAM || teamAccounts.has(m[1])) continue;
+    try {
+      teamAccounts.set(m[1], new Accounts({ file: path.join(TEAMS_DIR, f) }));
+      boards.set(m[1], makeBoard(path.join(TEAMS_DIR, `events-${m[1]}.jsonl`)));
+    } catch (err) {
+      teamAccounts.delete(m[1]);
+      console.error(`zevet: could not load team ${m[1]} (${f}): ${err.message}`);
+    }
+  }
+}
+loadTeams();
+
+/**
+ * Which Workspace domain, if any, admits by rule on this team.
+ *
+ * A created team's own `Accounts#domain` always wins when set — it is what
+ * `/auth/domain` lets that team's owner turn on, off their OWN `hd` (see
+ * accounts.mjs's `setDomain`). `ZEVET_GOOGLE_DOMAIN` is a hub-wide fallback
+ * that applies ONLY to the default team, and only when that team has not set
+ * its own — the env var is an operator setting from before per-team domains
+ * existed, never a second way to grant one to a team that never asked.
+ */
+function domainFor(team, acc) {
+  return acc.domain || (team === DEFAULT_TEAM ? GOOGLE_DOMAIN : "");
+}
+
+/** A team's display name: the one it was given, else something readable for a
+ *  team made before names existed (or by a client that predates them). */
+function teamName(slug, acc) {
+  if (acc.name) return acc.name;
+  return slug === DEFAULT_TEAM ? process.env.ZEVET_TEAM_NAME || "Main team" : `Team ${slug.slice(0, 4)}`;
+}
+
+/** Trimmed, single-spaced, 1-48 characters, no control characters; else null. */
+export function cleanTeamName(raw) {
+  const n = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
+  return n && n.length <= 48 && !/[\u0000-\u001f\u007f]/.test(n) ? n : null;
+}
+
+/** A team's address is its name: lowercase [a-z0-9-], 1-40 chars; else "". */
+export function slugify(name) {
+  return String(name || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/, "");
+}
+
+/** The slug a name points at, or null. A team made before names were
+ *  addresses has a random slug, so its stored name is matched too. */
+function findTeam(name) {
+  const s = slugify(name);
+  if (!s || s === DEFAULT_TEAM) return null;
+  // The hub's original team has no stored name, only ZEVET_TEAM_NAME; its name must
+  // resolve (join by name) and be taken (no second team can claim it).
+  const def = teamAccounts.get(DEFAULT_TEAM);
+  if (def && slugify(teamName(DEFAULT_TEAM, def)) === s) return DEFAULT_TEAM;
+  if (teamAccounts.has(s)) return s;
+  for (const [slug, acc] of teamAccounts) if (slug !== DEFAULT_TEAM && acc.name && slugify(acc.name) === s) return slug;
+  return null;
+}
+
+/** BUG-2026-09-28: "no such team exists" for the DEFAULT team's own configured
+ *  name (e.g. resolving "Masoretes" then trying to join or sign in with it).
+ *  `body.team` at every call site below is a SLUG already handed back by
+ *  /team/resolve, /team/create or a prior sign-in — never a name a person
+ *  typed (that is /team/resolve's own job, at the one call site that still
+ *  calls findTeam directly). findTeam's `s === DEFAULT_TEAM` guard exists so
+ *  a raw TYPED name of literally "default" does not resolve unless it
+ *  matches the team's real configured name — correct for a typed name, and
+ *  wrong for a slug already-resolved TO "default", which /team/resolve
+ *  legitimately returns for the one team whose slug equals DEFAULT_TEAM. */
+function resolveTeamSlug(slug) {
+  return slug === DEFAULT_TEAM ? DEFAULT_TEAM : findTeam(slug);
+}
+
+function createTeam(name) {
   if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
-    return { ok: false, status: 503, error: "this hub has no sign-in configured" };
+    return { ok: false, status: 503, error: "sign-in is not configured" };
   }
   sweepUnclaimedTeams();
   if (teamAccounts.size - 1 >= MAX_TEAMS) {
-    return { ok: false, status: 503, error: "this hub is holding as many teams as it will" };
+    return { ok: false, status: 503, error: "too many teams" };
   }
   let slug;
-  do {
-    slug = randomBytes(5).toString("hex");
-  } while (teamAccounts.has(slug));
+  if (name) {
+    slug = slugify(name);
+    if (!slug) return { ok: false, status: 400, error: "name the team (letters or digits)" };
+    if (slug === DEFAULT_TEAM || findTeam(slug)) {
+      let n = 2;
+      while (findTeam(`${slug}-${n}`)) n++;
+      return { ok: false, status: 409, error: "Taken", suggest: `${slug}-${n}` };
+    }
+  } else {
+    // A build from before names existed: it still gets a random address.
+    do {
+      slug = randomBytes(5).toString("hex");
+    } while (teamAccounts.has(slug));
+  }
   // No `secret` passed — Accounts mints a fresh random master secret exactly
   // the way it does for a hub with no ZEVET_SECRET. That fresh secret is what
   // makes this team's documents unreadable by any other team's members.
   const acc = new Accounts({ file: path.join(TEAMS_DIR, `accounts-${slug}.json`) });
+  if (name) acc.setName(name);
   teamAccounts.set(slug, acc);
   boards.set(slug, makeBoard(path.join(TEAMS_DIR, `events-${slug}.jsonl`)));
   return { ok: true, team: slug };
@@ -742,6 +939,25 @@ function createTeam() {
 function teamFrom(req, url) {
   const token = tokenFrom(req, url);
   return token ? resolveTeam(token) : null;
+}
+
+/**
+ * The same, but refuses a shared-token caller outright.
+ *
+ * A shared token is "authenticated but anonymous" (see resolveTeam) and that
+ * used to be enough for every team-scoped route, including the board itself
+ * (/api/state, /events, the ws upgrade) and /ingest. MEASURED as a real leak:
+ * a teammate who had never signed in or redeemed a key — holding only an old
+ * install's shared token, or the anonymous one a fresh config starts with —
+ * could still read the whole board: every person's name, every prompt and
+ * tool call. Every team-scoped route now requires an actual person behind
+ * the token. The one deliberate exception is /auth/whoami, which a
+ * shared-token caller still needs to learn "sign in with GitHub/Google" —
+ * it answers, but strips the people list before it does.
+ */
+function teamFromSession(req, url) {
+  const auth = teamFrom(req, url);
+  return auth && auth.session ? auth : null;
 }
 
 /**
@@ -885,18 +1101,104 @@ function googlePage(res, status, message) {
   res.end(body);
 }
 
-/** One row of the People list. Shared by `/auth/whoami` and `/auth/allow` so
- *  the two cannot drift into describing the same person differently. */
-function person(a) {
-  return { login: a.display || a.login, provider: a.provider, owner: a.owner, pending: !a.id };
+/**
+ * The invite field is ONE text input (Andrew: "keep the invite field
+ * single"), so it carries either a bare login/email, or a GitHub login
+ * followed by an email to mail the invite to. Whitespace-separated, the
+ * email — if any — is always the LAST token, so "octocat andrew@x.com" and a
+ * lone "andrew@x.com" both parse without a second field.
+ *
+ * Returns `{ login, email }`: `login` is what `acc.allow()` is called with;
+ * `email` is "" unless the input named one explicitly (a bare email invite
+ * IS its own recipient, but that is decided by the caller, not here).
+ */
+function parseInvite(raw) {
+  const parts = String(raw || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return { login: parts.slice(0, -1).join(" ").replace(/^@/, ""), email: parts[parts.length - 1] };
+  }
+  return { login: (parts[0] || "").replace(/^@/, ""), email: "" };
+}
+
+/**
+ * One row of the People list. Shared by `/auth/whoami`, `/auth/allow` and
+ * `/auth/revoke` so the three cannot drift into describing the same person
+ * differently.
+ *
+ * `state` is the one compact word the row shows (settings.tsx's PendingRow);
+ * every timestamp behind it is exposed too, for its tooltip only — Zevet's
+ * copy style is one word on the row, the "why" in a title attribute, never a
+ * paragraph next to the name. Most-advanced first:
+ *
+ *   installed — accepted, AND the hub has recorded at least one authenticated
+ *               request from their session since (`acc.lastSeen`) — the
+ *               desktop actually phoned home, not merely completed OAuth
+ *   accepted  — signed in / redeemed the key, but no session on record (rare:
+ *               e.g. a 90-day-idle session already swept by `session()`)
+ *   sent      — still pending, the last invite-email attempt succeeded
+ *   failed    — still pending, the last invite-email attempt did not
+ *   invited   — still pending, no send attempted or known yet
+ *
+ * Deliberately not "delivered"/"bounced": that would claim the mail
+ * PROVIDER's word on the message, which this hub only learns if a Resend
+ * webhook is wired up to report it — it is not, today, so "sent"/"failed"
+ * says only what this hub actually knows (its own send attempt succeeded or
+ * didn't), never more.
+ */
+function person(a, acc) {
+  const pending = !a.id;
+  const lastSeen = acc ? acc.lastSeen(a.login) : 0;
+  let state = "invited";
+  if (!pending) state = lastSeen ? "installed" : "accepted";
+  else if (a.emailSent === true) state = "sent";
+  else if (a.emailSent === false) state = "failed";
+  return {
+    // `login` is what is SHOWN (the person's display name, which they can
+    // change); `key` is what every route takes to name them, and never changes
+    // on a rename.
+    login: a.display || a.login,
+    key: a.login,
+    provider: a.provider,
+    owner: a.owner,
+    pending,
+    state,
+    invitedAt: a.added || null,
+    emailSentAt: a.emailSentAt || null,
+    emailError: a.emailError || null,
+    acceptedAt: a.acceptedAt || null,
+    lastSeen: lastSeen || null,
+    identities: [{ provider: a.provider, login: a.login, id: a.id }, ...(a.identities || [])].filter((i) => i.id).map((i) => ({ provider: i.provider || "github", login: i.login })),
+    aliases: a.aliases || [],
+  };
+}
+
+/** Link mode for a sign-in route: a caller who is ALREADY signed in as a
+ *  person, adding a second identity to themselves. `null` if this request is
+ *  not one; `{ error }` if it is and cannot be. */
+function linkAuth(req, url, body) {
+  if (!body || body.link !== true) return null;
+  const auth = teamFrom(req, url);
+  if (!auth || !auth.session) return { error: "sign in before linking another account", status: 401 };
+  return { auth };
 }
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url, "http://localhost");
+async function handleRequest(req, res) {
+  // Central, so no route can forget them. Nothing in this repo frames the hub
+  // (the board's iframes point at usemasora.com), hence DENY for every route.
+  // No CSP: the board relies on inline styles and it was not browser-verified.
+  res.setHeader("x-content-type-options", "nosniff");
+  res.setHeader("referrer-policy", "no-referrer");
+  res.setHeader("x-frame-options", "DENY");
+  let url;
+  try {
+    url = new URL(req.url, "http://localhost");
+  } catch {
+    return json(res, 400, { error: "unreadable request line" });
+  }
 
 
   /* ── Signing in ────────────────────────────────────────────────────────────
@@ -916,7 +1218,7 @@ const server = createServer(async (req, res) => {
    * fifteen minutes, so there is nothing here to guess at anyway.
    */
   if (url.pathname === "/auth/github/start" && req.method === "POST") {
-    if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "this hub has no GitHub sign-in configured" });
+    if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "GitHub sign-in is not configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
     // `team` is optional and new: absent (every install in the field today)
@@ -928,10 +1230,10 @@ const server = createServer(async (req, res) => {
     } catch {
       body = {};
     }
-    const team = String((body && body.team) || DEFAULT_TEAM);
-    if (!teamAccounts.has(team)) return json(res, 404, { error: "no such team — create one first" });
+    const team = body && body.team ? resolveTeamSlug(body.team) : DEFAULT_TEAM;
+    if (!team) return json(res, 404, { error: "no such team — create one first" });
 
-    const r = await deviceStart({ clientId: GITHUB_CLIENT_ID });
+    const r = await deviceStart({ clientId: GITHUB_CLIENT_ID, fetchImpl: TEST_IDP_FETCH });
     if (!r.ok) return json(res, 502, { error: r.error });
     return json(res, 200, {
       ok: true,
@@ -946,7 +1248,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/auth/github/finish" && req.method === "POST") {
-    if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "this hub has no GitHub sign-in configured" });
+    if (!GITHUB_CLIENT_ID) return json(res, 503, { error: "GitHub sign-in is not configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
     let body = null;
@@ -956,19 +1258,37 @@ const server = createServer(async (req, res) => {
       return json(res, 400, { error: "expected JSON" });
     }
 
-    const team = String((body && body.team) || DEFAULT_TEAM);
-    const acc = teamAccounts.get(team);
-    if (!acc) return json(res, 404, { error: "no such team — create one first" });
+    // Linking a second account to somebody already signed in: the session
+    // decides the team and the person, the device flow proves the second
+    // identity. Nothing below — no allowlist check, no new session, no secret —
+    // applies to it.
+    const linking = linkAuth(req, url, body);
+    if (linking && linking.error) return json(res, linking.status, { error: linking.error });
 
-    const polled = await devicePoll({ clientId: GITHUB_CLIENT_ID, deviceCode: body && body.deviceCode });
+    const team = linking ? linking.auth.team : body && body.team ? resolveTeamSlug(body.team) : DEFAULT_TEAM;
+    if (!team) return json(res, 404, { error: "no such team — create one first" });
+    const acc = teamAccounts.get(team);
+
+    const polled = await devicePoll({ clientId: GITHUB_CLIENT_ID, deviceCode: body && body.deviceCode, fetchImpl: TEST_IDP_FETCH });
     if (!polled.ok) return json(res, 400, { error: polled.error });
     // Still waiting on the browser. A 200 with `pending` rather than a 202 or a
     // 4xx, because the desktop app polls this every few seconds for up to
     // fifteen minutes and a non-2xx would light up every error path it has.
     if (polled.pending) return json(res, 200, { ok: true, pending: true, slowDown: Boolean(polled.slowDown) });
 
-    const who = await githubUser({ accessToken: polled.accessToken });
+    const who = await githubUser({ accessToken: polled.accessToken, fetchImpl: TEST_IDP_FETCH });
     if (!who.ok) return json(res, 502, { error: who.error });
+    // The evidence that lets the hub recognise this login as somebody it
+    // already knows by email. Best effort: no scope, no evidence, sign-in goes on.
+    who.emails = (await githubVerifiedEmails({ accessToken: polled.accessToken, fetchImpl: TEST_IDP_FETCH })).emails;
+
+    if (linking) {
+      const r = acc.link(linking.auth.session, { provider: "github", login: who.login, id: who.id, display: who.login }, who.emails);
+      if (!r.ok) return json(res, 403, { error: r.error });
+      console.log(`zevet: linked @${who.login} to ${r.person ? r.person.name : "a person"}${r.merged ? " (merged)" : ""}`);
+      notifyPeopleChanged(team);
+      return json(res, 200, { ok: true, linked: true, login: who.login, merged: Boolean(r.merged) });
+    }
 
     // ZEVET_GITHUB_OWNER reserves the DEFAULT team for a named person; a team
     // created at runtime has no such reservation — trust-on-first-use hands
@@ -985,6 +1305,7 @@ const server = createServer(async (req, res) => {
 
     const sess = acc.signIn(who);
     console.log(`zevet: ${sess.owner ? "OWNER " : ""}sign-in by @${sess.login}${team === DEFAULT_TEAM ? "" : ` (team ${team})`}`);
+    notifyPeopleChanged(team);
 
     /* ⚠️ THIS RESPONSE CARRIES THE MASTER SECRET. It is the only route that
      * does, it is over TLS, and it is the whole of the tradeoff documented at
@@ -1014,7 +1335,7 @@ const server = createServer(async (req, res) => {
    * itself), and `finish` returns only what `callback` already established.
    */
   if (url.pathname === "/auth/google/start" && req.method === "POST") {
-    if (!GOOGLE_ON) return json(res, 503, { error: "this hub has no Google sign-in configured" });
+    if (!GOOGLE_ON) return json(res, 503, { error: "Google sign-in is not configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
     let body = null;
@@ -1023,12 +1344,15 @@ const server = createServer(async (req, res) => {
     } catch {
       body = {};
     }
-    const team = String((body && body.team) || DEFAULT_TEAM);
-    if (!teamAccounts.has(team)) return json(res, 404, { error: "no such team — create one first" });
-    // Only the DEFAULT team's Workspace domain auto-admits by rule; a team
-    // created at runtime is invite-only beyond its owner, so no `hd` hint is
-    // sent and readIdToken below is not asked to enforce one.
-    const domain = team === DEFAULT_TEAM ? GOOGLE_DOMAIN : "";
+    const linking = linkAuth(req, url, body);
+    if (linking && linking.error) return json(res, linking.status, { error: linking.error });
+    const team = linking ? linking.auth.team : body && body.team ? resolveTeamSlug(body.team) : DEFAULT_TEAM;
+    if (!team) return json(res, 404, { error: "no such team — create one first" });
+    // Any team's own domain door (see domainFor), or the default team's
+    // env-wide fallback. A created team with no domain set is invite-only
+    // beyond its owner, so no `hd` hint is sent below. Linking has no domain
+    // door: the second address may be a personal Gmail.
+    const domain = linking ? "" : domainFor(team, teamAccounts.get(team));
 
     sweepGooglePairs();
     if (googlePairs.size >= GOOGLE_PAIRS_MAX) return json(res, 429, { error: "too many sign-ins in flight — try again in a minute" });
@@ -1043,7 +1367,11 @@ const server = createServer(async (req, res) => {
     // ⚠️ `team` travels through the pair record, not through Google's
     // redirect: `callback` only ever sees `state` (this pairCode), so this is
     // the one place the team for this attempt is recorded.
-    googlePairs.set(pairCode, { at: Date.now(), ip, team, result: null, error: null, tried: false });
+    // `link` is the signed-in person this attempt will add an identity to —
+    // set here, from the caller's own session, never from anything Google or
+    // the browser later sends.
+    const link = linking ? { provider: linking.auth.session.provider, login: linking.auth.session.login, id: linking.auth.session.id } : null;
+    googlePairs.set(pairCode, { at: Date.now(), ip, team, link, result: null, error: null, tried: false });
     return json(res, 200, {
       ok: true,
       pairCode,
@@ -1058,7 +1386,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/auth/google/callback" && req.method === "GET") {
-    if (!GOOGLE_ON) return googlePage(res, 503, "Google sign-in is not configured on this hub.");
+    if (!GOOGLE_ON) return googlePage(res, 503, "Google sign-in is not configured.");
 
     const state = url.searchParams.get("state") || "";
     const pair = googlePairs.get(state);
@@ -1093,6 +1421,7 @@ const server = createServer(async (req, res) => {
       clientSecret: GOOGLE_CLIENT_SECRET,
       code: url.searchParams.get("code"),
       redirectUri: GOOGLE_REDIRECT,
+      fetchImpl: TEST_IDP_FETCH,
     });
     if (!ex.ok) {
       pair.error = ex.error;
@@ -1104,7 +1433,7 @@ const server = createServer(async (req, res) => {
       pair.error = "that team no longer exists";
       return googlePage(res, 404, pair.error);
     }
-    const domain = pair.team === DEFAULT_TEAM || !pair.team ? GOOGLE_DOMAIN : "";
+    const domain = pair.link ? "" : domainFor(pair.team || DEFAULT_TEAM, acc);
 
     /* ⚠️ THE IDENTITY COMES FROM HERE AND NOWHERE ELSE. Not from the query
      * string, not from anything the browser carried — from an id token this
@@ -1115,6 +1444,19 @@ const server = createServer(async (req, res) => {
       pair.error = who.error;
       authFailed(req, url);
       return googlePage(res, 403, who.error);
+    }
+
+    if (pair.link) {
+      const r = acc.link(pair.link, who, who.emails);
+      if (!r.ok) {
+        pair.error = r.error;
+        return googlePage(res, 403, r.error);
+      }
+      console.log(`zevet: linked ${who.login} to ${r.person ? r.person.name : "a person"}${r.merged ? " (merged)" : ""}`);
+      notifyPeopleChanged(pair.team || DEFAULT_TEAM);
+      // No token, no secret: the person is already signed in.
+      pair.result = { linked: true, login: who.login, merged: Boolean(r.merged), team: pair.team || DEFAULT_TEAM };
+      return googlePage(res, 200, `Linked ${who.login}. You can close this tab and go back to zevet.`);
     }
 
     const may = acc.mayEnter(who, { requiredOwner: domain ? GOOGLE_OWNER : "", domain });
@@ -1128,6 +1470,7 @@ const server = createServer(async (req, res) => {
     console.log(
       `zevet: ${sess.owner ? "OWNER " : ""}sign-in by ${sess.login}${may.byDomain ? ` (${domain} Workspace)` : ""}${pair.team && pair.team !== DEFAULT_TEAM ? ` (team ${pair.team})` : ""}`,
     );
+    notifyPeopleChanged(pair.team || DEFAULT_TEAM);
 
     /* ⚠️ THIS HOLDS THE MASTER SECRET, in memory, until the app claims it or it
      * expires. Same tradeoff as the GitHub finish route documents; the
@@ -1139,7 +1482,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/auth/google/finish" && req.method === "POST") {
-    if (!GOOGLE_ON) return json(res, 503, { error: "this hub has no Google sign-in configured" });
+    if (!GOOGLE_ON) return json(res, 503, { error: "Google sign-in is not configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
     let body = null;
@@ -1180,6 +1523,7 @@ const server = createServer(async (req, res) => {
     return json(res, 200, {
       ok: true,
       team: auth.team,
+      teamName: teamName(auth.team, acc),
       // A shared-token caller is authenticated but anonymous. Saying so is
       // better than inventing a name for it, and it is what the settings pane
       // shows a hook-only machine.
@@ -1192,9 +1536,75 @@ const server = createServer(async (req, res) => {
       // field to decide whether to show its connect button, and it is served by
       // this same hub on a slower refresh cycle than the hub itself.
       googleSignIn: GOOGLE_ON,
-      googleDomain: auth.team === DEFAULT_TEAM ? GOOGLE_DOMAIN : "",
-      people: acc.list().map(person),
+      googleDomain: domainFor(auth.team, acc),
+      // The owner's own Workspace domain, if they have one — the one value
+      // `/auth/domain` will accept, whether or not the toggle is currently
+      // on (`googleDomain` above says that). Shown only to the owner: it is
+      // their sign-in identity, not a fact about the team worth handing
+      // every member.
+      availableDomain: sess && acc.owner === sess.login ? acc.ownerHd : "",
+      // The one field a shared-token caller (no personal session) does not
+      // get: every OTHER person's name and status is exactly the leak this
+      // route otherwise would not have — see teamFromSession's comment.
+      people: sess ? acc.list().map((a) => person(a, acc)) : [],
+      // You: your display name and every identity linked to you — what the
+      // agents tab needs to know which row is yours after a rename, and what
+      // Settings lists under "Link another account".
+      me: sess ? acc.profile(sess) : null,
     });
+  }
+
+  /* Renaming, unlinking, combining. `rename` is yours to do to yourself (the
+   * owner may rename anyone); `unlink` only ever touches the caller's own
+   * person; `merge` is OWNER ONLY, because it asserts two people are one
+   * without a provider having proved it. */
+  if ((url.pathname === "/auth/rename" || url.pathname === "/auth/unlink" || url.pathname === "/auth/merge") && req.method === "POST") {
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    if (!sess) return json(res, 403, { error: "sign in first" });
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    body = body && typeof body === "object" ? body : {};
+    const isOwner = acc.owner === sess.login;
+
+    if (url.pathname === "/auth/rename") {
+      const target = String(body.login || sess.login).toLowerCase().replace(/^@/, "");
+      const mine = acc.profile(sess);
+      const mineLogins = mine ? mine.identities.map((i) => i.login) : [sess.login];
+      if (!mineLogins.includes(target) && !isOwner) return json(res, 403, { error: "you can only rename yourself" });
+      // A name already worn by somebody on the BOARD (a hook-only teammate has no
+      // account, so accounts cannot see them) is theirs: taking it would fold
+      // their row into yours. Names you already go by are fine.
+      const want = String(body.name || "").trim().toLowerCase();
+      const mineNames = new Set([...(mine ? [mine.name, ...mine.aliases, ...mine.identities.map((i) => i.login)] : []), body.actor].filter(Boolean).map((n) => String(n).toLowerCase()));
+      if (want && !mineNames.has(want) && boards.get(auth.team).events.some((e) => String(e.actor).toLowerCase() === want)) {
+        return json(res, 400, { error: `${String(body.name).trim()} is already on the board` });
+      }
+      // The actor string is only ever taken for the caller's OWN person.
+      const r = acc.rename(target, body.name, { actor: mineLogins.includes(target) ? body.actor : "" });
+      if (!r.ok) return json(res, 400, { error: r.error });
+      notifyPeopleChanged(auth.team);
+      return json(res, 200, { ok: true, me: acc.profile(sess), people: acc.list().map((a) => person(a, acc)) });
+    }
+
+    if (url.pathname === "/auth/unlink") {
+      const r = acc.unlink(sess, { provider: body.provider, login: body.login });
+      if (!r.ok) return json(res, 400, { error: r.error });
+      notifyPeopleChanged(auth.team);
+      return json(res, 200, { ok: true, me: acc.profile(sess), people: acc.list().map((a) => person(a, acc)) });
+    }
+
+    if (!isOwner) return json(res, 403, { error: acc.owner ? `only @${acc.owner} can combine people` : "nobody has claimed this team yet" });
+    const r = acc.combine(body.into, body.from);
+    if (!r.ok) return json(res, 400, { error: r.error });
+    notifyPeopleChanged(auth.team);
+    return json(res, 200, { ok: true, merged: Boolean(r.merged), people: acc.list().map((a) => person(a, acc)), me: acc.profile(sess) });
   }
 
   /* Signing yourself out. NOT owner-gated, unlike allow/revoke below: ending
@@ -1233,7 +1643,7 @@ const server = createServer(async (req, res) => {
       return json(res, 403, {
         error: acc.owner
           ? `only @${acc.owner} can change this list`
-          : "nobody has claimed this hub yet — the first sign-in becomes its owner",
+          : "nobody has claimed this team yet — the first sign-in becomes its owner",
       });
     }
     let body = null;
@@ -1242,9 +1652,118 @@ const server = createServer(async (req, res) => {
     } catch {
       return json(res, 400, { error: "expected JSON" });
     }
-    const r = url.pathname === "/auth/allow" ? acc.allow(body && body.login) : acc.revoke(body && body.login);
+
+    if (url.pathname === "/auth/revoke") {
+      const r = acc.revoke(body && body.login);
+      if (!r.ok) return json(res, 400, { error: r.error });
+      notifyPeopleChanged(auth.team);
+      return json(res, 200, { ok: true, people: acc.list().map((a) => person(a, acc)) });
+    }
+
+    // /auth/allow: mint (or rotate) the invite key, then try to email it.
+    // Never a crash either way — see mailer.mjs's own header — so this always
+    // answers 200 once the allowlist change itself is valid. Also doubles as
+    // "Resend" (settings.tsx): calling it again on a still-pending login is
+    // exactly how a stalled or failed invite is retried — acc.allow rotates
+    // the key each time (accounts.mjs), so a resend and the row's own "Copy"
+    // are the same call, never a stale key reused after the real one shipped.
+    const { login: typedLogin, email: typedEmail } = parseInvite(body && body.login);
+
+    // Recipient resolution happens BEFORE acc.allow, not after: acc.allow's
+    // own dedupe needs the resolved address to recognise "michael" typed
+    // today and "michael@x.com" typed next week as the one pending invite,
+    // not two (see accounts.mjs's own comment on `allow`). `invitableLogin`
+    // is the same validation `allow` runs, called here only so an invalid
+    // login is never worth a live GitHub lookup — exactly what the old
+    // ordering (validate via `allow`, THEN resolve) already guaranteed.
+    const valid = invitableLogin(typedLogin);
+    let recipient = typedEmail || (typedLogin.includes("@") ? typedLogin : "");
+    if (!recipient && valid.ok && valid.provider === "github") {
+      const pub = await githubPublicEmail(typedLogin, { fetchImpl: TEST_IDP_FETCH });
+      if (pub.ok && pub.email) recipient = pub.email;
+    }
+
+    const r = acc.allow(typedLogin, { email: recipient });
     if (!r.ok) return json(res, 400, { error: r.error });
-    return json(res, 200, { ok: true, people: acc.list().map(person) });
+
+    let emailSent = false;
+    let emailError = "";
+    let inviteText = "";
+    if (r.key) {
+      const msg = inviteMessage({ teamName: teamName(auth.team, acc), key: r.key, macUrl: DOWNLOAD_MAC, winUrl: DOWNLOAD_WIN });
+      inviteText = msg.text;
+      if (recipient) {
+        const sent = await sendInviteEmail({
+          apiKey: RESEND_API_KEY,
+          from: RESEND_FROM,
+          to: recipient,
+          teamName: teamName(auth.team, acc),
+          key: r.key,
+          macUrl: DOWNLOAD_MAC,
+          winUrl: DOWNLOAD_WIN,
+        });
+        emailSent = sent.ok;
+        if (!sent.ok) emailError = sent.error;
+        // Persisted on the row so a later /auth/whoami poll still shows it —
+        // person()'s "sent"/"failed" state reads this back.
+        acc.recordInviteEmail(r.login, { sent: emailSent, error: emailError });
+      }
+    }
+    notifyPeopleChanged(auth.team);
+
+    return json(res, 200, {
+      ok: true,
+      people: acc.list().map((a) => person(a, acc)),
+      email_sent: emailSent,
+      // Honest failure, never folded into `email_sent`: a Resend outage or an
+      // unverified domain must be VISIBLE to the inviter, not silently eaten —
+      // the one thing settings.tsx must never do with this field is show it
+      // as sent.
+      ...(recipient && !emailSent ? { email_error: emailError || "could not send" } : {}),
+      // No address could be found at all (a GitHub login with no public
+      // profile email, and no email typed) — settings.tsx asks for one inline
+      // rather than silently falling back to a bare key with no way to send.
+      ...(r.key && !recipient ? { recipient_needed: true } : {}),
+      // Owner-only response: the SAME text `sendInviteEmail` just sent (or
+      // tried to), including the key, so "Copy invite" is never out of sync
+      // with what was actually emailed. Handed back regardless of email_sent
+      // — the owner who just clicked Invite/Resend is exactly who is allowed
+      // to see the key they minted.
+      ...(r.key ? { key: r.key, inviteText } : {}),
+      // `login` is the CANONICAL identifier this invite lives under, which is
+      // not always `typedLogin` — a dedupe-by-email hit resends an existing
+      // row keyed on whatever was typed the FIRST time. `already` says
+      // whether this call found a pending row rather than creating one, so
+      // settings.tsx can say "resent" instead of implying a new invite.
+      ...(r.login ? { login: r.login } : {}),
+      already: Boolean(r.already),
+    });
+  }
+
+  /* Turning the Workspace door on or off for THIS team. Same owner-only gate
+   * as allow/revoke above, and the same reason: it changes who gets in
+   * without an invite, which is exactly the kind of change a shared token
+   * must not be able to make for itself. `acc.setDomain` is what actually
+   * refuses anything but the owner's own `hd` — see its comment. */
+  if (url.pathname === "/auth/domain" && req.method === "POST") {
+    const auth = teamFrom(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    if (!sess || acc.owner !== sess.login) {
+      return json(res, 403, {
+        error: acc.owner ? `only @${acc.owner} can change this` : "nobody has claimed this team yet — the first sign-in becomes its owner",
+      });
+    }
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const r = acc.setDomain(body && body.domain);
+    if (!r.ok) return json(res, 400, { error: r.error });
+    return json(res, 200, { ok: true, domain: acc.domain });
   }
 
   /* Team-held model credentials: listed and added by any signed-in member
@@ -1253,7 +1772,7 @@ const server = createServer(async (req, res) => {
    * list/whoami/settings, so a board that only shows metadata cannot leak
    * one by accident. */
   if (url.pathname === "/team/credentials" && req.method === "GET") {
-    const auth = teamFrom(req, url);
+    const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
     return json(res, 200, { credentials: auth.accounts.listCredentials() });
   }
@@ -1296,7 +1815,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname.startsWith("/team/credentials/") && url.pathname.endsWith("/secret") && req.method === "GET") {
-    const auth = teamFrom(req, url);
+    const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
     const id = safeDecode(url.pathname.slice("/team/credentials/".length, -"/secret".length));
     const key = id ? auth.accounts.credentialKey(id) : null;
@@ -1327,9 +1846,63 @@ const server = createServer(async (req, res) => {
    * into it. */
   if (url.pathname === "/team/create" && req.method === "POST") {
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
-    const r = createTeam();
-    if (!r.ok) return json(res, r.status || 503, { error: r.error });
-    return json(res, 200, { ok: true, team: r.team });
+    // A client that sends a JSON body must name the team. A body-less POST is
+    // a build from before names existed: it still works and gets a default name.
+    let name = "";
+    if (/json/i.test(String(req.headers["content-type"] || ""))) {
+      let body = null;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        body = null;
+      }
+      name = cleanTeamName(body && body.name);
+      if (!name) return json(res, 400, { error: "name the team (1-48 characters)" });
+    }
+    const r = createTeam(name);
+    if (!r.ok) return json(res, r.status || 503, { error: r.error, ...(r.suggest ? { suggest: r.suggest } : {}) });
+    return json(res, 200, { ok: true, team: r.team, name: teamName(r.team, teamAccounts.get(r.team)) });
+  }
+
+  // Does a team by this name exist here? Nothing else is said.
+  if (url.pathname === "/team/resolve" && req.method === "GET") {
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+    const team = findTeam(url.searchParams.get("name"));
+    return json(res, 200, team ? { exists: true, team } : { exists: false });
+  }
+
+  /**
+   * Redeem an invite key. Unauthenticated, same reasoning as the sign-in
+   * "finish" routes above: what is presented is a per-invitee secret, not a
+   * claim to be believed, and `acc.redeem` is what actually decides.
+   *
+   * ⚠️ THIS RESPONSE ALSO CARRIES THE MASTER SECRET, same as
+   * /auth/github/finish and /auth/google/finish — a key redemption mints a
+   * session exactly like a successful sign-in, and the joiner's editor needs
+   * the same secret either way. Do not add it to any other response.
+   */
+  if (url.pathname === "/team/join" && req.method === "POST") {
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const team = body && body.team ? resolveTeamSlug(body.team) : null;
+    if (!team) {
+      authFailed(req, url);
+      return json(res, 404, { error: "no such team" });
+    }
+    const acc = teamAccounts.get(team);
+    const r = acc.redeem(body && body.key);
+    if (!r.ok) {
+      authFailed(req, url);
+      return json(res, 400, { error: "bad key" });
+    }
+    console.log(`zevet: key redeemed by @${r.login}${team === DEFAULT_TEAM ? "" : ` (team ${team})`}`);
+    notifyPeopleChanged(team);
+    return json(res, 200, { ok: true, token: r.token, secret: acc.secret, login: r.login, owner: r.owner, team });
   }
 
   if (url.pathname === "/healthz") {
@@ -1341,6 +1914,7 @@ const server = createServer(async (req, res) => {
     const board = boards.get(DEFAULT_TEAM);
     return json(res, 200, {
       ok: true,
+      build: BUILD_ID,
       events: board.events.length,
       listeners: board.listeners.size,
       rooms: rooms.size,
@@ -1349,7 +1923,20 @@ const server = createServer(async (req, res) => {
     });
   }
 
+  // Unauthenticated like /healthz: an id that says "the board was rebuilt", no data.
+  if (url.pathname === "/version") return json(res, 200, { build: BUILD_ID });
+
   if (url.pathname === "/ingest" && req.method === "POST") {
+    // ⚠️ NOT teamFromSession, on purpose, unlike every other route this
+    // touched: client/hook.mjs derives its token straight from the team
+    // SECRET (secret.mjs's resolveAuth), never a personal session — that is
+    // how a hook-only machine (never signed into GitHub/Google) reports at
+    // all, and it is Andrew's OWN real config, confirmed on this machine.
+    // Locking this to teamFromSession would silence every hook on the team,
+    // including his. The leak this incident is about is READING the board
+    // anonymously (whoami's people list, /api/state, /events, the ws
+    // upgrade) — writing your OWN activity under a token only your own team
+    // holds is not that. Revisit if hooks ever carry a real session instead.
     const auth = teamFrom(req, url);
     if (!auth) return refuse(req, res, url);
     let parsed;
@@ -1379,18 +1966,18 @@ const server = createServer(async (req, res) => {
       // are two participants, and without this they were one.
       machine: String(parsed.machine || "").slice(0, 60),
     };
-    boards.get(auth.team).record(evt);
+    boards.get(auth.team).record(evt, teamAccounts.get(auth.team).actorResolver());
     return json(res, 200, { ok: true });
   }
 
   if (url.pathname === "/api/state") {
-    const auth = teamFrom(req, url);
+    const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
-    return json(res, 200, boards.get(auth.team).snapshot());
+    return json(res, 200, boards.get(auth.team).snapshot(auth.accounts.actorResolver()));
   }
 
   if (url.pathname === "/events") {
-    const auth = teamFrom(req, url);
+    const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
     const board = boards.get(auth.team);
     res.writeHead(200, {
@@ -1399,7 +1986,7 @@ const server = createServer(async (req, res) => {
       connection: "keep-alive",
       "x-accel-buffering": "no",
     });
-    res.write(`event: hello\ndata: ${JSON.stringify(board.snapshot())}\n\n`);
+    res.write(`event: hello\ndata: ${JSON.stringify(board.snapshot(auth.accounts.actorResolver()))}\n\n`);
     board.listeners.add(res);
     // A proxy that sees nothing for a minute will close the stream. Ping.
     const ping = setInterval(() => {
@@ -1542,14 +2129,31 @@ const server = createServer(async (req, res) => {
     try {
       const html = await readFile(path.join(HERE, "public", "index.html"), "utf8");
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      return res.end(html);
+      // The build this page was served at: the board compares it with /version.
+      return res.end(html.replace("<head>", `<head>\n    <meta name="zevet-build" content="${BUILD_ID}" />`));
     } catch (err) {
       return json(res, 500, { error: `dashboard missing: ${err.message}` });
     }
   }
 
   json(res, 404, { error: "no such route" });
+}
+
+const sentry = await initSentry();
+
+// One request's exception answers that request; it must not take the hub down.
+const server = createServer((req, res) => {
+  handleRequest(req, res).catch((err) => {
+    sentry?.captureException(err);
+    console.error(`zevet: request failed — ${req.method} ${String(req.url).slice(0, 200)}: ${err && err.stack ? err.stack : err}`);
+    if (!res.headersSent) json(res, 500, { error: "internal error" });
+    else res.destroy();
+  });
 });
+
+// Last resort: log and keep serving. Startup failures exit through server.on("error").
+process.on("unhandledRejection", (err) => console.error("zevet: unhandled rejection —", err));
+process.on("uncaughtException", (err) => console.error("zevet: uncaught exception —", err));
 
 // ---- the sync transport: RFC 6455, by hand ---------------------------------
 //
@@ -1867,7 +2471,7 @@ function joinRoom(conn, name) {
       // answer: evicting a room people are sitting in would silently
       // desynchronise them, which is a worse failure than a failed join
       // because nobody would see it happen.
-      wsClose(conn, CLOSE_TRY_LATER, "the hub is holding as many rooms as it will");
+      wsClose(conn, CLOSE_TRY_LATER, "too many rooms");
       return false;
     }
     room = { log: [], bytes: 0, sockets: new Set(), used: Date.now() };
@@ -2128,6 +2732,16 @@ server.on("upgrade", (req, socket, head) => {
   // Which team this socket belongs to, for the rest of its life — see roomKey().
   // tokenFrom() already ran every candidate through tokenOk() (== resolveTeam()
   // !== null), so this cannot come back null for a token that just passed.
+  //
+  // ⚠️ DELIBERATELY NOT LOCKED TO A SESSION, unlike /api/state, /events and
+  // whoami's people list. /ws has exactly one production consumer —
+  // desktop/doc-sync.js, the EDITOR's document sync — and its content is
+  // ciphertext the hub never has the key for; the document key derives from
+  // the SAME team secret that authenticates the shared token, so a
+  // shared-token holder gains no plaintext access here they did not already
+  // have. Locking it would silence the editor for exactly the machines
+  // hook.mjs already depends on being shared-token-only for — a hook-only
+  // teammate who has never personally signed in.
   const auth = resolveTeam(token);
   const team = auth ? auth.team : DEFAULT_TEAM;
 

@@ -61,6 +61,16 @@ export function spritesByPath(events, { repoName, followMode, myActor, now, idle
   return out;
 }
 
+export function latestToolForActor(events, { repoName, actor, now, liveAfterMs }) {
+  let latest = null;
+  (events || []).forEach((ev) => {
+    if (!ev || ev.repo !== repoName || ev.actor !== actor) return;
+    if (now - ev.ts > liveAfterMs) return;
+    if (!latest || ev.ts >= latest.ts) latest = ev;
+  });
+  return latest;
+}
+
 /** Everything of an actor's since their most recent prompt. */
 export function turnTrace(events, actor) {
   const mine = (events || []).filter((e) => e && e.actor === actor);
@@ -77,6 +87,23 @@ export function turnTrace(events, actor) {
     tools: turn.filter((e) => e.kind === "tool"),
     ended: turn.some((e) => e.kind === "turn_end"),
   };
+}
+
+/**
+ * An actor's recent work as turns, oldest first: each prompt, the tool calls
+ * that followed it, and whether it finished. What Chat + Work opens, read-only,
+ * for a teammate — the hub carries prompts and tool calls, never replies.
+ */
+export function teammateTurns(events, actor) {
+  const turns = [];
+  for (const e of events || []) {
+    if (!e || e.actor !== actor) continue;
+    if (e.kind === "prompt" || !turns.length) turns.push({ prompt: e.kind === "prompt" ? e : null, tools: [], ended: false });
+    const t = turns[turns.length - 1];
+    if (e.kind === "tool") t.tools.push(e);
+    else if (e.kind === "turn_end") t.ended = true;
+  }
+  return turns;
 }
 
 /** The one-line mission and the current command, as the roster shows them. */

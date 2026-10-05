@@ -73,12 +73,14 @@ describe("asking GitHub for a code", () => {
     assert.equal(f.seen[0].body.scope, SCOPES);
   });
 
-  test("asks for read:user and NOTHING that touches code", () => {
+  test("asks for read:user and user:email and NOTHING that touches code", () => {
     // ⚠️ If this ever fails because somebody widened the scope, that is a
     // product decision about what zevet asks permission for, not a test to fix.
     // `repo` is read-write access to every private repository the person can
     // see, requested from everybody who only wanted to sign in.
-    assert.equal(SCOPES, "read:user");
+    // user:email is the one addition: it is what GET /user/emails needs, and
+    // that is how the hub learns a GitHub login and an email are one person.
+    assert.equal(SCOPES, "read:user user:email");
   });
 
   test("builds the complete URL itself if GitHub stops sending one", async () => {
@@ -101,7 +103,7 @@ describe("asking GitHub for a code", () => {
   test("a hub with no client id says so instead of calling GitHub", async () => {
     const r = await deviceStart({ clientId: "", fetchImpl: () => assert.fail("must not call GitHub") });
     assert.equal(r.ok, false);
-    assert.match(r.error, /no GitHub client id/);
+    assert.match(r.error, /not configured/);
   });
 
   test("an HTML outage page is reported as such, not as a parse error", async () => {
@@ -261,7 +263,7 @@ describe("the desktop state machine", () => {
   test("a hub with no OAuth app is named as a deployment problem", async () => {
     const f = hubFetch(() => ({ status: 503, body: { error: "this hub has no GitHub sign-in configured" } }));
     const s = new GithubSignIn({ hub: "http://hub", fetchImpl: f });
-    await assert.rejects(() => s.start(), /GitHub sign-in is not configured for this hub/);
+    await assert.rejects(() => s.start(), /GitHub sign-in is off/);
   });
 
   test("a chosen team rides along on both start and finish, so the hub can bind the device code to it", async () => {

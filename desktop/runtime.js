@@ -62,6 +62,7 @@ function preparePath({ platform = process.platform, env = process.env, home = os
 function clientFile(name, { clientDir, resourcesPath = process.resourcesPath, desktopDir = __dirname } = {}) {
   const candidates = [
     clientDir && path.join(clientDir, name),
+    path.join(desktopDir, "client", name), // the payload's own copy (payload-tree.cjs); a checkout has none
     resourcesPath && path.join(resourcesPath, "client", name),
     path.join(desktopDir, "..", "client", name),
   ];

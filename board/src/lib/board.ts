@@ -9,9 +9,11 @@ import {
   plainError,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
+import { draftAfter } from "./chat-stream.mjs";
 import { classifyEnding, noteModelLimit as noteLimitFromStatus } from "./model-limits.mjs";
 import { learnModels } from "./models.mjs";
 import { usageOf, type UsageReading } from "./usage.mjs";
+import { initBoardSentry } from "./sentry";
 import type { SessionAgent, SessionSummary } from "./sessions.d.mts";
 import type { TranscriptState } from "./transcript.d.mts";
 import { mainSurface, repoToFollow, showConversation, showFile } from "./view.mjs";
@@ -128,6 +130,9 @@ interface LiveStrip {
 interface Strip {
   live: LiveStrip;
   machine: StatusResult | null;
+  /** The account's 5h/7d windows, from the latest `rate_limit_event` any
+   *  console reported. Account-wide, so the strip shows them once. */
+  limits: RateWindow[];
 }
 
 /**
@@ -244,6 +249,10 @@ interface BoardState {
    *  across model switches; the selector only shows it for a model that
    *  declares support, so it is carried even while it does not apply. */
   launchEffort: string;
+  /** Next start only: `claude --continue`, the latest session in this folder. */
+  launchContinue: boolean;
+  /** Next starts: extra folders claude may touch (`--add-dir`), one path per line. */
+  launchAddDirs: string;
   launchMode: LaunchMode;
   /** The posture this user chose as their default, or "" if they never did.
    *  Read from ~/.zevet/config.json at boot; see desktop/main.js storedMode. */
@@ -317,6 +326,7 @@ interface BoardState {
   setFollowMode: (m: "mine" | "all" | "off") => void;
   setView: (v: ViewMode) => void;
   toggleTree: () => void;
+  setTreeHidden: (hidden: boolean) => void;
   setTheme: (t: Theme) => void;
   clearSelectedPath: () => void;
 
@@ -324,6 +334,8 @@ interface BoardState {
   setDefaultMode: (m: string) => Promise<{ ok: boolean; error?: string }>;
   setLaunchModel: (m: string) => void;
   setLaunchEffort: (e: string) => void;
+  setLaunchContinue: (on: boolean) => void;
+  setLaunchAddDirs: (dirs: string) => void;
   setLaunchAgent: (a: string) => void;
   adoptDefaultAgent: () => void;
   /** Start an agent. `launch` is for a FORK: the session to branch from, the
@@ -385,6 +397,35 @@ interface BoardState {
   bumpTick: () => void;
 }
 
+/** Every name (lower-cased) the hub knows a person by: what they are called now,
+ *  what they were called, and each login they have linked. */
+export function myActorNames(me: { name: string; identities?: Array<{ login: string }>; aliases?: string[] }): string[] {
+  return [me.name, ...(me.aliases || []), ...(me.identities || []).map((i) => i.login)].map((n) => String(n).toLowerCase().replace(/^@/, ""));
+}
+
+const claimedActors = new Set<string>();
+
+/** Change MY display name on the hub. Yourself only (the hub refuses otherwise;
+ *  the owner renames others from Settings). `actor` is the string this machine's
+ *  hook reports, so the events already in the log follow the new name. */
+export async function renameSelf(name: string): Promise<{ ok: boolean; error?: string }> {
+  const actor = (bridge.cfg && bridge.cfg.actor) || useBoard.getState().myActor || undefined;
+  try {
+    const r = await fetch("/auth/rename", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, actor }),
+    });
+    const b = (await r.json().catch(() => ({}))) as { error?: string };
+    if (!r.ok) return { ok: false, error: b.error || `Could not rename (${r.status})` };
+    useBoard.getState().refreshWhoami();
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not connect." };
+  }
+}
+
 export type UsableAgentShape = {
   name: string;
   ok: boolean;
@@ -396,11 +437,21 @@ interface WhoStateShape {
   ok?: boolean;
   actor?: string;
   login?: string;
+  teamName?: string;
   owner?: boolean;
   allow?: string[];
   shared?: boolean;
   githubSignIn?: boolean;
-  people?: Array<{ login: string; owner?: boolean; pending?: boolean }>;
+  people?: Array<{
+    login: string;
+    key?: string;
+    owner?: boolean;
+    pending?: boolean;
+    identities?: Array<{ provider: string; login: string }>;
+    aliases?: string[];
+  }>;
+  /** Me: my display name and every identity linked to me (see hub `profile`). */
+  me?: { name: string; login: string; owner: boolean; identities: Array<{ provider: string; login: string }>; aliases: string[] } | null;
 }
 
 export interface EditorViewState {
@@ -510,6 +561,8 @@ export const useBoard = create<BoardState>((set, get) => ({
   // the next agent — restored here so a reload doesn't reset them to nothing.
   launchModel: pref("launchModel", ""),
   launchEffort: "",
+  launchContinue: false,
+  launchAddDirs: pref("launchAddDirs", ""),
   launchMode: (() => {
     const saved = pref("launchMode", "auto");
     return (MODES.some((m) => m.id === saved) ? saved : "auto") as LaunchMode;
@@ -519,7 +572,7 @@ export const useBoard = create<BoardState>((set, get) => ({
   edView: null,
   docStatus: Object.create(null) as Record<string, { state: string; detail?: string }>,
 
-  strip: { live: { model: null, context: null, cacheHit: null, cost: null }, machine: null },
+  strip: { live: { model: null, context: null, cacheHit: null, cost: null }, machine: null, limits: [] },
 
   who: { state: null, busy: false },
   index: { state: null, barPct: 0, progressText: "ready" },
@@ -629,10 +682,10 @@ export const useBoard = create<BoardState>((set, get) => ({
   /* Hidden, not unmounted: the tree keeps its open folders and its scroll
      position (it is only `visibility: hidden` at zero width, see masora.css),
      so unfolding it puts it back exactly as it was. */
-  toggleTree: () => {
-    const next = !get().treeHidden;
-    setPref("treeHidden", next ? "1" : "0");
-    set({ treeHidden: next });
+  toggleTree: () => get().setTreeHidden(!get().treeHidden),
+  setTreeHidden: (hidden) => {
+    setPref("treeHidden", hidden ? "1" : "0");
+    set({ treeHidden: hidden });
     requestMeasureEditor();
   },
   setView: (v) => {
@@ -669,6 +722,11 @@ export const useBoard = create<BoardState>((set, get) => ({
     set({ launchModel: m });
   },
   setLaunchEffort: (e) => set({ launchEffort: e }),
+  setLaunchContinue: (on) => set({ launchContinue: on }),
+  setLaunchAddDirs: (dirs) => {
+    setPref("launchAddDirs", dirs);
+    set({ launchAddDirs: dirs });
+  },
   setLaunchAgent: (a) => set({ launchAgent: a }),
 
   startAgent: (name, launch) => {
@@ -711,9 +769,18 @@ export const useBoard = create<BoardState>((set, get) => ({
       launching: false,
       ...showConversation(),
     }));
+    // claude-only flags; desktop/agent-console.js extrasFrom re-validates them.
+    const claude = name === "claude";
+    const st = get();
+    const addDirs = st.launchAddDirs.split(/\r?\n/).map((d) => d.trim()).filter(Boolean);
+    const continueLatest = claude && st.launchContinue && !(launch && launch.forkFrom);
+    if (continueLatest) set({ launchContinue: false });
     br.startAgent(name, root, {
       model,
       mode,
+      ...(claude && st.launchEffort ? { effort: st.launchEffort } : {}),
+      ...(claude && addDirs.length ? { addDirs } : {}),
+      ...(continueLatest ? { continueLatest: true } : {}),
       ...(launch && launch.forkFrom ? { forkFrom: launch.forkFrom } : {}),
       // C2/C4: when a first prompt is already known (a fork's queued
       // question), it goes to the main process too, so it can ask Masora for
@@ -727,6 +794,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       } else {
         if (closedMeanwhile(c, r.id)) return;
         c.id = r.id ? String(r.id) : null;
+        if (r.engine) c.engine = r.engine;
         // The prompt a fork was started to ask. It goes only after the spawn
         // succeeded, because a prompt sent to a console with no process is the
         // one case where the composer's own guard cannot help.
@@ -1042,6 +1110,20 @@ export const useBoard = create<BoardState>((set, get) => ({
         // a network error -- AccountSection renders that as an explicit
         // error with a Retry, rather than the comment here just claiming one.
         set({ who: { state: r && r.ok ? r : { ok: false }, busy: false } });
+        // My machine reports an actor string (config, OS user). When the hub has
+        // tied that string to me, the roster and every event now carry my
+        // display name instead, so that is what "me" has to be compared to.
+        const me = r && r.ok ? r.me : null;
+        const actor = bridge.cfg && bridge.cfg.actor;
+        if (me && actor && myActorNames(me).includes(actor.toLowerCase()) && get().myActor !== me.name) set({ myActor: me.name });
+        // A signed-in person's own machine reports this actor string (desktop sign-in
+        // sets it to the login, the hook to the OS user), so the hub is told it is
+        // theirs and the events under it join their row. Once per actor: the hub may
+        // refuse a name somebody else already holds, and asking again would loop.
+        if (me && actor && !myActorNames(me).includes(actor.toLowerCase()) && !claimedActors.has(actor.toLowerCase())) {
+          claimedActors.add(actor.toLowerCase());
+          void renameSelf(me.name);
+        }
       })
       .catch(() => set({ who: { state: { ok: false }, busy: false } }));
   },
@@ -1630,6 +1712,8 @@ function closedMeanwhile(c: ConsoleEntry, id: string | null | undefined): boolea
  */
 function reattachConsoles(held: HeldConsole[]): void {
   for (const h of held) {
+    // Exact id, not consoleById: that one falls back to a pending launch.
+    if (useBoard.getState().myConsoles.some((x) => x.id === h.id)) continue;
     const c: ConsoleEntry = {
       key: ++consoleSeq,
       id: h.id,
@@ -1650,6 +1734,8 @@ function reattachConsoles(held: HeldConsole[]): void {
       startedAt: h.startedAt,
       exitCode: null,
       ...(h.title ? { autoTitle: h.title } : {}),
+      ...(h.engine ? { engine: h.engine } : {}),
+      ...(h.label ? { label: h.label } : {}),
     };
     useBoard.setState((g) => ({ myConsoles: [...g.myConsoles, c] }));
     for (const evt of h.events) ingressAgentEvent(evt);
@@ -1724,6 +1810,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
         signalConsolesChanged();
       }
     }
+    if (limits) useBoard.setState((g) => ({ strip: { ...g.strip, limits } }));
 
     const u = usageOf(payload);
     const cost = typeof payload.total_cost_usd === "number" ? payload.total_cost_usd : null;
@@ -1758,6 +1845,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
     c.exitCode = evt.code ?? null;
     pushConsoleLine(c, "meta", `agent exited (${evt.code === null ? "signal " + evt.signal : "code " + evt.code})`);
     c.transcript = closeTranscript(c.transcript, { code: evt.code ?? null, stopped: Boolean(evt.stopped) });
+    c.draft = "";
   } else if (evt.type === "stderr") {
     /* ⚠️ STDERR IS NOT THE AGENT SPEAKING, and it used to be rendered as if it
        were. This called `appendRaw`, which appends to the OPEN ASSISTANT
@@ -1806,6 +1894,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
       pushConsoleLine(c, k as ConsoleLine["kind"], text);
     }
     c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: c.agent, localRoot, model: c.model });
+    c.draft = draftAfter(c.draft ?? "", evt.payload);
     noteModelLimit(c, evt.payload);
   } else if (evt.type === "stdout-line") {
     // Update banners and notices, not the conversation: the raw view only.
@@ -2728,6 +2817,22 @@ export function connect(): void {
   es.addEventListener("activity", (m: Event) => {
     useBoard.getState().pushEvent(JSON.parse((m as MessageEvent).data) as HubEvent);
   });
+  // The roster (settings.tsx's Account & Team section) changes on someone
+  // else's machine — an invite, a resend, a sign-in, a removal — and this is
+  // the push that replaces polling for it. The payload carries nothing
+  // (whoami is per-caller session state, not broadcastable); refetching it
+  // is the whole point of the event.
+  es.addEventListener("people", () => {
+    useBoard.getState().refreshWhoami();
+    // A rename, a link or a merge changes what the roster CALLS people, and the
+    // roster is folded from the events, so take a fresh snapshot with it.
+    void fetch("/api/state", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => {
+        if (s) useBoard.getState().applySnapshot(s);
+      })
+      .catch(() => undefined);
+  });
   es.onopen = () => {
     useBoard.getState().setConn("live");
   };
@@ -2804,6 +2909,7 @@ export function boot(): void {
       if (MODES.some((m) => m.id === saved)) {
         useBoard.setState({ defaultMode: saved, launchMode: saved as LaunchMode });
       }
+      initBoardSentry({ actor: c.actor, version: c.version });
     });
   }
 
@@ -2858,6 +2964,9 @@ export function boot(): void {
       br.onAgentEvent(ingressAgentEvent);
     }
   }
+  if (bridge.local && typeof bridge.local.onAgentAttached === "function") {
+    bridge.local.onAgentAttached((h) => reattachConsoles([h]));
+  }
   void g.refreshLocalWorkspaces().then(restoreLastRoot);
   void g.refreshLocalAgents();
 
@@ -2899,6 +3008,8 @@ interface ZevetConfigLike {
   machine?: string;
   /** This user's default permission posture; see desktop/main.js storedMode. */
   mode?: string;
+  /** electron-builder's version string; see lib/sentry.ts. */
+  version?: string;
 }
 
 /* ---------------------------------------------------------------------------
@@ -3010,12 +3121,12 @@ export async function answerAsk(id: string, picked: string[]): Promise<void> {
   }
 }
 
-export async function answerPermit(id: string, allow: boolean, reason?: string): Promise<void> {
+export async function answerPermit(id: string, allow: boolean, reason?: string, always?: boolean): Promise<void> {
   const br = bridge.local;
   useBoard.setState((g) => ({ permits: g.permits.filter((p) => p.id !== id) }));
   if (!br || typeof br.permitAnswer !== "function") return;
   try {
-    await br.permitAnswer(id, allow, reason);
+    await br.permitAnswer(id, allow, reason, always);
   } catch {
     // The agent's own timeout denies it. Failing to deliver a "yes" costs an
     // action; failing to deliver a "no" costs nothing, because no is default.
@@ -3137,8 +3248,20 @@ export function buildSplits(): Array<HTMLElement> {
       d.dataset.on = "true";
       const move = (me: PointerEvent) => {
         const lim = PANE_LIMITS[pane];
-        const w = clampPaneWidth(paneEdgeWidth(pane, me.clientX), lim[0], lim[1]);
-        useBoard.getState().setPanes({ ...useBoard.getState().panes, [pane]: w });
+        const raw = paneEdgeWidth(pane, me.clientX);
+        /* Only the tree collapses by drag — the rail has nothing that reads
+           "hidden" for it to snap to. Below half its own floor, let go
+           entirely rather than pin it at the floor: `setTreeHidden` is the
+           same flag the keyboard shortcut flips, `--tree: 0` in masora.css
+           already does the visual collapse, and `panes.tree` is left exactly
+           where it was — that's the "last open width" §3 restores to. */
+        if (pane === "tree" && raw < lim[0] / 2) {
+          if (!useBoard.getState().treeHidden) useBoard.getState().setTreeHidden(true);
+        } else {
+          if (pane === "tree" && useBoard.getState().treeHidden) useBoard.getState().setTreeHidden(false);
+          const w = clampPaneWidth(raw, lim[0], lim[1]);
+          useBoard.getState().setPanes({ ...useBoard.getState().panes, [pane]: w });
+        }
         applyPanes();
         positionSplits();
       };

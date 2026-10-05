@@ -79,6 +79,29 @@ describe("config", () => {
     assert.equal(cfg.repos[path.resolve("/repo/a")], true);
   });
 
+  test("no canonical (an older Masora): display falls back to member_email", () => {
+    const { encrypt } = fakeCrypto();
+    masora.saveToken("t", encrypt, "old@b.co");
+    assert.equal(masora.readConfig().member, "old@b.co");
+  });
+
+  test("a canonical identity replaces member_email: name preferred, email as the fallback", () => {
+    const { encrypt } = fakeCrypto();
+    masora.saveToken("t", encrypt, "old@b.co", { name: "Andrew", email: "andrew@real.co", aliases: [] });
+    assert.equal(masora.readConfig().member, "Andrew");
+
+    masora.saveToken("t", encrypt, "old@b.co", { name: null, email: "andrew@real.co", aliases: [] });
+    assert.equal(masora.readConfig().member, "andrew@real.co");
+  });
+
+  test("unpair clears a stored canonical too", () => {
+    const { encrypt } = fakeCrypto();
+    masora.saveToken("t", encrypt, "old@b.co", { name: "Andrew", email: "andrew@real.co", aliases: [] });
+    masora.unpair();
+    masora.saveToken("t2", encrypt, "old@b.co");
+    assert.equal(masora.readConfig().member, "old@b.co");
+  });
+
   test("setRepoOpted(dir, false) removes the key rather than storing false", () => {
     masora.setRepoOpted("/repo/b", true);
     assert.equal(masora.reposFor()[path.resolve("/repo/b")], true);

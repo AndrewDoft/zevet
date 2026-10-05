@@ -40,6 +40,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
+const agentCatalogs = require("./agent-catalogs.js");
 
 const IS_WINDOWS = process.platform === "win32";
 
@@ -344,7 +345,9 @@ const MODES = {
   auto: {
     label: "Auto",
     claude: ["--permission-mode", "acceptEdits"],
-    codex: ["--sandbox", "workspace-write", "--approve-for-me"],
+    // MEASURED 2026-09-24, codex-cli 0.155.0-alpha.9.2: --approve-for-me carries the
+    // workspace-write sandbox itself and exits 2 if --sandbox is also given.
+    codex: ["--approve-for-me"],
     opencode: ["--auto"],
   },
   dangerous: {
@@ -409,12 +412,71 @@ const CAN_FORK = new Set(["claude", "codex"]);
  */
 const CAN_RESUME = new Set(["claude", "codex", "opencode"]);
 
+/**
+ * `codex exec resume` takes neither --sandbox nor --approve-for-me (measured
+ * 2026-09-24, codex-cli 0.155.0-alpha.9.2: exit 2, "unexpected argument"); it
+ * takes -m, --dangerously-bypass-approvals-and-sandbox and -c key=value. So the
+ * postures become the config keys those flags set. The value is left a bare
+ * string, which codex reads as a literal when it is not TOML, so no quote ever
+ * reaches a cmd.exe shim's argv.
+ */
+function resumeSafe(extra) {
+  const out = [];
+  for (let i = 0; i < extra.length; i++) {
+    if (extra[i] === "--sandbox") out.push("-c", `sandbox_mode=${extra[++i]}`);
+    else if (extra[i] === "--approve-for-me") out.push("-c", "sandbox_mode=workspace-write", "-c", "approval_policy=never");
+    else out.push(extra[i]);
+  }
+  return out;
+}
+
+/** `claude --help`: --effort <level> (low, medium, high, xhigh, max). */
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
+/**
+ * The launch options a renderer may ask for beyond model and mode, reduced to
+ * what is safe to put on argv. The renderer is the untrusted side of the
+ * bridge: an extra directory must be an absolute path to a directory that
+ * exists, and effort must be one of the CLI's own levels — anything else is
+ * dropped rather than passed on. claude only; the other CLIs have no flag.
+ */
+function extrasFrom(opts) {
+  const o = opts || {};
+  const addDirs = [];
+  for (const d of Array.isArray(o.addDirs) ? o.addDirs : []) {
+    if (typeof d !== "string" || !path.isAbsolute(d) || addDirs.includes(d)) continue;
+    try {
+      if (fs.statSync(d).isDirectory()) addDirs.push(d);
+    } catch {
+      // Missing or unreadable: not a directory claude could use either.
+    }
+  }
+  return {
+    ...(addDirs.length ? { addDirs } : {}),
+    ...(EFFORTS.includes(o.effort) ? { effort: o.effort } : {}),
+    ...(o.continueLatest === true ? { continueLatest: true } : {}),
+  };
+}
+
 function invocationFor(agent, opts) {
   const o = opts || {};
   const extra = [];
   // A model is only passed when one was chosen; the CLI's own default is a
   // better answer than a value zevet guessed.
-  if (typeof o.model === "string" && o.model.trim()) extra.push(agent === "claude" ? "--model" : "-m", o.model.trim());
+  if (typeof o.model === "string" && o.model.trim()) {
+    const model = o.model.trim();
+    // codex forwards -m straight to OpenAI with no local validation of its own,
+    // and the list the picker offers when this machine has never talked to
+    // codex (no ~/.codex/models_cache.json yet) is agent-models.generated.mjs's
+    // shipped snapshot from whoever last ran the sync script -- not proof the
+    // id exists on THIS account's plan. Sending an id codex does not recognize
+    // is a provider 400 with no reply at all (this is how a brand-new install's
+    // very first Codex message can fail before the real cache ever gets
+    // written). Only trust a codex model against its own cache; with none, or
+    // the id missing from it, say nothing and let codex's own default answer.
+    const trusted = agent !== "codex" || (agentCatalogs.codexModels(o.home) || []).some((m) => m.id === model);
+    if (trusted) extra.push(agent === "claude" ? "--model" : "-m", model);
+  }
   extra.push(...modeFlags(agent, o.mode).flags);
 
   const forkFrom =
@@ -442,6 +504,10 @@ function invocationFor(agent, opts) {
     if (typeof o.permissionTool === "string" && o.permissionTool.trim()) {
       extra.push("--permission-prompt-tool", o.permissionTool.trim());
     }
+    // Repeated rather than variadic: `--add-dir a b` would swallow whatever
+    // positional follows. See extrasFrom for what reaches here.
+    for (const d of Array.isArray(o.addDirs) ? o.addDirs : []) extra.push("--add-dir", d);
+    if (EFFORTS.includes(o.effort)) extra.push("--effort", o.effort);
     return [
       "-p",
       "--input-format",
@@ -449,20 +515,26 @@ function invocationFor(agent, opts) {
       "--output-format",
       "stream-json",
       "--verbose",
-      /* ⚠️ NO --include-partial-messages. It makes claude wrap every raw SSE
-       * event in a `stream_event` payload, and zevet has never had a reader
-       * for one: each arrived at transcript.mjs's "unknown but real" branch
-       * and was printed as the literal text `[claude: stream_event]` INTO THE
-       * ASSISTANT'S MESSAGE. Measured in the running app 2026-09-21 — a
-       * one-sentence question answered with dozens of them, and nothing else.
-       *
-       * Asking for them buys nothing either way: the same content arrives
-       * complete as an `assistant` payload PER CONTENT BLOCK, which is what
-       * the board renders and what it rendered before this flag was added.
-       * The partials would only be useful token-by-token, and using them that
-       * way means de-duplicating against the block that follows. */
+      /* PARTIAL MESSAGES ARE ON, and the thing they used to break is now
+       * handled on the reading side. History: with this flag claude wraps every
+       * raw SSE event in a `stream_event` payload, transcript.mjs had no reader
+       * for one, and each printed the literal text `[claude: stream_event]` into
+       * the assistant's message (measured in the running app 2026-09-21).
+       * transcript.mjs still DROPS them — they are never transcript content.
+       * Instead lib/chat-stream.mjs's `draftAfter` grows a view-only `draft`
+       * from the text deltas, and the complete `assistant` block replaces it, so
+       * nothing is counted twice. desktop/console-log.js does not keep them
+       * (hundreds per answer would push real events out of a reload's replay).
+       * test/agent-console.test.mjs and test/transcript.test.mjs pin both halves. */
+      "--include-partial-messages",
       "--replay-user-messages",
-      ...(forkFrom ? ["--resume", forkFrom, "--fork-session"] : resumeFrom ? ["--resume", resumeFrom] : []),
+      ...(forkFrom
+        ? ["--resume", forkFrom, "--fork-session"]
+        : resumeFrom
+        ? ["--resume", resumeFrom]
+        : o.continueLatest === true
+        ? ["--continue"]
+        : []),
       ...extra,
     ];
   }
@@ -482,7 +554,7 @@ function invocationFor(agent, opts) {
   // so it goes immediately after `exec` — before the flags and before the `-`,
   // which is still the prompt and still last.
   if (forkFrom) return ["exec", "fork", forkFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
-  if (resumeFrom) return ["exec", "resume", resumeFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
+  if (resumeFrom) return ["exec", "resume", resumeFrom, "--skip-git-repo-check", "--json", ...resumeSafe(extra), "-"];
   return ["exec", "--skip-git-repo-check", "--json", ...extra, "-"];
 }
 
@@ -904,6 +976,7 @@ module.exports = {
   MODES,
   modeFlags,
   invocationFor,
+  extrasFrom,
   resolveAgent,
   startConsole,
   // Exported for the suite, which tests these directly rather than inferring

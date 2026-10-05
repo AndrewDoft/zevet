@@ -14,7 +14,15 @@ import { chromium } from "playwright-core";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
 const DESKTOP = path.join(ROOT, "desktop");
-const STATE_FILE = path.join(HERE, ".state.json");
+// BUG-2026-09-28: a single fixed path meant any two test FILES that both
+// drive Electron (setup-window.test.mjs, hub-unreachable.test.mjs, and now
+// setup-sso-e2e.test.mjs) collided the moment `node --test` ran them
+// concurrently — the default — each thinking the other's launch was its own
+// ("already launched (pid N); run close first"), measured on CI once a
+// third such file existed to make the race land every time instead of most
+// of the time. ZEVET_DRIVE_STATE lets each caller point at its own file;
+// every `before()` in this repo's own drive-based test files sets one.
+const STATE_FILE = process.env.ZEVET_DRIVE_STATE ? path.resolve(process.env.ZEVET_DRIVE_STATE) : path.join(HERE, ".state.json");
 
 function loadState() {
   try {
@@ -37,7 +45,7 @@ function alive(pid) {
   }
 }
 
-async function waitForCDP(port, timeoutMs = 30000) {
+async function waitForCDP(port, timeoutMs = 60000) {
   const deadline = Date.now() + timeoutMs;
   let lastErr;
   while (Date.now() < deadline) {
@@ -60,8 +68,13 @@ async function cmdLaunch() {
 
   // A fresh, empty profile: no ~/.zevet config (ZEVET_HOME), no Electron
   // userData (--user-data-dir), so the app looks exactly like a first install.
+  //
+  // A caller that has ALREADY set ZEVET_HOME (and put a config.json in it
+  // before calling "launch") is asking for a machine that looks already set
+  // up, not a fresh one — e.g. a test of the board window itself rather than
+  // setup. Respected here rather than always overwritten with a new empty one.
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-drive-"));
-  const home = path.join(base, "zevet-home");
+  const home = process.env.ZEVET_HOME ? path.resolve(process.env.ZEVET_HOME) : path.join(base, "zevet-home");
   const userData = path.join(base, "user-data");
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(userData, { recursive: true });
@@ -80,6 +93,14 @@ async function cmdLaunch() {
       env: {
         ...process.env,
         ZEVET_HOME: home,
+        // The installer writes ~/.codex, ~/.config/opencode and ~/.claude, so a
+        // throwaway ZEVET_HOME alone still edits the real user's agent configs.
+        HOME: base,
+        USERPROFILE: base,
+        // Never let a test run start a pairing against a Masora that is really running here.
+        ZEVET_MASORA_URL: process.env.ZEVET_MASORA_URL || "http://127.0.0.1:1",
+        APPDATA: path.join(base, "appdata"),
+        LOCALAPPDATA: path.join(base, "localappdata"),
         ZEVET_TEST_HOOKS: "1",
         ZEVET_ALLOW_MULTI: "1",
       },

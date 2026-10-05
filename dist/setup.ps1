@@ -53,11 +53,11 @@ $major = [int](((& node --version) -replace '^v','') -split '\.')[0]
 if ($major -lt 20) { Fail "Node $major is too old. zevet needs Node 20 or newer." }
 
 # --- What we need from the person ---------------------------------------
-if (-not $Hub)    { $Hub    = Read-Host "Hub URL (ask Andrew)" }
+if (-not $Hub)    { $Hub    = if ($env:ZEVET_HUB) { $env:ZEVET_HUB } else { "https://34-74-69-129.sslip.io" } }
 if (-not $Secret) { $Secret = Read-Host "Master secret (ask Andrew)" }
 if (-not $Name)   { $Name   = Read-Host "Your name on the board (e.g. michael)" }
 $Hub = $Hub.TrimEnd('/')
-if (-not $Hub -or -not $Secret -or -not $Name) { Fail "hub, master secret and name are all required." }
+if (-not $Hub -or -not $Secret -or -not $Name) { Fail "team key and name are required." }
 
 # --- Derive the token this machine will present --------------------------
 # INLINED, NOT IMPORTED, for the same reason setup.sh inlines it: at this point
@@ -106,7 +106,7 @@ if (-not $Token -or $Token -eq "BAD") {
 
 if ($Hub -notmatch '^https://' -and $Hub -notmatch '^http://(127\.0\.0\.1|localhost)') {
   Write-Host ""
-  Write-Host "  Note: $Hub is plain HTTP." -ForegroundColor Yellow
+  Write-Host "  Note: connection is not encrypted." -ForegroundColor Yellow
   Write-Host "  The token and everything zevet reports travel unencrypted, and anyone" -ForegroundColor Yellow
   Write-Host "  who can alter traffic on the way can replace the client code this" -ForegroundColor Yellow
   Write-Host "  installs. Fine on a trusted LAN; not fine on cafe wifi." -ForegroundColor Yellow
@@ -122,18 +122,18 @@ New-Item -ItemType Directory -Force -Path $clientDir | Out-Null
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
 
 # --- Pull the current client --------------------------------------------
-Write-Host "Fetching the current client from $Hub ..."
+Write-Host "Fetching the current client ..."
 $headers = @{ "x-zevet-token" = $Token }
 try {
   $manifest = Invoke-RestMethod -Uri "$Hub/dist/manifest.json" -Headers $headers -TimeoutSec 20 -MaximumRedirection 0
 } catch {
-  Fail "could not reach the hub, or the token was rejected. Check both with Andrew.`n       ($($_.Exception.Message))"
+  Fail "could not connect, or the key was rejected.`n       ($($_.Exception.Message))"
 }
-if (-not $manifest.files) { Fail "the hub did not return a usable manifest." }
+if (-not $manifest.files) { Fail "the server did not return a usable manifest." }
 
 # Validate the WHOLE manifest before fetching any of it.
 foreach ($f in $manifest.files) {
-  if (-not (Test-SafeName $f.name)) { Fail "the hub offered a file name this installer will not write: '$($f.name)'. Nothing was installed." }
+  if (-not (Test-SafeName $f.name)) { Fail "the server offered a file name this installer will not write: '$($f.name)'. Nothing was installed." }
   if ($f.sha256 -notmatch '^[0-9a-f]{64}$') { Fail "'$($f.name)' has no usable checksum. Nothing was installed." }
 }
 
@@ -150,7 +150,7 @@ foreach ($f in $manifest.files) {
   $got = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash.ToLower()
   if ($got -ne $f.sha256.ToLower()) {
     Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
-    Fail "$($f.name) did not match the hub's checksum. Nothing was installed."
+    Fail "$($f.name) did not match its checksum. Nothing was installed."
   }
   $moves += @{ From = $tmp; To = (Join-Path $clientDir $f.name) }
   Write-Host "  ok  $($f.name)"
@@ -206,8 +206,7 @@ if ($Repo) {
 
 # Deliberately not echoing the MASTER SECRET back: this line gets pasted into
 # chat, and the secret is also the document key.
-Write-Host "The board: $Hub/?token=<the derived token printed below>"
-Write-Host "Updates install themselves from the hub; there's nothing to re-download."
+Write-Host "Updates install themselves."
 
 # --- The line the hub operator needs -------------------------------------
 # The derived token IS printed, and that is a considered trade rather than an

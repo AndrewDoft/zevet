@@ -3,6 +3,7 @@ import { useBoard, selectStrip } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { WorkspacePicker } from "./workspaces";
 import { ago } from "../lib/fmt";
+import { windowParts } from "../lib/when.mjs";
 import type { Conn } from "../lib/types";
 
 /* `bar` and `tint` went with ctx and cache. They drew the sparkline and the
@@ -11,15 +12,6 @@ import type { Conn } from "../lib/types";
    whichever agent spoke last. Nothing else on this strip is a proportion, so
    a bar helper with no caller is the kind of thing that gets re-used badly
    later. Deleted rather than left behind. */
-
-/** Same rounding as lib/fmt.ts § tokens, and for the same reason — see the
- *  warning there. This copy takes a nullable, which that one does not. */
-function tokens(n: number | null | undefined) {
-  if (n == null) return "";
-  if (n >= 999500) return (n / 1000000).toFixed(1) + "M";
-  if (n < 1000) return String(Math.round(n));
-  return (n / 1000).toFixed(0) + "k";
-}
 
 export function connLabel(c: Conn) {
   if (c === "live") return "live";
@@ -36,9 +28,11 @@ function Sp({ cls, text, title }: { cls?: string; text: string | number; title?:
 }
 
 export function Strip() {
-  const { live, machine } = useBoard(selectStrip);
+  const { live, machine, limits } = useBoard(selectStrip);
   const conn = useBoard((s) => s.conn);
   const localError = useBoard((s) => s.localError);
+  const treeHidden = useBoard((s) => s.treeHidden);
+  const setTreeHidden = useBoard((s) => s.setTreeHidden);
   /* ⚠️ THREE LINES, NOT ONE SEGMENT PER LINE. `.strip` is a column, so every
      segment used to take a row of its own and the rail's corner was four
      stacked words. The grouping is by what a glance is actually asking:
@@ -60,6 +54,19 @@ export function Strip() {
      Desktop only: with no bridge there is no folder to open, and
      WorkspacesPane still renders the browser repo filter in the rail. */
   if (bridge.local) where.push(<Seg key="repo-pick"><WorkspacePicker /></Seg>);
+
+  /* Beside the repo picker, and only while the tree is actually shut:
+     dragging it closed (or Ctrl/Cmd+B) leaves no control on screen that
+     opens it again otherwise. Label only, zevet style — no caption under it. */
+  if (bridge.local && treeHidden) {
+    where.push(
+      <Seg key="open-tree">
+        <button type="button" className="follow" onClick={() => setTreeHidden(false)}>
+          Open tree
+        </button>
+      </Seg>,
+    );
+  }
 
   if (live.model) rest.push(<Seg key="model"><Sp cls="dim" text={live.model} /></Seg>);
 
@@ -85,22 +92,21 @@ export function Strip() {
      What stays on the strip is what belongs to the machine or the repo rather
      than to one run: branch, ahead/behind, spend windows. */
 
-  const burn = machine && (machine.burn as { "5h"?: { tokens?: number }; "7d"?: { tokens?: number }; cost?: number } | undefined);
-  if (burn) {
-    const b: ReactNode[] = [<Sp key="k" cls="k" text="spent" />];
-    (["5h", "7d"] as const).forEach((w) => {
-      if (burn[w] && burn[w].tokens) {
-        // A middle dot between the two windows, so "5h 73k 7d 73k" — two
-        // numbers back to back with nothing marking where one window ends and
-        // the next begins — reads as "5h 73k · 7d 73k" instead.
-        if (b.length > 1) b.push(<Sp key={w + "sep"} cls="dim" text="·" />);
-        b.push(<Sp key={w} cls="dim" text={w} />);
-        b.push(<Sp key={w + "v"} cls="v" text={tokens(burn[w].tokens)} />);
-      }
-    });
-    if (b.length > 1) rest.push(<Seg key="spent">{b}</Seg>);
+  /* The account's real 5h/7d windows: percent used and time to reset, off
+     claude's own `rate_limit_event`. This used to show zevet's token tally
+     for each window ("spent 5h 73k · 7d 73k"), which is not the limit and
+     reads identical until the app has been open five hours. */
+  const lim: ReactNode[] = [];
+  for (const w of limits) {
+    const [label, pct, left] = windowParts(w);
+    if (lim.length) lim.push(<Sp key={w.key + "sep"} cls="dim" text="·" />);
+    lim.push(<Sp key={w.key} cls="dim" text={label} />);
+    lim.push(<Sp key={w.key + "v"} cls={w.utilization >= 0.8 ? "warn" : "v"} text={pct} />);
+    if (left) lim.push(<Sp key={w.key + "t"} cls="dim" text={left} />);
   }
+  if (lim.length) rest.push(<Seg key="limits">{lim}</Seg>);
 
+  const burn = machine && (machine.burn as { cost?: number } | undefined);
   const cost = burn && typeof burn.cost === "number" && burn.cost > 0 ? burn.cost : live.cost;
   if (typeof cost === "number" && cost > 0) {
     rest.push(<Seg key="cost"><Sp cls="dim" text={"$" + cost.toFixed(2)} /></Seg>);

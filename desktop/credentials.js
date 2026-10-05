@@ -13,11 +13,11 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { zevetHome, atomicWriteJson } = require("./zevet-home.js");
 
-const HOME = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+const HOME = zevetHome();
 const CONFIG_PATH = path.join(HOME, "credentials.json");
 
 function readRaw() {
@@ -33,7 +33,7 @@ function readRaw() {
 
 function writeRaw(raw) {
   fs.mkdirSync(HOME, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(raw, null, 2)}\n`, "utf8");
+  atomicWriteJson(CONFIG_PATH, raw);
   try {
     fs.chmodSync(CONFIG_PATH, 0o600);
   } catch {

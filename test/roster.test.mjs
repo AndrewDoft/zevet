@@ -23,6 +23,7 @@ const {
   liveActorsOf,
   newestHunk,
   spritesByPath,
+  latestToolForActor,
   turnSummary,
   agoText,
 } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "roster.mjs")).href);
@@ -107,6 +108,13 @@ describe("follow mode", () => {
 });
 
 describe("roster rendering", () => {
+  test("live agent rows and conversation headers carry readable sprites", () => {
+    const people = readFileSync(path.join(ROOT, "board", "src", "components", "people.tsx"), "utf8");
+    const sessions = readFileSync(path.join(ROOT, "board", "src", "components", "sessions.tsx"), "utf8");
+    assert.match(people, /<AgentSprite[^>]*repo=/);
+    assert.match(sessions, /<AgentSprite[^>]*size="header"/);
+    assert.match(readFileSync(path.join(ROOT, "board", "src", "components", "tree.tsx"), "utf8"), /width: 24, height: 16/);
+  });
   test("the rail says who and what is running, and never a tool call", () => {
     const people = src("components/people.tsx");
     // ⚠️ THE TOOL TRACE IS GONE ON PURPOSE. Seven rows of `currentOf`/`turnOf`
@@ -214,7 +222,7 @@ describe("the default permission posture", () => {
     // One table of modes, and it is the one that builds the actual flags.
     const guard = /hasOwnProperty\.call\(agentConsole\.MODES, /g;
     assert.ok((main.match(guard) || []).length >= 2, "a mode list was copied instead of shared");
-    assert.ok(main.includes('ipcMain.handle("local:defaultMode"'), "nothing can set it");
+    assert.ok(main.includes('bridge.handle("local:defaultMode"'), "nothing can set it");
   });
 
   test("the board seeds from it and the sheet can change it", () => {
@@ -299,6 +307,18 @@ describe("file-tree sprite map", () => {
       ev({ target: null }),
     ];
     assert.deepEqual(spritesByPath(events, opts), {});
+  });
+});
+
+describe("live agent sprite event", () => {
+  test("selects the latest live tool or prompt for an actor", () => {
+    const events = [
+      ev({ actor: "andrew", repo: "zevet", kind: "tool", tool: "Read", ts: NOW - 4000 }),
+      ev({ actor: "andrew", repo: "zevet", kind: "prompt", tool: "", ts: NOW - 1000 }),
+      ev({ actor: "andrew", repo: "other", kind: "tool", tool: "Edit", ts: NOW - 100 }),
+    ];
+    assert.equal(latestToolForActor(events, { repoName: "zevet", actor: "andrew", now: NOW, liveAfterMs: 60_000 }).kind, "prompt");
+    assert.equal(latestToolForActor(events, { repoName: "zevet", actor: "andrew", now: NOW, liveAfterMs: 500 }), null);
   });
 });
 

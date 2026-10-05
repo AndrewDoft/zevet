@@ -1,6 +1,6 @@
 """Check the mounted deliverable, including Finder's saved install layout.
 
-Uses electron-builder's existing DS_Store reader; no extra dependency.
+Needs `pip install ds-store==1.3.3 mac-alias==2.2.3` (electron-builder 26 no longer vendors them).
 Called by smoke-macos.mjs after mounting the final DMG.
 """
 from pathlib import Path
@@ -11,7 +11,6 @@ import sys
 import tempfile
 
 root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(root / "desktop/node_modules/dmg-builder/vendor"))
 from ds_store import DSStore
 
 mount = Path(sys.argv[1])
@@ -41,7 +40,7 @@ for x, y in locations:
     assert radius + 110 <= y <= height - radius - 80, "Install icon or label is clipped"
 
 # TIFF contains a standard and Retina image, both at the same physical size.
-backgrounds = list((mount / ".background").glob("*.tiff"))
+backgrounds = list(mount.glob(".background.tiff")) or list((mount / ".background").glob("*.tiff"))
 assert len(backgrounds) == 1, "Installer background is missing"
 data = backgrounds[0].read_bytes()
 assert data[:4] in (b"II\x2a\x00", b"MM\x00\x2a"), "Invalid TIFF background"

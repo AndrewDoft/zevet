@@ -194,6 +194,14 @@ export function appendAgentPayload(state, payload, opts = {}) {
  * opens a turn to carry it. A run that ends with no output and NO error still
  * adds nothing.
  */
+/** Whether a turn is in flight: an assistant message is open, or the last
+ *  message is a prompt still waiting for its first reply. False after the
+ *  turn's `result` (closeTranscript) -- the process may live on, idle. */
+export function turnInFlight(state) {
+  const last = state.messages[state.messages.length - 1];
+  return state.openIndex >= 0 || (last !== undefined && last.role === "user");
+}
+
 export function closeTranscript(state, { code = null, error = null, stopped = false } = {}) {
   let s = { ...state, running: false };
   if (s.openIndex < 0 && !error) return s;

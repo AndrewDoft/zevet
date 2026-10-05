@@ -13,6 +13,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { clientPayload } from "./sign-client-manifest.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -49,8 +50,19 @@ export function checkClientFiles(root = ROOT) {
   return null;
 }
 
+/** hub/client-manifest.signed.json must cover exactly this tree's client files and version. */
+export function checkSignedManifest(root = ROOT) {
+  const file = path.join(root, "hub", "client-manifest.signed.json");
+  if (!existsSync(file)) return "hub/client-manifest.signed.json is missing — run scripts/sign-client-manifest.mjs (docs/RELEASING.md)";
+  const { payload } = JSON.parse(readFileSync(file, "utf8"));
+  if (JSON.stringify(payload) !== JSON.stringify(clientPayload(root))) {
+    return "hub/client-manifest.signed.json is stale (client files or version changed) — re-run scripts/sign-client-manifest.mjs and commit it";
+  }
+  return null;
+}
+
 function git(...args) {
-  return execFileSync("git", args, { cwd: ROOT, stdio: "pipe", encoding: "utf8" }).trim();
+  return execFileSync("git", args, { cwd: ROOT, stdio: "pipe", encoding: "utf8", windowsHide: true }).trim();
 }
 
 function main() {
@@ -71,6 +83,9 @@ function main() {
 
   const c = checkClientFiles();
   if (c) return fail(c);
+
+  const sm = checkSignedManifest();
+  if (sm) return fail(sm);
 
   console.log(`zevet ${version} is releasable.`);
   console.log("");

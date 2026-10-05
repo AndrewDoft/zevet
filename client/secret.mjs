@@ -240,3 +240,18 @@ export function sameToken(a, b) {
   if (x.length !== y.length) return false;
   return timingSafeEqual(x, y);
 }
+
+/**
+ * Would sending the hub token to this URL put it on the network in cleartext?
+ * True for `http:` to anything but loopback; loopback http stays allowed for
+ * local dev. Anything unparseable is treated as insecure.
+ */
+export function insecureHub(hub) {
+  try {
+    const u = new URL(hub);
+    if (u.protocol === "https:") return false;
+    return !(u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname));
+  } catch {
+    return true;
+  }
+}

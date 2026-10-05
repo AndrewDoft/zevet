@@ -69,9 +69,9 @@ test('buildTree still dots and shows a real touched file', () => {
 });
 
 test('desktop config supplies the event producers machine identity', () => {
-  const source = read('desktop/main.js').match(/ipcMain\.handle\("zevet:config", \(\) => \{[^]*?^\}\);/m)[0];
+  const source = read('desktop/main.js').match(/bridge\.handle\("zevet:config", \(\) => \{[^]*?^\}\);/m)[0];
   let config;
-  vm.runInNewContext(source, { ipcMain: { handle: (_name, handler) => { config = handler(); } }, readConfig: () => ({ actor: 'me' }), storedMode: () => '', os: { hostname: () => 'my-pc' } });
+  vm.runInNewContext(source, { bridge: { handle: (_name, handler) => { config = handler(); } }, readConfig: () => ({ actor: 'me' }), storedMode: () => '', os: { hostname: () => 'my-pc' }, app: { getVersion: () => '0.0.0' }, APP_VERSION: '0.0.0' });
   assert.equal(config.machine, 'my-pc');
 });
 

@@ -14,7 +14,7 @@ npm test              # the whole gate, from the repo root
 
 Green, or stop. The gate includes `test/desktop-packaging.test.mjs`, which is
 what catches the classic failure: a `require` added to `main.js` without adding
-the file to `build.files` in `desktop/package.json`, which produces an app that
+the file to `payload.files` in `desktop/package.json`, which produces an app that
 crashes on launch and a build that succeeded.
 
 ## 1. Bump the version
@@ -77,6 +77,50 @@ off the bytes that are about to be published.
 `--notes` is one short sentence. It is shown in the rail under "Version 0.2.0 is
 ready", in a 258px column, so it is a line and not a changelog.
 
+**The feed is signed, and unsigned feeds are rejected by the app.** The script
+refuses to write one without the private key:
+
+```
+$env:ZEVET_UPDATE_SIGNING_KEY = (pwsh -NoProfile -File C:/Users/andre/.claude/bin/update-signing-key.ps1 zevet | Out-String)
+node scripts/make-feed.mjs ./release-0.2.0 --notes "..."
+```
+
+Never log or commit that PEM. The same value is the GitHub Actions secret
+`ZEVET_UPDATE_SIGNING_KEY` on `AndrewDoft/zevet` (nothing in Actions builds the feed
+today; it is there so one can). To re-sign a feed that is already published, in place:
+`node scripts/make-feed.mjs --sign-only zevet-latest.json`.
+
+Scheme (the same as Zevet Voice's `updates/signing.py`): Ed25519 over
+`"zevet-update-v1\n"` (the domain string plus ONE newline byte) followed by the canonical
+JSON of `payload` (sorted keys, `,`/`:` separators, non-ASCII left as is). The feed keeps its
+old top-level `version`/`notes`/`platforms` so installed apps that predate signing keep
+updating; new apps read only `payload` and `signature`
+(`{algorithm:"ed25519", key_id:"zevet-2026-09", signature:<base64>}`). Pinned public key
+(raw, base64) `WtLCaM3MBForULoSLJ0tYRmPyr4fOv24wBbugXSahZc=`, id `zevet-2026-09`, in
+`desktop/update-signing.js`. Rotating: ship an app that pins both, then retire the old id.
+
+Before an installer is offered, the app also checks its publisher (Authenticode
+`CN=Andrew Doft`, or Developer ID team `27C8FVB83B`). It is enforced when the running app
+carries that publisher itself and log-only otherwise, so unsigned dev builds still update.
+
+### The hub's client manifest
+
+`hub/server.mjs` serves `/dist/manifest.json`; installed clients (`client/updater.mjs`)
+run the code it lists. It is signed the same way with the same key under the domain
+`"zevet-client-v1\n"`. The hub holds no private key, so the signature is made at release time:
+
+```
+$env:ZEVET_UPDATE_SIGNING_KEY = (pwsh -NoProfile -File C:/Users/andre/.claude/bin/update-signing-key.ps1 zevet | Out-String)
+node scripts/sign-client-manifest.mjs     # writes hub/client-manifest.signed.json — commit it
+```
+
+Run it after ANY change under `client/` and after every version bump.
+`scripts/release-check.mjs` fails while the file is stale. A stale or missing file is not
+fatal to the hub: it then serves the unsigned manifest, which current clients reject, so
+client updates pause until the file is re-signed and the hub redeployed. Clients also refuse
+a plain-`http` hub (loopback excepted). For a local dev hub only,
+`ZEVET_ALLOW_UNSIGNED_MANIFEST=1` makes the updater accept an unsigned manifest.
+
 ## 4. Upload
 
 The download host is `/srv/masora/downloads` on the GCE box `masora-app`
@@ -107,6 +151,68 @@ Then check it from outside:
 ```
 curl -s https://usemasora.com/download/zevet-latest.json
 curl -sI https://usemasora.com/download/zevet-0.2.0-windows-x64-setup.exe | head -3
+```
+
+## 4a. Repointing the stable download links
+
+`https://usemasora.com/download/Zevet.dmg` and `.../Zevet-Setup.exe` are the
+links that never change — the invite email (`hub/mailer.mjs`) and anything
+else that should survive a release both use these, not a versioned filename.
+Caddy rewrites them to the versioned file:
+
+```
+handle /download/Zevet.dmg {
+	root * /srv/downloads
+	rewrite * /zevet-0.2.0-macos-arm64.dmg
+	...
+}
+handle /download/Zevet-Setup.exe {
+	root * /srv/downloads
+	rewrite * /zevet-0.2.0-windows-x64-setup.exe
+	...
+}
+```
+
+⚠️ **Edit `/srv/masora/Caddyfile` in place — never `sed -i`.** `sed -i` writes a
+new inode and renames it over the old one; `/srv/masora/Caddyfile` is bind-mounted
+into the caddy container, which is still holding the OLD inode open, so the
+container goes on serving the pre-edit file until it is recreated — the exact
+trap `docs/RELEASING.md`'s hub section and `masora-landing/next.config.ts`
+both document for the same reason. A python `open(..., "r+")` that writes and
+truncates keeps the original inode:
+
+```
+gcloud compute ssh masora-app --tunnel-through-iap --zone us-east1-b --command '
+  sudo cp /srv/masora/Caddyfile /srv/masora/Caddyfile.bak-$(date +%Y%m%d-%H%M%S)
+  sudo python3 - <<PYEOF
+import re
+p = "/srv/masora/Caddyfile"
+with open(p, "r+") as f:
+    text = f.read()
+    text = re.sub(r"zevet-[0-9.]+-macos-arm64\.dmg", "zevet-0.2.0-macos-arm64.dmg", text)
+    text = re.sub(r"zevet-[0-9.]+-windows-x64-setup\.exe", "zevet-0.2.0-windows-x64-setup.exe", text)
+    f.seek(0)
+    f.write(text)
+    f.truncate()
+PYEOF
+  '
+```
+
+Confirm the running container actually sees the new text (not just the file on
+the host) before reloading:
+
+```
+gcloud compute ssh masora-app --tunnel-through-iap --zone us-east1-b --command \
+  'docker exec $(docker ps -qf name=caddy) grep -n "zevet-0.2.0" /srv/masora/Caddyfile'
+gcloud compute ssh masora-app --tunnel-through-iap --zone us-east1-b --command \
+  'sudo docker exec $(docker ps -qf name=caddy) caddy reload --config /etc/caddy/Caddyfile'
+```
+
+Then from outside, confirm the stable links now 302/serve the new files:
+
+```
+curl -sI https://usemasora.com/download/Zevet.dmg | head -3
+curl -sI https://usemasora.com/download/Zevet-Setup.exe | head -3
 ```
 
 ## 5. The landing page points itself
@@ -169,6 +275,64 @@ row. Click it; on Windows the app exits and comes back on the new version.
 If it says nothing at all, the phases that are deliberately silent are
 "checking" and "current" — Settings shows the real state and the error text.
 
+## 7. Payload releases: publishing IS the update
+
+`desktop/main.js` and everything it requires (`payload.files` in `desktop/package.json`, plus
+`client/*.mjs`) is the **payload**; `bootstrap.js`, `payload-config.js`, `update-signing.js`,
+`app-update.js`, Electron and the native modules are the **shell**. The installer carries both
+(the payload as `resources/app-core`, the seed). The installer feed above updates the shell;
+running apps take a payload by themselves, with no installer and no bar.
+
+**Which release is which.** Changed only payload files → publish a payload and leave
+`zevet-latest.json` alone (an app that sees a newer installer shows the update bar). Changed
+`bootstrap.js`, Electron, a native module or a shell file → publish the installer (steps 2-4)
+and bump `SHELL_VERSION` in `desktop/payload-config.js` if the new payload needs the new shell.
+Installers are still built for every tag (new downloads); only the feed decides who is offered one.
+`seq` is `seqOf(version)` (0.2.89 -> 2089), so it rises with every version and the seed maps exactly.
+
+```
+npm run icon --prefix desktop                    # the tree includes build/icon.png
+export ZEVET_UPDATE_SIGNING_KEY=...              # the same key as the feed (step 3)
+node scripts/make-feed.mjs payload --out ./payload-0.2.89 [--channel canary] [--have hashes.txt]
+```
+
+Default channel is `canary`; an install follows it when `<payload root>/channel` says `canary`
+(or `ZEVET_PAYLOAD_CHANNEL=canary`), otherwise it follows `stable`. Promote by re-running the same
+build with `--channel stable` after a day without a revert event. The command stages the tree,
+publishes it for `win-x64` and `mac-arm64` with desktop-kit's `bin/publish-payload.mjs`, and writes the
+`p/` layout: `p/b/<aa>/<sha>` (brotli blobs), `p/m/<sha>.json` (manifests), and one
+`p/zevet/<channel>/<platform>/pulse.json` per platform. `--have` lists blob hashes already on the host
+(`ls /srv/masora/downloads/p/b/*`); without it every blob is written, and uploading only the new ones is on you.
+
+⚠️ **Upload bytes before the pointer**: `p/b/`, then `p/m/`, then the pulses, last. A pulse that names
+a manifest the host lacks is a check that fails until it lands. Caddy must serve `/download/p/b/*` and
+`/download/p/m/*` immutable and `/download/p/*/pulse.json` with `Cache-Control: no-store`.
+
+**When an app swaps.** Never while a console (agent, zagent-hosted agent, agent-API spawn) has a live
+process or spoke in the last 5 minutes, a chat turn is in flight, a window had input in the last
+2 minutes, or no window is open. Otherwise: activate, `app.relaunch()`, `app.exit(0)` (about 2 s). Quit
+activates a staged build without relaunching. The relaunched app confirms the build once a window has
+finished loading (or failed: an unreachable hub is not the payload's fault) and the agent API
+answers; three failed boots (load throw, uncaught exception before confirm, no healthy signal in
+120 s) revert to the previous build and mark it bad for good.
+
+**What survives a relaunch, what does not.**
+- Survives (on disk): config, credentials, workspaces, `~/.zevet`, the family key, the payload store.
+  The board window comes back and reconnects to the hub and its editor rooms by itself.
+- Changes: the agent API port and token (`listen(0)`; `agent-api.json` is rewritten and the
+  `zevet-agent` CLI re-reads it on every call). Window size and position (not persisted anywhere).
+- Lost: everything held in main-process memory: finished agents' transcripts (console-log), pending
+  permit/ask cards, unsaved composer text. The gate exists so that nothing
+  *running* is lost: there are no open terminals or agents at swap time by construction.
+
+**Proof.** `scripts/test-payload-swap.mjs` (GitHub Actions `build`, both legs, and Codemagic
+`macos-autoupdate`) launches the packaged app against a local pulse server: asserts one blob fetched
+for a one-file change, the swap without the installer (`app.asar` byte-identical), and a payload whose
+`main.js` throws reverting after three strikes. `test/payload-e2e.test.mjs` is the same with the kit's
+client alone, in `npm test`. Locally, `ZEVET_PAYLOAD_PULSE`, `ZEVET_PAYLOAD_ROOT`,
+`ZEVET_PAYLOAD_CHANNEL` and `ZEVET_PAYLOAD_CHECK_MS` point a packaged app at a fake host (loopback pulses
+are trusted with `ZEVET_APP_FEED_TRUSTED_KEY`, like the installer feed).
+
 ---
 
 ## Testing the updater without publishing anything
@@ -184,16 +348,26 @@ ZEVET_APP_FEED=http://127.0.0.1:8801/download/zevet-latest.json npm start
 This is how the feature was verified before it had ever been published — the
 real app, its own timer, a real stream, a real checksum.
 
+The feed must be signed. For a loopback feed only, the app also honours
+`ZEVET_APP_FEED_TRUSTED_KEY=<key id>:<raw public key, base64>`, so
+`node scripts/make-feed.mjs <dir> --test-key <dir>/test-key.json` (a throwaway key, never
+the real one) gives a feed a dev build will take. `codemagic.yaml`'s
+`macos-autoupdate` workflow does exactly that.
+
 ## What is not automated, and why
 
 **Uploading.** Publishing is the one irreversible step, and it is a `scp` into a
 production box that also serves the Masora app. It stays a command somebody
 runs on purpose.
 
-**Signing.** Neither artifact is signed. macOS therefore cannot be updated in
-place — the app opens the disk image and the person drags it across — and both
-platforms warn on first run. See D-006 in `DECISIONS.md`; the fix is an Apple
-Developer account, which is a purchase rather than a patch.
+**Signing.** Windows is signed as "Andrew Doft" via Azure Trusted Signing/OIDC
+(see §Windows below) and verified in-job with `Get-AuthenticodeSignature`. macOS
+signs with the "Developer ID Application" identity and notarizes with an App
+Store Connect API key once `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_API_KEY` /
+`APPLE_API_KEY_ID` / `APPLE_API_ISSUER` are all set (see §Code signing above);
+without any one of the five the disk image ships ad-hoc sealed only, the app
+cannot update itself in place — it opens the disk image and the person drags
+it across — and it warns on first run. See D-006 in `DECISIONS.md`.
 
 ---
 
@@ -222,7 +396,7 @@ leaves the container on the old inode. The same trap as the Caddyfile, which
 Confirm with `/healthz`, which names the fields it gained:
 
 ```
-curl -s https://34-74-69-129.sslip.io/healthz
+curl -s https://hub.usemasora.com/healthz
 {"ok":true,"events":0,"listeners":0,"rooms":0,"wsListeners":0}
 ```
 
@@ -259,8 +433,8 @@ Always prove both halves afterwards, from outside — the first attempt returned
 check showed it:
 
 ```
-curl -so /dev/null -w "%{http_code}\n" -H "x-zevet-token: <old>"     https://34-74-69-129.sslip.io/api/state   # want 401
-curl -so /dev/null -w "%{http_code}\n" -H "x-zevet-token: <derived>" https://34-74-69-129.sslip.io/api/state   # want 200
+curl -so /dev/null -w "%{http_code}\n" -H "x-zevet-token: <old>"     https://hub.usemasora.com/api/state   # want 401
+curl -so /dev/null -w "%{http_code}\n" -H "x-zevet-token: <derived>" https://hub.usemasora.com/api/state   # want 200
 ```
 
 ⚠️ And one about this document. The block above ends with `ZEOF`, not `EOF`,
@@ -322,8 +496,20 @@ only in `/srv/zevet/.env`, mode 600, and never reaches the app or the browser.
 1. Google Cloud Console → **APIs & Services → Credentials → Create credentials → OAuth
    client ID**, type **Web application**.
 2. Under **Authorized redirect URIs** add exactly, byte for byte:
-   `https://<hub-host>/auth/google/callback` — today that is
-   `https://34-74-69-129.sslip.io/auth/google/callback`.
+   `https://<hub-host>/auth/google/callback` — the canonical hub host is
+   `hub.usemasora.com`, so a fresh setup adds
+   `https://hub.usemasora.com/auth/google/callback`.
+   ⚠️ **What is actually configured right now is still the sslip address**
+   (`https://34-74-69-129.sslip.io/auth/google/callback`) — the hub domain
+   moved on 2026-09-27 but `ZEVET_GOOGLE_REDIRECT` deliberately was not
+   flipped in the same pass (see the git history around that date): sign-in
+   works unaffected either way, since Caddy answers on both names, and the
+   env only changes once someone has added `hub.usemasora.com`'s callback as
+   an ADDITIONAL authorized redirect URI in Google Cloud Console (the sslip
+   one stays registered too — removing it would be its own outage). Check
+   which one is live with
+   `ssh masora-app 'grep ZEVET_GOOGLE_REDIRECT /srv/zevet/.env'` before
+   assuming this doc's example matches reality.
    ⚠️ A mismatch here does not fail until the very last step of a sign-in, as Google's
    `redirect_uri_mismatch`. A trailing slash is a mismatch.
 3. Copy the **Client ID** and the **Client secret**.
@@ -334,7 +520,7 @@ Then on the hub (see **Deploying the hub** above for how to reach the box):
 sudo tee -a /srv/zevet/.env >/dev/null <<'ZEOF'
 ZEVET_GOOGLE_CLIENT_ID=<the client id>
 ZEVET_GOOGLE_CLIENT_SECRET=<the client secret>
-ZEVET_GOOGLE_REDIRECT=https://34-74-69-129.sslip.io/auth/google/callback
+ZEVET_GOOGLE_REDIRECT=<the redirect URI you just registered in step 2 — must match byte for byte>
 ZEVET_GOOGLE_DOMAIN=<your Workspace domain, or leave the line out>
 ZEOF
 sudo chmod 600 /srv/zevet/.env
@@ -391,11 +577,12 @@ now the single most valuable file on that box.
 
 ## Code signing
 
-Nothing is signed. The pipeline is built and inert: `desktop/electron-builder.config.js`
-computes the build config from the environment, and with no secrets set it produces exactly
-what it always did. `test/signing.test.mjs` pins both halves, including the case where only
-*some* of the Apple credentials are present — which would otherwise produce a signed,
-un-notarised app that Gatekeeper still refuses while the build log reads like a success.
+macOS is wired and live as of the `macnotary` work (ported from the `macsign` branch).
+`desktop/electron-builder.config.js` computes the build config from the environment;
+`test/signing.test.mjs` pins both halves, including the case where only *some* of the
+Apple credentials are present (refused — `desktop/signing.js`'s `macSigning()` is
+all-five-or-none, never a partial signature that Gatekeeper still refuses while the
+build log reads like a success).
 
 **macOS — Apple Developer Program, $99/yr.** Add as repository *secrets*:
 
@@ -403,20 +590,54 @@ un-notarised app that Gatekeeper still refuses while the build log reads like a 
 | --- | --- |
 | `CSC_LINK` | the Developer ID Application `.p12`, base64-encoded |
 | `CSC_KEY_PASSWORD` | its export password |
-| `APPLE_ID` | the Apple ID email |
-| `APPLE_APP_SPECIFIC_PASSWORD` | an app-specific password, **not** the account password |
-| `APPLE_TEAM_ID` | the ten-character team id |
+| `APPLE_API_KEY` | an App Store Connect API key's `.p8`, base64-encoded |
+| `APPLE_API_KEY_ID` | that key's id |
+| `APPLE_API_ISSUER` | the App Store Connect issuer uuid |
 
-This is also what unblocks **in-place auto-update on macOS**. macOS will not let an unsigned
-app replace itself, so `desktop/app-update.js` currently opens the disk image and asks the
-person to drag it across. Windows has had one-click update since 0.2.0; macOS cannot until
-this is bought.
+Notarization is an **App Store Connect API key**, not an Apple ID + app-specific
+password — the password path locked the Apple ID twice in one afternoon on a bad
+credential (see `DECISIONS.md`), and an API key structurally cannot do that.
+`app-builder-lib`'s `getNotarizeOptions()` (`macPackager.js`) reads `APPLE_API_KEY`,
+`APPLE_API_KEY_ID` and `APPLE_API_ISSUER` for this ("option 2: API key"); no team id
+is needed on this path. `APPLE_API_KEY` must be a **filesystem path** to the `.p8` by
+the time electron-builder runs — that's what `@electron/notarize`'s `appleApiKey` is
+documented as, and what it passes straight through as `notarytool submit`'s `--key` —
+so the secret holds base64 and `build.yml`'s "Decode the App Store Connect API key"
+step decodes it to a file and repoints the env var at that path before `npm run
+dist:mac`.
 
-**Windows — Azure Trusted Signing, about $10/month.** Secrets `AZURE_TENANT_ID`,
-`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`; repository *variables*
-`AZURE_CODE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`,
-`AZURE_PUBLISHER_NAME`. Chosen over an OV/EV certificate because those now require the key
-on a hardware token, which a GitHub Actions runner cannot use.
+With them set: `electron-builder.config.js` turns on `hardenedRuntime` + `notarize`;
+`@electron/osx-sign` (`desktop/sign-macos.cjs` uses the pinned 1.3.1; electron-builder 26.17.0 carries its own 1.3.3) walks the whole `.app` and
+signs every Mach-O it finds bottom-up; `desktop/staple-macos.cjs` (`afterSign`) staples
+the notarization ticket onto the `.app` (electron-builder's own `notarize()` submits and
+waits but never staples); `desktop/notarize-dmg.cjs` (`afterAllArtifactBuild`) separately
+submits the built `.dmg` to `notarytool` and staples that too, since the app being
+notarized does not give the `.dmg` — a different file, a different hash — a ticket of
+its own. `build.yml`'s "Smoke the macOS app on Apple Silicon" step runs `codesign
+--verify --deep --strict`, `spctl -a -vv -t exec` (asserting the verdict includes
+`source=Notarized Developer ID`), and `xcrun stapler validate` on the `.app` whenever
+`ZEVET_EXPECT_SIGNED` is set; it is a no-op (loud, not silent) on a fork or PR with no
+secrets. A fresh CI keychain also lacks Apple's Developer ID intermediate CA, which
+`build.yml`'s "Import Apple's Developer ID intermediate CA" step imports before the
+build whenever `CSC_LINK` is set — without it electron-builder reports a perfectly
+valid imported cert as `CSSMERR_TP_NOT_TRUSTED`.
+
+This is also what unblocked **in-place auto-update on macOS**, as of 0.2.86: macOS will not let
+an unsigned app replace itself, and `desktop/app-update.js`'s self-replace path
+(`canSelfReplaceMac`/`_spawnMacReplace`) only runs once `bundlePath` is set on a signed build.
+Verified end to end, including the "Restart now" relaunch, on real Apple Silicon hardware via
+codemagic.yaml's `macos-autoupdate` workflow. A build with no `bundlePath` configured (or an
+unsigned dev build) still falls back to opening the disk image and asking the person to drag
+it across.
+
+**Windows — Azure Trusted Signing, about $10/month. Already on.** Secrets
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_SUBSCRIPTION_ID` (OIDC federated
+credential via `azure/login`, scoped to the `signing` environment — no client
+secret; `id-token: write` is what lets the runner mint the token); repository
+*variables* `AZURE_CODE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`,
+`AZURE_CERT_PROFILE`, `AZURE_PUBLISHER_NAME`. Chosen over an OV/EV certificate
+because those now require the key on a hardware token, which a GitHub Actions
+runner cannot use.
 
 ⚠️ `AZURE_PUBLISHER_NAME` must match the certificate subject exactly, or NSIS rejects its
 own signature at install time.

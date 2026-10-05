@@ -51,7 +51,28 @@ describe("the model selector states agent facts once", () => {
 
   test("reasoning effort is offered only where a CLI takes the flag", () => {
     assert.match(choice, /const HAS_EFFORT = new Set\(\["codex"\]\)/);
-    assert.match(choice, /efforts: HAS_EFFORT\.has\(a\.name\) && alias \? true : undefined/);
+    // claude takes --effort <low|medium|high|xhigh|max> (`claude --help`, 2.1.284).
+    assert.match(choice, /efforts: a\.name === "claude" \? CLAUDE_EFFORTS : HAS_EFFORT\.has\(a\.name\) && alias \? true : undefined/);
+    assert.match(choice, /\["low", "medium", "high", "xhigh", "max"\]/);
+  });
+});
+
+describe("a fresh install never guesses a model id the account might not have", () => {
+  // ⚠️ ROOT CAUSE of "Provider error 400" on a brand-new Codex install: no
+  // local ~/.codex/models_cache.json yet, so a.models is undefined and the
+  // picker fell back to MODELS[a.name] (agent-models.generated.mjs — an id
+  // captured off Andrew's own account) and auto-selected all[0] as the launch
+  // default regardless of source, so the very first message passed `-m
+  // gpt-6-astra` to a codex CLI that may have no access to it.
+  test("a model row is marked verified only when it came from this machine's own CLI cache", () => {
+    const rows = choice.slice(choice.indexOf("const groups = useMemo"), choice.indexOf("const all = useMemo"));
+    assert.match(rows, /const verified = Boolean\(a\.models\);/);
+    assert.match(rows, /verified,/);
+  });
+
+  test("the auto-selected default skips unverified rows instead of blindly taking all[0]", () => {
+    assert.match(choice, /const selected = match\?\.id \?\? all\.find\(\(m\) => m\.verified\)\?\.id \?\? "";/);
+    assert.ok(!/const selected = match\?\.id \?\? all\[0\]\?\.id \?\? "";/.test(choice), "back to trusting an unverified all[0]");
   });
 });
 

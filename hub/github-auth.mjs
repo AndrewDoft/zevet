@@ -43,13 +43,20 @@
 export const DEVICE_CODE_URL = "https://github.com/login/device/code";
 export const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 export const USER_URL = "https://api.github.com/user";
+export const EMAILS_URL = "https://api.github.com/user/emails";
 
 /**
  * The scopes requested.
  *
  * ⚠️ DELIBERATELY THE NARROWEST THING THAT WORKS. `read:user` reads the public
- * profile — a login and a numeric id — and nothing else. It does not grant
- * access to code, to private repositories, to organisations or to email.
+ * profile — a login and a numeric id. `user:email` is the one addition, and it
+ * exists for exactly one call: `GET /user/emails` (docs.github.com/rest/users/emails
+ * — "OAuth app tokens … need the user:email scope"), which lists the person's
+ * addresses WITH a `verified` flag. That is what lets the hub recognise that an
+ * email invite and a GitHub login are the same human, on evidence rather than a
+ * guess. Neither scope grants access to code, private repositories or
+ * organisations. Existing sign-ins keep working; GitHub asks the person to
+ * approve the extra scope the next time they sign in.
  *
  * It is tempting to ask for `repo` now, because the ORIGINAL request that
  * started this ("a way to edit the github repos it can access... that might
@@ -60,7 +67,7 @@ export const USER_URL = "https://api.github.com/user";
  * day something does, it is one string here and a re-authorisation prompt —
  * which is the correct moment to ask, rather than years earlier.
  */
-export const SCOPES = "read:user";
+export const SCOPES = "read:user user:email";
 
 /** GitHub answers JSON only when asked. Without this header both OAuth
  *  endpoints reply with a form-urlencoded body, which is the single most common
@@ -116,7 +123,7 @@ async function call(url, init, fetchImpl) {
  * than replaced with a number that seemed nice here.
  */
 export async function deviceStart({ clientId, scopes = SCOPES, fetchImpl } = {}) {
-  if (!clientId) return { ok: false, error: "this hub has no GitHub client id configured" };
+  if (!clientId) return { ok: false, error: "GitHub sign-in is not configured" };
 
   const r = await call(
     DEVICE_CODE_URL,
@@ -164,7 +171,7 @@ export async function deviceStart({ clientId, scopes = SCOPES, fetchImpl } = {})
  *   `{ ok: false, error }`                          — stop, and say this
  */
 export async function devicePoll({ clientId, deviceCode, fetchImpl } = {}) {
-  if (!clientId) return { ok: false, error: "this hub has no GitHub client id configured" };
+  if (!clientId) return { ok: false, error: "GitHub sign-in is not configured" };
   if (!deviceCode) return { ok: false, error: "no device code" };
 
   const r = await call(
@@ -218,7 +225,75 @@ export async function githubUser({ accessToken, fetchImpl } = {}) {
 
   const b = r.body || {};
   if (!b.login || !b.id) return { ok: false, error: "GitHub returned a user with no login" };
-  return { ok: true, login: String(b.login), id: String(b.id), name: b.name ? String(b.name) : null, avatar: b.avatar_url ? String(b.avatar_url) : null };
+  // ⚠️ THE PUBLIC PROFILE EMAIL, AND ONLY WHEN ONE IS SET. `read:user` does
+  // not grant `/user/emails` (that needs the separate `user:email` scope,
+  // not requested — see SCOPES above), so this is the one email address
+  // GitHub will hand back on this scope. GitHub only lets a person set a
+  // VERIFIED address as their public one (docs.github.com/rest/users/users
+  // — "email: the publicly visible email address"), so it is safe to treat
+  // as verified; it is simply absent whenever nobody made one public, and
+  // accounts.mjs's matching by login is what still works for everyone else.
+  return {
+    ok: true,
+    login: String(b.login),
+    id: String(b.id),
+    name: b.name ? String(b.name) : null,
+    avatar: b.avatar_url ? String(b.avatar_url) : null,
+    email: b.email ? String(b.email).toLowerCase() : null,
+  };
+}
+
+/**
+ * The person's VERIFIED email addresses, from `GET /user/emails` (needs the
+ * `user:email` scope). Only rows GitHub marks `verified: true` count — an
+ * unverified row is a string somebody typed into their settings. Never throws
+ * and never fails a sign-in: a token without the scope (403), or GitHub having
+ * an afternoon, is just "no evidence" — `{ ok: false, emails: [] }`.
+ */
+export async function githubVerifiedEmails({ accessToken, fetchImpl } = {}) {
+  if (!accessToken) return { ok: false, emails: [] };
+  const r = await call(
+    EMAILS_URL,
+    { method: "GET", headers: { Accept: "application/vnd.github+json", "User-Agent": UA, Authorization: `Bearer ${accessToken}` } },
+    fetchImpl,
+  );
+  if (!r.ok || r.status !== 200 || !Array.isArray(r.body)) return { ok: false, emails: [] };
+  const emails = r.body
+    .filter((e) => e && e.verified === true && typeof e.email === "string" && e.email.includes("@"))
+    .map((e) => e.email.toLowerCase())
+    // GitHub's privacy placeholder (id+login@users.noreply.github.com) is
+    // verified but is not an address anyone else could have typed for them.
+    .filter((e) => !e.endsWith("@users.noreply.github.com"));
+  return { ok: true, emails: [...new Set(emails)] };
+}
+
+/**
+ * The public profile email for a GitHub LOGIN, unauthenticated — GitHub's
+ * `/users/:login` is a public endpoint and needs no access token.
+ *
+ * Used only to fill in a recipient address for an invite email when the
+ * inviter typed a bare GitHub username and no email of their own: same public
+ * field `githubUser` reads off a token above (`docs.github.com/rest/users/users`
+ * — a person may only make a VERIFIED address public), just fetched by name
+ * instead of by an access token nobody has yet, because the invitee has not
+ * signed in.
+ *
+ * Unauthenticated calls to this endpoint are rate limited by GitHub to 60/hr
+ * per IP — fine for invite volume on a team hub; not fine for a bulk import,
+ * which is not what this is for.
+ */
+export async function githubPublicEmail(login, { fetchImpl } = {}) {
+  const l = String(login || "").trim();
+  if (!l) return { ok: false, error: "no login" };
+  const r = await call(
+    `https://api.github.com/users/${encodeURIComponent(l)}`,
+    { method: "GET", headers: { Accept: "application/vnd.github+json", "User-Agent": UA } },
+    fetchImpl,
+  );
+  if (!r.ok) return r;
+  if (r.status !== 200) return { ok: false, error: `GitHub returned ${r.status} for @${l}` };
+  const b = r.body || {};
+  return { ok: true, email: b.email ? String(b.email).toLowerCase() : null };
 }
 
 /** GitHub's errors carry a human sentence in `error_description` often enough

@@ -26,7 +26,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -747,18 +747,13 @@ describe("the platform workarounds themselves", () => {
     ]) {
       assert.ok(claude.includes(flag), `claude invocation is missing ${flag}`);
     }
-    /* ⚠️ AND ONE FLAG THAT MUST NOT BE THERE. --include-partial-messages makes
-       claude wrap every raw SSE event in a `stream_event` payload, and zevet
-       has no reader for one — each printed the literal text
-       `[claude: stream_event]` into the assistant's message. Measured in the
-       running app 2026-09-21: a one-sentence question answered with dozens of
-       them and nothing else. The same content arrives complete as an
-       `assistant` payload per content block, so asking for the partials buys
-       nothing and costs the transcript. */
-    assert.ok(
-      !claude.includes("--include-partial-messages"),
-      "claude must not ask for partial messages: they render as [claude: stream_event]",
-    );
+    /* --include-partial-messages IS there now: it makes claude wrap every raw
+       SSE event in a `stream_event`, which used to print `[claude:
+       stream_event]` into the assistant's message. The reading side handles
+       them (transcript.mjs drops them, chat-stream.mjs `draftAfter` turns the
+       text deltas into a draft) — test/transcript.test.mjs and
+       test/claude-parity.test.mjs pin those halves. */
+    assert.ok(claude.includes("--include-partial-messages"), "claude console must stream tokens");
 
     // Read off `codex exec --help` (codex-cli 0.155.0-alpha.2.6). The trailing
     // "-" is the CLI's own documented spelling of "read the prompt from stdin",
@@ -784,6 +779,55 @@ describe("the platform workarounds themselves", () => {
     assert.deepEqual(modeFlags("opencode", "auto").flags, ["--auto"]);
     assert.deepEqual(modeFlags("opencode", "dangerous").flags, ["--auto"]);
     assert.ok(modeFlags("opencode", "dangerous").note, "dangerous fallback is silent");
+  });
+
+  describe("codex's -m is trusted against its own cache, never guessed", () => {
+    // codex forwards -m straight to OpenAI with no client-side check of its
+    // own; an id the account's catalogue does not recognize is a "provider
+    // error 400" and no reply at all. Seen live: a fresh install's first Codex
+    // message, before ~/.codex/models_cache.json exists, sent the picker's
+    // shipped-fallback id (agent-models.generated.mjs — whoever last ran
+    // board/scripts/sync-agent-models.mjs, not this account) straight to
+    // codex exec. `home` is an invocationFor-only override so this never
+    // touches the machine's real ~/.codex.
+    function tempHome(t) {
+      const dir = mkdtempSync(path.join(tmpdir(), "zevet-codex-models-"));
+      t.after(() => rmSync(dir, { recursive: true, force: true }));
+      return dir;
+    }
+    function withCache(home, models) {
+      const dir = path.join(home, ".codex");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "models_cache.json"), JSON.stringify({ models }), "utf8");
+    }
+
+    test("no cache at all: the model is dropped, not guessed", (t) => {
+      const home = tempHome(t);
+      const args = _internals.invocationFor("codex", { model: "gpt-6-astra", home });
+      assert.ok(!args.includes("-m"), `a fresh machine with no codex cache must not guess a model: ${args}`);
+    });
+
+    test("a model present in the real cache is passed through", (t) => {
+      const home = tempHome(t);
+      withCache(home, [{ slug: "gpt-6-astra", display_name: "GPT-6-Astra" }]);
+      const args = _internals.invocationFor("codex", { model: "gpt-6-astra", home });
+      assert.equal(args[args.indexOf("-m") + 1], "gpt-6-astra");
+    });
+
+    test("an id missing from the real cache is dropped, not forwarded to OpenAI", (t) => {
+      const home = tempHome(t);
+      withCache(home, [{ slug: "gpt-6-astra", display_name: "GPT-6-Astra" }]);
+      const args = _internals.invocationFor("codex", { model: "gpt-9-imaginary", home });
+      assert.ok(!args.includes("-m"), `an id this account's own catalogue does not know must not reach codex: ${args}`);
+    });
+
+    test("claude and opencode are unaffected: their model always passes through", (t) => {
+      const home = tempHome(t); // empty: no cache for either CLI either
+      const claude = _internals.invocationFor("claude", { model: "claude-opus-5-5", home });
+      assert.equal(claude[claude.indexOf("--model") + 1], "claude-opus-5-5");
+      const opencode = _internals.invocationFor("opencode", { model: "openrouter/cohere/north-mini-code:free", home });
+      assert.equal(opencode[opencode.indexOf("-m") + 1], "openrouter/cohere/north-mini-code:free");
+    });
   });
 
   test("the line splitter keeps a remainder and flushes it on demand", () => {

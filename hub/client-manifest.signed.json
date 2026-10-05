@@ -1,0 +1,84 @@
+{
+  "payload": {
+    "schema": 1,
+    "type": "zevet-client",
+    "version": "0.2.93",
+    "files": [
+      {
+        "name": "hook.mjs",
+        "bytes": 23079,
+        "sha256": "57c1a426611d041eb07b9c532745b26b156b571bef1a43ffb716365521daa541"
+      },
+      {
+        "name": "install.mjs",
+        "bytes": 12888,
+        "sha256": "f015c469b7a080fc224e26a5dabf367e59c0c7ee5fd5bb0df8f9c05a80c5dbd0"
+      },
+      {
+        "name": "updater.mjs",
+        "bytes": 12121,
+        "sha256": "d5e70c3f2d8401ff6b146b0fa53ccda0ba3e8a3785f33bbdfd61ffdf33c837a1"
+      },
+      {
+        "name": "detect.mjs",
+        "bytes": 10182,
+        "sha256": "921626ba2c3103238973daebba12059b4703bbb8ebef5585bee36da3b2e40e9e"
+      },
+      {
+        "name": "install-codex.mjs",
+        "bytes": 15541,
+        "sha256": "390f3cc8e33093e4cca96b6bbeda6ca2699322adfd55d0f4f98f20548f445a2c"
+      },
+      {
+        "name": "codex-trust.mjs",
+        "bytes": 6706,
+        "sha256": "569a660e6a07ddc145b2d799094c452fb927e5ef3e774967b0560adff1ce9dd5"
+      },
+      {
+        "name": "install-opencode.mjs",
+        "bytes": 11377,
+        "sha256": "95a28c8900384cb38f1be0124772e9f1ca61062cfb86e896313c994d0e2dbec9"
+      },
+      {
+        "name": "opencode-plugin.mjs",
+        "bytes": 15594,
+        "sha256": "6a8ac61f96392e91d6223bd79900f790d6d3011c68dcb74b98ccfa25b4fb277f"
+      },
+      {
+        "name": "uninstall.mjs",
+        "bytes": 13627,
+        "sha256": "1fbe03198611c092054cdb877a0f9d1a3efde1002e6c3b6415ba6ecd1b52c67a"
+      },
+      {
+        "name": "doctor.mjs",
+        "bytes": 25015,
+        "sha256": "dc9c1e23185fbe95e4209026774d7afa8bdf2b46863b2dcd97c4d7ad798813da"
+      },
+      {
+        "name": "secret.mjs",
+        "bytes": 13296,
+        "sha256": "1b84c37464d2b2e97e990fba1505e0016b717f8ca4c8f1e8a78a2adb21e86640"
+      },
+      {
+        "name": "zevet-home.mjs",
+        "bytes": 1121,
+        "sha256": "f1ec9e7e25847c7cb70cce26760071955ee7c2402c8df2985a0c4ab5e9b97c40"
+      },
+      {
+        "name": "signing.mjs",
+        "bytes": 3335,
+        "sha256": "fb97c496481445b96d3cf6a5bb4f807fb2f1f8d0d99c8145c2c80256dad94e4d"
+      },
+      {
+        "name": "doc-crypto.mjs",
+        "bytes": 4750,
+        "sha256": "c77db36fc185bf5e8adb89e26faee74b1c237d868d0461b593f35ad36a584b9b"
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "zevet-2026-09",
+    "signature": "jA0ZE1QVis6arq0ePs9o08u/R8QtXzFsV0z2Fx1Hs+oiI9lsCIB3kopBYmxZPUeoC1rdX/vzO0qS2nT7avu2Ag=="
+  }
+}

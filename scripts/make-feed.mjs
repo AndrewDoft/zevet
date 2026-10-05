@@ -15,16 +15,64 @@
 // here as a disagreement rather than as a feed that advertises 0.2.0 and
 // serves 0.1.2.
 //
+// SIGNING. The feed is signed with Ed25519 (domain "zevet-update-v1", key id
+// zevet-2026-09; see desktop/update-signing.js). The private PEM comes from the
+// environment and is never logged or written:
+//
+//   ZEVET_UPDATE_SIGNING_KEY=<PEM>            (GitHub Actions secret of that name)
+//   locally: $env:ZEVET_UPDATE_SIGNING_KEY = (pwsh -NoProfile -File C:/Users/andre/.claude/bin/update-signing-key.ps1 zevet | Out-String)
+//
+//   node scripts/make-feed.mjs <dir> ...              generate AND sign
+//   node scripts/make-feed.mjs --sign-only <feed.json> re-sign a published feed in place
+//   node scripts/make-feed.mjs <dir> --test-key <f>   sign with a throwaway key, write its
+//                                                     public half to <f> (loopback proofs only)
+//
+// The signed payload is {schema, type, version, notes, platforms}. The legacy
+// top-level version/notes/platforms are kept, identical, so installed clients
+// that predate signing keep updating; new clients read only the payload.
+//
 // What this does NOT do: upload anything. It prints a file. Publishing is a
 // separate, deliberate step — see docs/RELEASING.md.
-import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { readFileSync, writeFileSync, readdirSync, statSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { readManifest } = createRequire(import.meta.url)("../desktop/app-update.js");
+const require = createRequire(import.meta.url);
+const { readManifest } = require("../desktop/app-update.js");
+const { UPDATE_DOMAIN, PINNED_KEYS, signDocument, verifySigned } = require("../desktop/update-signing.js");
+const KEY_ID = Object.keys(PINNED_KEYS)[0];
+
+/** {schema,type,version,notes,platforms} -> the feed with payload + signature. */
+function signedFeed({ version, notes, platforms }, { pem, keyId, keys }) {
+  const payload = { schema: 1, type: "zevet-update", version, notes, platforms };
+  const signature = signDocument(UPDATE_DOMAIN, payload, pem, keyId);
+  // Read it back with the verifier the app will use, so a wrong key fails here.
+  verifySigned(UPDATE_DOMAIN, payload, signature, keys);
+  return { version, notes, platforms, payload, signature };
+}
+
+/** The key to sign with: the real one from the environment, or a throwaway
+ *  (--test-key FILE writes its public half to FILE) for loopback proofs. */
+function signer() {
+  const testKeyOut = arg("--test-key");
+  if (testKeyOut) {
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const raw = publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64");
+    writeFileSync(testKeyOut, JSON.stringify({ key_id: "zevet-test", public_key: raw }) + "\n", "utf8");
+    return { pem: privateKey.export({ format: "pem", type: "pkcs8" }), keyId: "zevet-test", keys: { "zevet-test": raw } };
+  }
+  const pem = (process.env.ZEVET_UPDATE_SIGNING_KEY || "").replaceAll("|", "\n").trim();
+  if (!pem) {
+    console.error("ZEVET_UPDATE_SIGNING_KEY is not set: refusing to write an unsigned feed (see the header)");
+    process.exit(1);
+  }
+  return { pem, keyId: KEY_ID, keys: PINNED_KEYS };
+}
 
 /**
  * Which artifact belongs to which machine.
@@ -40,14 +88,111 @@ const TARGETS = [
   { key: "darwin-arm64", re: /^zevet-(\d+(?:\.\d+)*)-macos-arm64\.dmg$/ },
 ];
 
+/**
+ * The masora2 incident this guards against: a manual `gcloud compute scp`
+ * upload (docs/RELEASING.md §2/§4) that lands a truncated or otherwise
+ * corrupted installer. Nothing before this hashed whatever bytes happened to
+ * be in the release directory, self-consistently -- a bad file "verifies"
+ * against its own bad hash all the way to a machine that downloads it and
+ * gets nothing (exit 0, no zevet.exe). A truncated PE fails Authenticode
+ * verification (the signature covers a hash of the file), which is a much
+ * stronger, independent check than re-hashing the same bytes.
+ *
+ * ponytail: no per-platform min-size table, one floor for both artifacts --
+ * raise it (or add a real expected-size check) if a legitimately smaller
+ * build ever trips it.
+ */
+const MIN_ARTIFACT_BYTES = 20 * 1024 * 1024;
+function verifyArtifactIntegrity(file, key) {
+  // test/make-feed.test.mjs writes fixture files a few bytes long on purpose,
+  // to test the versioning/mixed-release logic without needing a real
+  // installer -- this check is about THAT logic, not this one.
+  if (process.env.MAKE_FEED_SKIP_ARTIFACT_CHECK) return null;
+  const bytes = statSync(file).size;
+  if (bytes < MIN_ARTIFACT_BYTES) {
+    return `${path.basename(file)} is only ${bytes} bytes (< ${MIN_ARTIFACT_BYTES}) -- looks truncated, not publishing it`;
+  }
+  if (key === "win32-x64" && process.platform === "win32") {
+    // PSModulePath inherited from a pwsh (7+) parent makes the spawned
+    // Windows PowerShell (5.1) fail to autoload its own Get-AuthenticodeSignature
+    // module -- the same trap scripts/codemagic.mjs's token() already strips.
+    const { PSModulePath, ...env } = process.env;
+    const ps = spawnSync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", `(Get-AuthenticodeSignature '${file}').Status.ToString()`],
+      { encoding: "utf8", windowsHide: true, env },
+    );
+    const status = (ps.stdout || "").trim();
+    if (status === "NotSigned") {
+      console.log(`  (${path.basename(file)} carries no Authenticode signature -- unsigned dev build, not verifying it)`);
+    } else if (status !== "Valid") {
+      return `${path.basename(file)} Authenticode status is ${status || `unknown (${ps.stderr || ps.error})`}, not "Valid" -- looks corrupted, not publishing it`;
+    }
+  }
+  return null;
+}
+
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(name);
   return i > 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
+if (process.argv[2] === "--sign-only") {
+  const file = process.argv[3];
+  if (!file) {
+    console.error("usage: node scripts/make-feed.mjs --sign-only <feed.json> [--out FILE]");
+    process.exit(2);
+  }
+  const old = JSON.parse(readFileSync(file, "utf8"));
+  const src = old.payload || old; // re-signing a signed feed re-signs its payload
+  const feed = signedFeed(src, signer());
+  writeFileSync(arg("--out", file), JSON.stringify(feed, null, 2) + "\n", "utf8");
+  console.log(`signed ${arg("--out", file)} (zevet ${feed.version})`);
+  process.exit(0);
+}
+
+// PAYLOAD MODE. The installer feed above is for SHELL updates (bootstrap, Electron, natives). A release
+// that changed only desktop/'s payload files is published as a payload instead: every running app takes
+// it without an installer (desktop/payload-swap.js says when).
+//
+//   node scripts/make-feed.mjs payload --out <staging> [--channel canary] [--have FILE]
+//        [--test-key FILE] [--tree DIR --build X.Y.Z]
+//
+// Stages desktop/'s payload tree (or --tree), then runs desktop-kit's publish-payload.mjs once per platform.
+// It writes the p/ layout under --out and uploads nothing. seq = seqOf(build) (desktop/payload-config.js).
+// UPLOAD ORDER: p/b/, then p/m/, then p/zevet/<channel>/<platform>/pulse.json LAST — a pulse that names
+// bytes the host does not have yet is a check that fails until they arrive.
+if (process.argv[2] === "payload") {
+  const config = require("../desktop/payload-config.js");
+  const build = arg("--build", JSON.parse(readFileSync(path.join(ROOT, "desktop", "package.json"), "utf8")).version);
+  const out = arg("--out");
+  if (!out) {
+    console.error("usage: node scripts/make-feed.mjs payload --out <staging dir> [--channel canary] [--have FILE] [--test-key FILE] [--tree DIR --build X.Y.Z]");
+    process.exit(2);
+  }
+  const { pem, keyId } = signer();
+  const env = { ...process.env, ZEVET_PAYLOAD_SIGNING_KEY: pem.replaceAll("\n", "|") };
+  const tree = arg("--tree") || require("../desktop/payload-tree.cjs").stage(mkdtempSync(path.join(tmpdir(), "zevet-payload-")));
+  const publisher = path.join(ROOT, "desktop", "node_modules", "@masora", "desktop-kit", "bin", "publish-payload.mjs");
+  for (const platform of ["win-x64", "mac-arm64"]) {
+    const r = spawnSync(process.execPath, [
+      publisher, "--app", "zevet", "--channel", arg("--channel", "canary"), "--platform", platform,
+      "--build", build, "--seq", String(config.seqOf(build)), "--schema-head", "0", "--shell-min", String(config.SHELL_VERSION),
+      "--tree", tree, "--out", out, "--key-env", "ZEVET_PAYLOAD_SIGNING_KEY", "--key-id", keyId, ...(arg("--have") ? ["--have", arg("--have")] : []),
+    ], { encoding: "utf8", windowsHide: true, env });
+    process.stdout.write(r.stdout || "");
+    if (r.status !== 0) {
+      process.stderr.write(r.stderr || "");
+      process.exit(r.status || 1);
+    }
+  }
+  console.log(`wrote ${out}/p — upload p/b, then p/m, then the pulses (see the header)`);
+  process.exit(0);
+}
+
 const dir = process.argv[2];
 if (!dir || dir.startsWith("--")) {
-  console.error("usage: node scripts/make-feed.mjs <artifact-dir> [--out FILE] [--notes TEXT]");
+  console.error("usage: node scripts/make-feed.mjs <artifact-dir> [--out FILE] [--notes TEXT] [--test-key FILE]\n       node scripts/make-feed.mjs --sign-only <feed.json>");
   process.exit(2);
 }
 
@@ -70,6 +215,11 @@ for (const t of TARGETS) {
   const version = t.re.exec(hit)[1];
   versions.add(version);
   const full = path.join(dir, hit);
+  const integrityProblem = verifyArtifactIntegrity(full, t.key);
+  if (integrityProblem) {
+    console.error(integrityProblem);
+    process.exit(1);
+  }
   const bytes = statSync(full).size;
   const sha256 = createHash("sha256").update(readFileSync(full)).digest("hex");
   platforms[t.key] = { file: hit, bytes, sha256 };
@@ -97,16 +247,17 @@ if (pkg.version !== version) {
   process.exit(1);
 }
 
-const feed = { version, notes: arg("--notes", ""), platforms };
+const unsigned = { version, notes: arg("--notes", ""), platforms };
 // Apply the reader's own validation before writing something no installed
 // machine can use (for example a zero-byte file from an interrupted build).
 for (const key of Object.keys(platforms)) {
-  const { error } = readManifest(feed, key);
+  const { error } = readManifest(unsigned, key);
   if (error) {
     console.error(error);
     process.exit(1);
   }
 }
+const feed = signedFeed(unsigned, signer());
 const out = arg("--out", path.join(dir, "zevet-latest.json"));
 writeFileSync(out, JSON.stringify(feed, null, 2) + "\n", "utf8");
 

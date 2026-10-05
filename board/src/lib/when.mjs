@@ -63,3 +63,20 @@ export function whenText(ms, now = Date.now()) {
 
   return ahead ? `in ${n}${unit}` : `${n}${unit} ago`;
 }
+
+/** The provider's window ids, short, as the strip labels them. */
+const WINDOW_SHORT = { five_hour: "5h", seven_day: "7d" };
+
+/**
+ * A rate-limit window as the strip shows it: label, percent used, time to
+ * reset — `["5h", "42%", "3h"]`. The reset is "" when the agent gave none.
+ * Reads RateWindow (lib/types.ts): utilization 0..1, resetsAt in ms.
+ */
+export function windowParts(w, now = Date.now()) {
+  const reset = whenText(w.resetsAt, now);
+  return [
+    WINDOW_SHORT[w.key] || w.key,
+    Math.round(w.utilization * 100) + "%",
+    reset.startsWith("in ") ? reset.slice(3) : "",
+  ];
+}

@@ -1,6 +1,6 @@
 {
   "name": "zevet",
-  "version": "0.2.61",
+  "version": "0.2.93",
   "private": true,
   "type": "module",
   "description": "Watch your team's AI coding agents work, live, in one place.",
@@ -11,9 +11,15 @@
     "hub": "node hub/server.mjs",
     "install-hooks": "node client/install.mjs",
     "doctor": "node client/doctor.mjs",
-    "test": "node scripts/run-tests.mjs"
+    "test": "node scripts/run-tests.mjs",
+    "ipc:gen": "node desktop/node_modules/@masora/desktop-kit/bin/ipc-gen.js desktop/ipc-table.js --preload desktop/preload.js --dts board/src/lib/bridge.generated.d.ts",
+    "ipc:check": "npm run ipc:gen -- --check",
+    "typecheck": "npm --prefix board run typecheck"
   },
   "devDependencies": {
     "playwright-core": "1.63.0"
+  },
+  "dependencies": {
+    "@sentry/node": "10.75.0"
   }
 }

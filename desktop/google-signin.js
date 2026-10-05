@@ -46,7 +46,7 @@ class SignInError extends Error {}
  */
 class GoogleSignIn {
   constructor({ hub, team = "", fetchImpl, now = () => Date.now(), sleep } = {}) {
-    if (!hub) throw new SignInError("Enter a hub address.");
+    if (!hub) throw new SignInError("Offline");
     this.base = String(hub).replace(/\/+$/, "");
     // Empty/absent means the hub's DEFAULT team. `finish`/`callback` need no
     // copy of this — the hub records it against the pairCode at `start`.
@@ -69,27 +69,27 @@ class GoogleSignIn {
         signal: AbortSignal.timeout(15000),
       });
     } catch (err) {
-      throw new SignInError(`Could not reach the hub: ${err && err.message ? err.message : String(err)}`);
+      throw new SignInError("Offline");
     }
     let parsed = null;
     try {
       parsed = await res.json();
     } catch {
-      throw new SignInError(`The hub returned an invalid response (HTTP ${res.status}).`);
+      throw new SignInError(`Server error ${res.status}`);
     }
     if (!res.ok) {
       // 503 is the hub saying it has no Google client. That is a DEPLOYMENT
       // problem, not a user problem, and "sign-in failed" would send somebody
       // looking at their own Google account for an hour.
-      if (res.status === 503) throw new SignInError("Google sign-in is not configured for this hub.");
-      throw new SignInError(parsed && parsed.error ? parsed.error : `The hub returned HTTP ${res.status}.`);
+      if (res.status === 503) throw new SignInError("Google sign-in is off");
+      throw new SignInError(parsed && parsed.error ? parsed.error : `Server error ${res.status}`);
     }
     return parsed;
   }
 
   async start() {
     const r = await this.#post("/auth/google/start", { team: this.team });
-    if (!r || !r.pairCode || !r.authUrl) throw new SignInError("The hub did not start a Google sign-in. Try again.");
+    if (!r || !r.pairCode || !r.authUrl) throw new SignInError("Sign-in failed");
     this.pair = r;
     this.deadline = this.now() + Math.min(MAX_WAIT_MS, (Number(r.expiresIn) || 600) * 1000);
     this.intervalMs = Math.max(1, Number(r.interval) || 2) * 1000 || DEFAULT_INTERVAL_MS;
@@ -122,7 +122,7 @@ class GoogleSignIn {
       const r = await this.#post("/auth/google/finish", { pairCode: this.pair.pairCode });
       if (r && r.pending) continue;
       if (r && r.ok && r.token) return { token: r.token, secret: r.secret || "", login: r.login, owner: Boolean(r.owner) };
-      throw new SignInError((r && r.error) || "The hub returned an invalid sign-in response. Try again.");
+      throw new SignInError((r && r.error) || "Invalid sign-in response");
     }
     throw new SignInError("cancelled");
   }

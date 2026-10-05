@@ -1,0 +1,45 @@
+# Drives a brand-new install's onboarding against the REAL production hub, on
+# both platforms a first-run person actually downloads for.
+#
+# Exists because of BUG-2026-09-27: an external user with no team and no
+# invite reported "the hub couldn't be reached, none of it worked". Every
+# other onboarding test in this repo (test/setup-window.test.mjs and friends)
+# talks to a disposable hub this suite spawns itself, which cannot catch the
+# one class of bug that matters here: the address baked into the app being
+# stale, wrong, or genuinely unreachable from a normal network. This talks to
+# the real one.
+#
+# Dispatch-only, like build.yml: it creates a throwaway team on production
+# (named ci-onboard-<random>) and must never run on every push. See
+# test/onboard-live.test.mjs's header for how that team gets cleaned up
+# without this workflow doing anything itself.
+name: onboard-live
+
+on:
+  workflow_dispatch:
+
+jobs:
+  onboard:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Onboard against the live hub
+        env:
+          ZEVET_LIVE_HUB_TEST: "1"
+        run: node --test test/onboard-live.test.mjs

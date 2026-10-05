@@ -20,7 +20,8 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { resolveAuth } from "./secret.mjs";
+import { resolveAuth, insecureHub } from "./secret.mjs";
+import { zevetHome } from "./zevet-home.mjs";
 
 /**
  * Settings, from ~/.zevet/config.json, with environment variables winning.
@@ -33,7 +34,7 @@ import { resolveAuth } from "./secret.mjs";
 function settings() {
   let file = {};
   try {
-    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    const home = zevetHome();
     // Strip a UTF-8 BOM. Windows PowerShell 5.1 writes one with
     // `Set-Content -Encoding UTF8`, and JSON.parse rejects a leading U+FEFF —
     // which silently sent every Windows teammate back to the 127.0.0.1 default
@@ -109,7 +110,7 @@ const isCodex = AGENT_FLAG ? AGENT_FLAG === "codex" : false;
 function repoIsOptedIn(dir) {
   let list;
   try {
-    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    const home = zevetHome();
     const raw = readFileSync(path.join(home, "codex-repos.json"), "utf8").replace(/^﻿/, "");
     const parsed = JSON.parse(raw);
     list = Array.isArray(parsed) ? parsed : [];
@@ -172,7 +173,7 @@ const OUTBOX_TRY_MS = 250;
 const OUTBOX_MAX = 100;
 
 function outboxFile() {
-  const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+  const home = zevetHome();
   return path.join(home, "outbox.jsonl");
 }
 
@@ -197,7 +198,7 @@ function outboxRead() {
 
 function outboxWrite(list) {
   try {
-    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    const home = zevetHome();
     mkdirSync(home, { recursive: true });
     writeFileSync(outboxFile(), list.map((e) => JSON.stringify(e)).join("\n") + (list.length ? "\n" : ""), "utf8");
   } catch (err) {
@@ -218,6 +219,9 @@ function outboxAppend(body) {
  * `{ status: "sent" }` or `{ status: "rejected", code }`.
  */
 async function postEvent(body, timeoutMs) {
+  // The token would cross the network in cleartext. Not "failed": queueing it
+  // for a retry would only re-send it later to the same hub.
+  if (insecureHub(HUB)) return { status: "refused", why: "refusing to send the token to a plain-http hub — use an https hub" };
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
@@ -272,12 +276,34 @@ async function flushOutbox() {
  * dropped as some other checkout's. Keep in sync with the copy in opencode-plugin.mjs.
  */
 function zevetOrigin(dir) {
-  const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+  const home = zevetHome();
   const same = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
   if (!same(path.dirname(dir), path.resolve(home, "worktrees"))) return null;
   try {
     const { repo } = JSON.parse(readFileSync(`${dir}.json`, "utf8"));
     return typeof repo === "string" && repo ? path.resolve(repo) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The main checkout behind ANY linked git worktree, zevet-made or not.
+ *
+ * `zevetOrigin` only resolves a worktree zevet itself created (the sidecar
+ * JSON next to it) -- an agent sitting in a worktree the user or the agent
+ * made by hand (`git worktree add ../repo-fix`) fell through to
+ * `path.basename(dir)`, so its activity showed up under a repo name nobody's
+ * board had open. Every linked worktree, zevet-made or not, carries this
+ * same pointer back to the one shared `.git`: `gitdir` is git's own record of
+ * it, so reading it costs the same two file reads as the branch lookup just
+ * above and needs no sidecar at all.
+ */
+function linkedWorktreeOrigin(gitdir, worktreeDir) {
+  try {
+    const commondir = readFileSync(path.join(gitdir, "commondir"), "utf8").trim();
+    const root = path.dirname(path.resolve(gitdir, commondir));
+    return root !== worktreeDir ? root : null;
   } catch {
     return null;
   }
@@ -297,13 +323,17 @@ function repoInfo(startDir) {
       const dotgit = path.join(dir, ".git");
       if (existsSync(dotgit)) {
         let branch = "";
+        let gitdir = dotgit;
+        let isWorktree = false;
         try {
-          let gitdir = dotgit;
           if (!existsSync(path.join(dotgit, "HEAD"))) {
             // In a worktree, .git is a file pointing at the real gitdir.
             const link = readFileSync(dotgit, "utf8").trim();
             const m = link.match(/^gitdir:\s*(.+)$/);
-            if (m) gitdir = path.resolve(dir, m[1]);
+            if (m) {
+              gitdir = path.resolve(dir, m[1]);
+              isWorktree = true;
+            }
           }
           const head = readFileSync(path.join(gitdir, "HEAD"), "utf8").trim();
           const ref = head.match(/^ref:\s*refs\/heads\/(.+)$/);
@@ -311,7 +341,7 @@ function repoInfo(startDir) {
         } catch (err) {
           warn(`could not read HEAD: ${err.code || err.message}`);
         }
-        const origin = zevetOrigin(dir);
+        const origin = zevetOrigin(dir) || (isWorktree ? linkedWorktreeOrigin(gitdir, dir) : null);
         // `root` stays the worktree: it is where the agent's files are.
         if (origin) return { ...repoInfo(origin), root: dir, origin };
         return { repo: path.basename(dir), branch, root: dir };
@@ -492,6 +522,8 @@ async function main() {
     warn(`hub unreachable (${r.why}) — kept for later, this turn is unaffected`);
   } else if (r.status === "rejected") {
     warn(`hub answered ${r.code} — this turn is unaffected`);
+  } else if (r.status === "refused") {
+    warn(`${r.why} — this turn is unaffected`);
   }
 }
 
@@ -505,7 +537,7 @@ async function main() {
  */
 function maybeCheckForUpdates() {
   try {
-    const home = process.env.ZEVET_HOME || path.join(os.homedir(), ".zevet");
+    const home = zevetHome();
     const updater = path.join(path.dirname(fileURLToPath(import.meta.url)), "updater.mjs");
     if (!existsSync(updater)) return;
 

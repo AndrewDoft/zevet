@@ -102,6 +102,10 @@ export interface ConsoleEntry {
   usage: ConsoleUsage;
   startedAt: number;
   exitCode: number | null;
+  /** Text streamed so far for the block claude is still writing (claude only,
+   *  `--include-partial-messages`). View-only: the complete block replaces it.
+   *  See chat-stream.mjs `draftAfter`. */
+  draft?: string;
   /** The provider's own rate-limit windows, when the agent reports them.
    *  Empty for an agent that does not — see `limitsOf` in lib/board.ts. */
   limits: RateWindow[];
@@ -118,6 +122,12 @@ export interface ConsoleEntry {
   /** Slash commands the agent CLI announced in its init line (claude does;
    *  the others do not, and stay empty). Drives the composer's `/` menu. */
   slashCommands: string[];
+  /** Which Claude account this ran on, only set when a launch named one
+   *  (desktop/agent-engine.js). Absent for an ordinary UI-started console. */
+  engine?: string;
+  /** Set only for a console the local control API spawned (desktop/
+   *  agent-api.js), never for one the board's own UI started. */
+  label?: string;
   /** The console this one was forked from, by `key`.
    *
    *  ⚠️ IT HAS TO BE RECORDED HERE, because it cannot be recovered. Both CLIs

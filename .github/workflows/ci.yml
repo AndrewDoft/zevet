@@ -1,0 +1,37 @@
+# Cheap PR/push gate: tests, board typecheck, and "the committed hub/public
+# bundle is what the source builds to". Ubuntu only; the release build (build.yml)
+# stays tag/manual. The real-Electron suites skip here (no Electron binary).
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            board/package-lock.json
+            editor/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix board
+      - run: npm ci --prefix editor
+      # desktop/*.js require @masora/desktop-kit. Production deps only: the kit, and NOT
+      # electron (a devDependency) -- with it present the real-Electron suites would try
+      # to run here instead of skipping (test/helpers.mjs NO_DRIVE), and hang without a display.
+      - run: npm ci --prefix desktop --omit=dev --omit=optional --ignore-scripts
+      # The generated preload and bridge types must be what desktop/ipc-table.js produces.
+      - run: npm run ipc:check
+      - run: npm test
+      - run: npm run typecheck
+      - run: node build.mjs
+        working-directory: board
+      - name: hub/public matches the source
+        run: git diff --exit-code hub/public

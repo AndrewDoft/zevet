@@ -62,7 +62,7 @@ const path = require("node:path");
  * (see `extraResources` in desktop/package.json). Development: the checkout.
  */
 function cryptoModulePaths(name) {
-  const out = [];
+  const out = [path.join(__dirname, "client", name)]; // the payload's own copy (payload-tree.cjs)
   if (process.resourcesPath) out.push(path.join(process.resourcesPath, "client", name));
   out.push(path.join(__dirname, "..", "client", name));
   return out;

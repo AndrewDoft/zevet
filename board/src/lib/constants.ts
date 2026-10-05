@@ -1,5 +1,7 @@
 import type { LaunchMode } from "./types";
 import { OPENCODE_FREE_MODELS } from "./models.generated.mjs";
+import { GEMINI_MODELS } from "./gemini-models.mjs";
+import { MUSE_MODELS } from "./muse-models.mjs";
 import { CLAUDE_MODELS, CODEX_MODELS } from "./agent-models.generated.mjs";
 
 export const ID: unique symbol = Symbol("id");
@@ -37,6 +39,13 @@ export const MODELS: Record<string, string[]> = {
   claude: CLAUDE_MODELS.map((m) => m.id),
   codex: CODEX_MODELS.map((m) => m.id),
   opencode: [...OPENCODE_FREE_MODELS],
+  // Copied from the Gemini CLI doc, dated in gemini-models.mjs. Not run from
+  // here: Chat lists it behind a Connect chip (composercontrols.tsx).
+  gemini: [...GEMINI_MODELS],
+  // Meta's Model API, dated in muse-models.mjs. Not run from here either —
+  // Chat lists it only once a Meta key is detected (composercontrols.tsx),
+  // and there is no adapter behind it yet (docs/contracts/meta-model-api.md).
+  meta: MUSE_MODELS.map((m) => m.id),
 };
 
 /** claude reads stream-json line by line and stays open for as many prompts as

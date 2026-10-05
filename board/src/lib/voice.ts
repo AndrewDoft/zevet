@@ -64,6 +64,14 @@ function endedSession(): DictationAdapter.Session {
   };
 }
 
+function focusComposer(): void {
+  const input = document.querySelector<HTMLTextAreaElement>(".aui-composer-input");
+  if (input && document.activeElement !== input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+
 export class MasoraVoiceDictationAdapter implements DictationAdapter {
   /** Called when zevet Voice is not installed, so the board can offer it.
    *  A callback rather than a store import: this file is the adapter, and the
@@ -77,6 +85,10 @@ export class MasoraVoiceDictationAdapter implements DictationAdapter {
   }
 
   listen(): DictationAdapter.Session {
+    // zevet Voice types into whatever has keyboard focus. The mic button keeps focus off itself (onMouseDown in
+    // thread.aui.tsx); this puts the caret in the composer when it was somewhere else, so the text lands there.
+    // 0.2.64 lost it: Voice's paste into zevet.exe was never read, and the typed fallback went to the button.
+    focusComposer();
     const local = bridge.local as { voiceMic?: () => Promise<MicResult> } | undefined;
     // An older desktop build has no such method. Offering the download is the
     // honest answer there too — what it cannot do is pretend to dictate.
