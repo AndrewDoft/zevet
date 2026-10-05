@@ -31,12 +31,24 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { zevetHome, atomicWriteJson } = require("./zevet-home.js");
+const { cloudOrigin } = require("./hub-target.js");
 
 const HOME = zevetHome();
 const CONFIG_PATH = path.join(HOME, "masora.json");
 
-// Masora runs on this machine (the Masora desktop app); usemasora.com only hosts downloads.
-const DEFAULT_URL = process.env.ZEVET_MASORA_URL || "http://127.0.0.1:3210";
+// Masora is the cloud app. ZEVET_MASORA_URL overrides; else the family descriptor's `cloud` (https only), else the
+// cloud origin. Read per call: Masora may write the descriptor later.
+function defaultUrl() {
+  if (process.env.ZEVET_MASORA_URL) return process.env.ZEVET_MASORA_URL;
+  try {
+    const kit = require("@masora/desktop-kit");
+    const cloud = (kit.readJson(path.join(kit.familyDir(), "masora.json")) || {}).cloud;
+    if (typeof cloud === "string" && /^https:\/\/[^\s/]+/i.test(cloud.trim())) return cloud.trim().replace(/\/+$/, "");
+  } catch {
+    // no kit, no descriptor: the cloud
+  }
+  return cloudOrigin();
+}
 
 /** Matches apps/connector/main.go's own `-poll-interval`/`-poll-deadline` defaults. */
 const POLL_INTERVAL_MS = 5000;
@@ -80,13 +92,15 @@ function readConfig() {
   const canonicalEmail = canonical && typeof canonical.email === "string" && canonical.email ? canonical.email : "";
   const legacyMember = typeof raw.member === "string" ? raw.member : "";
   return {
-    url: typeof raw.url === "string" && raw.url ? raw.url : DEFAULT_URL,
+    url: typeof raw.url === "string" && raw.url ? raw.url : defaultUrl(),
     paired: typeof raw.tokenEnc === "string" && raw.tokenEnc.length > 0,
     repos: raw.repos && typeof raw.repos === "object" && !Array.isArray(raw.repos) ? raw.repos : {},
     // Zevet Chat push (C1 `zevet_chat`). Off unless the person turned it on:
     // the per-repo opt-in above says nothing about chats, which have no repo.
     chat: raw.chat === true,
     member: canonicalName || canonicalEmail || legacyMember,
+    // The true account email of the stored credential (heartbeat `masora.account_email`).
+    account_email: canonicalEmail || (legacyMember.includes("@") ? legacyMember : ""),
   };
 }
 
@@ -97,7 +111,7 @@ function setChatPush(on) {
 
 function saveUrl(url) {
   const raw = readRaw();
-  writeRaw({ ...raw, url: String(url || "").trim() || DEFAULT_URL });
+  writeRaw({ ...raw, url: String(url || "").trim() || defaultUrl() });
   return readConfig();
 }
 
@@ -287,7 +301,7 @@ function mcpServerEntry(baseUrl) {
 }
 
 module.exports = {
-  DEFAULT_URL,
+  defaultUrl,
   CONFIG_PATH,
   readConfig,
   saveUrl,

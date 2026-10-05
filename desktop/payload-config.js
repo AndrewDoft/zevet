@@ -6,7 +6,7 @@ const path = require("node:path");
 
 /** Bumped only when bootstrap.js, Electron or a native module changes in a way a
  *  payload may depend on; a pulse's shell_min above this waits for the installer. */
-const SHELL_VERSION = 1;
+const SHELL_VERSION = 2; // 2: main.js loads update-rollback.js from the shell (0.2.100 crashed on 0.2.96 shells at 1)
 
 /** A monotonic integer from a dotted version: 0.2.89 -> 2089, 0.3.0 -> 3000, 1.0.0 -> 1000000.
  *  Minor and patch each get three digits. */

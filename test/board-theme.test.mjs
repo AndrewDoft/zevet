@@ -120,7 +120,7 @@ describe("theme behaviours", () => {
   });
 
   test("Settings keeps focus and does not lose the invitation draft to a rerender", () => {
-    const settings = src("components/settings.tsx");
+    const settings = src("components/settings.tsx") + src("components/invite.tsx");
     assert.ok(settings.includes('id="settingsClose"'), "the close button id is gone");
     assert.ok(settings.includes('id="settingsInvite"'), "the invitation field id is gone");
     assert.ok(settings.includes('ref={invite}'), "the invitation must survive rerenders as an uncontrolled field");

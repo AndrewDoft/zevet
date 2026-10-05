@@ -121,17 +121,23 @@ function appendStreamed(state, kind, text) {
  * A reminder that trails a real prompt is cut out of it instead, because the
  * words in front of it are somebody's ask.
  */
-export function appendUserText(state, text) {
+export function appendUserText(state, text, model) {
   if (typeof text !== "string" || !text.length) return state;
   const env = readEnvelope(text);
   if (env && env.kind === "noise") return state;
   const said = env ? text : withoutNoise(text);
   if (!said) return state;
-  const closed = { ...state, openIndex: -1 };
+  // `model`: the display name this prompt is sent on. A change from the last
+  // prompt's is kept on the message, and the thread draws it as a quiet rule
+  // ("switched from X to Y"). Pure data, no call: it costs nothing.
+  const to = typeof model === "string" ? model : "";
+  const from = state.model || "";
+  const closed = { ...state, openIndex: -1, ...(to ? { model: to } : {}) };
   return pushMessage(closed, {
     id: nextId(),
     role: "user",
     content: [{ type: "text", text: said }],
+    ...(to && from && to !== from ? { metadata: { custom: { switched: { from, to } } } } : {}),
   });
 }
 
@@ -176,6 +182,25 @@ export function appendLine(state, text) {
  */
 export function appendAgentPayload(state, payload, opts = {}) {
   if (!payload || typeof payload !== "object") return state;
+  /* Which model a Zevet-routed turn landed on: kept on the turn's message so
+     the thread can label it. Not content, and it comes from the router
+     (desktop/zevet-router.js), never from a CLI. */
+  if (payload.type === "zevet_route") {
+    const s = openAssistant(state);
+    const messages = s.messages.slice();
+    const to = String(payload.label || payload.model || "");
+    messages[s.openIndex] = { ...messages[s.openIndex], metadata: { custom: { via: to } } };
+    /* The router moves between models by itself, so the "switched from X to Y"
+       rule (appendUserText, which only sees "Zevet") cannot see it: it is drawn
+       here, on the prompt this turn answered, when the routed model changed. */
+    const from = s.routed || "";
+    const at = s.openIndex - 1;
+    if (from && to && from !== to && at >= 0 && messages[at].role === "user") {
+      const meta = messages[at].metadata || {};
+      messages[at] = { ...messages[at], metadata: { ...meta, custom: { ...(meta.custom || {}), switched: { from, to } } } };
+    }
+    return { ...s, messages, routed: to || from };
+  }
   const agent = opts.agent || "claude";
   const root = opts.localRoot || null;
 

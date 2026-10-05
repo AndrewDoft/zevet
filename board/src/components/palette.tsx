@@ -98,7 +98,7 @@ export function Palette() {
 
     const actions: Entry[] = [
       {
-        command: { id: "action:launch", label: "Start an agent", group: "Actions", keys: NO_KEYS },
+        command: { id: "action:launch", label: "New agent", group: "Actions", keys: NO_KEYS },
         run: openLauncher,
       },
       {

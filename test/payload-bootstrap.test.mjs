@@ -60,10 +60,27 @@ describe("the shell/payload split", () => {
       }
     }
   });
+  test("every relative require in a payload file resolves inside the payload; bootShell.require only reaches the shell", async () => {
+    const payloadFiles = new Set(pkg.payload.files.filter((f) => !f.endsWith("/**")));
+    for (const f of payloadFiles.has("main.js") ? [...payloadFiles].filter((f) => /\.[cm]?js$/.test(f)) : []) {
+      const src = stripComments(fs.readFileSync(path.join(DESKTOP, f), "utf8"));
+      for (const [, dep] of src.matchAll(/(?<![.\w])require\("\.\/([^"]+)"\)/g)) {
+        const ok = payloadFiles.has(dep) || pkg.payload.files.some((p) => p.endsWith("/**") && dep.startsWith(p.slice(0, -2)));
+        assert.ok(ok, `${f} requires ./${dep}, which is not in the payload (a shell module goes through bootShell.require)`);
+      }
+      for (const [, dep] of src.matchAll(/bootShell\.require\("\.\/([^"]+)"\)/g)) assert.ok(shellFiles.has(dep), `${f} bootShell.requires ./${dep}, which the shell does not carry`);
+    }
+  });
   test("the pinned keys and the installer updater stay in the shell: a payload cannot change what it trusts", async () => {
-    for (const f of ["update-signing.js", "app-update.js"]) {
+    for (const f of ["update-signing.js", "app-update.js", "update-rollback.js"]) {
       assert.ok(shellFiles.has(f), `${f} left the shell`);
       assert.equal(pkg.payload.files.includes(f), false);
+    }
+  });
+  test("the family index and idle install are payload; they reach keys only through main.js", async () => {
+    for (const f of ["family-index.js", "idle-install.js"]) {
+      assert.ok(pkg.payload.files.includes(f));
+      assert.doesNotMatch(stripComments(fs.readFileSync(path.join(DESKTOP, f), "utf8")), /require\("\.\/update-signing\.js"\)/);
     }
   });
   test("the installer carries the payload tree as resources/app-core", async () => {

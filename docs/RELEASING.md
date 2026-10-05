@@ -6,6 +6,45 @@ putting two installers and that file on the download host. Until the file
 changes, nothing updates — a 404 or a stale version is treated as "nothing to
 report", so there is no step here that half-ships.
 
+## Shipping: `npm run ship`
+
+```
+npm run ship -- --dry-run     # the plan, no side effects
+npm run ship                  # the whole release, from origin/main
+```
+
+One command does everything below (§0-§7 and "Deploying the hub") and decides for itself: shell or payload from
+`git diff <last release tag>..origin/main` (`classify` in `scripts/ship-lib.mjs`: the §7 rule, tested), the next
+version (above every tag AND the live feed), and whether the hub needs a deploy (`board/`, `hub/`, `client/`,
+`editor/` changed). It runs the gate, bumps, re-signs the client manifest, rebuilds a stale board bundle, commits,
+tags, pushes, waits for `build.yml` in the foreground, checks the exe's Authenticode, uploads installers (feed last,
+shell only), repoints the Caddy links in place, publishes the payload to the one feed every install reads (stable),
+reads it back over HTTPS, deploys the hub and checks `/healthz` + `/version`, hashes the served installers, and
+appends the D-record to `DECISIONS.md`. Docs, tests and scripts alone are not a release.
+
+**One channel.** There is no canary, no soak and no promote step: a release goes straight to the feed every install
+reads, Andrew's included, so the gate in the release step is the only check before everyone gets it.
+
+**Resumable.** Every step asks "is this already done?" first (tag on origin, run green, installers on the host,
+Caddyfile names the version, pulse carries the build on both platforms, hub marker, D-record on main) and skips.
+A crash mid-ship is repaired by running it again; a tag with no D-record is resumed, not re-cut. A tag whose
+`build.yml` failed never reached anyone and is superseded by the next version. A lock file
+(`%TEMP%\zevet-ship.lock`) keeps two ships apart. The signing key is read from the DPAPI file, held in memory,
+never printed. ship works in its own worktree (`../zevet-ship`, or `ZEVET_SHIP_DIR`).
+
+**Auto-ship.** `scripts/ship-watch.mjs` runs every 10 minutes: if origin/main has releasable commits past the last
+tag AND the tip's `ci` run is green (read with `gh`) AND no ship is running, it runs ship; an unfinished tag is
+resumed without asking ci. Log: `%LOCALAPPDATA%\Zevet\ship-watch.log`. Register it once, hidden (no window):
+
+```
+pwsh -NoProfile -File scripts/register-ship-watch.ps1 -Checkout <a clone of zevet on main nothing else edits>
+pwsh -NoProfile -File scripts/register-ship-watch.ps1 -Remove
+```
+
+Check it by `LastTaskResult` and the log, not by the task's state (see the vault note on laptop tasks).
+
+The sections below stay as the reference `ship.mjs` implements, and as the manual route when it cannot run.
+
 ## 0. Before anything
 
 ```
@@ -293,12 +332,10 @@ Installers are still built for every tag (new downloads); only the feed decides 
 ```
 npm run icon --prefix desktop                    # the tree includes build/icon.png
 export ZEVET_UPDATE_SIGNING_KEY=...              # the same key as the feed (step 3)
-node scripts/make-feed.mjs payload --out ./payload-0.2.89 [--channel canary] [--have hashes.txt]
+node scripts/make-feed.mjs payload --out ./payload-0.2.89 [--channel stable] [--have hashes.txt]
 ```
 
-Default channel is `canary`; an install follows it when `<payload root>/channel` says `canary`
-(or `ZEVET_PAYLOAD_CHANNEL=canary`), otherwise it follows `stable`. Promote by re-running the same
-build with `--channel stable` after a day without a revert event. The command stages the tree,
+There is one channel, `stable`, which every install follows. `npm run ship` runs this itself. The command stages the tree,
 publishes it for `win-x64` and `mac-arm64` with desktop-kit's `bin/publish-payload.mjs`, and writes the
 `p/` layout: `p/b/<aa>/<sha>` (brotli blobs), `p/m/<sha>.json` (manifests), and one
 `p/zevet/<channel>/<platform>/pulse.json` per platform. `--have` lists blob hashes already on the host
@@ -357,8 +394,9 @@ the real one) gives a feed a dev build will take. `codemagic.yaml`'s
 ## What is not automated, and why
 
 **Uploading.** Publishing is the one irreversible step, and it is a `scp` into a
-production box that also serves the Masora app. It stays a command somebody
-runs on purpose.
+production box that also serves the Masora app. It is `npm run ship`'s job now
+(and the watcher's, once registered); by hand it stays a command somebody runs on
+purpose.
 
 **Signing.** Windows is signed as "Andrew Doft" via Azure Trusted Signing/OIDC
 (see §Windows below) and verified in-job with `Get-AuthenticodeSignature`. macOS
@@ -534,6 +572,11 @@ Workspace domain is admitted *without being invited* — that is the point of it
 why revoking somebody now writes them to a block list rather than only deleting the invite.
 Deleting alone would let the domain rule re-admit them on their next sign-in. Leave the
 variable unset and only invited accounts get in.
+
+**`ZEVET_TEAM_DOMAINS=usemasora.com,metrodora.ai`** maps Workspace domains to the default team: a Google sign-in whose `hd`
+claim AND verified email are both on the list joins with no invite, team name or key (the setup window's Google button names
+no team). Other domains keep invite/key. A door, not a gate — set it instead of `ZEVET_GOOGLE_DOMAIN`, not with it (the hub
+refuses to start with both).
 
 `ZEVET_GOOGLE_OWNER=<login>` reserves first claim of the hub, exactly as
 `ZEVET_GITHUB_OWNER` does. The first successful sign-in by *either* provider becomes the

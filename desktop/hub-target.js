@@ -3,8 +3,18 @@
 // resolves to its own team on this hub. Self-hosting is an admin setting only
 // (docs/self-hosting.md): ZEVET_HUB, or `defaultHub` in ~/.zevet/config.json.
 
-/** The hub the app ships pointing at. */
-const HOSTED_HUB = "https://hub.usemasora.com";
+/** The Masora cloud: web app at /, API at /api, MCP at /mcp, and the hub under /hub (Caddy strips the prefix). */
+const PRIMARY_ORIGIN = "https://app.usemasora.com";
+
+/** ZEVET_CLOUD_ORIGIN (tests/dev), else the cloud. Sync. */
+function cloudOrigin() {
+  return String(process.env.ZEVET_CLOUD_ORIGIN || "").trim().replace(/\/+$/, "") || PRIMARY_ORIGIN;
+}
+
+const hostedHub = () => `${cloudOrigin()}/hub`;
+
+/** The hub's own domain, the default from before the cloud origin. Still served, never decommissioned. */
+const DOMAIN_HUB = "https://hub.usemasora.com";
 
 /**
  * The address this shipped BEFORE hub.usemasora.com existed, and never
@@ -30,7 +40,7 @@ function clean(v) {
  * @param {{ env?: Record<string,string|undefined>, cfg?: object|null }} from
  */
 function resolveHub({ env = {}, cfg = null } = {}) {
-  return clean(env.ZEVET_HUB) || clean(cfg && cfg.hub) || clean(cfg && cfg.defaultHub) || HOSTED_HUB;
+  return clean(env.ZEVET_HUB) || clean(cfg && cfg.hub) || clean(cfg && cfg.defaultHub) || hostedHub();
 }
 
-module.exports = { HOSTED_HUB, LEGACY_HUB, resolveHub };
+module.exports = { PRIMARY_ORIGIN, cloudOrigin, hostedHub, DOMAIN_HUB, LEGACY_HUB, resolveHub };

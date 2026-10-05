@@ -47,9 +47,9 @@ test("only the surface in front binds ModelChoice to the /model signal", () => {
   assert.ok(!/open=\{modelSelectorOpen\}/.test(src), "bound unconditionally again");
 });
 
-test("Chat's claude-only picker never writes the launch model back", () => {
+test("the picker's write-back is the same in Chat and Code, front surface only", () => {
   const src = readFileSync(path.join(ROOT, "board", "src", "components", "model-choice.tsx"), "utf8");
-  assert.match(src, /if \(inChat \|\| !front \|\| match \|\| !selected\) return;/);
+  assert.match(src, /if \(!front \|\| match \|\| !selected\) return;/);
   const chat = readFileSync(path.join(ROOT, "board", "src", "lib", "chat.ts"), "utf8");
   // Chat runs every provider now, so the pick goes through as it is.
   assert.match(chat, /chatSend\(chatId, text, \{ agent, model: launchModel/);
@@ -77,7 +77,7 @@ test("openLocalRoot surfaces an error instead of leaving the tree null forever o
 });
 
 test("startAgent's console stops spinning and shows an error on a rejected spawn", () => {
-  const fn = boardSlice("  startAgent: (name, launch) => {", "  setActiveConsole: (key) =>");
+  const fn = boardSlice("  startAgent: (name, launch)", "  setActiveConsole: (key) =>");
   const rejection = fn.slice(fn.indexOf(".catch("));
   assert.match(rejection, /c\.running = false/, "the optimistic running:true console never resets");
   assert.match(rejection, /pushConsoleLine\(c, "err"/, "no error line reaches the console");

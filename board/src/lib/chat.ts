@@ -24,8 +24,9 @@ import { useBoard } from "./board";
  *  already hold, so a stored "chat" loads as Chat + Work with no migration. */
 export type Mode = "code" | "chat";
 
-/** The agents Chat + Work can run (desktop/chat-cli.js, chat-claude.js). */
-export const CHAT_AGENTS = ["claude", "codex", "opencode"] as const;
+/** The agents Chat + Work can run (desktop/chat-cli.js, chat-claude.js), and
+ *  "zevet", the router over them (desktop/chat-zevet.js). */
+export const CHAT_AGENTS = ["claude", "codex", "opencode", "zevet"] as const;
 
 /** Chat needs a desktop build that has it (0.2.53+). */
 export function chatAvailable(): boolean {
@@ -208,7 +209,8 @@ export function wireChat(): void {
          <agent>:<model>, the exact namespace ModelChoice reads for that
          agent's group; a run that hits a usage limit here grays the same
          picker row Code's would. */
-      if (prev.model) {
+      // "zevet:auto" is not a model: the router handles its own limits (see board.ts).
+      if (prev.model && prev.agent !== "zevet") {
         const last = next.transcript.messages[next.transcript.messages.length - 1] as
           | { status?: { type?: string; error?: string } }
           | undefined;

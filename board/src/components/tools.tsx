@@ -22,6 +22,7 @@
 import { makeAssistantToolUI } from "@assistant-ui/react";
 import type { ReactNode } from "react";
 import { useState } from "react";
+import { myAuthorStyle } from "../lib/board";
 import { CodeDiff, type DiffLine } from "./assistant-ui/elements/code-diff";
 import { FileTree, type FileTreeNode } from "./assistant-ui/elements/file-tree";
 import { SubagentList } from "./assistant-ui/elements/subagent-list";
@@ -190,6 +191,7 @@ function EditUI(p: ToolProps) {
     <Shell name="Edit" target={file} tool={p}>
       <CodeDiff
         className="max-w-none"
+        style={myAuthorStyle()}
         filename={shortPath(file) || "(unnamed file)"}
         additions={additions}
         deletions={deletions}

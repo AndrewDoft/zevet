@@ -6,6 +6,7 @@
 // "one prompt" therefore appeared under all four codex models and all ten
 // opencode ones, saying the same thing eleven times and reading as if it
 // described the model.
+import { defaultPick } from "../board/src/lib/zevet-model.mjs";
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -71,8 +72,13 @@ describe("a fresh install never guesses a model id the account might not have", 
   });
 
   test("the auto-selected default skips unverified rows instead of blindly taking all[0]", () => {
-    assert.match(choice, /const selected = match\?\.id \?\? all\.find\(\(m\) => m\.verified\)\?\.id \?\? "";/);
-    assert.ok(!/const selected = match\?\.id \?\? all\[0\]\?\.id \?\? "";/.test(choice), "back to trusting an unverified all[0]");
+    // Retargeted 2026-09-30: the rule moved into defaultPick (zevet-model.mjs),
+    // which falls to Zevet ahead of any row; without Zevet it still skips
+    // unverified rows. Pinned by behaviour now, not by the source line.
+    assert.match(choice, /const selected = defaultPick\(all, launchModel, aliasOf\);/);
+    const aliasOf = (id) => id.slice(id.indexOf(":") + 1);
+    assert.equal(defaultPick([{ id: "codex:guess" }, { id: "claude:sonnet", verified: true }], "", aliasOf), "claude:sonnet");
+    assert.equal(defaultPick([{ id: "codex:guess" }], "", aliasOf), "", "back to trusting an unverified all[0]");
   });
 });
 

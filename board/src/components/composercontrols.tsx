@@ -90,7 +90,7 @@ const compactModelChoice = cn(
 interface ComposerSource {
   usage: RunUsage | null;
   model: string;
-  runningModel: { id: string; name: string } | undefined;
+  runningModel: { id: string; name: string; title?: string } | undefined;
   agents: UsableAgent[];
   launchMode: LaunchMode;
   setLaunchMode: (m: LaunchMode) => void;
@@ -111,22 +111,18 @@ function useComposerSource(): ComposerSource {
     const thread = activeId ? threads[activeId] : null;
     const usage = thread?.usage ?? null;
     const model = usage?.model ? runningModelName(usage.model, usage.model) : "";
-    const runningModel = usage?.model ? { id: `${thread?.agent ?? "claude"}:${usage.model}`, name: model || "Default" } : undefined;
-    // Every provider, installed or not: a missing one is a Connect chip in the
-    // picker. Gemini has no adapter here, so it is always the chip.
-    //
-    // Meta is different: Andrew asked for it to show only when usable, not as
-    // a permanent upsell. `localAgents` carries a "meta" row (desktop/main.js
-    // `local:agents`) whose `signedIn` reflects a detected MODEL_API_KEY or a
-    // saved Settings credential — absent that, the group is left out of the
-    // picker entirely rather than shown disabled. `ok` stays false either way:
-    // there is no execution adapter yet (docs/contracts/meta-model-api.md).
-    const meta = localAgents.find((a) => a.name === "meta");
-    const usable = [
-      ...localAgents.filter((a) => (CHAT_AGENTS as readonly string[]).includes(a.name)),
-      { name: "gemini", ok: false, signedIn: false, detail: "" },
-      ...(meta?.signedIn ? [{ name: "meta", ok: false, signedIn: true, detail: meta.detail }] : []),
-    ];
+    // Chat's model is chosen per turn, so the trigger shows the run's only
+    // while one is in flight; after that the pick is what the next turn uses.
+    const runningModel = !thread?.busy
+      ? undefined
+      : thread.agent === "zevet"
+        ? { id: "zevet:auto", name: thread.route ? `Zevet · ${thread.route}` : "Zevet", title: thread.routeWhy }
+        : usage?.model
+          ? { id: `${thread.agent}:${usage.model}`, name: model || "Default" }
+          : undefined;
+    // The rows Code offers, less the agents Chat has no adapter for (gemini,
+    // meta): a row that would run as another agent is not a choice.
+    const usable = localAgents.filter((a) => a.ok && (CHAT_AGENTS as readonly string[]).includes(a.name));
     return {
       usage,
       model,
@@ -146,7 +142,11 @@ function useComposerSource(): ComposerSource {
   const usable = localAgents.filter((a) => a.ok);
   const model = active ? runningModelName(active.usage.model, active.model) : "";
   const runningModel = active
-    ? { id: `${active.agent}:${active.usage.model || active.model}`, name: model || "Default" }
+    ? active.nextModel
+      ? { id: `${active.agent}:${active.nextModel}`, name: runningModelName("", active.nextModel) }
+      : active.agent === "zevet"
+      ? { id: "zevet:auto", name: active.route ? `Zevet · ${active.route}` : "Zevet", title: active.routeWhy }
+      : { id: `${active.agent}:${active.usage.model || active.model}`, name: model || "Default" }
     : undefined;
   return {
     usage: active?.usage ?? null,

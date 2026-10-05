@@ -39,6 +39,7 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { clientFile } = require("./runtime.js");
 const { randomUUID } = require("node:crypto");
 const agentCatalogs = require("./agent-catalogs.js");
 
@@ -487,6 +488,7 @@ function invocationFor(agent, opts) {
       : null;
 
   if (agent === "claude") {
+    const hookSettings = claudeHookSettings(o);
     // Standing instructions for this repo, if the person set any. claude is
     // the only one of the three with a flag for it; see desktop/main.js's
     // `local:agentSettings`, which is where the text comes from.
@@ -534,7 +536,8 @@ function invocationFor(agent, opts) {
         ? ["--resume", resumeFrom]
         : o.continueLatest === true
         ? ["--continue"]
-        : []),
+      : []),
+      ...(hookSettings ? ["--settings", JSON.stringify(hookSettings)] : []),
       ...extra,
     ];
   }
@@ -556,6 +559,58 @@ function invocationFor(agent, opts) {
   if (forkFrom) return ["exec", "fork", forkFrom, "--skip-git-repo-check", "--json", ...extra, "-"];
   if (resumeFrom) return ["exec", "resume", resumeFrom, "--skip-git-repo-check", "--json", ...resumeSafe(extra), "-"];
   return ["exec", "--skip-git-repo-check", "--json", ...extra, "-"];
+}
+
+/* The command client/install.mjs writes for a wired repo, spelled here rather
+   than required: in the packaged app client/ sits INSIDE this directory
+   (payload-tree.cjs), so requiring client/ by a parent-relative path works in a checkout but
+   throws at load there and takes every agent launch with it. */
+function quoteArg(p, platform = process.platform) {
+  if (platform !== "win32") return `"${String(p).replace(/[\\"$`]/g, "\\$&")}"`;
+  if (String(p).includes('"')) throw new Error(`path contains a quote: ${p}`);
+  return `"${p}"`;
+}
+function hookCommand({ node, hook, repo, platform = process.platform }) {
+  return `${quoteArg(node, platform)} ${quoteArg(hook, platform)} --zevet-hook --zevet-agent claude-code --zevet-repo ${quoteArg(repo, platform)}`;
+}
+const { hasStaleHook } = require("./reporting-health.js");
+function hasHookMarker(settings) {
+  return JSON.stringify((settings && settings.hooks) || {}).includes("--zevet-hook");
+}
+
+function claudeHookSettings(options) {
+  const repo = typeof options.repoRoot === "string" && options.repoRoot.trim() ? options.repoRoot : "";
+  if (!repo || repoHasZevetHook(options)) return null;
+  const hook = options.hookPath || clientFile("hook.mjs", options);
+  if (!hook) return null;
+  const node = options.nodePath || process.env.ZEVET_NODE || (process.versions.electron ? findNode() : process.execPath);
+  if (!node) return null;
+  const command = hookCommand({ node, hook, repo });
+  const entry = { type: "command", command, timeout: 10 };
+  return { hooks: {
+    UserPromptSubmit: [{ hooks: [entry] }],
+    PreToolUse: [{ matcher: "*", hooks: [entry] }],
+    Stop: [{ hooks: [entry] }],
+  } };
+}
+
+function repoHasZevetHook(options) {
+  let cfg;
+  try {
+    const raw = options.repoSettings || fs.readFileSync(path.join(options.repoRoot, ".claude", "settings.json"), "utf8");
+    cfg = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch { return false; }
+  // A marked hook whose script is gone is not a hook: it fails silently on every
+  // tool call, so the launch must still inject a working one.
+  return hasHookMarker(cfg) && !hasStaleHook(cfg);
+}
+
+function findNode() {
+  for (const dir of String(process.env.PATH || "").split(path.delimiter)) {
+    const candidate = path.join(dir, process.platform === "win32" ? "node.exe" : "node");
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 /**
@@ -805,7 +860,7 @@ function startConsole(opts) {
     return { ok: false, error: `Could not start ${agent}: spawn returned nothing.` };
   }
 
-  const id = randomUUID();
+  const id = options.id || randomUUID();
   let exited = false;
   let stopped = false;
   // Set before the kill, not after: taskkill /F ends the process with code 1,
@@ -984,6 +1039,7 @@ module.exports = {
   // changed by someone who has not read the measurements above.
   _internals: {
     AGENTS,
+    claudeHookSettings,
     CMD_METACHARACTERS,
     buildShimInvocation,
     encodePrompt,

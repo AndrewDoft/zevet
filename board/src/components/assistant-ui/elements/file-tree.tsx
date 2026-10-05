@@ -47,10 +47,10 @@ export function FileTree({
       <div className="flex items-baseline justify-between px-1">
         <span className="text-[13.5px] font-medium">{files} files changed</span>
         <span className={cn(mono, "tabular-nums")}>
-          <span className="text-emerald-600 dark:text-emerald-400">
+          <span className="d-add">
             +{totalAdditions}
           </span>{" "}
-          <span className="text-red-600 dark:text-red-400">
+          <span className="d-del">
             −{totalDeletions}
           </span>
         </span>
@@ -79,12 +79,12 @@ export function FileTree({
                 </span>
                 <span className={cn(mono, "shrink-0 tabular-nums")}>
                   {node.additions ? (
-                    <span className="text-emerald-600 dark:text-emerald-400">
+                    <span className="d-add">
                       +{node.additions}
                     </span>
                   ) : null}{" "}
                   {node.deletions ? (
-                    <span className="text-red-600 dark:text-red-400">
+                    <span className="d-del">
                       −{node.deletions}
                     </span>
                   ) : null}

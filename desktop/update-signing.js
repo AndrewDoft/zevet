@@ -22,8 +22,26 @@ const PINNED_KEYS = {
   "zevet-2026-09": "WtLCaM3MBForULoSLJ0tYRmPyr4fOv24wBbugXSahZc=",
 };
 
+/** The family index (https://usemasora.com/download/masora-family-latest.json, verified by family-index.js) is
+ *  published by Masora's release process under its own domain. Zevet only uses it to decide WHEN to check its
+ *  own signed feed, so a forged index costs one request to the download host and nothing else.
+ *
+ *  The index is signed with Masora's PUBLIC feed key under the family domain only (masora2
+ *  docs/contracts/family_updates.md; masora-family-index-v1), so pinning it here lets Masora vouch for "a newer
+ *  Zevet exists" and nothing else: it is never in PINNED_KEYS, so it can sign no Zevet update. Checked
+ *  2026-09-30 against Masora's live signed feed (0.3.125). ZEVET_FAMILY_INDEX_TRUSTED_KEY=<key id>:<raw ed25519
+ *  key, base64> adds another. */
+const FAMILY_INDEX_KEYS = { "masora-2026-09": "Ji987FREyur9tLKfFlxQNu9AOwjkVzb4F+VPm23VG/4=" };
+
+/** The keys an index may be signed with: the pinned set plus the env-pinned one. */
+function familyIndexKeys(env = process.env) {
+  const spec = env.ZEVET_FAMILY_INDEX_TRUSTED_KEY;
+  const i = spec ? spec.indexOf(":") : -1;
+  return i > 0 ? { ...FAMILY_INDEX_KEYS, [spec.slice(0, i)]: spec.slice(i + 1) } : { ...FAMILY_INDEX_KEYS };
+}
+
 /** Throws unless `envelope` is a valid signature over `doc` by a key in `keys`
  *  (default: the pinned set). Returns the key id. No fallback: a throw is "reject". */
 const verifySigned = (domain, doc, envelope, keys = PINNED_KEYS) => kit.verifySigned(domain, doc, envelope, keys);
 
-module.exports = { UPDATE_DOMAIN, CLIENT_DOMAIN, PINNED_KEYS, canonicalize: kit.canonicalize, verifySigned, signDocument: kit.signDocument };
+module.exports = { UPDATE_DOMAIN, CLIENT_DOMAIN, PINNED_KEYS, FAMILY_INDEX_KEYS, familyIndexKeys, canonicalize: kit.canonicalize, verifySigned, signDocument: kit.signDocument };

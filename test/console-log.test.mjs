@@ -126,7 +126,7 @@ test("a console closed while starting stops the process it was waiting for", () 
   assert.match(board, /function closedMeanwhile\([^)]*\)[^{]*\{[^}]*myConsoles\.some\(\(x\) => x\.key === c\.key\)/);
   assert.match(board, /stopAgent\(String\(id\)\);\s*void bridge\.local\?\.forgetAgent\?\.\(String\(id\)\)/);
   // startAgent and both resume paths: every place a new process id lands.
-  assert.equal(board.match(/if \(closedMeanwhile\(c, r\.id\)\) return;\s*(\/\/[^\n]*\s*)*c\.id = r\.id/g)?.length, 3);
+  assert.equal(board.match(/if \(closedMeanwhile\(c, r\.id\)\) return[^;]*;\s*(\/\/[^\n]*\s*)*c\.id = r\.id/g)?.length, 3);
 });
 
 test("a generated title is kept with the metadata and follows a continued thread", () => {
@@ -225,4 +225,31 @@ test("activity() says how many consoles have a live process and when any last sp
   t = 9000;
   log.record("b", { type: "exit" });
   assert.deepEqual(log.activity(), { running: 0, lastAt: 9000 });
+});
+
+test("a routed turn that ended on codex or opencode goes idle with its answer (the agent API's /wait returns)", () => {
+  const log = createConsoleLog();
+  log.open("z", { ...META, agent: "zevet" });
+  log.record("z", { type: "prompt", text: "hi" });
+  assert.equal(log.get("z").state, "working");
+  log.record("z", { type: "turn_end", result: "pineapple" });
+  const c = log.get("z");
+  assert.equal(c.state, "idle");
+  assert.equal(c.lastResult, "pineapple");
+  assert.equal(c.turns, 1);
+});
+
+test("a console keeps claude's session id, so a restart can resume it", async () => {
+  const { createRequire } = await import("node:module");
+  const req = createRequire(import.meta.url);
+  const { createConsoleLog: make } = req("../desktop/console-log.js");
+  const { resumableEntries } = req("../desktop/console-persistence.js");
+  const log = make();
+  log.open("c1", { agent: "claude", cwd: "/w", root: "/w" });
+  log.record("c1", { type: "agent", payload: { type: "system", subtype: "init", session_id: "s-123" } });
+  const snap = log.snapshot().consoles;
+  assert.equal(snap[0].sessionId, "s-123");
+  assert.deepEqual(resumableEntries(snap).map((e) => e.sessionId), ["s-123"], "and it is saved");
+  log.open("c2", { agent: "claude", cwd: "/w", root: "/w" }, "c1");
+  assert.equal(log.snapshot().consoles[0].sessionId, "s-123", "a follow-up process keeps the thread's id");
 });

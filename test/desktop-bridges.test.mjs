@@ -120,6 +120,11 @@ describe("the bridge surface the renderer is written against", () => {
       //   local:agentAttached — one console the board did not start (API spawn or a
       //   schedule), same content the agentEvent stream and `local:consoles` already
       //   carry; it only says the console exists.
+      //   local:boardRequest — the loopback agent API (desktop/agent-api.js,
+      //   `via: "board"`) asking the board to start or message an agent through
+      //   its own actions. Carries what the API caller sent (agent, folder,
+      //   prompt, model), which only a holder of the 0600 token file can
+      //   send; the answer is an invoke (boardReply) carrying a console id.
       //   local:indexEvent — code-index progress. Model download bytes and
       //   refresh counts, so an 86MB fetch is not a frozen button. Carries no
       //   file contents and no paths outside the workspace the user opened.
@@ -157,7 +162,7 @@ describe("the bridge surface the renderer is written against", () => {
       //   after a save/toggle/remove round-trip it initiated itself. Carries
       //   the same schedule records local:schedules already returns to an
       //   invoke, from a click — no new data crosses the boundary here.
-      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentAttached", "local:agentEvent", "local:askRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
+      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentAttached", "local:agentEvent", "local:askRequest", "local:boardRequest", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {
@@ -561,7 +566,7 @@ describe("the hub domain migration never blocks or overreaches", () => {
 
   test("only a config still on the legacy default is ever touched", () => {
     const body = stripComments(fnBody("async function migrateHubDomain"));
-    assert.match(body, /!==\s*LEGACY_HUB\)\s*return cfg/, "a hub the user or an admin set on purpose must be an immediate no-op");
+    assert.match(body, /\[LEGACY_HUB, DOMAIN_HUB\]\.includes\(.*\)\)\s*return cfg/, "a hub the user or an admin set on purpose must be an immediate no-op");
   });
 
   test("the probe is short and bounded, and a failure of any kind keeps the old hub", () => {
@@ -571,21 +576,29 @@ describe("the hub domain migration never blocks or overreaches", () => {
     assert.match(body, /if \(!res\.ok\) return cfg/, "a non-200 from the new host must not be treated as success");
   });
 
-  test("success rewrites cfg.hub to HOSTED_HUB and persists it", () => {
+  test("success rewrites cfg.hub to hostedHub() and persists it", () => {
     const body = stripComments(fnBody("async function migrateHubDomain"));
     assert.match(body, /writeConfig\(migrated\)/);
-    assert.match(body, /hub:\s*HOSTED_HUB/);
+    assert.match(body, /hub:\s*hostedHub\(\)/);
   });
 
   test("openBoard runs before the migration check, never after it", () => {
     // The same reasoning as the updater a few lines above it in main.js: a
     // network check — even a bounded, 2-second one — has no business
-    // delaying a window that could have opened already. migrateHubDomain
-    // only ever changes what the NEXT launch reads.
+    // delaying a window that could have opened already.
     const openIdx = main.indexOf("if (cfg) openBoard(cfg);");
     const migrateIdx = main.indexOf("void migrateHubDomain(cfg)");
     assert.ok(openIdx >= 0 && migrateIdx >= 0, "both call sites must exist in app.whenReady");
     assert.ok(openIdx < migrateIdx, "migrateHubDomain must be fired after openBoard, not before it");
+  });
+
+  test("a migration moves the open board to the new hub (the IPC guard reads config.json live)", () => {
+    // 0.2.103: the board opened on hub.usemasora.com, the migration wrote app.usemasora.com/hub 2 s later, and
+    // every bridge call from the still-open board was refused as a foreign sender until a restart.
+    const at = main.indexOf("void migrateHubDomain(cfg)");
+    const tail = stripComments(main.slice(at, at + 700));
+    assert.match(tail, /cfg\.hub = m\.hub/, "openBoard's reconnect closure must follow the new hub");
+    assert.match(tail, /boardWindow\.loadURL\(`\$\{m\.hub/, "the open board must be navigated to the migrated hub");
   });
 });
 

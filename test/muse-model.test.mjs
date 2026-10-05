@@ -38,34 +38,15 @@ describe("the picker offers Meta", () => {
     assert.match(constants, /meta:\s*MUSE_MODELS\.map\(\(m\) => m\.id\)/);
   });
 
-  test("Meta gets a provider label, same as every other group", () => {
-    assert.match(modelChoice, /meta:\s*"Meta"/);
-  });
-
   test("Meta's mark already exists (built for opencode's muse-spark rows) and resolves by agent name alone", () => {
     assert.match(providers, /meta:\s*\{\s*Mark:\s*MetaLogo/);
   });
 });
 
-describe("Meta is shown only when usable, unlike Gemini's permanent Connect chip", () => {
-  test("the Chat picker only adds a meta row when localAgents reports it signed in", () => {
-    // Not `{ name: "meta", ok: false, signedIn: false, detail: "" }` unconditionally
-    // (that is Gemini's own line, immediately above) — a conditional push gated on
-    // `meta?.signedIn`.
-    assert.match(composerControls, /meta\?\.signedIn/);
-    assert.match(composerControls, /localAgents\.find\(\(a\) => a\.name === "meta"\)/);
-  });
-
-  test("mutation check: the gate is a real condition, not always-true", () => {
-    // The spread-if idiom used here is `...(cond ? [x] : [])`. Hardcoding
-    // `cond` to true would make the row behave exactly like Gemini's
-    // permanent chip, which is the regression this feature exists to avoid.
-    assert.match(composerControls, /\.\.\.\(meta\?\.signedIn \? \[\{ name: "meta"/);
-    assert.doesNotMatch(composerControls, /\.\.\.\(true \? \[\{ name: "meta"/);
-  });
-
-  test("the adapter is honestly absent: ok stays false even when signed in", () => {
-    assert.match(composerControls, /\{ name: "meta", ok: false, signedIn: true, detail: meta\.detail \}/);
+describe("Meta is offered exactly where Code offers it", () => {
+  test("Chat lists only agents that can run (Meta has no adapter), so no synthetic meta row", () => {
+    assert.doesNotMatch(composerControls, /name: "meta"/);
+    assert.match(composerControls, /localAgents\.filter\(\(a\) => a\.ok && \(CHAT_AGENTS/);
   });
 });
 

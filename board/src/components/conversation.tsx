@@ -26,7 +26,6 @@ import { PermitPrompt, PermitQueue } from "./permits";
 import { AskPrompt, AskQueue } from "./asks";
 import { DraftRestore } from "./findviews";
 import { ThreadMap } from "./mapviews";
-import { SessionBanner } from "./sessions";
 
 const TURN_COMPONENTS = { ToolGroup: TurnToolGroup };
 
@@ -137,6 +136,18 @@ export function Conversation() {
    *  and a permit prompt all describe a process, and this conversation does
    *  not have one. */
   const reading = Boolean(useBoard((s) => s.sessions.open));
+  const closeSession = useBoard((s) => s.closeSession);
+  useEffect(() => {
+    if (!reading) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.key !== "Escape" || target?.closest("input, textarea, select, [contenteditable='true'], [role='dialog'], [role='menu']")) return;
+      event.preventDefault();
+      closeSession();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [reading, closeSession]);
 
   if (!local) {
     return (
@@ -172,7 +183,6 @@ export function Conversation() {
           What is left here is the one thing that cannot go in a composer: with
           no folder open there is nowhere for an agent to run at all, and the
           answer to that is a folder picker, not a control. */}
-      <SessionBanner />
       {!reading && !active && !localRoot ? (
         <div className="chat-setup">
           <Launcher />

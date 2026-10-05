@@ -6,7 +6,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, chmodSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, chmodSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -244,8 +244,25 @@ describe("what the hook reports", () => {
       assert.equal(e.repo, path.basename(repo.dir), "repo must be the origin's name, not the worktree directory's");
       assert.equal(e.branch, "feature/invites");
       assert.equal(e.target, "src/db.ts");
-      const root = repo.dir.replaceAll("\\", "/");
+      // git records the REAL path in commondir (macOS /private/var, Windows 8.3 -> long).
+      const root = realpathSync.native(repo.dir).replaceAll("\\", "/");
       assert.equal(e.checkout, createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex"));
+    } finally {
+      execFileSync("git", ["worktree", "remove", "-f", wtDir], { cwd: repo.dir, stdio: "pipe" });
+    }
+  });
+
+  test("an agent in the MAIN checkout editing a file in a SIBLING worktree still reports the file", async () => {
+    // Andrew's real shape (measured 2026-10-05: 8 of 8 file events on his hub had
+    // target null, so no sprite could ever ride a file): the session starts in
+    // the main checkout and edits `../repo-fix/...`. The path is outside `root`,
+    // but it is the same repo, and `src/db.ts` means the same file to everyone.
+    const wtDir = path.join(path.dirname(repo.dir), `${path.basename(repo.dir)}-siblingwt`);
+    execFileSync("git", ["worktree", "add", "-q", "-b", "sibling-wt", wtDir], { cwd: repo.dir, stdio: "pipe" });
+    try {
+      const e = await send({ cwd: repo.dir, hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: path.join(wtDir, "src", "db.ts") } });
+      assert.equal(e.repo, path.basename(repo.dir));
+      assert.equal(e.target, "src/db.ts");
     } finally {
       execFileSync("git", ["worktree", "remove", "-f", wtDir], { cwd: repo.dir, stdio: "pipe" });
     }

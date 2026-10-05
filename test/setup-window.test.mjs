@@ -130,6 +130,8 @@ describe("a fresh install's setup window", { skip: NO_DRIVE }, () => {
   });
 
   test("signing in with no team name opens no browser and says Name?", () => {
+    // The form opens behind "Other"; with it closed Google names no team at all.
+    drive("eval", `showOther(true)`);
     drive("click", "#google");
     assert.deepEqual(drive("opened"), []);
     assert.match(drive("snapshot").outline, /div#msg(?!.*hidden)[^\n]*"Name\?"/);

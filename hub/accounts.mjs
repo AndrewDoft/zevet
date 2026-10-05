@@ -108,7 +108,7 @@ function hashInviteKey(key) {
  */
 const DEFAULT_PROVIDER = "github";
 
-const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null, credentials: [] });
+const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorkspace: "", owner: null, allowed: [], blocked: [], sessions: {}, presence: {}, createdAt: null, credentials: [] });
 
 /** A stored credential record, minus its `key` — what everything except
  *  /team/credentials/:id/secret itself is allowed to see. */
@@ -265,6 +265,32 @@ export class Accounts {
     this.#save();
   }
 
+  /** The Masora workspace this team was opened for ("" when none): the key hub/masora-auth.mjs maps a
+   *  sign-in from Masora to a team by. */
+  get masoraWorkspace() {
+    return this.state.masoraWorkspace || "";
+  }
+
+  bindMasoraWorkspace(wid) {
+    this.state.masoraWorkspace = String(wid);
+    this.#save();
+  }
+
+  /**
+   * A person Masora vouches for (docs/contracts/cross_app_context.md "Hub sign-in"). Stored as a Google-style
+   * record keyed by email, so the same person signing in with Google later auto-links through `#byEmail`
+   * instead of becoming a second row. A person removed from THIS team stays removed (`#blocked`), and an
+   * ownerless team opens only for a Masora admin, so a member cannot become its owner by arriving first.
+   */
+  signInMasora({ sub, email, name, admin }) {
+    const login = String(email).toLowerCase();
+    const user = { provider: "google", login, id: `masora:${sub}`, display: String(name || login), emails: [login] };
+    if (this.#blocked(user)) return { ok: false, error: `${login} was removed from this team` };
+    if (!this.state.owner && !admin) return { ok: false, error: "a workspace admin has to open this team first" };
+    const r = this.signIn(user);
+    return { ok: true, token: r.token, owner: r.owner, login };
+  }
+
   /** The login that set this hub up, or null if nobody has yet. */
   get owner() {
     return this.state.owner ? this.state.owner.login : null;
@@ -399,7 +425,7 @@ export class Accounts {
    * `ZEVET_GITHUB_OWNER` closes it: set it, and only that login can claim the
    * hub, no matter who reaches it first.
    */
-  mayEnter(user, { requiredOwner = "", domain = "" } = {}) {
+  mayEnter(user, { requiredOwner = "", domain = "", domains = [] } = {}) {
     const me = {
       provider: provider(user),
       login: String(user.login || "").toLowerCase(),
@@ -472,6 +498,18 @@ export class Accounts {
      */
     if (me.provider === "google" && domain && String(user.hd || "").toLowerCase() === String(domain).toLowerCase()) {
       return { ok: true, first: false, byDomain: true };
+    }
+
+    /* ⚠️ THE MAPPED-DOMAINS DOOR (ZEVET_TEAM_DOMAINS): the same door for a LIST
+     * of domains, and stricter because nothing upstream gated on `hd`. BOTH the
+     * `hd` claim (a Workspace Google administers) AND a verified email on that
+     * same domain must hold — a personal gmail has no `hd`, and an unverified
+     * address is dropped by `verifiedEmails`. */
+    if (me.provider === "google" && domains.length) {
+      const hd = String(user.hd || "").toLowerCase();
+      if (hd && domains.includes(hd) && me.emails.some((e) => e.split("@")[1] === hd)) {
+        return { ok: true, first: false, byDomain: true };
+      }
     }
 
     // `display(this.state.owner)`, not `this.owner` — the latter is the bare
@@ -811,6 +849,36 @@ export class Accounts {
   }
 
   /**
+   * Remember that this person's machine just reported an event (`kind` "event":
+   * a hook POST was accepted) or their board just read the hub (`kind` "board").
+   * Diagnosis for the owner: a teammate whose events never arrive is otherwise
+   * indistinguishable from one who is not working. Kept in memory and written
+   * at most every 30s — a request-rate write would rewrite accounts.json
+   * several times a second; a crash loses seconds of a timestamp, not an account.
+   */
+  noteSeen(session, kind, info = {}) {
+    const r = this.#personOf(session);
+    if (!r) return;
+    const now = this.now();
+    const p = (this.state.presence[r.login] ||= {});
+    p[kind === "event" ? "eventAt" : "boardAt"] = now;
+    if (kind === "event") {
+      if (info.machine) p.machine = info.machine;
+      if (info.build) p.build = info.build;
+    }
+    if (!this.savedPresenceAt || now - this.savedPresenceAt > 30000) {
+      this.savedPresenceAt = now;
+      this.#save();
+    }
+  }
+
+  /** `{ eventAt, boardAt, machine, build }` — each null/"" when never seen. */
+  presenceOf(login) {
+    const p = this.state.presence[String(login || "").toLowerCase()] || {};
+    return { eventAt: p.eventAt || null, boardAt: p.boardAt || null, machine: p.machine || "", build: p.build || "" };
+  }
+
+  /**
    * Mint (or rotate) a one-time invite key for a still-pending allowlist
    * entry. Returns the plaintext key — the ONLY moment it ever exists outside
    * the inviter's clipboard/inbox — or null if `login` names no pending
@@ -1077,6 +1145,37 @@ export class Accounts {
   }
 
   /**
+   * Operator-declared proof (ZEVET_IDENTITY_LINKS): `who` (any login, name or
+   * alias of a member) holds the verified `email` — typically a GitHub-owner row
+   * that never carried one, so Masora's sign-in of the same human could not
+   * bind to it. Records the email, folds whoever it now provably duplicates
+   * (`mergeProvable`), and optionally sets the display name. Idempotent: a
+   * second run changes nothing and returns [].
+   */
+  linkEmail(who, email, display = "") {
+    const n = String(who || "").trim().toLowerCase().replace(/^@/, "");
+    const e = String(email || "").trim().toLowerCase();
+    const r = this.#people().find((x) => idents(x).some((i) => i.id) && this.#namesOf(x).includes(n));
+    if (!r || !e) return [];
+    const done = [];
+    if (!emailsOf(r).has(e)) {
+      const list = idents(r);
+      const i = list.find((x) => x.id);
+      i.emails = uniqStrings([...(i.emails || []), e]);
+      setIdents(r, list);
+      this.#save();
+      done.push(`${r.login} now holds ${e}`);
+    }
+    for (const m of this.mergeProvable()) done.push(`${m.absorbed} merged into ${m.kept} (${m.why})`);
+    const keep = this.#people().find((x) => emailsOf(x).has(e));
+    if (keep && display && keep.display !== display && [undefined, keep].includes(this.#claimedBy(display))) {
+      this.rename(keep.login, display);
+      done.push(`${keep.login} is shown as ${display}`);
+    }
+    return done;
+  }
+
+  /**
    * Resolve the name an event was recorded under (a machine's `actor` string)
    * to the person's CURRENT display name — so a rename, a linked identity and
    * a merge all show up on events already in the log, without rewriting it.
@@ -1133,6 +1232,7 @@ export class Accounts {
         secret: typeof raw.secret === "string" ? raw.secret : "",
         name: typeof raw.name === "string" ? raw.name : "",
         domain: typeof raw.domain === "string" ? raw.domain : "",
+        masoraWorkspace: typeof raw.masoraWorkspace === "string" ? raw.masoraWorkspace : "",
         owner: raw.owner && raw.owner.login ? tag(raw.owner) : null,
         allowed: Array.isArray(raw.allowed) ? raw.allowed.filter((a) => a && a.login).map(tag) : [],
         // A block with no id blocks nobody — `samePerson` needs one — so a
@@ -1140,6 +1240,7 @@ export class Accounts {
         // never matches.
         blocked: Array.isArray(raw.blocked) ? raw.blocked.filter((b) => b && b.login && b.id).map(tag) : [],
         sessions,
+        presence: raw.presence && typeof raw.presence === "object" && !Array.isArray(raw.presence) ? raw.presence : {},
         createdAt: typeof raw.createdAt === "number" ? raw.createdAt : null,
         // A malformed entry (no id or no key) is dropped rather than kept as
         // a row that can never be fetched or deleted by id.

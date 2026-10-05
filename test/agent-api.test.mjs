@@ -405,3 +405,9 @@ test("/list reports the working dir: cwd is the worktree when there is one, else
   assert.equal(w.cwd, "C:/r-wt");
   assert.equal(w.branch, "zevet/b");
 });
+
+test("/list carries the session id a restart resumes from", () => {
+  const { _internals } = require("../desktop/agent-api.js");
+  const s = _internals.summarize({ id: "a", events: [], startedAt: Date.now(), running: true, sessionId: "s-9" });
+  assert.equal(s.sessionId, "s-9");
+});

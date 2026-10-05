@@ -66,10 +66,13 @@ import type { RosterEntry } from "../lib/types";
 import type { SessionAgent, SessionSummary } from "../lib/sessions.d.mts";
 import type { ConsoleEntry } from "../lib/types";
 import { missionOf } from "../lib/text";
+import { withState } from "../lib/agents.mjs";
 import { agoLabel } from "../lib/fmt";
-import { sessionBlurb, sessionProject } from "../lib/sessions.mjs";
+import { foldRepoGroups, sessionBlurb, sessionProject } from "../lib/sessions.mjs";
 import { plainError } from "../lib/transcript.mjs";
+import { consoleSprite } from "../lib/roster.mjs";
 import { AgentLogo } from "./brand";
+import { Sprite } from "./sprite";
 import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
@@ -105,7 +108,7 @@ function TeammateRow({ login, invited, hue }: { login: string; invited: boolean;
       data-invited={String(invited)}
     >
       <span className="person-away-dot" aria-hidden="true" />
-      <span className="person-away-name">{"@" + login}</span>
+      <span className="person-away-name">{login}</span>
       <span className="person-away-state">{invited ? "invited" : "active"}</span>
     </div>
   );
@@ -146,7 +149,7 @@ function SubagentRow({ a, hue }: { a: SessionAgent; hue: number }) {
           same agent, which reads as two different things rather than one
           agent and its children. */}
       <AgentLogo agent="claude" model={a.model} hue={hue} className="agent-sub-mark size-3" />
-      <span className="agent-sub-name">{a.title || "Agent"}</span>
+      <span className="agent-sub-name">{sessionBlurb({ title: a.title, id: a.id, source: "claude" })}</span>
     </button>
   );
 }
@@ -200,7 +203,7 @@ function firstPrompt(c: ConsoleEntry): string {
 
 /** A console's title for anywhere it is listed. */
 export function consoleBlurb(c: ConsoleEntry): string {
-  return sessionBlurb({ title: c.title || c.autoTitle, prompt: firstPrompt(c), source: c.agent });
+  return sessionBlurb({ title: c.title || c.autoTitle, prompt: firstPrompt(c), label: c.label, source: c.agent });
 }
 
 /** A run that ended badly: it never started, or its last message was cut off. */
@@ -256,6 +259,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
     <div className="agent-row-wrap">
       <div
         className="agent-row"
+        data-console={String(Boolean(c))}
         data-active={String(isOpen)}
         style={{ "--who": `var(--who-${((hue % HUES) + HUES) % HUES})` } as CSSProperties}
       >
@@ -272,7 +276,14 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
           <AgentLogo agent={row.agent} model={row.model} hue={hue} className="agent-row-mark size-3" />
           <span className="agent-row-name">{row.blurb}</span>
           {c && c.running ? (
-            <span className="agent-row-live" role="img" aria-label="Running" />
+            /* The figure IS the running indicator: in this row's colour,
+               holding the tool the agent is using right now. The dot is the
+               fallback when the sprite script did not load. */
+            window.zevetSprites?.spriteFor ? (
+              <Sprite {...consoleSprite(c)} title="Running" />
+            ) : (
+              <span className="agent-row-live" role="img" aria-label="Running" />
+            )
           ) : unseen ? (
             <span
               className="agent-row-unseen"
@@ -309,6 +320,28 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
       {c && c.error ? (
         <div className="agent-row-err">{plainError(c.error, { model: c.model, fallback: "Couldn't start." })}</div>
       ) : null}
+    </div>
+  );
+}
+
+/** A teammate's agent, as the hub reports it: what it was asked, what it is doing
+ *  now, and where. Read-only — their session lives on their machine. */
+function TeamAgentRow({ a, hue, now }: { a: { key: string; agent: string; repo: string; branch: string; mission: string; current: string; lastTs: number; state?: string }; hue: number; now: number }) {
+  const where = a.repo ? a.repo + (a.branch ? " · " + a.branch : "") : "";
+  return (
+    <div className="agent-row-wrap" data-teammate-agent={a.key}>
+      <div className="agent-row" data-state={a.state} style={{ "--who": `var(--who-${((hue % HUES) + HUES) % HUES})` } as CSSProperties}>
+        <div className="agent-row-pick" title={[where, a.current].filter(Boolean).join(" — ")}>
+          <span className="agent-row-gap" aria-hidden="true" />
+          <AgentLogo agent={a.agent === "claude-code" ? "claude" : a.agent} hue={hue} className="agent-row-mark size-3" />
+          <span className="agent-row-name">{a.mission || where || "working"}</span>
+          {a.state === "working" ? (
+            <span className="agent-row-live" role="img" aria-label="Running" />
+          ) : (
+            <span className="agent-row-ago">{agoLabel(a.lastTs, now)}</span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -440,6 +473,8 @@ export function PeoplePane({
   const localRoot = useBoard((s) => s.localRoot);
   const [expanded, setExpanded] = useState<string[]>(() => expandedStored());
   const [shut, setShut] = useState<Record<string, boolean>>({});
+  const teamAgents = useBoard((s) => s.teamAgents);
+  const idleAfterMs = useBoard((s) => s.idleAfterMs);
   const [now, setNow] = useState(() => serverNow());
 
   useEffect(() => {
@@ -479,7 +514,7 @@ export function PeoplePane({
      send, and showing them twice beats hiding a live teammate. */
   const accounts = Array.isArray(who?.people) ? who.people : [];
   const mine = new Set(
-    [who?.login, bridge.cfg && bridge.cfg.login, ...(who?.me ? myActorNames(who.me) : [])]
+    [who?.login, bridge.cfg && bridge.cfg.login, bridge.cfg && bridge.cfg.actor, ...(who?.me ? myActorNames(who.me) : [])]
       .map((x) => String(x || "").toLowerCase())
       .filter(Boolean),
   );
@@ -492,7 +527,12 @@ export function PeoplePane({
       .filter(Boolean);
     return names.length > 0 && !names.some((n) => mine.has(n) || liveActors.has(n));
   });
-  const inRoster = roster.some((r) => r.actor === myActor);
+  /* ⚠️ ANY OF MY NAMES, NOT `myActor` ALONE. The hub files my events under my
+     display name; `myActor` only catches up when whoami answers, so after a
+     rename or a combine the roster said "andrew" while this said "AndrewDoft"
+     and I showed twice (Andrew, 2026-09-30: "separate once more"). */
+  const isMe = (actor: string) => actor === myActor || mine.has(actor.toLowerCase());
+  const inRoster = roster.some((r) => isMe(r.actor));
 
   /* Every session written to inside the live window, newest first, bucketed by
      the repo it ran in — merged with every console zevet itself has running,
@@ -520,7 +560,18 @@ export function PeoplePane({
      already claimed is skipped. */
   const groups: Array<{ repo: string; rows: Row[] }> = [];
   if (bridge.local) {
-    const bucket = new Map<string, Row[]>();
+    /* Keyed by the REPO, not the folder: a worktree (masora2-w125-fixb,
+       .claude/worktrees/x) files under its origin — foldRepoGroups. A console
+       borrows the name its own session file was given, when there is one. */
+    const bucket = new Map<string, { rows: Row[]; resolved: boolean }>();
+    const put = (repo: string, row: Row, resolved: boolean) => {
+      const g = bucket.get(repo);
+      if (g) {
+        g.rows.push(row);
+        g.resolved = g.resolved || resolved;
+      } else bucket.set(repo, { rows: [row], resolved });
+    };
+    const repoByDir = new Map(list.filter((s) => s.repo && s.cwd).map((s) => [s.cwd.toLowerCase(), s.repo as string]));
     const claimed = new Set(myConsoles.filter((c) => c.sessionId).map((c) => `${c.agent}:${c.sessionId}`));
 
     for (const c of myConsoles) {
@@ -530,14 +581,13 @@ export function PeoplePane({
         model: c.model,
         engine: c.engine,
         blurb: consoleBlurb(c),
-        updated: c.startedAt,
+        // Last heard from, not launched: the tree is ordered by activity.
+        updated: c.lastAt ?? c.startedAt,
         console: c,
         session: null,
       };
-      const key = consoleProject(c);
-      const g = bucket.get(key);
-      if (g) g.push(row);
-      else bucket.set(key, [row]);
+      const known = repoByDir.get(c.root.toLowerCase());
+      put(known || consoleProject(c), row, Boolean(known));
     }
 
     for (const s of list) {
@@ -552,13 +602,10 @@ export function PeoplePane({
         console: null,
         session: s,
       };
-      const key = sessionProject(s as unknown as Record<string, unknown>) || "elsewhere";
-      const g = bucket.get(key);
-      if (g) g.push(row);
-      else bucket.set(key, [row]);
+      put(s.repo || sessionProject(s as unknown as Record<string, unknown>) || "elsewhere", row, Boolean(s.repo));
     }
 
-    for (const [repo, rows] of bucket) {
+    for (const [repo, rows] of foldRepoGroups(bucket)) {
       rows.sort((a, b) => b.updated - a.updated);
       groups.push({ repo, rows });
     }
@@ -581,10 +628,10 @@ export function PeoplePane({
 
   return (
     <>
-      {roster.map((r) => {
+      {[...roster].sort((a, b) => b.lastTs - a.lastTs).map((r) => {
         const idle = isIdle(r, now);
         const open = expanded.indexOf(r.actor) >= 0;
-        const me = r.actor === myActor;
+        const me = isMe(r.actor);
         return (
           <div className="person-wrap" key={r.actor}>
             {me && editing ? (
@@ -617,7 +664,9 @@ export function PeoplePane({
             </button>
             )}
             {open ? <PersonDetail r={r} /> : null}
-            {me ? myRepos(r.hue) : null}
+            {me ? myRepos(r.hue) : withState(teamAgents.filter((a) => a.actor === r.actor), now, idleAfterMs).slice(0, 12).map((a) => (
+              <TeamAgentRow key={a.key} a={a} hue={r.hue} now={now} />
+            ))}
           </div>
         );
       })}
@@ -630,7 +679,7 @@ export function PeoplePane({
         <div className="person-wrap">
           <div className="person-row" style={{ "--who": "var(--who-0)" } as CSSProperties} data-idle="false">
             <span className="person-row-dot" aria-hidden="true" />
-            <span className="person-row-name">{myActor}</span>
+            <span className="person-row-name">{who?.me?.name || myActor}</span>
             <span className="person-row-state">you</span>
           </div>
           {myRepos(0)}

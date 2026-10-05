@@ -91,6 +91,59 @@ export async function combinePeople(fetchImpl, { into, from }) {
   }
 }
 
+/**
+ * Pairs of people the hub cannot prove are one human, but the board can see are
+ * worth the owner's look — for them to confirm, never fused on their behalf.
+ *
+ * Pure and side-effect-free: it does not read or write anything at the hub.
+ * A pair is returned when ANY of these cheap, case-insensitive tests holds:
+ *
+ *  1. the logins are equal after a leading "@" is stripped — "@AndrewDoft"
+ *     and "AndrewDoft";
+ *  2. one login is a PREFIX of the other AND that prefix is at least 4 chars
+ *     long — "andrew" and "AndrewDoft", but never "al" and "alice";
+ *  3. a linked account is shared — both people carry an identity whose login is
+ *     the same email (a Google identity's login IS its address).
+ *
+ * Each pair is returned as `[from, into]`: the one to combine FROM first (no
+ * linked account, or the shorter name) and the one to combine INTO second (the
+ * one with a linked account, or the longer name). Those map straight onto
+ * `combinePeople`'s `{ into, from }`. A pair is returned once, in input order.
+ */
+export function likelySame(people) {
+  const ns = (people || []).map(normalize).filter((n) => n.name);
+  const out = [];
+  for (let i = 0; i < ns.length; i++) {
+    for (let j = i + 1; j < ns.length; j++) {
+      if (pairwise(ns[i], ns[j])) out.push(order(ns[i].p, ns[j].p));
+    }
+  }
+  return out;
+}
+
+const normalize = (p) => {
+  const login = p && p.login != null ? String(p.login) : "";
+  const name = login.toLowerCase().replace(/^@/, "");
+  const emails = ((p && p.identities) || []).map((i) => String(i.login || "").toLowerCase()).filter((e) => e.includes("@"));
+  return { p, name, emails };
+};
+
+function pairwise(a, b) {
+  if (!a.name || !b.name) return false;
+  if (a.name === b.name) return true;
+  const [short, long] = a.name.length <= b.name.length ? [a.name, b.name] : [b.name, a.name];
+  if (short.length >= 4 && long.startsWith(short)) return true;
+  const set = new Set(a.emails);
+  return b.emails.some((e) => set.has(e));
+}
+
+function order(a, b) {
+  const aId = (a.identities || []).length;
+  const bId = (b.identities || []).length;
+  const into = aId !== bId ? (aId > bId ? a : b) : String(b.login || "").length >= String(a.login || "").length ? b : a;
+  return into === a ? [b, a] : [a, b];
+}
+
 /** Owner renames anyone (the hub checks); `login` is the person's stable key, not
  *  their display name. Yourself needs no owner — leave `login` off. */
 export async function renamePerson(fetchImpl, { login, name }) {

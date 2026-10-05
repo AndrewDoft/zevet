@@ -36,10 +36,9 @@ describe("the socket URL", () => {
     assert.equal(socketUrl("https://hub.example", "r").toString(), "wss://hub.example/ws");
   });
 
-  test("a path on the hub URL is replaced, not appended to", () => {
-    // A hub configured as `https://host/zevet` would otherwise produce
-    // `/zevet/ws`, which the hub does not serve and which 400s with no clue.
-    assert.equal(socketUrl("https://hub.example/board", "r").pathname, "/ws");
+  test("a path on the hub URL is kept: the hub lives under /hub on the cloud origin", () => {
+    // Caddy strips the prefix and the hub serves /ws, so https://app.usemasora.com/hub must reach /hub/ws.
+    assert.equal(socketUrl("https://app.usemasora.com/hub/", "r").pathname, "/hub/ws");
   });
 
   test("a query or fragment on the hub URL is dropped", () => {

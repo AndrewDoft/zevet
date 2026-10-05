@@ -187,6 +187,8 @@ contextBridge.exposeInMainWorld("zevet", {
    *  `githubLogout` under the name the Google button expects.
    */
   googleLogout: () => ipcRenderer.invoke("zevet:googleLogout"),
+  /** Send what the person typed plus the scrubbed tail of the app log to Sentry. `{ ok }`. */
+  sendReport: (text) => ipcRenderer.invoke("zevet:sendReport", { text }),
   /**
    * Leave the team entirely: ends the hub session, then drops session,
    *  secret AND hub from config.json (backed up first) so this machine
@@ -212,6 +214,8 @@ contextBridge.exposeInMainWorld("zevet", {
   masoraLinkStart: () => ipcRenderer.invoke("zevet:masoraLinkStart"),
   masoraLinkApprove: () => ipcRenderer.invoke("zevet:masoraLinkApprove"),
   masoraUnpair: () => ipcRenderer.invoke("zevet:masoraUnpair"),
+  /** Settings: the one line saying why this machine's agents are not reaching the team hub, or an empty string when they are. */
+  reportingStatus: () => ipcRenderer.invoke("zevet:reportingStatus"),
   /**
    * Family panel: one row per sibling app, and the click on its chip.
    *
@@ -470,6 +474,7 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   /** Start an agent in a folder. Returns { ok, id }. */
   startAgent: (agent, cwd, opts) => ipcRenderer.invoke("local:startAgent", { agent, cwd, opts }),
   sendToAgent: (id, text) => ipcRenderer.invoke("local:sendToAgent", { id, text }),
+  boardReply: (reqId, result) => ipcRenderer.invoke("local:boardReply", { reqId, result }),
   stopAgent: (id) => ipcRenderer.invoke("local:stopAgent", id),
   /**
    * The consoles still held by this app, with every event each has sent —
@@ -528,6 +533,11 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * just opened. Without it such an agent only reached the board on a page reload.
    */
   onAgentAttached: (fn) => subscribe("local:agentAttached", fn),
+  /**
+   * The loopback agent API asks the board to start or message an agent through
+   * its own actions, as a person's Send would. Answer with boardReply.
+   */
+  onBoardRequest: (fn) => subscribe("local:boardRequest", fn),
   /**
    * An agent is asking to do something and is BLOCKED until the answer comes
    * back — see the computer-use block in main.js. The board is the only place

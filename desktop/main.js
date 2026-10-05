@@ -24,7 +24,8 @@
 // that root. See openBoard() for why the board is allowed a bridge at all
 // despite loading a remote origin, and local:write below for why a WRITE over
 // that same bridge is a bigger thing to hand out than a read.
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, safeStorage, session, powerMonitor, net } = require("electron");
+const { createReconnect } = require("./reconnect.js");
 const { openSafe } = require("./open-safe.js");
 const { createLog, createIpcRegistry } = require("@masora/desktop-kit");
 // bootstrap.js (the asar entry) loaded this file; what only it can hand over is on this object.
@@ -55,23 +56,31 @@ const indexCapability = require("./index-capability.js");
 const embedder = require("./embedder.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
-const { AppUpdater, loopbackProofKeys } = bootShell.require("./app-update.js");
+const { AppUpdater, loopbackProofKeys, INSTALL_ARGS, winInstallArgs } = bootShell.require("./app-update.js");
+const { createRollback } = bootShell.require("./update-rollback.js");
+const { familyIndexKeys } = bootShell.require("./update-signing.js");
 const runtime = require("./runtime.js");
-const { createSwapper, confirmWhenHealthy } = require("./payload-swap.js");
+const { createSwapper, confirmWhenHealthy, awaitHealthy } = require("./payload-swap.js");
+const { createIdleInstaller, CHECK_MS: IDLE_CHECK_MS } = require("./idle-install.js");
 const askServer = require("./ask-server.js");
 const agentApi = require("./agent-api.js");
+const { createBoardAsk } = require("./board-ask.js");
 const { GithubSignIn } = require("./github-signin.js");
-const { resolveHub, HOSTED_HUB, LEGACY_HUB } = require("./hub-target.js");
+const { resolveHub, hostedHub, DOMAIN_HUB, LEGACY_HUB } = require("./hub-target.js");
 const { GoogleSignIn } = require("./google-signin.js");
 const masoraVoice = require("./zevet-voice.js");
 const agentSessions = require("./agent-sessions.js");
+const { resolveKnown } = require("./workspace-root.js");
+const { createApiRootLease } = require("./api-root-lease.js");
 const agentCatalogs = require("./agent-catalogs.js");
 const { createConsoleLog } = require("./console-log.js");
+const consolePersistence = require("./console-persistence.js");
 const { createAgentWorktrees } = require("./agent-worktree.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const { MasoraLink } = require("./masora-link.js");
 const { Family, familyDir, frameable, FRAME_URLS } = require("./family.js");
+const reportingHealth = require("./reporting-health.js");
 const credentials = require("./credentials.js");
 const credentialLadder = require("./credential-ladder.js");
 const credentialUsage = require("./credential-usage.js");
@@ -81,7 +90,9 @@ const masoraConnect = require("./masora-connect.js");
 const chats = require("./chat.js");
 const { createClaudeCli } = require("./chat-claude.js");
 const { createCli: createChatCli } = require("./chat-cli.js");
+const { createZevetChat } = require("./chat-zevet.js");
 const sentry = require("./sentry.js");
+const userReport = require("./user-report.js");
 const Sentry = require("@sentry/electron/main");
 // doc-sync.js is NOT required at the top. It resolves and loads the crypto
 // modules at construction time, and on a checkout where those are missing that
@@ -89,7 +100,7 @@ const Sentry = require("@sentry/electron/main");
 // exists and the app simply never starts, with the message going to a console
 // nobody is looking at. Required lazily in ensureDocSync() instead, where the
 // failure becomes an error string a person can read in the editor.
-const { execFile } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -134,10 +145,17 @@ if (process.env.ZEVET_SENTRY_TEST === "1") sentry.sendTestMessage(Sentry);
  * this is one wrapper applied once rather than five copies of the same
  * capture call.
  */
-const instrumentedStartConsole = sentry.withAgentFailureCapture(agentConsole.startConsole, {
+const startConsoleWithCapture = sentry.withAgentFailureCapture(agentConsole.startConsole, {
   sentryMain: Sentry,
   invocationFor: agentConsole.invocationFor,
 });
+
+/** When this app last started an agent — what reporting-health.js measures "events should have arrived by now" from. */
+let lastAgentStartAt = 0;
+function instrumentedStartConsole(...args) {
+  lastAgentStartAt = Date.now();
+  return startConsoleWithCapture(...args);
+}
 
 /**
  * Test hook: record every `shell.openExternal` call instead of actually
@@ -661,13 +679,13 @@ function writeConfig(cfg) {
  * untouched; the sslip address keeps working exactly as it always has.
  */
 async function migrateHubDomain(cfg) {
-  if (!cfg || String(cfg.hub || "").replace(/\/+$/, "") !== LEGACY_HUB) return cfg;
+  if (!cfg || ![LEGACY_HUB, DOMAIN_HUB].includes(String(cfg.hub || "").replace(/\/+$/, ""))) return cfg;
   try {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 2000);
     let res;
     try {
-      res = await fetch(`${HOSTED_HUB}/healthz`, { signal: ac.signal, redirect: "error" });
+      res = await fetch(`${hostedHub()}/healthz`, { signal: ac.signal, redirect: "error" });
     } finally {
       clearTimeout(timer);
     }
@@ -675,7 +693,7 @@ async function migrateHubDomain(cfg) {
   } catch {
     return cfg;
   }
-  const migrated = { ...cfg, hub: HOSTED_HUB };
+  const migrated = { ...cfg, hub: hostedHub() };
   writeConfig(migrated);
   return migrated;
 }
@@ -700,12 +718,11 @@ function openBoard(cfg) {
     backgroundColor: PAPER, // no white flash before the page paints
     title: "zevet",
     ...iconOption,
-    // macOS gets hiddenInset, which it has always had: the traffic lights stay
-    // where a Mac user expects them and the board's own title bar absorbs the
-    // inset. Windows and Linux get a hidden bar plus an overlay we colour.
+    // Expose the native controls' bounds on Mac too, so the board can reserve
+    // their space as zoom and fullscreen change. Windows/Linux colour the overlay.
     titleBarStyle: "hidden",
     ...(process.platform === "darwin"
-      ? { titleBarStyle: "hiddenInset" }
+      ? { titleBarStyle: "hiddenInset", titleBarOverlay: true }
       : { titleBarOverlay: chromeFor("light", storedZoom()) }),
     autoHideMenuBar: true,
     webPreferences: {
@@ -790,29 +807,41 @@ function openBoard(cfg) {
   if (auth.error) {
     boardWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(credentialPage(auth.error)));
   } else {
-    boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
+    boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}&build=${encodeURIComponent(APP_VERSION)}${sentryTestParam}`);
   }
 
-  // A fresh network interface (Wi-Fi still associating, a VPN adapter still
-  // coming up) can lose the very first request without meaning the hub is
-  // actually unreachable — the same race a browser papers over with its own
-  // retry. One retry before reporting anything to the person; a second
-  // failure is treated as real.
-  let boardLoadAttempts = 0;
-  boardWindow.webContents.on("did-fail-load", (_e, code, desc) => {
-    if (code === -3) return; // aborted by a normal navigation
-    if (!auth.error && boardLoadAttempts < 1) {
-      boardLoadAttempts += 1;
-      setTimeout(() => {
-        if (!boardWindow || boardWindow.isDestroyed()) return;
-        boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
-      }, 1500);
-      return;
-    }
-    boardWindow.loadURL(
-      "data:text/html;charset=utf-8," +
-        encodeURIComponent(unreachablePage(cfg.hub, `${desc} (${code})`)),
-    );
+  // A failed load (Wi-Fi still associating, a VPN coming up, the hub mid-deploy) shows Zevet's own waiting page
+  // at once and retries on a short capped backoff until it works; waking the machine or the network coming back
+  // retries immediately (reconnect.js). No address is shown: there is nothing for the person to do with one.
+  let probing = false;
+  const reconnect = createReconnect({
+    // Probe first: navigating to a dead hub would swap Chromium's own error page in over ours on every attempt.
+    load: async () => {
+      if (probing) return;
+      probing = true;
+      const up = await hubAnswers(cfg.hub);
+      probing = false;
+      if (!boardWindow || boardWindow.isDestroyed()) return reconnect.stop();
+      if (up) boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}&build=${encodeURIComponent(APP_VERSION)}${sentryTestParam}`);
+      else reconnect.failed();
+    },
+    showPage: () => boardWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(reconnectingPage())),
+    isOnline: () => net.isOnline(),
+  });
+  boardWindow.webContents.on("did-fail-load", (_e, code, _desc, _url, isMainFrame) => {
+    if (code === -3 || isMainFrame === false || auth.error) return; // aborted by a normal navigation, a subframe, or the credential page
+    reconnect.failed();
+  });
+  boardWindow.webContents.on("did-finish-load", () => {
+    if (!boardWindow.webContents.getURL().startsWith("data:")) reconnect.loaded();
+  });
+  const nudge = () => reconnect.nudge();
+  powerMonitor.on("resume", nudge);
+  powerMonitor.on("unlock-screen", nudge);
+  boardWindow.once("closed", () => {
+    reconnect.stop();
+    powerMonitor.removeListener("resume", nudge);
+    powerMonitor.removeListener("unlock-screen", nudge);
   });
 
   // Anything that wants a new window is a link to the outside world.
@@ -873,24 +902,27 @@ function statusPageStyle() {
 
 const STATUS_BRAND = `<div class="brand"><svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true" fill="currentColor"><circle cx="16" cy="8.2" r="3.5"/><circle cx="7" cy="23.8" r="3.5"/><circle cx="25" cy="23.8" r="3.5"/></svg>Zevet</div>`;
 
-function unreachablePage(hub, why) {
-  let host = String(hub || "");
+/** Does the hub answer at all (any non-5xx: a proxy's 502 is "down")? Never throws. */
+async function hubAnswers(hub) {
   try {
-    host = new URL(hub).host || host;
+    const r = await net.fetch(`${String(hub).replace(/\/+$/, "")}/healthz`, { signal: AbortSignal.timeout(4000) });
+    return r.status < 500;
   } catch {
-    // Not a parseable URL: show whatever was configured, verbatim.
+    return false;
   }
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Offline</title>${statusPageStyle()}
-  <main>${STATUS_BRAND}<h1>Offline</h1>
-  <p>Could not reach <code>${host.replace(/[<&]/g, "")}</code>: ${String(why).replace(/[<&]/g, "")}</p>
-  <p>A VPN, firewall, or a network with strict DNS filtering can block this address without
-  saying so. Try another network, or a quick reload once you're off it.</p></main></html>`;
+}
+
+function reconnectingPage() {
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Reconnecting</title>${statusPageStyle()}
+  <style>@keyframes z{to{transform:rotate(360deg)}}i{display:inline-block;width:14px;height:14px;margin-right:8px;vertical-align:-2px;border:2px solid #cfccc6;border-top-color:${INK};border-radius:50%;animation:z .9s linear infinite}@media(prefers-reduced-motion:reduce){i{animation:none}}</style>
+  <main>${STATUS_BRAND}<h1><i></i>Reconnecting</h1>
+  <p>Your work is safe. Zevet picks up again by itself as soon as it can.</p></main></html>`;
 }
 
 /**
  * The page shown when this machine cannot prove who it is.
  *
- * Separate from `unreachablePage` on purpose: that one says "the hub may be
+ * Separate from `reconnectingPage` on purpose: that one says "the hub may be
  * off, nothing is wrong with your install", which is a comforting and, here,
  * false thing to tell somebody whose config holds a mistyped secret. The
  * remedies are opposite — wait versus re-run setup — so the pages are too.
@@ -1562,6 +1594,38 @@ async function teamJoin(team, key) {
 
 bridge.handle("zevet:teamJoin", (_e, { team, key } = {}) => teamJoin(team, key));
 
+/* One login for everyone: Masora's signed assertion (family.js, zevet.credentials.json `hub`) in place of a team key.
+ * The hub answers like /team/join, so the same config lands: this machine cannot tell the two apart afterwards. */
+async function hubSignInFromMasora(hubUrl, assertion) {
+  try {
+    const res = await fetch(`${hubUrl}/auth/masora`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ assertion }),
+      signal: AbortSignal.timeout(15000),
+    });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      return { ok: false, error: `Server error ${res.status}` };
+    }
+    if (!res.ok || !body || !body.ok) return { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
+    const existing = readConfig() || {};
+    writeConfig({
+      ...existing,
+      hub: hubUrl,
+      secret: body.secret || existing.secret || "",
+      session: body.token,
+      actor: existing.actor || String(body.login || "").split("@")[0],
+      login: body.login,
+    });
+    return { ok: true, login: body.login, owner: Boolean(body.owner) };
+  } catch {
+    return { ok: false, error: "Offline" };
+  }
+}
+
 /* ── Sign out of GitHub, from Settings ─────────────────────────────────────
  *
  * The counterpart to the three calls above, for a machine that signed in
@@ -1602,6 +1666,14 @@ const signOut = async () => {
 // Signing out ends a SESSION, and a session does not remember which provider
 // minted it — so this is one function, under the name each button expects.
 bridge.handle("zevet:githubLogout", signOut);
+
+// Setup's "Send": the text is the person's; the log is read, bounded and scrubbed here (user-report.js).
+bridge.handle("zevet:sendReport", (_e, { text } = {}) =>
+  userReport.send(Sentry, {
+    text,
+    version: APP_VERSION,
+    log: userReport.readTail(path.join(app.getPath("logs"), "zevet.log")),
+  }));
 
 /* ── Sign out of the TEAM, from Settings (or the setup screen) ────────────
  *
@@ -1731,16 +1803,53 @@ const family = new Family({
     const s = await appUpdater.check();
     if (s && s.phase === "ready" && s.canInstall) await appUpdater.install();
   },
+  // The signed family index (family-index.js) names a newer Zevet: look now, never install. The keys are the
+  // shell's (a payload cannot change what it trusts); none pinned yet means the poll stays off.
+  indexKeys: familyIndexKeys(),
+  onIndexNewer: () => {
+    const phase = appUpdater.state.phase;
+    return phase === "ready" || phase === "downloading" || phase === "checking" ? undefined : appUpdater.check();
+  },
   readTeam: () => currentTeamName(),
   // D-615: Masora's onboarding relays a {team, key} invite via team.join;
   // this runs the identical call/config-write desktop/setup.html's own Join
   // button makes (teamJoin, above) — no separate hub credential of any kind
   // is ever held by or sent to Masora.
   joinTeam: (team, key) => teamJoin(team, key),
+  joinHub: hubSignInFromMasora,
   version: APP_VERSION,
   installPath: path.dirname(app.getPath("exe")),
 });
 bridge.handle("zevet:familyStatus", () => family.status());
+
+/* ── Is this machine's activity reaching the hub? ──────────────────────────────
+ * Repairs a Claude hook whose script has gone missing in any folder this
+ * machine has opened, then asks the hub whether it accepts this credential and
+ * has heard from this person since the last agent started. One line, or "". */
+let reportingLine = "";
+async function checkReporting() {
+  const cfg = readConfig();
+  if (!cfg) return;
+  const auth = authFor(cfg);
+  if (auth.error || !auth.token) {
+    reportingLine = "This machine's credential is unusable. Sign in again.";
+    return;
+  }
+  try {
+    const failedRepos = await reportingHealth.repairStaleHooks(readWorkspaces(), { install: installHooks });
+    reportingLine = await reportingHealth.reportingProblem({ hub: cfg.hub, token: auth.token, fetchImpl: net.fetch.bind(net), agentStartedAt: lastAgentStartAt, failedRepos });
+  } catch (err) {
+    reportingLine = "";
+  }
+}
+function startReportingHealth() {
+  setTimeout(() => void checkReporting(), 15000).unref();
+  setInterval(() => void checkReporting(), 5 * 60 * 1000).unref();
+}
+bridge.handle("zevet:reportingStatus", async () => {
+  if (lastAgentStartAt) await checkReporting();
+  return { problem: reportingLine };
+});
 bridge.handle("zevet:familyAct", (_e, { app: which, action } = {}) => family.act(String(which), String(action)));
 
 bridge.handle("zevet:masoraConfig", () => masora.readConfig());
@@ -1963,8 +2072,7 @@ function writeWorkspaces(list) {
  * is the only place a new root can come from.
  */
 function knownRoot(root) {
-  const want = path.resolve(String(root || ""));
-  return readWorkspaces().some((d) => path.resolve(d) === want) ? want : null;
+  return resolveKnown(root, readWorkspaces(), agentSessions.originOf);
 }
 
 /**
@@ -2014,7 +2122,10 @@ bridge.handle("local:masoraRepoToggle", (_e, { root, on } = {}) => {
 bridge.handle("local:tree", (_e, root) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
-  return localFs.listTree(dir, {});
+  // `origin`: a worktree's events are filed under its origin repo (hook.mjs),
+  // so the tree matches them by the origin's name and fingerprint.
+  const r = localFs.listTree(dir, {});
+  return r && r.ok ? { ...r, origin: agentSessions.originOf(dir) || dir } : r;
 });
 
 bridge.handle("local:read", (_e, { root, relPath }) => {
@@ -2370,6 +2481,9 @@ bridge.handle("local:status", async (_e, arg) => {
 
   const failedAgo = statusSources.hookFailure(STATUS_PATHS.errorLog);
 
+  // The 5h/7d windows from startup, before any agent has reported a
+  // rate_limit_event: this machine's own login, probed at most every 5 min.
+  const probed = await agentEngine.engine1Windows({ probeOpts: { fetchImpl: fetch } }).catch(() => undefined);
   return {
     ok: true,
     cindex,
@@ -2383,6 +2497,8 @@ bridge.handle("local:status", async (_e, arg) => {
     // deciding whether "2h" or "2 hours ago" reads better in a 10px strip.
     hook: { failedAgo },
     burn: burn.read(),
+    rateLimits: probed ? probed.windows : undefined,
+    rateLimitsAt: probed ? probed.at : 0,
   };
 });
 
@@ -2567,6 +2683,7 @@ async function runDueSchedules() {
         const started = instrumentedStartConsole({
           agent: s.agent,
           cwd: place.cwd,
+          repoRoot: place.root,
           model: s.model,
           mode: s.mode,
           env,
@@ -3092,7 +3209,12 @@ function notePlacement(p, evt, id) {
   if (sid && !p.session) p.session = String(sid);
 }
 
+/** Set once a payload swap starts: the consoles it stops are resumed in their
+ *  own worktrees after the relaunch, so nothing may be released under them. */
+let relaunching = false;
+
 async function releasePlacement(p) {
+  if (relaunching) return;
   if (!placements.delete(p) || !p.worktree) return;
   // A fork shares its source's worktree; the last one out removes it.
   if ([...placements].some((q) => q.worktree === p.worktree)) return;
@@ -3368,7 +3490,60 @@ async function masoraBriefFor(dir, prompt) {
 
 /** The shared body of `local:startAgent` and the control API's `spawn` --
  *  `trusted` is what tells the two apart (see `trustedDir` above). */
-async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
+/* ---- the Zevet model (desktop/zevet-router.js) ---------------------------
+   What is runnable is asked per turn and cached a minute: a CLI can sign in
+   mid-session. `opencode models` is a process spawn, so its list is kept ten. */
+const zevetRouter = require("./zevet-router.js");
+const repoPrivacy = require("./repo-privacy.js");
+let openModelsCache = { at: 0, list: null };
+function listOpenModels() {
+  const r = agentConsole.resolveAgent("opencode");
+  if (!r.ok) return Promise.resolve(null);
+  const inv = r.kind === "shim"
+    ? agentConsole._internals.buildShimInvocation(r.file, ["models"])
+    : { command: r.file, args: ["models"], options: {} };
+  return new Promise((resolve) => {
+    execFile(inv.command, inv.args, { ...inv.options, windowsHide: true, timeout: 30000, maxBuffer: 4 * 1024 * 1024 }, (err, out) =>
+      resolve(err ? null : String(out).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)));
+  });
+}
+let zevetLadderCache = { at: 0, ladder: null };
+async function zevetLadder() {
+  if (zevetLadderCache.ladder && Date.now() - zevetLadderCache.at < 60_000) return zevetLadderCache.ladder;
+  const detect = await loadDetect();
+  const found = detect ? detect.detectAgents() : [];
+  const usable = (name, id) => agentConsole.resolveAgent(name).ok && Boolean((found.find((a) => a.id === id) || {}).signedIn);
+  if (Date.now() - openModelsCache.at > 10 * 60_000) openModelsCache = { at: Date.now(), list: await listOpenModels() };
+  const ladder = zevetRouter.buildLadder({
+    has: { claude: usable("claude", "claude-code"), codex: usable("codex", "codex"), opencode: agentConsole.resolveAgent("opencode").ok },
+    claude: agentCatalogs.claudeModels(),
+    codex: agentCatalogs.codexModels(),
+    opencode: openModelsCache.list,
+  });
+  zevetLadderCache = { at: Date.now(), ladder };
+  return ladder;
+}
+/** A routed console: the same handle shape as startConsole's, one CLI process per rung in use. */
+function startZevetConsole(spec, claudeOnly) {
+  return zevetRouter.startRouted({
+    id: spec.id,
+    onEvent: spec.onEvent,
+    ladder: zevetLadder,
+    isPrivate: () => repoPrivacy.isPrivate(spec.cwd),
+    start: (rung, extra) =>
+      instrumentedStartConsole({
+        ...spec,
+        id: undefined,
+        agent: rung.agent,
+        model: rung.model,
+        onEvent: extra.onEvent,
+        ...(extra.resumeFrom ? { resumeFrom: extra.resumeFrom } : {}),
+        ...(rung.agent === "claude" ? claudeOnly : {}),
+      }),
+  });
+}
+
+async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId, restorePlace } = {}) {
   await runtimeReady;
   const dir = trusted ? trustedDir(cwd) : knownRoot(cwd);
   if (!dir) return { ok: false, error: trusted ? "cwd does not exist" : "not an opened workspace" };
@@ -3382,12 +3557,17 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
   /* `--continue` finds "the latest session in this folder", so it must start IN
      the folder: a fresh worktree would have no sessions to continue. */
   const inPlace = Boolean(opts && opts.continueLatest === true && String(agent || "") === "claude");
-  const place = source
+  /* A console restored after a payload swap goes back into the folder its
+     session ran in — claude finds a session only from there — and keeps the
+     worktree it had, rather than being placed afresh. */
+  const place = restorePlace
+    ? { id: null, root: restorePlace.root || dir, cwd: dir, worktree: restorePlace.worktree || null, session: String(resumeFrom || ""), title: "" }
+    : source
     ? { ...source, id: null, session: "", title: "" }
     : inPlace
     ? { id: null, root: dir, cwd: dir, worktree: null, session: "", title: "" }
     : await placeAgent(dir);
-  if (source || inPlace) placements.add(place);
+  if (restorePlace || source || inPlace) placements.add(place);
 
   // Standing instructions for this repo, if any were saved. Only claude has a
   // flag for them (agent-console.js § invocationFor); the other two ignore the
@@ -3411,7 +3591,8 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
   // handed one. A failure to set either up must not stop the agent starting
   // — it costs a capability, not the run.
   let mcpConfig = null;
-  if (String(agent || "") === "claude") {
+  const isZevet = String(agent || "") === "zevet";
+  if (String(agent || "") === "claude" || isZevet) {
     try {
       mcpConfig = await mcpConfigFor(dir, opts && typeof opts.mode === "string" ? opts.mode : "auto");
     } catch (err) {
@@ -3432,13 +3613,8 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
     return { ok: false, error: resolved.error };
   }
   const env = resolved.env;
-  const started = instrumentedStartConsole({
-    agent: String(agent || ""),
-    cwd: place.cwd,
-    model: opts && typeof opts.model === "string" ? opts.model : "",
-    mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
-    systemPrompt,
-    env,
+  // What only the claude CLI is handed. A routed console gives it to its claude rungs alone.
+  const claudeOnly = {
     ...(mcpConfig
       ? {
           mcpConfig: mcpConfig.file,
@@ -3447,11 +3623,25 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
           ...(mcpConfig.permissions ? { permissionTool: "mcp__zevet__permission_prompt" } : {}),
         }
       : {}),
+    // A routed console has no claude of its own; its claude rungs take these.
+    ...(isZevet ? agentConsole.extrasFrom(opts) : {}),
+  };
+  const spec = {
+    agent: String(agent || ""),
+    cwd: place.cwd,
+    repoRoot: place.root,
+    model: opts && typeof opts.model === "string" ? opts.model : "",
+    mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
+    ...(resumeFrom ? { resumeFrom: String(resumeFrom) } : {}),
+    ...(forcedId ? { id: String(forcedId) } : {}),
+    systemPrompt,
+    env,
+    ...(isZevet ? {} : claudeOnly),
     /* ⚠️ ASKED FOR, AND ALLOWED, ARE TWO DIFFERENT THINGS. The renderer may
        ask for a forked run; whether this repo may is decided here, against the
        saved settings, because the renderer is the untrusted side of the
        bridge. Same rule the workspace guard follows above. */
-    forkFrom,
+    forkFrom: isZevet ? "" : forkFrom,
     ...(String(agent || "") === "claude" ? agentConsole.extrasFrom(opts) : {}),
     onEvent: (evt) => {
       // The status strip's rolling windows are fed HERE, in the main process,
@@ -3461,9 +3651,11 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
       // accumulate is this side of the bridge.
       if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
       notePlacement(place, evt, handle.id);
+      if (evt && evt.type === "agent" && evt.payload && evt.payload.session_id) consoleLog.updateMeta(handle.id, { sessionId: String(evt.payload.session_id) });
       toBoard("local:agentEvent", consoleLog.record(handle.id, evt));
     },
-  });
+  };
+  const started = isZevet ? startZevetConsole(spec, claudeOnly) : instrumentedStartConsole(spec);
   if (!started.ok) {
     void releasePlacement(place);
     return { ok: false, error: started.error };
@@ -3475,7 +3667,11 @@ async function startAgentCore({ agent, cwd, opts, trusted } = {}) {
   consoleLog.open(started.id, consoleMeta(agent, dir, opts, place, resolved.engine));
   return { ok: true, id: started.id, agent, cwd: dir, engine: resolved.engine };
 }
-bridge.handle("local:startAgent", (_e, args) => startAgentCore(args));
+/** Directories the control API has asked the board to start an agent in: the
+ *  board's start is untrusted (knownRoot), so these -- set by main alone, for the
+ *  span of one request -- are let through as the API's own `spawn` is. */
+const apiRoots = createApiRootLease();
+bridge.handle("local:startAgent", (_e, args) => startAgentCore({ ...args, trusted: apiRoots.has(path.resolve(String((args && args.cwd) || ""))) }));
 
 /** What a reloaded board needs to rebuild a console's rail entry. `root` is
  *  the repo the user picked even when the agent works in a worktree of it.
@@ -3501,7 +3697,31 @@ function consoleMeta(agent, dir, opts, place, engineUsed) {
     ...(engineUsed ? { engine: engineUsed } : {}),
     ...(opts && typeof opts.label === "string" && opts.label ? { label: opts.label } : {}),
     ...(place && place.worktree ? { worktree: place.worktree.dir, branch: place.worktree.branch } : {}),
+    ...(opts && opts.sessionId ? { sessionId: String(opts.sessionId) } : {}),
   };
+}
+
+function resumeSnapshotFile() { return path.join(app.getPath("userData"), consolePersistence.FILE); }
+function persistResumableConsoles() {
+  const consoles = consoleLog.snapshot().consoles.map((e) => {
+    const p = placementOf(e.id);
+    return { ...e, cwd: (p && p.cwd) || e.cwd, root: (p && p.root) || e.root, worktreeRecord: (p && p.worktree) || null };
+  });
+  consolePersistence.write(resumeSnapshotFile(), consoles);
+}
+/** Before the worktree prune: a restored console keeps its worktree. */
+async function restoreResumableConsoles() {
+  const saved = consolePersistence.read(resumeSnapshotFile());
+  try { fs.rmSync(resumeSnapshotFile(), { force: true }); } catch (err) { console.warn(`[zevet] resume snapshot not removed: ${err.message}`); }
+  for (const s of saved) {
+    const r = await startAgentCore({
+      agent: "claude", cwd: s.cwd, trusted: true, resumeFrom: s.sessionId, forcedId: s.id,
+      restorePlace: { root: s.root, worktree: s.worktreeRecord || null },
+      opts: { model: s.model, mode: s.mode, engine: s.engine, label: s.label, sessionId: s.sessionId },
+    });
+    if (!r.ok) console.warn(`[zevet] could not resume console ${s.id}: ${r.error}`);
+    else if (s.inFlight) sendToAgentCore(s.id, "Zevet restarted to apply an update. Continue exactly where you left off.");
+  }
 }
 
 /**
@@ -3565,6 +3785,7 @@ bridge.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) 
   const started = instrumentedStartConsole({
     agent: String(agent || ""),
     cwd: place.cwd,
+    repoRoot: place.root,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
     systemPrompt: settings.systemPrompt,
@@ -3727,7 +3948,34 @@ app.on("web-contents-created", (_e, wc) => {
     });
   }
 });
+/** What every "is anyone using Zevet" decision reads: the payload swap and the idle installer share it, so agents,
+ *  a chat turn and recent input gate both identically (payload-swap.js busyReason). */
+const useGate = {
+  activity: () => {
+    const a = consoleLog.activity();
+    const live = consoleLog.snapshot().consoles.filter((e) => e.running);
+    return { ...a, resumable: live.some((e) => e.agent === "claude" && e.sessionId), nonResumable: live.filter((e) => !(e.agent === "claude" && e.sessionId)).length };
+  },
+  chatBusy: () => Boolean(chatRun && chatRun.turn),
+  lastInputAt: () => lastInputAt,
+  windows: () => BrowserWindow.getAllWindows().length,
+};
+/** Resolves when any window has finished a load attempt (load OR fail: an unreachable hub is not the build's fault). */
+const firstWindowLoaded = new Promise((resolve) => {
+  app.on("browser-window-created", (_e, w) => w.webContents.once("did-stop-loading", resolve));
+});
 function releaseForRelaunch() {
+  persistResumableConsoles();
+  // Stop the processes (their sessions are on disk) but keep every worktree:
+  // the relaunch resumes them there.
+  relaunching = true;
+  for (const c of consoles.values()) {
+    try {
+      c.stop();
+    } catch {
+      // Already gone.
+    }
+  }
   stopChatRun();
   fs.rmSync(AGENT_API_FILE, { force: true });
   family.stop();
@@ -3748,11 +3996,8 @@ if (bootShell.payload) {
   const swapper = createSwapper({
     payload: bootShell.payload,
     app,
-    activity: () => consoleLog.activity(),
-    chatBusy: () => Boolean(chatRun && chatRun.turn),
-    lastInputAt: () => lastInputAt,
+    ...useGate,
     inputQuietMs: process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS ? Number(process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS) : undefined, // the packaged proof only
-    windows: () => BrowserWindow.getAllWindows().length,
     release: releaseForRelaunch,
     log: bootShell.log,
   });
@@ -3764,10 +4009,7 @@ if (bootShell.payload) {
     swapper.applyOnQuit().catch((err) => bootShell.log(`payload apply on quit failed: ${err && err.message}`)).finally(() => { quitApplied = true; app.quit(); });
   });
   if (bootShell.trial) {
-    const loaded = new Promise((resolve) => {
-      app.on("browser-window-created", (_e, w) => w.webContents.once("did-stop-loading", resolve));
-    });
-    void confirmWhenHealthy({ payload: bootShell.trial, loaded, apiAnswers: agentApiAnswers, app, log: bootShell.log });
+    void confirmWhenHealthy({ payload: bootShell.trial, loaded: firstWindowLoaded, apiAnswers: agentApiAnswers, app, log: bootShell.log });
   }
 }
 
@@ -3843,13 +4085,15 @@ const chatProviders = {
   codex: createChatCli({ agent: "codex", id: "codex-cli", startConsole: instrumentedStartConsole }),
   opencode: createChatCli({ agent: "opencode", id: "opencode-cli", startConsole: instrumentedStartConsole }),
 };
+// "zevet:auto": the router, answering each turn with whichever of the above can.
+chatProviders.zevet = createZevetChat({ inner: chatProviders, ladder: zevetLadder, isPrivate: repoPrivacy.isPrivate });
 const DEFAULT_CHAT_AGENT = "claude";
 
 async function spawnChat(chat, provider, opts = {}, folder = "") {
   let mcpConfig = null;
   const cfg = masora.readConfig();
   // --mcp-config is claude's flag; the others get Masora as the C2 brief.
-  if (cfg.paired && provider.agent === "claude") {
+  if (cfg.paired && (provider.agent === "claude" || provider.agent === "zevet")) {
     mcpConfig = path.join(app.getPath("temp"), `zevet-chat-mcp-${process.pid}.json`);
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: masora.mcpServerEntry(cfg.url) }), "utf8");
   }
@@ -3859,14 +4103,22 @@ async function spawnChat(chat, provider, opts = {}, folder = "") {
     mcpConfig,
     model: opts.model,
     mode: opts.mode,
+    effort: agentConsole.extrasFrom(opts).effort,
     folder,
     env: await credentialEnvFor(),
     onEvent: (evt) => {
       const p = evt && evt.type === "agent" ? evt.payload : null;
       if (p && p.type === "system" && p.subtype === "init" && p.model) run.model = String(p.model);
-      const text = p && run.turn ? provider.replyOf(p) : "";
+      // The router says which backend answered; each turn is saved as theirs.
+      if (p && p.type === "zevet_route") {
+        run.model = String(p.model || "");
+        run.provider = `${p.agent}-cli`;
+      }
+      const text = p && run.turn ? provider.replyOf(p, evt) : "";
       if (text) run.turn.reply = run.turn.reply ? [run.turn.reply, text].join(String.fromCharCode(10, 10)) : text;
-      if (p && run.turn && provider.endsTurn(p)) finishChatTurn(run, run.turn.reply, p.is_error);
+      if (p && run.turn && provider.endsTurn(p, evt)) finishChatTurn(run, run.turn.reply, p.is_error);
+      // A routed turn that ended on codex or opencode says so itself (zevet-router.js).
+      if (evt && evt.type === "turn_end" && run.turn) finishChatTurn(run, run.turn.reply, Boolean(evt.error) || !run.turn.reply);
       if (evt && evt.type === "exit") {
         // A one-shot CLI ends its turn by exiting: a reply and a clean exit is
         // an answer; anything else is a failed turn and is not saved.
@@ -3915,7 +4167,7 @@ function chatFolder(dir) {
 
 /** What a live process was started for; a different answer respawns it. */
 function chatWant(provider, opts, folder) {
-  return [provider.agent, opts.model || "", opts.mode || "", folder].join("|");
+  return [provider.agent, opts.model || "", opts.mode || "", opts.effort || "", folder].join("|");
 }
 
 bridge.handle("chat:create", (_e, arg) => chats.create(chatAuthor(), chatFolder(arg && arg.folder) || ""));
@@ -3993,6 +4245,22 @@ bridge.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(ar
  *   - That the renderer is TOLD, and never asked. The board shows a row; the
  *     person clicks it or does not.
  * ======================================================================== */
+/** update-rollback.js: an installer update that does not come up healthy runs the previous installer again and is
+ *  never offered again. Windows only, and never on the payload path (bootstrap.js's 3-strike revert owns that). */
+const updatesDir = path.join(app.getPath("userData"), "updates");
+const rollback = createRollback({
+  dir: updatesDir,
+  running: app.getVersion(),
+  spawn,
+  installArgs: () => winInstallArgs(INSTALL_ARGS, process.execPath),
+  spawnOptions: { windowsVerbatimArguments: true }, // winInstallArgs ends in an unquoted /D=
+  verifyPublisher: async (_platform, file) => (await appUpdater._publisherProblem(file)) === null,
+  verifiedOnDisk: (file, entry) => appUpdater._verified(file, entry),
+  stopRuntime: () => persistResumableConsoles(), // quit() below is appUpdater's quitImpl: releaseForRelaunch
+  quit: () => appUpdater.quitImpl(),
+  log: (m) => { console.log(`[zevet-app-update] ${m}`); fileLog.info(`[zevet-app-update] ${m}`); },
+  report: (err) => sentry.captureUpdateFailure(Sentry, { stage: "auto-update-rollback", error: err }),
+});
 // Whether the menu item currently reads "Restart to update" — tracked outside
 // appUpdater.state so a download's percent ticks (also delivered through
 // onStatus) don't rebuild the native menu dozens of times for nothing.
@@ -4005,13 +4273,22 @@ let lastUpdatePhase = null;
  *  (what the feed is compared against); a payload swap moves the code without
  *  moving that, so shown raw it read 0.2.89 while 0.2.91 ran. */
 function withRunningBuild(s) {
-  return s && typeof s === "object" ? { ...s, current: APP_VERSION } : s;
+  if (!s || typeof s !== "object") return s;
+  // `shell` in this file is Electron's; the payload client is bootShell's.
+  let staged = null;
+  try {
+    staged = bootShell && bootShell.payload ? bootShell.payload.staged() : null;
+  } catch (err) {
+    bootShell.log(`payload staged() unreadable: ${err && err.message}`);
+  }
+  return { ...s, running: APP_VERSION, ...(staged && staged.build !== APP_VERSION ? { next: { build: staged.build, when: "on restart" } } : {}) };
 }
 const appUpdater = new AppUpdater({
+  rollback,
   currentVersion: app.getVersion(),
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
   trustedKeys: loopbackProofKeys(process.env.ZEVET_APP_FEED),
-  dir: path.join(app.getPath("userData"), "updates"),
+  dir: updatesDir,
   // Only meaningful on darwin; see canSelfReplaceMac() in app-update.js.
   // /Applications/zevet.app from .../zevet.app/Contents/MacOS/zevet.
   bundlePath: process.platform === "darwin" ? path.dirname(path.dirname(path.dirname(app.getPath("exe")))) : undefined,
@@ -4039,6 +4316,15 @@ const appUpdater = new AppUpdater({
     // ⚠️ NOT app.quit(): the board's beforeunload and the single-instance
     // lock both get in the way of a quit that has to be certain, and the
     // installer is already running by the time this fires.
+    // Restart now is a relaunch like a payload swap: save the running Claude
+    // consoles so the new build resumes them. Without this, every agent open
+    // across an installer restart was gone (masora2-09, 2026-09-30: w125-fixa
+    // and -fixb, "Zevet restarted and did not restore it").
+    try {
+      releaseForRelaunch();
+    } catch (err) {
+      bootShell.log(`consoles not saved before the installer restart: ${err && err.message}`);
+    }
     app.exit(0);
   },
 });
@@ -4051,6 +4337,41 @@ const appUpdater = new AppUpdater({
 app.on("before-quit", () => {
   if (appUpdater.state.phase === "ready") appUpdater.installOnQuit();
 });
+
+/**
+ * After an installer update: the new shell has to prove itself, like a trial payload does. A window that finished
+ * loading and an agent API that answers within the boot budget confirms it (and makes it the next rollback
+ * target); otherwise update-rollback.js takes one strike (a slow first boot is not a verdict) and then runs the
+ * previous installer. Relaunch on the first strike so the second one comes now, not at the next launch.
+ */
+async function watchShellInstall() {
+  if ((await rollback.afterBoot(null)) !== "none" || !rollback.state().pending) return; // a finished rollback, or an installer that never took
+  const ok = await awaitHealthy({ loaded: firstWindowLoaded, apiAnswers: agentApiAnswers });
+  const did = await rollback.afterBoot(ok ? { ok: true } : { ok: false, reason: "timeout" });
+  if (did === "retry") {
+    bootShell.log("installer update not healthy within 120s; relaunching for the second strike");
+    releaseForRelaunch();
+    app.relaunch();
+    app.exit(1);
+  }
+}
+
+/** Put a ready installer on when nobody is here (idle-install.js); the relaunch restores the consoles. */
+function startIdleInstall() {
+  const tick = createIdleInstaller({
+    updater: appUpdater,
+    gate: useGate,
+    canSilent: () => appUpdater.steps.canOnQuit(appUpdater),
+    systemIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+    windowsAway: () => {
+      const all = BrowserWindow.getAllWindows();
+      return all.length > 0 && all.every((w) => w.isMinimized() || !w.isVisible());
+    },
+    persist: persistResumableConsoles, // before the installer spawns; a non-resumable console never gets here (busyReason)
+    log: (m) => bootShell.log(m),
+  });
+  setInterval(() => void tick().catch((err) => bootShell.log(`idle install: ${err && err.message}`)), IDLE_CHECK_MS).unref();
+}
 
 /** The on-focus recheck and the resume-from-sleep recheck share one gate so
  *  neither adds a request on top of the ordinary hourly timer if the other
@@ -4098,6 +4419,15 @@ bridge.handle("local:voiceMic", () => masoraVoice.mic());
 bridge.handle("app:updateStatus", () => withRunningBuild(appUpdater.status()));
 bridge.handle("app:updateCheck", () => appUpdater.check());
 bridge.handle("app:updateInstall", () => appUpdater.install());
+/** The board window answering the loopback API's `via: "board"` requests (desktop/board-ask.js). */
+const boardAsk = createBoardAsk({
+  send: (reqId, kind, payload) => {
+    if (!boardWindow || boardWindow.isDestroyed()) return false;
+    toBoard("local:boardRequest", { reqId, kind, ...payload });
+    return true;
+  },
+});
+bridge.handle("local:boardReply", (_e, { reqId, result }) => boardAsk.reply(reqId, result));
 bridge.assertComplete();
 
 /**
@@ -4109,8 +4439,21 @@ bridge.assertComplete();
  * trusted -- see `trustedDir` above for what that buys `spawn`.
  */
 let agentApiHandle = null;
+async function askBoard(kind, payload) {
+  if (kind !== "start") return boardAsk.ask(kind, payload);
+  const dir = trustedDir(payload.cwd);
+  if (!dir) return { ok: false, error: "cwd does not exist" };
+  apiRoots.add(dir);
+  try {
+    const r = await boardAsk.ask(kind, { ...payload, cwd: dir });
+    return r && r.ok ? { ...r, cwd: dir } : r;
+  } finally {
+    apiRoots.delete(dir);
+  }
+}
 async function startAgentApi() {
   agentApiHandle = await agentApi.start({
+    askBoard,
     startAgentCore: async (args) => {
       const r = await startAgentCore(args);
       if (r.ok) announceConsole(r.id);
@@ -4127,17 +4470,23 @@ async function startAgentApi() {
   atomicWriteJson(AGENT_API_FILE, { url: agentApiHandle.url, token: agentApiHandle.token, pid: process.pid }, { mode: 0o600 });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   buildMenu();
   void startAgentApi();
-  // No console outlives the app, so neither does a worktree made for one.
-  void worktrees.prune();
+  // No console outlives the app, so neither does a worktree made for one —
+  // except those a payload swap is handing back, restored first.
+  void restoreResumableConsoles().finally(() =>
+    worktrees.prune(new Set([...placements].filter((p) => p.worktree).map((p) => path.resolve(p.worktree.dir)))),
+  );
   startScheduler();
   startMasoraPush();
+  startReportingHealth();
   // After the window, never before it: an update check that delayed the
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();
   family.start();
+  watchShellInstall();
+  startIdleInstall();
   // Only reliable after 'ready'; see the module's own docs.
   powerMonitor.on("resume", () => appUpdater.maybeCheck(UPDATE_RECHECK_MIN_GAP_MS));
   session.defaultSession.webRequest.onHeadersReceived({ urls: FRAME_URLS, types: ["subFrame"] }, (d, cb) => cb({ responseHeaders: frameable(d.responseHeaders) }));
@@ -4146,9 +4495,19 @@ app.whenReady().then(() => {
   else openSetup(null);
   // Same reasoning as the updater above: never delay the board for this.
   // The probe is quick (2s, bounded), but "quick" is still slower than a
-  // window that could have opened already — this runs alongside it and only
-  // ever changes what NEXT launch reads, never this one.
-  if (cfg) void migrateHubDomain(cfg);
+  // window that could have opened already — this runs alongside it.
+  // The IPC guard reads config.json on every call, so the moment the new hub is
+  // written a board still on the old origin loses its whole bridge (0.2.103:
+  // update checks, sessions, everything refused until a restart). Move it too;
+  // openBoard's reconnect closure reads cfg.hub, so it follows.
+  if (cfg) void migrateHubDomain(cfg).then((m) => {
+    if (m === cfg) return;
+    cfg.hub = m.hub;
+    if (!boardWindow || boardWindow.isDestroyed()) return;
+    let at;
+    try { at = new URL(boardWindow.webContents.getURL()); } catch { return; }
+    if (at.protocol === "https:" || at.protocol === "http:") boardWindow.loadURL(`${m.hub.replace(/\/+$/, "")}/${at.search}`);
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -179,6 +179,7 @@ type — but the app's side of it is the same start / wait / cancel.` },
     googleLogout: { channel: "zevet:googleLogout", params: [], type: `() => Promise<{ ok?: boolean; error?: string } | null | undefined>`, optional: true, doc: `End this machine's session, hub-side and locally. A session does not
  remember which provider minted it, so this is the same call as
  \`githubLogout\` under the name the Google button expects.` },
+    sendReport: { channel: "zevet:sendReport", params: ["text"], pack: "object", type: `(text: string) => Promise<{ ok: boolean }>`, optional: true, doc: `Send what the person typed plus the scrubbed tail of the app log to Sentry. \`{ ok }\`.` },
     signOutTeam: { channel: "zevet:signOutTeam", params: [], type: `() => Promise<{ ok?: boolean; error?: string } | null | undefined>`, optional: true, doc: `Leave the team entirely: ends the hub session, then drops session,
  secret AND hub from config.json (backed up first) so this machine
  falls back to first-run setup. See main.js's \`signOutTeam\`.
@@ -198,6 +199,7 @@ returns a token -- it is written straight to the OS keychain there.` },
     masoraLinkStart: { channel: "zevet:masoraLinkStart", params: [], type: `() => Promise<{ phase: string; paired?: boolean; code?: string; error?: string }>`, optional: true },
     masoraLinkApprove: { channel: "zevet:masoraLinkApprove", params: [], type: `() => Promise<boolean>`, optional: true },
     masoraUnpair: { channel: "zevet:masoraUnpair", params: [], type: `() => Promise<boolean>`, optional: true },
+    reportingStatus: { channel: "zevet:reportingStatus", params: [], type: `() => Promise<{ problem: string }>`, optional: true, doc: `Settings: the one line saying why this machine's agents are not reaching the team hub, or an empty string when they are.` },
     familyStatus: { channel: "zevet:familyStatus", params: [], type: `() => Promise<unknown[]>`, optional: true, doc: `Family panel: one row per sibling app, and the click on its chip.
 
 Family panel (desktop/family.js).` },
@@ -284,7 +286,7 @@ const zevetLocal = defineIpc({
 
 C1's per-repo opt-in, keyed by resolved folder path; default none.` },
     masoraRepoToggle: { channel: "local:masoraRepoToggle", params: ["root","on"], pack: "object", type: `(root: string, on: boolean) => Promise<{ ok: boolean; error?: string; repos?: Record<string, boolean> }>`, optional: true },
-    tree: { channel: "local:tree", params: ["root"], type: `(dir: string) => Promise<{ ok: boolean; entries?: LocalEntry[]; truncated?: boolean; error?: string }>`, doc: `A file tree under one of those folders.` },
+    tree: { channel: "local:tree", params: ["root"], type: `(dir: string) => Promise<{ ok: boolean; entries?: LocalEntry[]; truncated?: boolean; origin?: string; error?: string }>`, doc: `A file tree under one of those folders.` },
     read: { channel: "local:read", params: ["root","relPath"], pack: "object", type: `(root: string, relPath: string) => Promise<ReadResult>`, doc: `One text file, by path relative to its root.` },
     write: { channel: "local:write", params: ["root","relPath","text","opts"], pack: "object", type: `(root: string, relPath: string, text: string, opts: { bom?: boolean; eol?: string }) => Promise<{ ok: boolean; error?: string }>`, doc: `One text file back, by path relative to its root.
 
@@ -421,8 +423,9 @@ it. Idempotent — watching an already-watched file is a no-op, not a second
 stream of events.` },
     unwatch: { channel: "local:unwatch", params: ["root","relPath"], pack: "object", type: `(root: string, relPath: string) => Promise<unknown>` },
     agents: { channel: "local:agents", params: [], type: `() => Promise<UsableAgent[]>`, doc: `Which agents are installed on this machine.` },
-    startAgent: { channel: "local:startAgent", params: ["agent","cwd","opts"], pack: "object", type: `(name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean }) => Promise<StartAgentResult>`, doc: `Start an agent in a folder. Returns { ok, id }.` },
+    startAgent: { channel: "local:startAgent", params: ["agent","cwd","opts"], pack: "object", type: `(name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean; engine?: string; label?: string }) => Promise<StartAgentResult>`, doc: `Start an agent in a folder. Returns { ok, id }.` },
     sendToAgent: { channel: "local:sendToAgent", params: ["id","text"], pack: "object", type: `(id: string, text: string) => Promise<{ ok: boolean; error?: string }>` },
+    boardReply: { channel: "local:boardReply", params: ["reqId","result"], pack: "object", type: `(reqId: string, result: unknown) => Promise<unknown>`, optional: true },
     stopAgent: { channel: "local:stopAgent", params: ["id"], type: `(id: string) => Promise<unknown>` },
     consoles: { channel: "local:consoles", params: [], type: `() => Promise<{ seq: number; consoles: HeldConsole[] }>`, optional: true, doc: `The consoles still held by this app, with every event each has sent —
  what a reloaded board replays to pick them back up.
@@ -468,6 +471,8 @@ otherwise only refreshed after a save/toggle/remove round-trip.` },
     onAgentEvent: { channel: "local:agentEvent", payload: "unknown", type: `(cb: (evt: AgentEvent) => void) => () => void`, doc: `Stream of console events; returns an unsubscribe function.` },
     onAgentAttached: { channel: "local:agentAttached", payload: "unknown", type: `(cb: (c: HeldConsole) => void) => () => void`, optional: true, doc: `A console the board did not start itself (the loopback agent API, a schedule)
 just opened. Without it such an agent only reached the board on a page reload.` },
+    onBoardRequest: { channel: "local:boardRequest", payload: "unknown", type: `(cb: (req: { reqId: string; kind: string; [k: string]: unknown }) => void) => () => void`, optional: true, doc: `The loopback agent API asks the board to start or message an agent through
+its own actions, as a person's Send would. Answer with boardReply.` },
     onPermitRequest: { channel: "local:permitRequest", payload: "unknown", type: `(cb: (req: PermitRequest) => void) => () => void`, optional: true, doc: `An agent is asking to do something and is BLOCKED until the answer comes
 back — see the computer-use block in main.js. The board is the only place
 a person can be asked, so this is not a notification.

@@ -41,13 +41,13 @@ describe("resumeIdForSession — the right id per source", () => {
     assert.match(board, /claude --resume <session-id>/);
   });
 
-  test("the banner asks the SAME function rather than re-deriving the split", () => {
+  test("the sidebar Continue row asks the SAME function rather than re-deriving the split", () => {
     // A second, independently-written claude/codex branch in the UI is how
     // this drifts out of sync with the store's — sessions.tsx must import
     // and call board.ts's helper, not reimplement the ternary.
     assert.match(sessionsUi, /import \{ useBoard, resumeIdForSession \} from "\.\.\/lib\/board";/);
-    assert.match(sessionsUi, /const resumeId = resumeIdForSession\(open\);/);
-    assert.doesNotMatch(sessionsUi, /open\.source === "codex" \? open\.sessionId/);
+    assert.match(sessionsUi, /const resumeId = resumeIdForSession\(s\);/);
+    assert.doesNotMatch(sessionsUi, /s\.source === "codex" \? s\.sessionId/);
   });
 });
 
@@ -59,12 +59,12 @@ describe("continueSession — no id, not offered", () => {
     );
   });
 
-  test("the banner only renders Continue when resumeId is truthy and bridge.local.resumeAgent exists", () => {
+  test("the sidebar row only renders Continue when resumeId is truthy and bridge.local.resumeAgent exists", () => {
     assert.match(
       sessionsUi,
       /const canContinue =\s*Boolean\(resumeId\) && Boolean\(bridge\.local\) && typeof bridge\.local\?\.resumeAgent === "function";/,
     );
-    assert.match(sessionsUi, /\{canContinue \? \([\s\S]{0,120}onClick=\{\(\) => continueSession\(open\)\}/);
+    assert.match(sessionsUi, /if \(s\.surface === "sdk" \|\| !canContinue\) return null;/);
   });
 });
 

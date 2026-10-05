@@ -76,8 +76,9 @@ describe("every agent launch is wrapped, not just some of them", () => {
   test("the wrapper is used at every known launch site", () => {
     const uses = main.match(/instrumentedStartConsole/g) || [];
     // 1 definition + 3 Code launch sites (start, scheduled, resume/fork) + 3
-    // chat providers (claude, codex, opencode) = 7.
-    assert.equal(uses.length, 7, `instrumentedStartConsole reference count changed (${uses.length}) — a launch site may have been added or missed`);
+    // chat providers (claude, codex, opencode) + 1 routed-console rung
+    // (startZevetConsole) = 8.
+    assert.equal(uses.length, 8, `instrumentedStartConsole reference count changed (${uses.length}) — a launch site may have been added or missed`);
   });
 });
 

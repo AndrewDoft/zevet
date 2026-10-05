@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { createSwapper, confirmWhenHealthy, busyReason, AGENT_QUIET_MS, INPUT_QUIET_MS } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "payload-swap.js"));
+const { createSwapper, confirmWhenHealthy, awaitHealthy, busyReason, AGENT_QUIET_MS, INPUT_QUIET_MS } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "payload-swap.js"));
 
 const NOW = 10_000_000;
 const MIN = 60_000;
@@ -25,6 +25,12 @@ describe("busyReason: a swap never happens under work", () => {
   test("all quiet: it may go", () => assert.equal(busyReason(idle()), null));
   test("a running agent blocks it, however long ago it last spoke", () => {
     assert.match(busyReason(idle({ activity: () => ({ running: 1, lastAt: 0 }) })), /agent is running/);
+  });
+  test("resumable running consoles do not block a quiet swap", () => {
+    assert.equal(busyReason(idle({ activity: () => ({ running: 1, resumable: true, nonResumable: 0, lastAt: NOW }) })), null);
+  });
+  test("one non-resumable running console still blocks", () => {
+    assert.match(busyReason(idle({ activity: () => ({ running: 2, resumable: true, nonResumable: 1, lastAt: NOW }) })), /non-resumable/);
   });
   test("an agent that spoke 4m59s ago blocks it; at 5m it is over", () => {
     assert.match(busyReason(idle({ activity: () => ({ running: 0, lastAt: NOW - 5 * MIN + 1000 }) })), /last 5 minutes/);
@@ -104,6 +110,39 @@ describe("createSwapper", () => {
     await b.handlers.staged(); await new Promise((r) => setImmediate(r));
     assert.deepEqual(b.calls, []);
   });
+  test("the interval retries promptly after agents stop and input goes quiet", async () => {
+    let now = NOW;
+    let running = 1;
+    let lastInput = NOW;
+    let check;
+    const a = fakes({
+      activity: () => ({ running, lastAt: running ? now : now - AGENT_QUIET_MS }),
+      lastInputAt: () => lastInput,
+      now: () => now,
+      setIntervalImpl: (fn) => { check = fn; return {}; },
+    });
+    a.swapper.start();
+    await check();
+    assert.deepEqual(a.calls, []);
+    now += AGENT_QUIET_MS;
+    running = 0;
+    lastInput = now - INPUT_QUIET_MS;
+    await check();
+    assert.deepEqual(a.calls, ["activate", "release", "relaunch", "exit 0"]);
+  });
+  test("input arriving after the agent stops resets the gate", async () => {
+    let now = NOW;
+    let lastInput = NOW - INPUT_QUIET_MS;
+    let check;
+    const a = fakes({ now: () => now, lastInputAt: () => lastInput, setIntervalImpl: (fn) => { check = fn; return {}; } });
+    a.swapper.start();
+    lastInput = now;
+    await check();
+    assert.deepEqual(a.calls, []);
+    now += INPUT_QUIET_MS;
+    await check();
+    assert.deepEqual(a.calls, ["activate", "release", "relaunch", "exit 0"]);
+  });
   test("quit applies the staged build without relaunching, and does nothing when none is staged", async () => {
     const a = fakes();
     assert.equal(await a.swapper.applyOnQuit(), true);
@@ -157,18 +196,38 @@ describe("confirmWhenHealthy", () => {
   });
 });
 
+// The same signal without the payload's consequences: what the installer rollback waits on (main.js watchShellInstall).
+describe("awaitHealthy", () => {
+  const clock = () => { let t = 0; return { now: () => t, sleep: async (ms) => { t += ms; } }; };
+  test("true once a window has loaded and the API answers", async () => {
+    assert.equal(await awaitHealthy({ loaded: Promise.resolve(), apiAnswers: async () => true, ...clock() }), true);
+  });
+  test("false, with no side effect, when the API never answers within the budget", async () => {
+    assert.equal(await awaitHealthy({ loaded: Promise.resolve(), apiAnswers: async () => false, ...clock() }), false);
+  });
+  test("false when no window ever finishes loading, and an API that throws is not answering", async () => {
+    assert.equal(await awaitHealthy({ loaded: new Promise(() => {}), apiAnswers: async () => true, ...clock() }), false);
+    assert.equal(await awaitHealthy({ loaded: Promise.resolve(), apiAnswers: async () => { throw new Error("x"); }, ...clock() }), false);
+  });
+});
+
 // main.js cannot be loaded outside Electron (see desktop-bridges.test.mjs), so its wiring is asserted from source.
 describe("main.js hands the gate real state and the swap real teardown", async () => {
   const { readFileSync } = await import("node:fs");
   const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
-  const wiring = main.slice(main.indexOf("createSwapper({"), main.indexOf("createSwapper({") + 900);
+  // The gate's inputs are one object, useGate, shared by the swapper and the idle installer.
+  const wiring = main.slice(main.indexOf("const useGate = {"), main.indexOf("const useGate = {") + 900);
   const release = main.slice(main.indexOf("function releaseForRelaunch"), main.indexOf("function releaseForRelaunch") + 300);
 
   test("agents come from the console log, chat from the chat run, windows from Electron", () => {
-    assert.match(wiring, /activity: \(\) => consoleLog\.activity\(\)/);
+    assert.match(wiring, /activity: \(\) => \{[\s\S]{0,240}consoleLog\.activity\(\)/);
     assert.match(wiring, /chatBusy: \(\) => Boolean\(chatRun && chatRun\.turn\)/);
     assert.match(wiring, /windows: \(\) => BrowserWindow\.getAllWindows\(\)\.length/);
     assert.match(wiring, /lastInputAt: \(\) => lastInputAt/);
+  });
+  test("the swapper and the idle installer read the one gate", () => {
+    assert.match(main, /createSwapper\(\{[\s\S]{0,200}\.\.\.useGate/);
+    assert.match(main, /createIdleInstaller\(\{[\s\S]{0,200}gate: useGate/);
   });
   test("keyboard input on any web contents is what the input gate sees", () => {
     assert.match(main, /web-contents-created[\s\S]{0,300}before-input-event[\s\S]{0,400}lastInputAt = now;/);
@@ -181,7 +240,8 @@ describe("main.js hands the gate real state and the swap real teardown", async (
     assert.match(main, /swapper\.applyOnQuit\(\)\.catch/);
   });
   test("a trial build is confirmed through the trial handle, once a window has stopped loading and the agent API answers", () => {
-    assert.match(main, /if \(bootShell\.trial\) \{[\s\S]{0,400}did-stop-loading[\s\S]{0,300}confirmWhenHealthy\(\{ payload: bootShell\.trial, loaded, apiAnswers: agentApiAnswers/);
+    assert.match(main, /const firstWindowLoaded = new Promise[\s\S]{0,200}did-stop-loading/);
+    assert.match(main, /if \(bootShell\.trial\) \{[\s\S]{0,200}confirmWhenHealthy\(\{ payload: bootShell\.trial, loaded: firstWindowLoaded, apiAnswers: agentApiAnswers/);
   });
   test("the relaunch tidies what before-quit would, and never starts an installer", () => {
     assert.match(release, /stopChatRun\(\)/);

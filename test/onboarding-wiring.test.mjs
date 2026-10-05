@@ -126,9 +126,21 @@ describe("the Masora link is a background job", () => {
 
 describe("Settings copy is provider-neutral", () => {
   test("a Google login is not prefixed with @, and the session is not called GitHub's", () => {
-    const s = read("board", "src", "components", "settings.tsx");
+    const s = read("board", "src", "components", "settings.tsx") + read("board", "src", "components", "invite.tsx");
     assert.doesNotMatch(s, /"@" \+ p\.login|summary=\{login \? "@"/);
     assert.match(s, /login\.includes\("@"\) \? login/);
     assert.doesNotMatch(s, /"GitHub sign-in" \+ \(c\.hasSecret/);
+  });
+});
+
+describe("Google first: a mapped-domain person never sees a team or a key", () => {
+  test("the team/key/GitHub form starts closed and Google then names no team", () => {
+    assert.match(setup, /<div id="other" hidden>/);
+    assert.match(setup, /var direct = \$\("other"\)\.hidden;\s*var team = direct \? "" : await teamFor\(\);/);
+  });
+
+  test("a refusal opens the form; a success closes it", () => {
+    assert.match(setup, /if \(direct\) showOther\(true\);/);
+    assert.match(setup, /function signedIn\(done\) \{[^}]*showOther\(false\);/);
   });
 });

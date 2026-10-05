@@ -1,5 +1,6 @@
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 type Ident = { provider: string; login: string };
+type Person = { login: string; key?: string; identities?: Ident[]; aliases?: string[] };
 
 export function linkAccount(
   provider: "github" | "google",
@@ -16,3 +17,6 @@ export function unlinkAccount(fetchImpl: Fetch, i: Ident): Promise<{ ok: boolean
 export function combinePeople(fetchImpl: Fetch, a: { into: string; from: string }): Promise<{ ok: boolean; merged?: boolean; error?: string }>;
 export function renamePerson(fetchImpl: Fetch, a: { login?: string; name: string }): Promise<{ ok: boolean; error?: string }>;
 export function identityLabel(i: Ident): string;
+
+/** Pairs of people that look like the same human, as `[from, into]` tuples. */
+export function likelySame(people: Person[]): Array<[Person, Person]>;

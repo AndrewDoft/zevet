@@ -3,7 +3,7 @@
 // production hub -- not the disposable one test/helpers.mjs spins up. That is
 // the point of this file: setup-window.test.mjs proves the code is internally
 // consistent against a hub it controls; only a run against the real address
-// baked into desktop/hub-target.js's HOSTED_HUB can catch "that address is
+// baked into desktop/hub-target.js's hostedHub can catch "that address is
 // stale" or "that address is not actually reachable from a normal network".
 //
 // Opt-in only (ZEVET_LIVE_HUB_TEST=1): it talks to production and must never
@@ -27,7 +27,7 @@ const DRIVE = path.join(ROOT, "scripts", "drive", "drive.mjs");
 const TEAM_NAME = `ci-onboard-${randomBytes(4).toString("hex")}`;
 
 const require = createRequire(import.meta.url);
-const { HOSTED_HUB } = require(path.join(ROOT, "desktop", "hub-target.js"));
+const { hostedHub } = require(path.join(ROOT, "desktop", "hub-target.js"));
 
 function drive(...args) {
   const out = execFileSync(process.execPath, [DRIVE, ...args], { encoding: "utf8", timeout: 30000 });
@@ -85,7 +85,7 @@ describe(
     });
 
     test("the real hub now knows this team by name", async () => {
-      const res = await fetch(`${HOSTED_HUB}/team/resolve?name=${encodeURIComponent(TEAM_NAME)}`);
+      const res = await fetch(`${hostedHub()}/team/resolve?name=${encodeURIComponent(TEAM_NAME)}`);
       const body = await res.json();
       assert.equal(body.exists, true);
     });

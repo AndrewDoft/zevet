@@ -76,6 +76,8 @@ export interface ZevetBridge {
    *  `githubLogout` under the name the Google button expects.
    */
   googleLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
+  /** Send what the person typed plus the scrubbed tail of the app log to Sentry. `{ ok }`. */
+  sendReport?: (text: string) => Promise<{ ok: boolean }>;
   /**
    * Leave the team entirely: ends the hub session, then drops session,
    *  secret AND hub from config.json (backed up first) so this machine
@@ -101,6 +103,8 @@ export interface ZevetBridge {
   masoraLinkStart?: () => Promise<{ phase: string; paired?: boolean; code?: string; error?: string }>;
   masoraLinkApprove?: () => Promise<boolean>;
   masoraUnpair?: () => Promise<boolean>;
+  /** Settings: the one line saying why this machine's agents are not reaching the team hub, or an empty string when they are. */
+  reportingStatus?: () => Promise<{ problem: string }>;
   /**
    * Family panel: one row per sibling app, and the click on its chip.
    *
@@ -191,7 +195,7 @@ export interface LocalBridge {
   masoraRepos?: () => Promise<Record<string, boolean>>;
   masoraRepoToggle?: (root: string, on: boolean) => Promise<{ ok: boolean; error?: string; repos?: Record<string, boolean> }>;
   /** A file tree under one of those folders. */
-  tree: (dir: string) => Promise<{ ok: boolean; entries?: LocalEntry[]; truncated?: boolean; error?: string }>;
+  tree: (dir: string) => Promise<{ ok: boolean; entries?: LocalEntry[]; truncated?: boolean; origin?: string; error?: string }>;
   /** One text file, by path relative to its root. */
   read: (root: string, relPath: string) => Promise<ReadResult>;
   /**
@@ -383,8 +387,9 @@ export interface LocalBridge {
   /** Which agents are installed on this machine. */
   agents: () => Promise<UsableAgent[]>;
   /** Start an agent in a folder. Returns { ok, id }. */
-  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean }) => Promise<StartAgentResult>;
+  startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean; engine?: string; label?: string }) => Promise<StartAgentResult>;
   sendToAgent: (id: string, text: string) => Promise<{ ok: boolean; error?: string }>;
+  boardReply?: (reqId: string, result: unknown) => Promise<unknown>;
   stopAgent: (id: string) => Promise<unknown>;
   /**
    * The consoles still held by this app, with every event each has sent —
@@ -447,6 +452,11 @@ export interface LocalBridge {
    * just opened. Without it such an agent only reached the board on a page reload.
    */
   onAgentAttached?: (cb: (c: HeldConsole) => void) => () => void;
+  /**
+   * The loopback agent API asks the board to start or message an agent through
+   * its own actions, as a person's Send would. Answer with boardReply.
+   */
+  onBoardRequest?: (cb: (req: { reqId: string; kind: string; [k: string]: unknown }) => void) => () => void;
   /**
    * An agent is asking to do something and is BLOCKED until the answer comes
    * back — see the computer-use block in main.js. The board is the only place
