@@ -311,13 +311,16 @@ function closeOpenTurn(state) {
  */
 // Recorded identifiers are metadata, never a conversation title.
 function sessionTitle(s) {
-  const title = unwrapEnvelope(text(s.title)).replace(/\s+/g, " ").trim();
+  const title = unwrapEnvelope(text(s.title)).trim();
   return title === text(s.id) || /^(?:[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9a-f]{7,40})$/i.test(title) ? "" : title;
 }
 
 function sessionFallback(s) {
+  if (!s.cwd && !s.repo && (s.source === "claude" || s.source === "codex")) {
+    return `${s.source === "claude" ? "Claude" : "Codex"} session`;
+  }
   const repo = String(s.repo || s.cwd || "").split(/[\\/]/).filter(Boolean).pop() || "repo";
-  const date = new Date(Number(s.updated || s.started || 0));
+  const date = new Date(Number(s.updated ?? s.started ?? 0));
   const time = Number.isNaN(date.getTime()) ? "00:00" : date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
   return `${repo} ${time}`;
 }
@@ -335,21 +338,35 @@ function firstSentence(said) {
 }
 
 function cleanTitle(value) {
-  let cleaned = unwrapEnvelope(text(value)).replace(/\s+/g, " ").trim();
-  cleaned = cleaned.replace(/^RULES\s*\(hard\):\s*/i, "");
-  cleaned = cleaned.replace(/^#?\s*RESUME\s*[—:-]\s*/i, "");
+  let cleaned = unwrapEnvelope(text(value)).trim();
+  const preamble = /^(?:RULES\s*\(hard\):|#?\s*RESUME\s*[—:-])\s*/i.exec(cleaned);
+  if (preamble) {
+    const rest = cleaned.slice(preamble[0].length);
+    const task = /(?:^|\n)\s*TASK:\s*(.+?)(?=\n|$)/i.exec(rest);
+    const heading = /(?:^|\n)\s*#+\s*(?:Track\s*\d*\s*:\s*|Track\s*:\s*)?(.+?)(?=\n|$)/i.exec(rest);
+    cleaned = (task && task[1]) || (heading && heading[1]) || rest;
+    if (heading) cleaned = cleaned.split(/\s+[—:-]\s+/, 1)[0];
+    const issue = /(?:sentry\s+)?(?:issue\s+)?([A-Z][A-Z0-9]+-[A-Z0-9-]+)/i.exec(cleaned);
+    if (task && issue && /sentry/i.test(cleaned)) cleaned = `Sentry ${issue[1]}`;
+  }
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
   cleaned = cleaned.replace(/^you were\s+/i, "");
   cleaned = cleaned.replace(/^TASK:\s*/i, "");
+  cleaned = cleaned.replace(/^#+\s*(?:Track\s*\d*\s*:\s*|Track\s*:\s*)?/i, "");
   cleaned = cleaned.replace(/^#+\s*/, "").replace(/^>\s*/, "");
   cleaned = cleaned.replace(/\bClaude session\b|\bUntitled\b/gi, "");
   cleaned = cleaned.replace(/https?:\/\/\S+|(?:[A-Za-z]:)?[\\/]\S+/g, "");
-  return cleaned.replace(/\s+/g, " ").trim().replace(/[.!?…]+$/, "");
+  return cleaned.replace(/\s+/g, " ").trim().replace(/[.!?…—:-]+$/, "").trim();
 }
 
 const STOPWORDS = new Set(["the", "a", "an", "for", "of", "and", "to", "in", "on", "with", "after"]);
 
 function shortWords(value, limit = 20) {
-  const words = value.split(/\s+/).filter(Boolean).map((word) => word.replace(/[-_]+/g, " ")).flatMap((word) => word.split(/\s+/));
+  const words = value.split(/\s+/).filter(Boolean)
+    .map((word) => word.replace(/_+/g, " "))
+    .flatMap((word) => word.split(/\s+/))
+    .map((word) => /[A-Z].*-[A-Z].*-/.test(word) ? word : word.replace(/-+/g, " "))
+    .flatMap((word) => word.split(/\s+/));
   const useful = words.filter((word) => !STOPWORDS.has(word.toLowerCase()));
   let out = "";
   for (const word of useful.length ? useful : words) {
@@ -367,8 +384,11 @@ function titleCase(value) {
 
 export function sessionLabel(session, listed = []) {
   const s = session || {};
-  const raw = cleanTitle(s.label) || cleanTitle(sessionTitle(s)) || cleanTitle(s.prompt) || sessionFallback(s);
-  let name = titleCase(shortWords(raw));
+  const label = cleanTitle(s.label);
+  const rawTitle = cleanTitle(sessionTitle(s));
+  const rawPrompt = cleanTitle(s.prompt);
+  const raw = label || rawTitle || rawPrompt || sessionFallback(s);
+  let name = /^(?:Claude|Codex) session$/.test(raw) ? raw : titleCase(shortWords(raw));
   const collisions = listed.filter((other) => other && other !== s && titleCase(shortWords(cleanTitle(other.label) || cleanTitle(sessionTitle(other)) || cleanTitle(other.prompt) || sessionFallback(other))) === name);
   if (collisions.length) {
     const branch = String(s.branch || "").split(/[\\/]/).filter(Boolean).pop();

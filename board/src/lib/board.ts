@@ -778,6 +778,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       usage: { context: null, cacheHit: null, cost: null, model: null, input: null, cachedInput: null, output: null, window: null, series: [] },
       limits: [],
       sessionId: null,
+      ...(launch && launch.label ? { label: launch.label } : {}),
       slashCommands: [],
       // Which console this is a branch of, if any — see `forkedFrom` in
       // types.ts for why it cannot be worked out after the fact.

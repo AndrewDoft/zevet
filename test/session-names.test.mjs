@@ -5,11 +5,11 @@ import { sessionLabel } from "../board/src/lib/sessions.mjs";
 const s = (title, extra = {}) => ({ source: "claude", id: "abc123", title, prompt: "", cwd: "C:/dev/zevet", ...extra });
 
 test("sessionLabel strips boilerplate and keeps names short", () => {
-  assert.equal(sessionLabel(s("RULES (hard): never run_in_background or Monitor — wait…")), "Never Run Background");
-  assert.equal(sessionLabel(s("# RESUME — you were killed mid-task")), "Killed Mid Task");
+  assert.equal(sessionLabel(s("RULES (hard): never run_in_background or Monitor — wait…\n\nTASK: fix Sentry issue MASORA-API-3S (https://sentry.io/example)")), "Sentry MASORA-API-3S");
+  assert.equal(sessionLabel(s("# RESUME — you were killed mid-task\n\n# Track: Microsoft suite — sign-in, workspace creation…")), "Microsoft Suite");
   assert.equal(sessionLabel(s("Download process for Windows")), "Download Process");
   assert.equal(sessionLabel(s("Fix backfill credential revoked error")), "Fix Backfill");
-  assert.equal(sessionLabel(s(""), []), "Zevet 19:00");
+  assert.equal(sessionLabel(s("", { updated: Number.NaN }), []), "Zevet 00:00");
 });
 
 test("explicit labels win and are humanized", () => {

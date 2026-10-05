@@ -199,7 +199,7 @@ function firstPrompt(c: ConsoleEntry): string {
 
 /** A console's title for anywhere it is listed. */
 export function consoleBlurb(c: ConsoleEntry): string {
-  return sessionBlurb({ title: c.title || c.autoTitle, prompt: firstPrompt(c), source: c.agent });
+  return sessionBlurb({ title: c.title || c.autoTitle, prompt: firstPrompt(c), label: c.label, source: c.agent });
 }
 
 /** A run that ended badly: it never started, or its last message was cut off. */
