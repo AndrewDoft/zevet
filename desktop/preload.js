@@ -214,6 +214,8 @@ contextBridge.exposeInMainWorld("zevet", {
   masoraLinkStart: () => ipcRenderer.invoke("zevet:masoraLinkStart"),
   masoraLinkApprove: () => ipcRenderer.invoke("zevet:masoraLinkApprove"),
   masoraUnpair: () => ipcRenderer.invoke("zevet:masoraUnpair"),
+  /** Settings: the one line saying why this machine's agents are not reaching the team hub, or an empty string when they are. */
+  reportingStatus: () => ipcRenderer.invoke("zevet:reportingStatus"),
   /**
    * Family panel: one row per sibling app, and the click on its chip.
    *

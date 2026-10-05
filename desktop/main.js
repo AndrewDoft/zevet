@@ -80,6 +80,7 @@ const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const { MasoraLink } = require("./masora-link.js");
 const { Family, familyDir, frameable, FRAME_URLS } = require("./family.js");
+const reportingHealth = require("./reporting-health.js");
 const credentials = require("./credentials.js");
 const credentialLadder = require("./credential-ladder.js");
 const credentialUsage = require("./credential-usage.js");
@@ -144,10 +145,17 @@ if (process.env.ZEVET_SENTRY_TEST === "1") sentry.sendTestMessage(Sentry);
  * this is one wrapper applied once rather than five copies of the same
  * capture call.
  */
-const instrumentedStartConsole = sentry.withAgentFailureCapture(agentConsole.startConsole, {
+const startConsoleWithCapture = sentry.withAgentFailureCapture(agentConsole.startConsole, {
   sentryMain: Sentry,
   invocationFor: agentConsole.invocationFor,
 });
+
+/** When this app last started an agent — what reporting-health.js measures "events should have arrived by now" from. */
+let lastAgentStartAt = 0;
+function instrumentedStartConsole(...args) {
+  lastAgentStartAt = Date.now();
+  return startConsoleWithCapture(...args);
+}
 
 /**
  * Test hook: record every `shell.openExternal` call instead of actually
@@ -1813,6 +1821,35 @@ const family = new Family({
   installPath: path.dirname(app.getPath("exe")),
 });
 bridge.handle("zevet:familyStatus", () => family.status());
+
+/* ── Is this machine's activity reaching the hub? ──────────────────────────────
+ * Repairs a Claude hook whose script has gone missing in any folder this
+ * machine has opened, then asks the hub whether it accepts this credential and
+ * has heard from this person since the last agent started. One line, or "". */
+let reportingLine = "";
+async function checkReporting() {
+  const cfg = readConfig();
+  if (!cfg) return;
+  const auth = authFor(cfg);
+  if (auth.error || !auth.token) {
+    reportingLine = "This machine's credential is unusable. Sign in again.";
+    return;
+  }
+  try {
+    const failedRepos = await reportingHealth.repairStaleHooks(readWorkspaces(), { install: installHooks });
+    reportingLine = await reportingHealth.reportingProblem({ hub: cfg.hub, token: auth.token, fetchImpl: net.fetch.bind(net), agentStartedAt: lastAgentStartAt, failedRepos });
+  } catch (err) {
+    reportingLine = "";
+  }
+}
+function startReportingHealth() {
+  setTimeout(() => void checkReporting(), 15000).unref();
+  setInterval(() => void checkReporting(), 5 * 60 * 1000).unref();
+}
+bridge.handle("zevet:reportingStatus", async () => {
+  if (lastAgentStartAt) await checkReporting();
+  return { problem: reportingLine };
+});
 bridge.handle("zevet:familyAct", (_e, { app: which, action } = {}) => family.act(String(which), String(action)));
 
 bridge.handle("zevet:masoraConfig", () => masora.readConfig());
@@ -4443,6 +4480,7 @@ app.whenReady().then(async () => {
   );
   startScheduler();
   startMasoraPush();
+  startReportingHealth();
   // After the window, never before it: an update check that delayed the
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();

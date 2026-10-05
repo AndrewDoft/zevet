@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useBoard } from "../lib/board";
+import { agoLabel } from "../lib/fmt";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const MAKE_BTN = "sbtn";
@@ -17,6 +18,7 @@ function inviteTooltip(p: {
   emailError?: string | null;
   acceptedAt?: string | null;
   lastSeen?: number | null;
+  presence?: Presence | null;
 }): string {
   const lines: string[] = [];
   if (p.invitedAt) lines.push(`Invited ${new Date(p.invitedAt).toLocaleString()}`);
@@ -25,7 +27,22 @@ function inviteTooltip(p: {
   }
   if (p.acceptedAt) lines.push(`Accepted ${new Date(p.acceptedAt).toLocaleString()}`);
   if (p.lastSeen) lines.push(`Last seen ${new Date(p.lastSeen).toLocaleString()}`);
+  const q = p.presence;
+  if (q) {
+    lines.push(q.eventAt ? `Last event ${new Date(q.eventAt).toLocaleString()}` : "No event ever received from this person's machine");
+    if (q.boardAt) lines.push(`Board last open ${new Date(q.boardAt).toLocaleString()}`);
+    if (q.machine || q.build) lines.push([q.machine, q.build && `v${q.build}`].filter(Boolean).join(" · "));
+  }
   return lines.join("\n");
+}
+
+/** What the hub last heard from a person's machine (owner view). */
+type Presence = { eventAt: number | null; boardAt: number | null; machine: string; build: string };
+
+/** One compact word for the row: how long since an event arrived, or that none ever did. */
+function reporting(q: Presence | null | undefined, pending: boolean): string {
+  if (!q || pending) return "";
+  return q.eventAt ? "  · events " + agoLabel(q.eventAt, Date.now()) : "  · no events";
 }
 
 /** One pending invite's row. Resend and Copy are the SAME hub call
@@ -54,6 +71,7 @@ function PendingRow({
   emailError,
   acceptedAt,
   lastSeen,
+  presence,
 }: {
   login: string;
   /** The person's stable login — what `/auth/revoke` takes. `login` is their
@@ -69,6 +87,7 @@ function PendingRow({
   emailError: string | null;
   acceptedAt: string | null;
   lastSeen: number | null;
+  presence?: Presence | null;
 }) {
   const [state, setState] = useState<
     | { phase: "idle" }
@@ -137,8 +156,8 @@ function PendingRow({
 
   return (
     <div className="srow" key={login}>
-      <span className="k" title={isOwnerRow ? undefined : inviteTooltip({ invitedAt, emailSentAt, emailError, acceptedAt, lastSeen })}>
-        {handle(login) + (isOwnerRow ? "  · owner" : "  · " + lifecycle)}
+      <span className="k" title={isOwnerRow ? undefined : inviteTooltip({ invitedAt, emailSentAt, emailError, acceptedAt, lastSeen, presence })}>
+        {handle(login) + (isOwnerRow ? "  · owner" : "  · " + lifecycle) + reporting(presence, pending)}
       </span>
       <span className="v">
         {state.phase === "sent" ? <span className="hint">Sent</span> : null}
@@ -324,6 +343,7 @@ export function TeamInvite() {
         emailError?: string | null;
         acceptedAt?: string | null;
         lastSeen?: number | null;
+        presence?: Presence;
       }>)
     : [];
 
@@ -346,6 +366,7 @@ export function TeamInvite() {
               emailError={p.emailError ?? null}
               acceptedAt={p.acceptedAt ?? null}
               lastSeen={p.lastSeen ?? null}
+              presence={p.presence}
             />
           ))}
         </div>

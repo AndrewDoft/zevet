@@ -410,6 +410,7 @@ function AccountSection() {
     );
   }
 
+  out.push(<ReportingLine key="reporting" />);
   out.push(<TeamInvite key="team" />);
 
   return (
@@ -1071,6 +1072,24 @@ function FamilyCard({ row, onClose, onChange }: { row: FamilyRow; onClose: () =>
         </div>
       </div>
     </>
+  );
+}
+
+/** One red line when this machine's agents are not reaching the hub; nothing when they are. */
+function ReportingLine() {
+  const [problem, setProblem] = useState("");
+  useEffect(() => {
+    const ask = () => window.zevet?.reportingStatus?.().then((r) => setProblem((r && r.problem) || ""));
+    ask();
+    const t = setInterval(ask, 15000);
+    return () => clearInterval(t);
+  }, []);
+  if (!problem) return null;
+  return (
+    <div className="srow" id="settingsReporting">
+      <span className="k">Reporting</span>
+      <span className="v" style={{ color: "var(--bad)" }}>{problem}</span>
+    </div>
   );
 }
 

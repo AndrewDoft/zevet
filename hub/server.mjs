@@ -20,6 +20,7 @@ import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedE
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
 import { initSentry } from "./sentry.mjs";
+import { agentsOf } from "../board/src/lib/agents.mjs";
 import { verifyAssertion, replayGuard, parseTeamMap } from "./masora-auth.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -522,7 +523,11 @@ function makeBoard(file) {
     }
     collisions.sort((x, y) => y.lastTs - x.lastTs);
 
-    return { now, roster, collisions, events: named.slice(-300).map(show), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
+    // `agents` is folded from EVERYTHING retained, not the 300-event tail below: an
+    // agent that has been quiet for an hour is still somebody's agent, and a busy
+    // teammate would otherwise push every other agent off the board.
+    const agents = agentsOf(named.map(show), now, IDLE_AFTER_MS);
+    return { now, roster, collisions, agents, events: named.slice(-300).map(show), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
   };
 
   return board;
@@ -1228,7 +1233,7 @@ function parseInvite(raw) {
  * says only what this hub actually knows (its own send attempt succeeded or
  * didn't), never more.
  */
-function person(a, acc) {
+function person(a, acc, asOwner = false) {
   const pending = !a.id;
   const lastSeen = acc ? acc.lastSeen(a.login) : 0;
   let state = "invited";
@@ -1252,6 +1257,9 @@ function person(a, acc) {
     lastSeen: lastSeen || null,
     identities: [{ provider: a.provider, login: a.login, id: a.id }, ...(a.identities || [])].filter((i) => i.id).map((i) => ({ provider: i.provider || "github", login: i.login })),
     aliases: a.aliases || [],
+    // Last event / last board connection the hub saw from this person: the
+    // answer to "is Kai's machine reporting at all", without asking Kai.
+    ...(asOwner && acc ? { presence: acc.presenceOf(a.login) } : {}),
   };
 }
 
@@ -1643,11 +1651,11 @@ async function handleRequest(req, res) {
       // The one field a shared-token caller (no personal session) does not
       // get: every OTHER person's name and status is exactly the leak this
       // route otherwise would not have — see teamFromSession's comment.
-      people: sess ? acc.list().map((a) => person(a, acc)) : [],
+      people: sess ? acc.list().map((a) => person(a, acc, acc.owner === sess.login)) : [],
       // You: your display name and every identity linked to you — what the
       // agents tab needs to know which row is yours after a rename, and what
       // Settings lists under "Link another account".
-      me: sess ? acc.profile(sess) : null,
+      me: sess ? { ...acc.profile(sess), presence: acc.presenceOf(acc.profile(sess).login) } : null,
     });
   }
 
@@ -1754,7 +1762,7 @@ async function handleRequest(req, res) {
       const r = acc.revoke(body && body.login);
       if (!r.ok) return json(res, 400, { error: r.error });
       notifyPeopleChanged(auth.team);
-      return json(res, 200, { ok: true, people: acc.list().map((a) => person(a, acc)) });
+      return json(res, 200, { ok: true, people: acc.list().map((a) => person(a, acc, true)) });
     }
 
     // /auth/allow: mint (or rotate) the invite key, then try to email it.
@@ -1810,7 +1818,7 @@ async function handleRequest(req, res) {
 
     return json(res, 200, {
       ok: true,
-      people: acc.list().map((a) => person(a, acc)),
+      people: acc.list().map((a) => person(a, acc, true)),
       email_sent: emailSent,
       // Honest failure, never folded into `email_sent`: a Resend outage or an
       // unverified domain must be VISIBLE to the inviter, not silently eaten —
@@ -2102,7 +2110,11 @@ async function handleRequest(req, res) {
       // Which machine said it. Two teammates whose OS username is the same
       // are two participants, and without this they were one.
       machine: String(parsed.machine || "").slice(0, 60),
+      // Which agent session said it. Without it two agents one person runs in
+      // one repo are one row on everybody else's board.
+      session: String(parsed.session || "").slice(0, 64),
     };
+    if (auth.session) auth.accounts.noteSeen(auth.session, "event", { machine: evt.machine, build: String(req.headers["x-zevet-build"] || "").slice(0, 20) });
     boards.get(auth.team).record(evt, teamAccounts.get(auth.team).actorResolver());
     return json(res, 200, { ok: true });
   }
@@ -2110,6 +2122,7 @@ async function handleRequest(req, res) {
   if (url.pathname === "/api/state") {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
+    auth.accounts.noteSeen(auth.session, "board");
     return json(res, 200, boards.get(auth.team).snapshot(auth.accounts.actorResolver()));
   }
 
@@ -2117,6 +2130,7 @@ async function handleRequest(req, res) {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
     const board = boards.get(auth.team);
+    auth.accounts.noteSeen(auth.session, "board");
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-store",

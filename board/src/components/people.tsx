@@ -66,6 +66,7 @@ import type { RosterEntry } from "../lib/types";
 import type { SessionAgent, SessionSummary } from "../lib/sessions.d.mts";
 import type { ConsoleEntry } from "../lib/types";
 import { missionOf } from "../lib/text";
+import { withState } from "../lib/agents.mjs";
 import { agoLabel } from "../lib/fmt";
 import { foldRepoGroups, sessionBlurb, sessionProject } from "../lib/sessions.mjs";
 import { plainError } from "../lib/transcript.mjs";
@@ -321,6 +322,28 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
   );
 }
 
+/** A teammate's agent, as the hub reports it: what it was asked, what it is doing
+ *  now, and where. Read-only — their session lives on their machine. */
+function TeamAgentRow({ a, hue, now }: { a: { key: string; agent: string; repo: string; branch: string; mission: string; current: string; lastTs: number; state?: string }; hue: number; now: number }) {
+  const where = a.repo ? a.repo + (a.branch ? " · " + a.branch : "") : "";
+  return (
+    <div className="agent-row-wrap" data-teammate-agent={a.key}>
+      <div className="agent-row" data-state={a.state} style={{ "--who": `var(--who-${((hue % HUES) + HUES) % HUES})` } as CSSProperties}>
+        <div className="agent-row-pick" title={[where, a.current].filter(Boolean).join(" — ")}>
+          <span className="agent-row-gap" aria-hidden="true" />
+          <AgentLogo agent={a.agent === "claude-code" ? "claude" : a.agent} hue={hue} className="agent-row-mark size-3" />
+          <span className="agent-row-name">{a.mission || where || "working"}</span>
+          {a.state === "working" ? (
+            <span className="agent-row-live" role="img" aria-label="Running" />
+          ) : (
+            <span className="agent-row-ago">{agoLabel(a.lastTs, now)}</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** One repo, and the agents running in it. */
 function RepoGroup({
   repo,
@@ -448,6 +471,8 @@ export function PeoplePane({
   const localRoot = useBoard((s) => s.localRoot);
   const [expanded, setExpanded] = useState<string[]>(() => expandedStored());
   const [shut, setShut] = useState<Record<string, boolean>>({});
+  const teamAgents = useBoard((s) => s.teamAgents);
+  const idleAfterMs = useBoard((s) => s.idleAfterMs);
   const [now, setNow] = useState(() => serverNow());
 
   useEffect(() => {
@@ -637,7 +662,9 @@ export function PeoplePane({
             </button>
             )}
             {open ? <PersonDetail r={r} /> : null}
-            {me ? myRepos(r.hue) : null}
+            {me ? myRepos(r.hue) : withState(teamAgents.filter((a) => a.actor === r.actor), now, idleAfterMs).slice(0, 12).map((a) => (
+              <TeamAgentRow key={a.key} a={a} hue={r.hue} now={now} />
+            ))}
           </div>
         );
       })}

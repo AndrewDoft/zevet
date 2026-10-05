@@ -573,6 +573,7 @@ function quoteArg(p, platform = process.platform) {
 function hookCommand({ node, hook, repo, platform = process.platform }) {
   return `${quoteArg(node, platform)} ${quoteArg(hook, platform)} --zevet-hook --zevet-agent claude-code --zevet-repo ${quoteArg(repo, platform)}`;
 }
+const { hasStaleHook } = require("./reporting-health.js");
 function hasHookMarker(settings) {
   return JSON.stringify((settings && settings.hooks) || {}).includes("--zevet-hook");
 }
@@ -599,7 +600,9 @@ function repoHasZevetHook(options) {
     const raw = options.repoSettings || fs.readFileSync(path.join(options.repoRoot, ".claude", "settings.json"), "utf8");
     cfg = typeof raw === "string" ? JSON.parse(raw) : raw;
   } catch { return false; }
-  return hasHookMarker(cfg);
+  // A marked hook whose script is gone is not a hook: it fails silently on every
+  // tool call, so the launch must still inject a working one.
+  return hasHookMarker(cfg) && !hasStaleHook(cfg);
 }
 
 function findNode() {
@@ -1036,6 +1039,7 @@ module.exports = {
   // changed by someone who has not read the measurements above.
   _internals: {
     AGENTS,
+    claudeHookSettings,
     CMD_METACHARACTERS,
     buildShimInvocation,
     encodePrompt,
