@@ -175,6 +175,17 @@ export function liveActorsOf(roster, repoName) {
   return (roster || []).filter((r) => r && r.lastEvent && r.lastEvent.repo === repoName);
 }
 
+export function consoleSprite(c) {
+  const msgs = (c && c.transcript && c.transcript.messages) || [];
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role === "user") return { kind: "prompt" };
+  const parts = Array.isArray(last.content) ? last.content : [];
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i] && parts[i].type === "tool-call") return { tool: parts[i].toolName };
+  }
+  return {};
+}
+
 /* Agent marks. Filed here as data rather than in the component so the gate can
  * check the coverage without importing React: known agents get a mark, and any
  * other agent name must fall through to the plain bead in marks.tsx. */
