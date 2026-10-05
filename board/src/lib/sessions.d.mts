@@ -102,7 +102,7 @@ export function sessionTranscript(
   opts?: { cwd?: string | null; source?: string },
 ): TranscriptState;
 export function unwrapEnvelope(prompt: string): string;
-export function sessionBlurb(session: { title?: string; prompt?: string; id?: string; source?: string }): string;
+export function sessionBlurb(session: { title?: string; label?: string; prompt?: string; id?: string; source?: string }): string;
 export function sessionLabel(session: { title?: string; prompt?: string; label?: string; id?: string; source?: string; branch?: string; cwd?: string; updated?: number; started?: number }, listed?: readonly object[]): string;
 export function sessionWhere(session: { surface?: string; origin?: string }): string;
 export function sessionProject(session: { cwd?: string; slug?: string }): string;
