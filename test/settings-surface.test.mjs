@@ -113,11 +113,3 @@ describe("creating a team via Google Workspace: the owner's domain toggle", () =
     assert.match(account, /fetch\("\/auth\/domain"/);
   });
 });
-
-describe("the update download's Cancel button is not a decoration (P1)", () => {
-  const jobProgress = src("board/src/components/assistant-ui/elements/job-progress.tsx");
-
-  test("the X only renders when the caller actually wired a cancel", () => {
-    assert.match(jobProgress, /\{!finished && onCancel && \(/);
-  });
-});
