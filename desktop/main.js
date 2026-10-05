@@ -799,7 +799,7 @@ function openBoard(cfg) {
   if (auth.error) {
     boardWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(credentialPage(auth.error)));
   } else {
-    boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
+    boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}&build=${encodeURIComponent(APP_VERSION)}${sentryTestParam}`);
   }
 
   // A failed load (Wi-Fi still associating, a VPN coming up, the hub mid-deploy) shows Zevet's own waiting page
@@ -814,7 +814,7 @@ function openBoard(cfg) {
       const up = await hubAnswers(cfg.hub);
       probing = false;
       if (!boardWindow || boardWindow.isDestroyed()) return reconnect.stop();
-      if (up) boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}${sentryTestParam}`);
+      if (up) boardWindow.loadURL(`${cfg.hub.replace(/\/+$/, "")}/?token=${encodeURIComponent(auth.token)}&build=${encodeURIComponent(APP_VERSION)}${sentryTestParam}`);
       else reconnect.failed();
     },
     showPage: () => boardWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(reconnectingPage())),

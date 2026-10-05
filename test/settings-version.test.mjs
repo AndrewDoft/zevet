@@ -11,6 +11,7 @@ import vm from "node:vm";
 import { ROOT } from "./helpers.mjs";
 
 const main = fs.readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
+const boardMain = fs.readFileSync(path.join(ROOT, "board", "src", "main.tsx"), "utf8");
 const settings = fs.readFileSync(path.join(ROOT, "board", "src", "components", "settings.tsx"), "utf8");
 
 function helper(bootShell) {
@@ -45,7 +46,14 @@ test("the status poll and the pushed status both carry it", () => {
 
 test("Settings shows only the running build, never the installer beside it, and Next", () => {
   // Andrew, 2026-10-01: "settings should only show 2.105 or whatever the new version is, not the app thing".
-  assert.match(settings, /summary=\{\(s && \(s\.running \|\| s\.current\)\) \|\| "unknown"\}/);
+  assert.match(settings, /summary=\{bridge\.cfg\?\.version \|\| \(s && s\.running\) \|\| "unknown"\}/);
   assert.doesNotMatch(settings, /\(app \$\{s\.current\}\)/);
   assert.match(settings, /k="Next" v=\{`\$\{s\.next\.build\} \(\$\{s\.next\.when\}\)`\}/);
+});
+
+test("the first Settings render has the running build synchronously and cannot fall back to current", () => {
+  assert.match(main, /build=\$\{encodeURIComponent\(APP_VERSION\)\}/);
+  assert.match(boardMain, /window\.__zevetCfg = \{ version: bootstrapBuild \}/);
+  assert.match(settings, /bridge\.cfg\?\.version \|\| \(s && s\.running\)/);
+  assert.doesNotMatch(settings, /s\.current/);
 });

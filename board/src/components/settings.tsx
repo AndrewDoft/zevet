@@ -870,7 +870,7 @@ function VersionSection() {
   }
   out.push(<SRow key="updates" k="Updates" v={<div className="update-actions">{actions}</div>} />);
   return (
-    <SSection title="Version" summary={(s && (s.running || s.current)) || "unknown"}>{out}</SSection>
+    <SSection title="Version" summary={bridge.cfg?.version || (s && s.running) || "unknown"}>{out}</SSection>
   );
 }
 
