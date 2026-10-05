@@ -66,14 +66,14 @@ describe("the update controls", () => {
     assert.ok(INSTALLER_OPENED.includes("replace it in Applications"));
   });
 
-  test("Windows offers a restart and blocks duplicate installation across both controls", async () => {
+  test("legacy update control has no restart label", async () => {
     let resolveInstall;
     const ui = board({ updateInstall: () => new Promise((r) => { resolveInstall = r; }) });
     ui.ctl.receiveUpdate({ ...ready, manual: false });
     assert.deepEqual(updateCommand(ui.ctl.updates.state, up(), has()), {
       kind: "restart",
       disabled: false,
-      label: "Restart to install",
+      label: "Installing automatically",
     });
     ui.ctl.install();
     await flush();
