@@ -299,7 +299,7 @@ export function buildSteps(ctx) {
           io.run("npm", ["run", "build"], { cwd: path.join(wt, "board"), stream: true });
         }
         io.run("node", ["scripts/run-tests.mjs"], { cwd: wt, stream: true });
-        io.git(["add", "package.json", "package-lock.json", "desktop/package.json", "desktop/package-lock.json", "hub/client-manifest.signed.json", "hub/public/board.js", "hub/public/board.js.map", "hub/public/board.js.srchash"], { cwd: wt });
+        io.git(["add", "package.json", "package-lock.json", "desktop/package.json", "desktop/package-lock.json", "hub/client-manifest.signed.json", "hub/public/board.js", "hub/public/board.js.map", "hub/public/board.js.srchash", "hub/public/board.css"], { cwd: wt });
         io.git(["commit", "-q", "-m", `release: ${v}`], { cwd: wt });
         io.run("node", ["scripts/release-check.mjs"], { cwd: wt });
         io.git(["tag", "-d", tag], { cwd: wt, allow: [0, 1] });
