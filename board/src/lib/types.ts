@@ -100,6 +100,8 @@ export interface ConsoleEntry {
    *  `sendPrompt` exactly as `nextMode` is (resume on the new model). */
   nextModel?: string | null;
   model: string;
+  effort?: string;
+  account?: string;
   root: string;
   hue: number;
   /** What this console has spent, as IT reported it.

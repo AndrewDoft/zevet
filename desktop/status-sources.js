@@ -240,7 +240,11 @@ function usageFrom(payload) {
     cacheHit: context > 0 ? (cacheRead / context) * 100 : null,
     model: typeof payload.model === "string"
       ? payload.model
-      : (payload.message && typeof payload.message.model === "string" ? payload.message.model : null),
+      : (payload.message && typeof payload.message.model === "string" ? payload.message.model :
+        (payload.part && typeof payload.part.modelID === "string"
+          ? (typeof payload.part.providerID === "string" && !payload.part.modelID.startsWith(`${payload.part.providerID}/`)
+            ? `${payload.part.providerID}/${payload.part.modelID}` : payload.part.modelID)
+          : null)),
   };
 }
 

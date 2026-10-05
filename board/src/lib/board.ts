@@ -161,6 +161,7 @@ export interface ForkLaunch {
   /** The model and posture of the run it came from, so the two answers differ
    *  by the prompt and nothing else. */
   model?: string;
+  effort?: string;
   mode?: LaunchMode;
   /** The `key` of the console being branched. Recorded on the new console as
    *  `forkedFrom`; a fork's own session id is new, so this is the only link
@@ -2051,6 +2052,7 @@ function recordUsage(c: ConsoleEntry, u: UsageReading | null, cost: number | nul
     next.context = u.context;
     if (u.cacheHit != null) next.cacheHit = u.cacheHit;
     if (u.model) next.model = u.model;
+    if (u.model && !c.model) c.model = u.model;
     next.input = u.input;
     next.cachedInput = u.cachedInput;
     next.output = u.output;
@@ -2080,6 +2082,9 @@ export async function pollConsoleFiles(): Promise<void> {
       c.title = r.title;
       changed = true;
     }
+    if (r.model && r.model !== c.model) { c.model = r.model; changed = true; }
+    if (r.effort && r.effort !== c.effort) { c.effort = r.effort; changed = true; }
+    if (r.account && r.account !== c.account) { c.account = r.account; changed = true; }
     if (r.context != null && r.context !== c.usage.context) {
       const cached = r.cached ?? 0;
       recordUsage(
