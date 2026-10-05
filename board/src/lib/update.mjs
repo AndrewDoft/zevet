@@ -27,7 +27,7 @@ export function updateCommand(state, up, { hasCheck, hasInstall }) {
       disabled: busy,
       label: up.installing
         ? state.manual ? "Opening\u2026" : "Restarting\u2026"
-        : state.manual ? "Open installer" : "Restart to install",
+        : state.manual ? "Open installer" : "Installing automatically",
     };
   }
   if (state.phase === "error" && hasCheck) {

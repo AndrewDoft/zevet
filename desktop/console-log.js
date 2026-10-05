@@ -58,6 +58,9 @@ function createConsoleLog({ cap = EVENT_CAP, head = HEAD } = {}) {
       const out = { ...evt, id, seq: ++seq };
       const e = entries.get(id);
       if (e) {
+        const p = evt && evt.type === "agent" ? evt.payload : null;
+        const session = p && (p.session_id || p.thread_id || p.sessionID);
+        if (typeof session === "string" && session.trim()) e.meta = { ...e.meta, sessionId: session.trim() };
         e.events.push(out);
         if (evt.type === "exit") e.running = false;
         if (e.events.length > cap) {

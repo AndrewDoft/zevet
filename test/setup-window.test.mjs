@@ -13,7 +13,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -85,25 +85,9 @@ describe("a fresh install's setup window", () => {
     assert.match(outline, /button#finish[^\n]*disabled[^\n]*"Open zevet"/);
   });
 
-  // Run early, deliberately: main.js's real appUpdater fires its first check
-  // FIRST_CHECK_MS (25s) after launch, and a real push landing between this
-  // test's own synthetic ones would show a real version rather than "9.9.9"
-  // — a flake this test then has to explain rather than one anyone caused.
-  test("c). the update banner paints from a status the app pushes, before any sign-in", () => {
-    const before = drive("snapshot").outline;
-    assert.match(before, /div#updateNote[^\n]*hidden/, "nothing to show yet on a version that is current");
-
-    drive("eval", `window.paintUpdate({ phase: "ready", version: "9.9.9", canInstall: true, manual: false })`);
-    const ready = drive("snapshot").outline;
-    // div#updateNote's own captured text is the span's and the button's text
-    // concatenated (it is the outer container's textContent) — no quote sits
-    // between "ready." and "Restart", so the pattern must not require one.
-    assert.match(ready, /div#updateNote(?!.*hidden)[^\n]*"v9\.9\.9 is ready\./);
-    assert.match(ready, /button#updateBtn(?!.*hidden)[^\n]*"Restart to install"/);
-
-    drive("eval", `window.paintUpdate({ phase: "current" })`);
-    const gone = drive("snapshot").outline;
-    assert.match(gone, /div#updateNote[^\n]*hidden/);
+  test("c). setup has no update notification surface", () => {
+    const source = readFileSync(path.join(ROOT, "desktop", "setup.html"), "utf8");
+    assert.doesNotMatch(source, /updateNote|updateBtn|paintUpdate|Restart to install/);
   });
 
   test("a). clicking a sign-in button with no team address opens no browser, and says why", () => {

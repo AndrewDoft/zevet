@@ -99,10 +99,6 @@
   </header>
   <p class="lede">Connect to your team.</p>
 
-  <div id="updateNote" class="note" hidden>
-    <span id="updateText"></span>
-    <div class="row"><button id="updateBtn" class="primary" hidden></button></div>
-  </div>
 
   <!-- No account yet, and nowhere to get one: that was the whole bug. This
        defaults the team address to Andrew's hosted hub and mints a brand new,
@@ -250,44 +246,6 @@
     $("google").textContent = "Create with Google";
     $("gh").textContent = "Create with GitHub";
   });
-
-  /* ── Staying current before there is anything to sign in to ────────────────
-   *
-   * The updater (desktop/app-update.js) checks the PUBLIC download feed, not
-   * the hub, and runs whether or not a team is configured — see main.js's
-   * appUpdater.start(). This is the missing half: painting what it finds on
-   * the one window a person with no hub yet is actually looking at.
-   */
-  function paintUpdate(s) {
-    var note = $("updateNote"), text = $("updateText"), btn = $("updateBtn");
-    if (!s || (s.phase !== "downloading" && s.phase !== "ready" && s.phase !== "error")) {
-      note.hidden = true;
-      return;
-    }
-    note.hidden = false;
-    if (s.phase === "downloading") {
-      var pct = Math.max(0, Math.min(100, Math.floor(Number(s.percent) || 0)));
-      text.textContent = "Downloading " + s.version + " — " + pct + "%";
-      btn.hidden = true;
-    } else if (s.phase === "ready" && s.canInstall) {
-      text.textContent = "v" + s.version + " is ready.";
-      btn.hidden = false;
-      btn.textContent = s.manual ? "Open installer" : "Restart to install";
-      btn.onclick = function () {
-        btn.disabled = true;
-        window.zevetLocal.updateInstall();
-      };
-    } else if (s.phase === "error") {
-      text.textContent = s.error || "Update check failed.";
-      btn.hidden = true;
-    } else {
-      note.hidden = true;
-    }
-  }
-  if (window.zevetLocal) {
-    if (typeof window.zevetLocal.onUpdate === "function") window.zevetLocal.onUpdate(paintUpdate);
-    if (typeof window.zevetLocal.updateStatus === "function") window.zevetLocal.updateStatus().then(paintUpdate);
-  }
 
   /* ── The GitHub path ───────────────────────────────────────────────────────
    *

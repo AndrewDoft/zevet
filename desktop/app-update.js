@@ -228,6 +228,7 @@ class AppUpdater {
     this.spawnImpl = o.spawnImpl || spawn;
     this.openImpl = o.openImpl || null; // set by main.js to shell.openPath
     this.quitImpl = typeof o.quitImpl === "function" ? o.quitImpl : () => {};
+    this.autoInstall = o.autoInstall === true;
 
     /** Everything the renderer is told, and the only state that leaves here. */
     this.state = {
@@ -279,10 +280,9 @@ class AppUpdater {
   /**
    * Look for a newer build and, if there is one, fetch it.
    *
-   * Downloading without being asked is the deliberate half of "auto-update":
-   * by the time the person is told there is a new version, it is already on
-   * the disk and installing is one click with no wait. Running it without
-   * being asked is the half that is NOT done, and the header says why.
+   * Production enables autoInstall so a verified build never waits for
+   * renderer UI. The explicit install method remains available to tests and
+   * compatibility callers.
    */
   async check() {
     if (this._busy) return this.status();
@@ -335,6 +335,7 @@ class AppUpdater {
       if (this._verified(dest, m.entry)) {
         this._readyEntry = m.entry;
         this._set({ phase: "ready", version: m.version, notes: m.notes, file: dest, percent: 100, canInstall: true, error: null });
+        if (this.autoInstall) await this.install();
         return this.status();
       }
 
@@ -343,6 +344,7 @@ class AppUpdater {
       this._readyEntry = m.entry;
       this._set({ phase: "ready", file: dest, percent: 100, canInstall: true });
       this.log(`${this.currentVersion} -> ${m.version} downloaded and verified`);
+      if (this.autoInstall) await this.install();
       return this.status();
     } catch (err) {
       this.log(`update check failed: ${err && err.message}`);

@@ -316,6 +316,7 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   /** The consoles still held by this app, with every event each has sent —
    *  what a reloaded board replays to pick them back up. */
   consoles: () => ipcRenderer.invoke("local:consoles"),
+  resumeSaved: () => ipcRenderer.invoke("local:resumeSaved"),
   forgetAgent: (id) => ipcRenderer.invoke("local:forgetAgent", id),
   /* Zevet Chat (desktop/chat.js): repo-independent conversations. */
   chatList: (query) => ipcRenderer.invoke("chat:list", { query }),

@@ -2850,6 +2850,19 @@ export function boot(): void {
         .then((snap) => {
           const seq = snap ? snap.seq : 0;
           if (snap) reattachConsoles(snap.consoles);
+          void br.resumeSaved?.().then((saved) => {
+            if (!Array.isArray(saved)) return;
+            if (saved.length) reattachConsoles(saved as any);
+            for (const old of saved as Array<{ id?: string }>) {
+              const c = useBoard.getState().myConsoles.find((x) => x.id === old.id);
+              if (!c || !c.sessionId || !c.running) continue;
+              void br.resumeAgent?.(c.agent, c.root, c.sessionId, { model: c.model, mode: c.mode, continues: c.id || undefined }).then((r) => {
+                if (r && r.ok && r.id) c.id = String(r.id);
+                else c.running = false;
+                signalConsolesChanged();
+              });
+            }
+          });
           const late = held || [];
           held = null;
           for (const evt of late) if (!(typeof evt.seq === "number" && evt.seq <= seq)) ingressAgentEvent(evt);

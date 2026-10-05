@@ -3137,6 +3137,14 @@ ipcMain.handle("local:stopAgent", (_e, id) => {
 
 /** Every console a reloaded board should show again, with what it has said. */
 ipcMain.handle("local:consoles", () => consoleLog.snapshot());
+ipcMain.handle("local:resumeSaved", () => {
+  const file = path.join(app.getPath("userData"), "console-resume.json");
+  try {
+    const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+    fs.rmSync(file, { force: true });
+    return saved && Array.isArray(saved.consoles) ? saved.consoles : [];
+  } catch { return []; }
+});
 
 /** The board closed a thread; a reload should not bring it back. */
 ipcMain.handle("local:forgetAgent", (_e, id) => {
@@ -3150,6 +3158,18 @@ ipcMain.handle("local:forgetAgent", (_e, id) => {
 // and nobody asked for. Called on quit and on window close — NOT on reload,
 // which re-attaches instead; see releaseBoardResources.
 function stopAllConsoles() {
+  // Persist before stopping. This is the single hand-off used by app quit,
+  // installer relaunch, crash recovery, and payload swaps. It deliberately
+  // includes every provider: claude, codex, and opencode all have a session
+  // identifier in their event stream when resumable.
+  try {
+    const resumeFile = path.join(app.getPath("userData"), "console-resume.json");
+    const running = consoleLog.snapshot().consoles.filter((c) => c.running && c.sessionId);
+    fs.mkdirSync(path.dirname(resumeFile), { recursive: true });
+    fs.writeFileSync(resumeFile, JSON.stringify({ version: 1, consoles: running }), "utf8");
+  } catch (err) {
+    console.error(`zevet: could not save console resume state: ${err.message}`);
+  }
   for (const c of consoles.values()) {
     try {
       c.stop();
@@ -3358,6 +3378,7 @@ ipcMain.handle("zevet:masoraChatPush", (_e, arg) => masora.setChatPush(Boolean(a
  * ======================================================================== */
 const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),
+  autoInstall: true,
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
   dir: path.join(app.getPath("userData"), "updates"),
   // toBoard() only reaches boardWindow, and a person stuck on setup — no hub

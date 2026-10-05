@@ -221,6 +221,7 @@ export interface LocalBridge {
   /** What the app still holds from before a reload. Optional: an older desktop
    *  build reaps its agents on reload instead. */
   consoles?: () => Promise<{ seq: number; consoles: HeldConsole[] }>;
+  resumeSaved?: () => Promise<unknown>;
   forgetAgent?: (id: string) => Promise<unknown>;
   watch: (root: string, relPath: string, lastWritten: string | null) => Promise<{ ok: boolean }>;
   unwatch: (root: string, relPath: string) => Promise<unknown>;
