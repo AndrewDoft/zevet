@@ -103,6 +103,8 @@ export interface ZevetBridge {
   masoraLinkStart?: () => Promise<{ phase: string; paired?: boolean; code?: string; error?: string }>;
   masoraLinkApprove?: () => Promise<boolean>;
   masoraUnpair?: () => Promise<boolean>;
+  /** Settings: the one line saying why this machine's agents are not reaching the team hub, or an empty string when they are. */
+  reportingStatus?: () => Promise<{ problem: string }>;
   /**
    * Family panel: one row per sibling app, and the click on its chip.
    *

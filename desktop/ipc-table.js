@@ -199,6 +199,7 @@ returns a token -- it is written straight to the OS keychain there.` },
     masoraLinkStart: { channel: "zevet:masoraLinkStart", params: [], type: `() => Promise<{ phase: string; paired?: boolean; code?: string; error?: string }>`, optional: true },
     masoraLinkApprove: { channel: "zevet:masoraLinkApprove", params: [], type: `() => Promise<boolean>`, optional: true },
     masoraUnpair: { channel: "zevet:masoraUnpair", params: [], type: `() => Promise<boolean>`, optional: true },
+    reportingStatus: { channel: "zevet:reportingStatus", params: [], type: `() => Promise<{ problem: string }>`, optional: true, doc: `Settings: the one line saying why this machine's agents are not reaching the team hub, or an empty string when they are.` },
     familyStatus: { channel: "zevet:familyStatus", params: [], type: `() => Promise<unknown[]>`, optional: true, doc: `Family panel: one row per sibling app, and the click on its chip.
 
 Family panel (desktop/family.js).` },

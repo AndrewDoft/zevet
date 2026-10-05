@@ -90,6 +90,15 @@ function settings() {
 
 const { hub: HUB, token: TOKEN, actor: ACTOR } = settings();
 
+/** This client's version, so the hub can tell the owner which build a silent machine is on. */
+const BUILD = (() => {
+  try {
+    return String(JSON.parse(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")).version || "");
+  } catch {
+    return "";
+  }
+})();
+
 /** `--zevet-repo <path>` / `--zevet-agent <id>`, written into the command by install.mjs. */
 function flag(name) {
   const i = process.argv.indexOf(name);
@@ -227,7 +236,7 @@ async function postEvent(body, timeoutMs) {
   try {
     const res = await fetch(`${HUB}/ingest`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-zevet-token": TOKEN },
+      headers: { "content-type": "application/json", "x-zevet-token": TOKEN, "x-zevet-build": BUILD },
       body: JSON.stringify(body),
       signal: ac.signal,
       // Same redirect refusal as the old inline fetch below used to carry:
@@ -510,7 +519,8 @@ async function main() {
   // knows exactly which config file it wrote the command into.
   const agent = isCodex ? "codex" : "claude-code";
 
-  const payload = { ...body, actor: ACTOR, machine, repo, branch, agent, checkout: checkoutId(origin || root) };
+  const session = String(p.session_id || p.sessionId || "").slice(0, 64);
+  const payload = { ...body, actor: ACTOR, machine, repo, branch, agent, session, checkout: checkoutId(origin || root) };
 
   // The backlog goes first (oldest first, budgeted), so a teammate who was
   // offline reappears in order rather than as a gap followed by now.

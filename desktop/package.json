@@ -69,6 +69,7 @@
       "ipc-guard.js",
       "ipc-table.js",
       "family.js",
+      "reporting-health.js",
       "family-index.js",
       "idle-install.js",
       "masora-connect.js",

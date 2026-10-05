@@ -9,6 +9,8 @@ import {
   plainError,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
+import { foldAgent } from "./agents.mjs";
+import type { AgentRow } from "./agents.d.mts";
 import { draftAfter } from "./chat-stream.mjs";
 import { answerBoardRequest } from "./board-requests.mjs";
 import { isNotOpen, shownError } from "./workspace-root.mjs";
@@ -178,6 +180,8 @@ interface BoardState {
 
   events: HubEvent[];
   roster: RosterEntry[];
+  /** Everyone's agents (folded by the hub, kept live by pushEvent); state is derived at render. */
+  teamAgents: AgentRow[];
   collisions: Collision[];
 
   selectedActor: string | null;
@@ -534,6 +538,7 @@ export const useBoard = create<BoardState>((set, get) => ({
 
   events: [],
   roster: [],
+  teamAgents: [],
   collisions: [],
 
   selectedActor: null,
@@ -644,6 +649,7 @@ export const useBoard = create<BoardState>((set, get) => ({
     set((g) => ({
       skewMs: skew,
       roster: s.roster || [],
+      teamAgents: s.agents || [],
       collisions: s.collisions || [],
       idleAfterMs: s.idleAfterMs || IDLE_FALLBACK,
       events: s.events || [],
@@ -675,7 +681,9 @@ export const useBoard = create<BoardState>((set, get) => ({
       r.lastTs = e.ts;
       r.lastEvent = e;
     }
-    const patch: Partial<BoardState> = { events, roster };
+    const agents = new Map(g.teamAgents.map((a) => [a.key, { ...a }]));
+    foldAgent(agents, e);
+    const patch: Partial<BoardState> = { events, roster, teamAgents: [...agents.values()] };
     if (!g.selectedRepo) patch.selectedRepo = e.repo || null;
     set(patch);
     followEvent(e);

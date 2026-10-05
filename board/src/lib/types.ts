@@ -1,4 +1,5 @@
 import type { TranscriptState } from "./transcript.d.mts";
+import type { AgentRow } from "./agents.d.mts";
 
 export type Conn = "init" | "live" | "down";
 export type ViewMode = "ide" | "agent";
@@ -20,6 +21,7 @@ export interface HubEvent {
   detail?: string;
   agent?: string;
   machine?: string;
+  session?: string;
 }
 
 export interface RosterEntry {
@@ -50,6 +52,7 @@ export interface Collision {
 export interface Snapshot {
   now: number;
   roster: RosterEntry[];
+  agents?: AgentRow[];
   collisions: Collision[];
   events: HubEvent[];
   windowMs: number;

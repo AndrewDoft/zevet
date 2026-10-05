@@ -108,7 +108,7 @@ function hashInviteKey(key) {
  */
 const DEFAULT_PROVIDER = "github";
 
-const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorkspace: "", owner: null, allowed: [], blocked: [], sessions: {}, createdAt: null, credentials: [] });
+const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorkspace: "", owner: null, allowed: [], blocked: [], sessions: {}, presence: {}, createdAt: null, credentials: [] });
 
 /** A stored credential record, minus its `key` — what everything except
  *  /team/credentials/:id/secret itself is allowed to see. */
@@ -849,6 +849,36 @@ export class Accounts {
   }
 
   /**
+   * Remember that this person's machine just reported an event (`kind` "event":
+   * a hook POST was accepted) or their board just read the hub (`kind` "board").
+   * Diagnosis for the owner: a teammate whose events never arrive is otherwise
+   * indistinguishable from one who is not working. Kept in memory and written
+   * at most every 30s — a request-rate write would rewrite accounts.json
+   * several times a second; a crash loses seconds of a timestamp, not an account.
+   */
+  noteSeen(session, kind, info = {}) {
+    const r = this.#personOf(session);
+    if (!r) return;
+    const now = this.now();
+    const p = (this.state.presence[r.login] ||= {});
+    p[kind === "event" ? "eventAt" : "boardAt"] = now;
+    if (kind === "event") {
+      if (info.machine) p.machine = info.machine;
+      if (info.build) p.build = info.build;
+    }
+    if (!this.savedPresenceAt || now - this.savedPresenceAt > 30000) {
+      this.savedPresenceAt = now;
+      this.#save();
+    }
+  }
+
+  /** `{ eventAt, boardAt, machine, build }` — each null/"" when never seen. */
+  presenceOf(login) {
+    const p = this.state.presence[String(login || "").toLowerCase()] || {};
+    return { eventAt: p.eventAt || null, boardAt: p.boardAt || null, machine: p.machine || "", build: p.build || "" };
+  }
+
+  /**
    * Mint (or rotate) a one-time invite key for a still-pending allowlist
    * entry. Returns the plaintext key — the ONLY moment it ever exists outside
    * the inviter's clipboard/inbox — or null if `login` names no pending
@@ -1210,6 +1240,7 @@ export class Accounts {
         // never matches.
         blocked: Array.isArray(raw.blocked) ? raw.blocked.filter((b) => b && b.login && b.id).map(tag) : [],
         sessions,
+        presence: raw.presence && typeof raw.presence === "object" && !Array.isArray(raw.presence) ? raw.presence : {},
         createdAt: typeof raw.createdAt === "number" ? raw.createdAt : null,
         // A malformed entry (no id or no key) is dropped rather than kept as
         // a row that can never be fetched or deleted by id.
