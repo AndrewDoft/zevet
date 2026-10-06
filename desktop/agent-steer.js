@@ -80,7 +80,7 @@ async function sendSteer({ fetchImpl = fetch, hub, token, key, docCrypto = loadD
   const body = cleanText(text);
   if (!body) return { ok: false, error: "Nothing to send." };
   if (body.length > TEXT_MAX) return { ok: false, error: `A steer is at most ${TEXT_MAX} characters.` };
-  if (!hub || !token) return { ok: false, error: "This app is not signed in to a hub." };
+  if (!hub || !token) return { ok: false, error: "This app is not signed in to a team." };
   if (!key || !docCrypto) return { ok: false, error: "This machine has no team secret, so it cannot seal a steer. Re-run setup." };
   if (!to || !session) return { ok: false, error: "No agent to steer." };
   const id = randomUUID();
@@ -106,9 +106,9 @@ async function sendSteer({ fetchImpl = fetch, hub, token, key, docCrypto = loadD
     }
     const status = STATUSES.includes(out.status) ? out.status : "";
     if (res.ok) return { ok: true, id, status: status || "queued", approval: Boolean(out.approval) };
-    return { ok: false, id, ...(status ? { status } : {}), error: out.error || `hub answered ${res.status}` };
+    return { ok: false, id, ...(status ? { status } : {}), error: out.error || `the team server answered ${res.status}` };
   } catch (err) {
-    return { ok: false, id, error: `Could not reach the hub: ${err.message}` };
+    return { ok: false, id, error: `Could not reach your team: ${err.message}` };
   }
 }
 

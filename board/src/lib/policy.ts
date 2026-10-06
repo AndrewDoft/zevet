@@ -39,7 +39,7 @@ export function getPolicy(): Promise<PolicyState> {
     .then(async (r) => {
       const body = (await r.json().catch(() => ({}))) as { policy?: { steer?: unknown }; admin?: unknown; owner?: unknown; error?: string };
       if (!r.ok) {
-        update({ loaded: true, error: body.error || `the hub answered ${r.status}` });
+        update({ loaded: true, error: body.error || `the team server answered ${r.status}` });
         return state;
       }
       update({
@@ -52,7 +52,7 @@ export function getPolicy(): Promise<PolicyState> {
       return state;
     })
     .catch((err: unknown) => {
-      update({ loaded: true, error: err instanceof Error ? err.message : "could not reach the hub" });
+      update({ loaded: true, error: err instanceof Error ? err.message : "could not reach your team" });
       return state;
     })
     .finally(() => {
@@ -71,11 +71,11 @@ export async function setPolicy(v: SteerPolicy): Promise<{ ok: boolean; error?: 
       body: JSON.stringify({ steer: v }),
     });
     const body = (await r.json().catch(() => ({}))) as { policy?: { steer?: unknown }; error?: string };
-    if (!r.ok) return { ok: false, error: body.error || `the hub answered ${r.status}` };
+    if (!r.ok) return { ok: false, error: body.error || `the team server answered ${r.status}` };
     update({ steer: isSteer(body.policy?.steer) ? body.policy.steer : v, error: "" });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "could not reach the hub" };
+    return { ok: false, error: err instanceof Error ? err.message : "could not reach your team" };
   }
 }
 

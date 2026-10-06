@@ -177,7 +177,7 @@ describe("voice and queuing", () => {
     // `reading` joined it later for the same class of reason: a session read
     // off disk has no process to send to, so the queue must be absent there
     // too or Send would swallow a prompt into nothing.
-    assert.match(runtime, /queue: reading \|\| !active \|\| oneShot \? undefined : queue\.adapter/);
+    assert.match(runtime, /queue: reading \|\| steering \|\| !active \|\| oneShot \? undefined : queue\.adapter/);
   });
 
   test("the queue is driven from the run's edges", () => {
