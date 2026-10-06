@@ -1753,3 +1753,14 @@ unknown agent, offline, wrong-recipient status, settled-stays-settled, rate
 limit, shared token), `test/agent-steer.test.mjs` (AAD binding, no plaintext
 on the wire, approval gate, decline/timeout, replay, text-only injection, and
 one steer end to end through a real hub), `test/activity.test.mjs`.
+
+## D-059 — Shipped: 0.2.121, Rebuild board bundle (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-06).** 19 commit(s) past v0.2.120.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.121 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.121`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `20b6a0c8…` (153106536 B), dmg `c0958971…` (205269430 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2121 on both platforms. Manifests win `be4f89ae…`, mac `bb2fb76f…`. Delta: 11 new blob(s) uploaded. 81 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `ae51dcbb3e12` -> `f7c2582d3539`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
