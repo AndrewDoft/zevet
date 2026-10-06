@@ -348,13 +348,38 @@ with no additional features planned."*
 
 ## What it deliberately does not do
 
-No worktree orchestration and no cross-machine approval routing. That machinery
-exists so agents on different machines can edit one repo simultaneously without
-colliding. Three people who can talk to each other get most of it from a branch
-convention and a board that shows the collision coming.
+No worktree orchestration across machines. That machinery exists so agents on
+different machines can edit one repo simultaneously without colliding. Three
+people who can talk to each other get most of it from a branch convention and
+a board that shows the collision coming. It is also the machinery that is
+hardest to get right, and the reason the tool this replaces was unusable.
 
-It is also the machinery that is hardest to get right, and the reason the tool
-this replaces was unusable.
+**This list used to include "no cross-machine approval routing", and that is no
+longer true (D-058).** You can steer a teammate's agent: the Steer button on
+their agent row aims your composer at it, and what you send is sealed on your
+machine with the document key, relayed by the hub (which cannot open it), and
+queued on their agent as a turn starting `[from <you>]`. Whether that is
+allowed is one team-wide setting only the team owner can change, enforced by
+the hub: **Ask first** (the default — their app shows an approval card and
+nothing reaches the agent until they approve), **Always on**, or **Always
+off**. You see every steer's outcome: sent, delivered, accepted, declined (with
+why), refused by policy, offline, or unknown agent. A steer is text only — it
+cannot change a mode, grant a tool permission or answer a permit — and only
+agents running in their Zevet app can be steered, not ones in a plain
+terminal. It is still remote prompt injection into a machine holding
+credentials, which is why the default asks. The hub holds the team secret on
+disk (see `hub/accounts.mjs`), so "cannot open it" means the hub process never
+does, not that it could not.
+
+**Prompt text is shared, including into agents.** Every teammate already sees
+everyone's prompts on the board; now agents see a short summary too. A
+desktop-launched Claude gets a bounded "team activity" block (who is working
+on what, the first line of teammates' last few prompts, open comments) in its
+system prompt, framed as data, not instructions, and `~/.zevet/activity.md`
+holds the current version. `node client/install.mjs <repo> --activity` adds an
+`@~/.zevet/activity.md` import to that repo's `CLAUDE.md` for agents started in
+a terminal (opt-in; `--remove` takes it out). Nothing goes through the hook's
+stdout. The cost, said plainly: a teammate's prompt is now input to your agent.
 
 **This list used to include "no syncing anyone's uncommitted work onto anyone
 else's checkout", and that is no longer true.** A file open in the shared editor
@@ -378,6 +403,8 @@ client/opencode-plugin.mjs  the same, as an opencode plugin (copied per repo, se
 client/install.mjs     writes/removes the hooks in a repo's .claude/settings.json
 client/install-opencode.mjs wires/removes the plugin in a repo's .opencode/plugins/
 client/updater.mjs     keeps this machine in step with the hub. runs detached.
+client/activity.mjs    the team activity block agents read (~/.zevet/activity.md).
+desktop/agent-steer.js steering a teammate's agent: seal, send, approve, inject.
 dist/setup.ps1         what a Windows teammate runs once.
 dist/setup.sh          what a macOS teammate runs once.
 ```

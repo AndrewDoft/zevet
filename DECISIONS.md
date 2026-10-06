@@ -1682,3 +1682,74 @@ launched by Zevet getting the hub hooks via `--settings` (`agent-console.js`), a
 - **Hub** redeployed from the tag in place; `BUILD_ID` `8fc1a63ac8e6` -> `ae51dcbb3e12`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-058 — Cross-machine steering is built, gated by a team policy; prompt text is shared into agents
+
+**2026-10-06**
+
+**Decision (Andrew, final).** Two reversals of what this file and the README
+used to say zevet deliberately does not do:
+
+1. **A person can steer a teammate's agent** (amoeba gap plan, item B). The
+   board's Steer button on a teammate's agent row retargets the composer; the
+   desktop seals the text with the document key (`client/doc-crypto.mjs`, AAD
+   binding steer id + target person + target session, so the relay cannot
+   re-aim or re-number it) and POSTs `/api/steer`. The hub stamps `from` from
+   the caller's session (a body `from` is ignored), refuses replays by id,
+   rate-limits the sender (10/min), caps the sealed size, refuses a target
+   agent its board has never seen, and relays ciphertext only to the target
+   person's own channel (`/events?steer=1`), never the team. The target's
+   desktop (`desktop/agent-steer.js`) reports `delivered`, finds the agent
+   among its OWN consoles, and injects through the board's Send as a turn
+   starting `[from <name>]` (never a slash command). Every steer ends in a
+   status the sender sees: queued, delivered, accepted, declined (with why),
+   refused-by-policy, offline, unknown-agent.
+2. **Prompt text is shared, including into agents** (item D). A
+   desktop-launched claude gets a bounded (≤1500 chars) team activity block —
+   who is working on what, the first line of teammates' last three prompts,
+   open comments from `~/.zevet/comments` — appended via
+   `--append-system-prompt`, framed as data, not instructions. The desktop
+   refreshes `~/.zevet/activity.md` every minute while signed in; the detached
+   updater rewrites it for hook-only machines; `install.mjs --activity` adds an
+   opt-in `@~/.zevet/activity.md` import to a repo's `CLAUDE.md`. Never via the
+   hook's stdout.
+
+**The policy.** One app-wide setting per team, `steer` ∈ {`on`, `ask`, `off`},
+default `ask`, stored in the team's `accounts.json` (`policy`), served by
+`GET /api/policy`, written by `PUT /api/policy` by the team owner only (the
+existing owner gate), validated (anything but the three values is a 400 and a
+bad batch changes nothing), audited (`accounts.audit`, plus a hub log line),
+and enforced by the HUB: `off` is refused before anything is relayed; `ask`
+is relayed flagged `approval: true` and the owner's app injects only after
+Approve (the desktop treats a missing flag as `ask`); `on` injects directly.
+The board's `<SteerPolicyControl />` (owner: three buttons; everyone else: a
+sentence) is rendered in Settings by settings.tsx.
+
+**Why ask is the default.** A steer is remote prompt injection into a machine
+holding credentials. The update channel already taught this project not to
+ship auto-accept first.
+
+**Known limits, said plainly.**
+- Only agents running in the target's Zevet app can be steered; a terminal
+  session is declined ("not running in their Zevet app").
+- An approval card nobody answers declines after 10 minutes; a hub restart
+  loses in-flight statuses (steers already injected are unaffected).
+- The hub holds the team secret on disk (`hub/accounts.mjs` header), so "the
+  hub cannot read a steer" means the hub process never opens one.
+- claude's system prompt is fixed for the life of its process, so the block is
+  a snapshot at each process start (start, resume) plus a pointer to the live
+  file. codex and opencode have no system-prompt flag here and get the file
+  only. A `.cmd`-shim claude cannot take a multi-line argument at all
+  (agent-console.js § CMD_METACHARACTERS), so it gets the file only too.
+- Hook-only machines refresh the file at the updater's cadence (≤ every 30
+  min) and only with a personal session; the board refuses the shared token.
+- The cost of sharing prompt text into agents: a teammate's prompt is now
+  input to your agent. The block is flattened, capped and labelled as data;
+  that reduces the lever, it does not remove it.
+
+**Tests.** `test/steer-hub.test.mjs` (non-admin PUT, bad values, policy=off
+enforcement, approval flag, forged `from`, replay, oversize, malformed,
+unknown agent, offline, wrong-recipient status, settled-stays-settled, rate
+limit, shared token), `test/agent-steer.test.mjs` (AAD binding, no plaintext
+on the wire, approval gate, decline/timeout, replay, text-only injection, and
+one steer end to end through a real hub), `test/activity.test.mjs`.
