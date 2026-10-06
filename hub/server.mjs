@@ -15,7 +15,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSyn
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Accounts, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
+import { Accounts, POLICY_VALUES, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
 import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedEmails } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
@@ -264,6 +264,9 @@ const CLIENT_FILES = [
   // that first imports it, which is the exact race the entry above exists to
   // avoid. Shipping an unused 5 KB file early costs nothing.
   "doc-crypto.mjs",
+  // activity.mjs is imported BY updater.mjs and install.mjs (the team activity
+  // file agents read, D-058).
+  "activity.mjs",
 ];
 
 /** The self-hosted faces. All SIL OFL-1.1; see hub/public/fonts/LICENSE. */
@@ -1277,6 +1280,92 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
+/* ── Steering a teammate's agent (D-058) ─────────────────────────────────────
+ *
+ * A steer is a prompt one person sends into ANOTHER person's running agent.
+ * That is remote prompt injection into a machine holding credentials, so:
+ *
+ *   • The text is sealed on the sender's desktop with the document key
+ *     (client/doc-crypto.mjs, AAD binding id+to+session) and the hub relays
+ *     ciphertext it never opens. The hub sees who steered whose agent, when.
+ *   • `from` is stamped HERE from the caller's session. Anything the body
+ *     says about who sent it is ignored.
+ *   • The team policy (accounts.policy.steer) is enforced HERE: `off` is
+ *     refused before anything is relayed; `ask` is relayed flagged
+ *     `approval: true`, and the owner's desktop injects only after Approve.
+ *   • Delivered only to the target person's own desktop channel
+ *     (`/events?steer=1` from a session whose person goes by the target name),
+ *     never broadcast. No such channel open is an honest `offline`.
+ *   • One id is relayed once (replay), the sender is rate limited, the sealed
+ *     text is size-capped, and a target agent the board has never seen is
+ *     refused. A steer carries text only — no mode, no tool permission.
+ *
+ * Statuses the sender sees: queued, delivered, accepted, declined,
+ * refused-by-policy, offline, unknown-agent. Every one is answered, none is
+ * dropped silently. In memory only: a restart loses in-flight statuses, not
+ * steers already injected.
+ */
+const STEER_SEALED_MAX = 16 * 1024; // base64 of a sealed ≤4000-char prompt fits with room to spare
+const STEER_RATE_WINDOW_MS = 60 * 1000;
+const STEER_RATE_MAX = Number(process.env.ZEVET_STEER_RATE_MAX || 10);
+const STEER_KEEP = 500; // per team, oldest dropped — also bounds the replay window
+const STEER_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
+const STEER_FINAL = new Set(["accepted", "declined"]);
+const STEER_OWNER_STATUSES = new Set(["delivered", "accepted", "declined"]);
+const steerTeams = new Map(); // team -> { listeners:Set<res>, byId:Map<id,rec>, rate:Map<person,ts[]> }
+
+function steerTeam(team) {
+  let t = steerTeams.get(team);
+  if (!t) steerTeams.set(team, (t = { listeners: new Set(), byId: new Map(), rate: new Map() }));
+  return t;
+}
+
+/** Which person a session is, by a stable key (their primary login). */
+function personKey(acc, sess) {
+  const p = sess ? acc.profile(sess) : null;
+  return p ? p.login : "";
+}
+
+function steerFrame(res, name, data) {
+  if (res.destroyed || res.writableEnded) return false;
+  res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+  return true;
+}
+
+/** Open steer channels belonging to whoever goes by `name`. */
+function steerChannelsFor(team, acc, name) {
+  const want = String(name || "").toLowerCase().replace(/^@/, "");
+  return [...steerTeam(team).listeners].filter((res) => !res.destroyed && acc.namesOfSession(res.zevetSteer.session).includes(want));
+}
+
+/** Tell the sender's own desktop(s) where their steer stands. */
+function steerTellSender(team, acc, rec) {
+  for (const res of steerTeam(team).listeners) {
+    if (personKey(acc, res.zevetSteer.session) === rec.fromKey) {
+      steerFrame(res, "steer-status", { id: rec.id, to: rec.to, status: rec.status, reason: rec.reason || "" });
+    }
+  }
+}
+
+function steerRemember(team, rec) {
+  const t = steerTeam(team);
+  t.byId.set(rec.id, rec);
+  while (t.byId.size > STEER_KEEP) t.byId.delete(t.byId.keys().next().value);
+}
+
+/** true when this person is over the limit; counts the attempt otherwise. */
+function steerRateLimited(team, key, now = Date.now()) {
+  const t = steerTeam(team);
+  const recent = (t.rate.get(key) || []).filter((ts) => now - ts < STEER_RATE_WINDOW_MS);
+  if (recent.length >= STEER_RATE_MAX) {
+    t.rate.set(key, recent);
+    return true;
+  }
+  recent.push(now);
+  t.rate.set(key, recent);
+  return false;
+}
+
 async function handleRequest(req, res) {
   // Central, so no route can forget them. Nothing in this repo frames the hub
   // (the board's iframes point at usemasora.com), hence DENY for every route.
@@ -2119,6 +2208,125 @@ async function handleRequest(req, res) {
     return json(res, 200, { ok: true });
   }
 
+  /* Team policy (D-058). Read by any signed-in member; written by the owner
+   * only — the same owner gate as allow/revoke/domain — validated against
+   * accounts.POLICY_VALUES and kept in the team's audit trail. */
+  if (url.pathname === "/api/policy" && req.method === "GET") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    return json(res, 200, { ok: true, policy: acc.policy, admin: acc.owner === auth.session.login, owner: acc.owner });
+  }
+
+  if (url.pathname === "/api/policy" && req.method === "PUT") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    if (acc.owner !== sess.login) {
+      console.error(`zevet: policy change refused for @${sess.login} (not the owner)${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`);
+      return json(res, 403, { error: acc.owner ? `only @${acc.owner} can change team policy` : "nobody has claimed this team yet" });
+    }
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body) || !Object.keys(body).length) return json(res, 400, { error: "expected { steer }" });
+    // Validate everything before storing anything: one bad key refuses the lot.
+    for (const [key, value] of Object.entries(body)) {
+      const ok = Object.hasOwn(POLICY_VALUES, key) && typeof value === "string" && POLICY_VALUES[key].includes(value);
+      if (!ok) return json(res, 400, { error: Object.hasOwn(POLICY_VALUES, key) ? `${key} must be one of ${POLICY_VALUES[key].join(", ")}` : `unknown policy: ${key}` });
+    }
+    for (const [key, value] of Object.entries(body)) {
+      const r = acc.setPolicy(key, value, sess.login);
+      if (r.changed) console.log(`zevet: policy ${key} -> ${value} by @${sess.login}${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`);
+    }
+    return json(res, 200, { ok: true, policy: acc.policy });
+  }
+
+  /* Send a steer — see the block comment above `steerTeam`. */
+  if (url.pathname === "/api/steer" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, STEER_SEALED_MAX + 4 * 1024));
+    } catch (err) {
+      const big = /too large/.test(String(err && err.message));
+      return json(res, big ? 413 : 400, { error: big ? "steer too large" : "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
+    const fromKey = personKey(acc, sess) || sess.login;
+    if (steerRateLimited(auth.team, fromKey)) return json(res, 429, { error: "too many steers — wait a minute" });
+    const id = typeof body.id === "string" ? body.id : "";
+    const to = typeof body.to === "string" ? body.to.trim().slice(0, 40) : "";
+    const session = typeof body.session === "string" ? body.session.slice(0, 64) : "";
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    if (!STEER_ID_RE.test(id) || !to || !session || !sealed) return json(res, 400, { error: "a steer needs id, to, session and sealed" });
+    if (sealed.length > STEER_SEALED_MAX) return json(res, 413, { error: "steer too large" });
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(sealed)) return json(res, 400, { error: "sealed must be base64" });
+    const t = steerTeam(auth.team);
+    if (t.byId.has(id)) return json(res, 409, { error: "that steer id was already used" });
+    const from = (acc.profile(sess) || {}).name || sess.login;
+    const policy = acc.policy.steer;
+    const rec = { id, at: Date.now(), from, fromKey, to, session, repo: typeof body.repo === "string" ? body.repo.slice(0, 120) : "", status: "", reason: "" };
+    const tag = `${from} -> ${to}${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`;
+    if (policy === "off") {
+      steerRemember(auth.team, { ...rec, status: "refused-by-policy" });
+      console.log(`zevet: steer ${id} ${tag} refused: policy is off`);
+      return json(res, 403, { ok: false, id, status: "refused-by-policy", error: "steering is turned off for this team" });
+    }
+    const resolve = acc.actorResolver();
+    const want = resolve(to).toLowerCase();
+    const agent = boards.get(auth.team).snapshot(resolve).agents.find((a) => a.session === session && String(a.actor).toLowerCase() === want);
+    if (!agent) {
+      steerRemember(auth.team, { ...rec, status: "unknown-agent" });
+      return json(res, 404, { ok: false, id, status: "unknown-agent", error: `no agent of ${to}'s with that session is on the board` });
+    }
+    const channels = steerChannelsFor(auth.team, acc, to);
+    if (!channels.length) {
+      steerRemember(auth.team, { ...rec, status: "offline" });
+      console.log(`zevet: steer ${id} ${tag}: offline`);
+      return json(res, 200, { ok: true, id, status: "offline" });
+    }
+    const approval = policy === "ask";
+    const msg = { id, from, to, repo: rec.repo, session, agent: agent.agent, sealed, approval, at: rec.at };
+    for (const ch of channels) steerFrame(ch, "steer", msg);
+    steerRemember(auth.team, { ...rec, status: "queued" });
+    console.log(`zevet: steer ${id} ${tag} queued (${approval ? "needs approval" : "policy on"})`);
+    return json(res, 200, { ok: true, id, status: "queued", approval });
+  }
+
+  /* The target's desktop reporting what happened to a steer. Only the person
+   * it was sent TO may, only the owner-side statuses, and never after it was
+   * accepted or declined. Relayed to the sender's own channel. */
+  if (url.pathname === "/api/steer/status" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const rec = body && typeof body.id === "string" ? steerTeam(auth.team).byId.get(body.id) : null;
+    if (!rec) return json(res, 404, { error: "no such steer" });
+    if (!acc.namesOfSession(auth.session).includes(rec.to.toLowerCase().replace(/^@/, ""))) return json(res, 403, { error: "that steer was not sent to you" });
+    const status = String(body.status || "");
+    if (!STEER_OWNER_STATUSES.has(status)) return json(res, 400, { error: "status must be delivered, accepted or declined" });
+    if (!["queued", "delivered"].includes(rec.status)) return json(res, 409, { error: `already ${rec.status}` });
+    rec.status = status;
+    rec.reason = typeof body.reason === "string" ? body.reason.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 200) : "";
+    steerTellSender(auth.team, acc, rec);
+    if (status !== "delivered") console.log(`zevet: steer ${rec.id} ${rec.from} -> ${rec.to} ${status}`);
+    return json(res, 200, { ok: true });
+  }
+
   if (url.pathname === "/api/state") {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
@@ -2129,6 +2337,27 @@ async function handleRequest(req, res) {
   if (url.pathname === "/events") {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
+    // A desktop's private steer channel (D-058): steers addressed to this
+    // person, and the status of steers they sent. Nothing from the board.
+    if (url.searchParams.get("steer") === "1") {
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+      res.write(`retry: 1000\nevent: hello\ndata: {"steer":true}\n\n`);
+      res.zevetSteer = { session: auth.session };
+      const t = steerTeam(auth.team);
+      t.listeners.add(res);
+      const ping = setInterval(() => {
+        try {
+          res.write(": ping\n\n");
+        } catch {
+          clearInterval(ping);
+        }
+      }, 25000);
+      req.on("close", () => {
+        clearInterval(ping);
+        t.listeners.delete(res);
+      });
+      return;
+    }
     const board = boards.get(auth.team);
     auth.accounts.noteSeen(auth.session, "board");
     res.writeHead(200, {

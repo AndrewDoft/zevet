@@ -108,7 +108,15 @@ function hashInviteKey(key) {
  */
 const DEFAULT_PROVIDER = "github";
 
-const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorkspace: "", owner: null, allowed: [], blocked: [], sessions: {}, presence: {}, createdAt: null, credentials: [] });
+const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorkspace: "", owner: null, allowed: [], blocked: [], sessions: {}, presence: {}, createdAt: null, credentials: [], policy: {}, audit: [] });
+
+/** Team-wide policies an admin (the owner) sets, and every value each may take.
+ *  `steer`: may a teammate steer somebody else's agent — `on` always, `ask`
+ *  the owner of the agent approves each one (the default), `off` never. The
+ *  hub enforces it (server.mjs § steering); the desktop only obeys. */
+export const POLICY_VALUES = Object.freeze({ steer: Object.freeze(["on", "ask", "off"]) });
+export const DEFAULT_POLICY = Object.freeze({ steer: "ask" });
+const AUDIT_MAX = 200;
 
 /** A stored credential record, minus its `key` — what everything except
  *  /team/credentials/:id/secret itself is allowed to see. */
@@ -289,6 +297,38 @@ export class Accounts {
     if (!this.state.owner && !admin) return { ok: false, error: "a workspace admin has to open this team first" };
     const r = this.signIn(user);
     return { ok: true, token: r.token, owner: r.owner, login };
+  }
+
+  /** This team's policies, defaults filled in. */
+  get policy() {
+    return { ...DEFAULT_POLICY, ...(this.state.policy || {}) };
+  }
+
+  /** Change one policy. The route decides WHO may (owner only); this decides
+   *  WHAT may be stored, and records it in the audit trail either way. */
+  setPolicy(key, value, by) {
+    if (!Object.hasOwn(POLICY_VALUES, key)) return { ok: false, error: `unknown policy: ${String(key)}` };
+    if (typeof value !== "string" || !POLICY_VALUES[key].includes(value)) {
+      return { ok: false, error: `${key} must be one of ${POLICY_VALUES[key].join(", ")}` };
+    }
+    const was = this.policy[key];
+    this.state.policy = { ...this.policy, [key]: value };
+    this.state.audit = [...(this.state.audit || []), { at: this.now(), by: String(by || ""), what: `policy.${key}`, from: was, to: value }].slice(-AUDIT_MAX);
+    this.#save();
+    return { ok: true, policy: this.policy, changed: was !== value };
+  }
+
+  /** Who changed what, oldest first (bounded). */
+  get audit() {
+    return (this.state.audit || []).slice();
+  }
+
+  /** Every name (display, logins, aliases; lowercase, no "@") the person
+   *  behind a session goes by — what an event's `actor` may be for them.
+   *  [] for a session that belongs to nobody. */
+  namesOfSession(sess) {
+    const r = sess ? this.#personOf(sess) : null;
+    return r ? this.#namesOf(r) : [];
   }
 
   /** The login that set this hub up, or null if nobody has yet. */
@@ -1247,6 +1287,12 @@ export class Accounts {
         credentials: Array.isArray(raw.credentials)
           ? raw.credentials.filter((c) => c && c.id && c.key).map((c) => ({ ...c }))
           : [],
+        // Only known keys with allowed values survive a load: a hand-edited
+        // file cannot smuggle in a policy value the route would have refused.
+        policy: Object.fromEntries(
+          Object.entries(raw.policy && typeof raw.policy === "object" ? raw.policy : {}).filter(([k, v]) => Object.hasOwn(POLICY_VALUES, k) && POLICY_VALUES[k].includes(v)),
+        ),
+        audit: Array.isArray(raw.audit) ? raw.audit.filter((a) => a && typeof a === "object").slice(-AUDIT_MAX) : [],
       };
     } catch (err) {
       // ⚠️ A CORRUPT FILE IS NOT SILENTLY REPLACED. Starting empty would mean
