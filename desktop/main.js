@@ -879,6 +879,7 @@ function openBoard(cfg) {
   });
 
   startCollisionWatch(cfg);
+  startSteerChannel(cfg);
 }
 
 function statusPageStyle() {
@@ -3573,7 +3574,7 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
   // flag for them (agent-console.js § invocationFor); the other two ignore the
   // option rather than being handed something they cannot use.
   const settings = agentSettingsFor(dir);
-  let systemPrompt = settings.systemPrompt;
+  let systemPrompt = withActivity(settings.systemPrompt);
   // C2/C4: the brief needs SOME prompt text to match against; when the
   // renderer has not queued one yet (an interactive session where nobody has
   // typed the first message), there is nothing to ask Masora and this is
@@ -3788,7 +3789,7 @@ bridge.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) 
     repoRoot: place.root,
     model: opts && typeof opts.model === "string" ? opts.model : "",
     mode: opts && typeof opts.mode === "string" ? opts.mode : "auto",
-    systemPrompt: settings.systemPrompt,
+    systemPrompt: withActivity(settings.systemPrompt),
     resumeFrom: resumeFrom.trim(),
     ...(String(agent || "") === "claude" ? agentConsole.extrasFrom({ ...opts, continueLatest: false }) : {}),
     env,
@@ -4435,6 +4436,180 @@ const boardAsk = createBoardAsk({
   },
 });
 bridge.handle("local:boardReply", (_e, { reqId, result }) => boardAsk.reply(reqId, result));
+
+/* ── Steering a teammate's agent, and shared team context (D-058) ──────────
+ *
+ * desktop/agent-steer.js holds the logic; this is the wiring. The hub decides
+ * the policy (on / ask / off) and says so on each steer it relays; this side
+ * finds the agent among its OWN consoles, puts an approval card on the board
+ * when asked to, and injects through the board's own Send (so the transcript
+ * shows it like any other turn, prefixed "[from …]"), falling back to the
+ * console directly when no board answers.
+ */
+const agentSteer = require("./agent-steer.js");
+let steerAbort = null;
+let activityTimer = null;
+/** Approval cards waiting on the person, by steer id. */
+const pendingSteers = new Map();
+
+function steerAuth(cfg) {
+  const c = cfg || {};
+  const auth = authFor(c);
+  const secret = loadSecretModule();
+  let key = null;
+  try {
+    key = auth.secret && secret ? secret.deriveDocKey(auth.secret) : null;
+  } catch {
+    key = null;
+  }
+  return { hub: String(c.hub || "").replace(/\/+$/, ""), token: auth.token || "", session: Boolean(auth.session), key };
+}
+
+/** The console running the agent session a steer names — this app's only. */
+function findSteerConsole(session) {
+  const all = consoleLog.snapshot().consoles.filter((c) => c.sessionId && c.sessionId === session);
+  const c = all.find((x) => x.running) || all[0];
+  return c ? { id: c.id, agent: c.agent } : null;
+}
+
+async function injectSteer(consoleId, prompt) {
+  const r = await askBoard("send", { id: consoleId, prompt });
+  if (r && !r.notFound) return r;
+  return sendToAgentCore(consoleId, prompt);
+}
+
+const steerInbox = agentSteer.createSteerInbox({
+  open: (msg) => agentSteer._internals.open(agentSteer.loadDocCrypto(), steerAuth(readConfig()).key, msg, msg.sealed),
+  findConsole: findSteerConsole,
+  askOwner: (req) =>
+    new Promise((resolve) => {
+      if (!boardWindow || boardWindow.isDestroyed()) return resolve(null);
+      pendingSteers.set(req.id, resolve);
+      toBoard("local:steerEvent", { kind: "ask", id: req.id, from: req.from, text: req.text, agent: req.agent, repo: req.repo, consoleId: req.consoleId });
+    }),
+  inject: injectSteer,
+  report: async (id, status, reason) => {
+    const a = steerAuth(readConfig());
+    if (!a.hub || !a.token) return;
+    await fetch(`${a.hub}/api/steer/status`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zevet-token": a.token },
+      body: JSON.stringify({ id, status, reason }),
+      redirect: "error",
+      signal: AbortSignal.timeout(10000),
+    });
+  },
+});
+
+function startSteerChannel(cfg) {
+  stopSteerChannel();
+  const a = steerAuth(cfg);
+  // The steer channel and the board both refuse a shared token: a person has
+  // to be signed in to be steered, or to steer.
+  if (!a.hub || !a.token || !a.session) return;
+  const ctl = new AbortController();
+  steerAbort = ctl;
+  void agentSteer.streamSteers({
+    hub: a.hub,
+    token: a.token,
+    signal: ctl.signal,
+    onFrame: (name, data) => {
+      if (name === "steer") {
+        void steerInbox.handle(data).then((status) => {
+          const id = data && typeof data.id === "string" ? data.id : "";
+          pendingSteers.delete(id);
+          if (status === "accepted" || status === "declined") toBoard("local:steerEvent", { kind: "done", id, from: String((data && data.from) || ""), status });
+        });
+      } else if (name === "steer-status" && data && typeof data.id === "string") {
+        toBoard("local:steerEvent", { kind: "status", id: data.id, to: String(data.to || ""), status: String(data.status || ""), reason: String(data.reason || "") });
+      }
+    },
+  });
+  void refreshActivity(cfg);
+  activityTimer = setInterval(() => void refreshActivity(readConfig() || cfg), 60 * 1000);
+}
+
+function stopSteerChannel() {
+  if (steerAbort) steerAbort.abort();
+  steerAbort = null;
+  if (activityTimer) clearInterval(activityTimer);
+  activityTimer = null;
+  for (const resolve of pendingSteers.values()) resolve(null);
+  pendingSteers.clear();
+}
+
+bridge.handle("local:steerSend", async (_e, arg) => {
+  const a = steerAuth(readConfig());
+  if (!a.session) return { ok: false, error: "Sign in to your team to steer a teammate's agent." };
+  return agentSteer.sendSteer({
+    hub: a.hub,
+    token: a.token,
+    key: a.key,
+    to: String((arg && arg.to) || ""),
+    session: String((arg && arg.session) || ""),
+    repo: String((arg && arg.repo) || ""),
+    text: String((arg && arg.text) || ""),
+  });
+});
+
+/** The person's answer to one steer approval card. */
+bridge.handle("local:steerAnswer", (_e, arg) => {
+  const id = arg && typeof arg.id === "string" ? arg.id : "";
+  const resolve = pendingSteers.get(id);
+  if (!resolve) return { ok: false, error: "no such steer" };
+  pendingSteers.delete(id);
+  resolve(Boolean(arg && arg.approve === true));
+  return { ok: true };
+});
+
+/* Shared context: the team activity block (client/activity.mjs), refreshed
+ * every minute while signed in, written to ~/.zevet/activity.md and appended
+ * to a desktop-launched claude's system prompt at every process start. claude
+ * keeps one process across turns and its system prompt is fixed for that
+ * process, so the block also points at the file, which stays current. codex
+ * and opencode have no system-prompt flag here; they get the file only. */
+let activityModule;
+function loadActivity() {
+  if (activityModule !== undefined) return activityModule;
+  activityModule = null;
+  const target = runtime.clientFile("activity.mjs", { clientDir: CLIENT_DIR });
+  try {
+    if (target) activityModule = require(target);
+  } catch (err) {
+    console.error(`zevet: could not load activity.mjs (${err.message})`);
+  }
+  return activityModule;
+}
+
+let activityText = "";
+async function refreshActivity(cfg) {
+  const act = loadActivity();
+  const a = steerAuth(cfg);
+  if (!act || !a.session || !a.hub) return;
+  try {
+    const headers = { "x-zevet-token": a.token };
+    const [state, who] = await Promise.all(
+      ["/api/state", "/auth/whoami"].map((p) => fetch(`${a.hub}${p}`, { headers, redirect: "error", signal: AbortSignal.timeout(10000) }).then((r) => (r.ok ? r.json() : null))),
+    );
+    if (!state) return;
+    const me = who && who.me ? [who.me.name, who.me.login, ...(who.me.aliases || []), ...(who.me.identities || []).map((i) => i.login)] : [];
+    activityText = act.activityBlock(state, { me: [cfg && cfg.actor, who && who.login, ...me].filter(Boolean), comments: act.readComments(HOME) });
+    act.writeActivityFile(HOME, activityText);
+  } catch (err) {
+    console.error(`zevet: team activity not refreshed (${err.message})`);
+  }
+}
+
+function withActivity(systemPrompt) {
+  if (!activityText) return systemPrompt;
+  // A .cmd-shim claude refuses any argument with a newline or a quote in it
+  // (agent-console.js § CMD_METACHARACTERS), and this block has both: adding
+  // it there would stop every launch. Such a machine gets the file only.
+  const r = agentConsole.resolveAgent("claude");
+  if (!r.ok || r.kind === "shim") return systemPrompt;
+  return [systemPrompt, `${activityText}\n(This is a snapshot from when you started; ~/.zevet/activity.md is kept current.)`].filter(Boolean).join("\n\n");
+}
+
 bridge.assertComplete();
 
 /**
@@ -4527,6 +4702,7 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   stopCollisionWatch();
+  stopSteerChannel();
   if (process.platform !== "darwin") app.quit();
 });
 

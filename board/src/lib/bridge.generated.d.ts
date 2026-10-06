@@ -428,6 +428,13 @@ export interface LocalBridge {
    * UI must not be able to, which is why the card is removed optimistically.
    */
   askAnswer?: (id: string, picked: string[]) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Steer a teammate's agent (D-058): main seals the text with the document
+   * key and sends it through the hub, which enforces the team's steer policy.
+   * Optional: an older desktop build cannot steer.
+   */
+  steerSend?: (to: string, session: string, repo: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>;
+  steerAnswer?: (id: string, approve: boolean) => Promise<{ ok: boolean; error?: string }>;
   onUpdate: (cb: (s: unknown) => void) => void;
   onIndexEvent: (cb: (p: { kind?: string; total?: number; loaded?: number; indexed?: number }) => void) => void;
   /**
@@ -478,6 +485,11 @@ export interface LocalBridge {
    * pair beside them: an older main process simply never sends one.
    */
   onAskRequest?: (cb: (req: AskRequest) => void) => () => void;
+  /**
+   * Steering (D-058): `ask` an approval card for a teammate's steer, `done`
+   * when one was injected or declined, `status` for a steer this person sent.
+   */
+  onSteerEvent?: (cb: (e: { kind: string; id: string; [k: string]: unknown }) => void) => () => void;
 }
 
 export interface ZevetDocBridge {

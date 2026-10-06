@@ -455,6 +455,10 @@ and the Code | Chat switch is then not offered.` },
     askAnswer: { channel: "local:askAnswer", params: ["id","picked"], pack: "object", type: `(id: string, picked: string[]) => Promise<{ ok: boolean; error?: string }>`, optional: true, doc: `Answered ONCE, with the chosen LABELS. Answering twice is harmless on the
 wire — the main process has already deleted the pending entry — but the
 UI must not be able to, which is why the card is removed optimistically.` },
+    steerSend: { channel: "local:steerSend", params: ["to","session","repo","text"], pack: "object", type: `(to: string, session: string, repo: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>`, optional: true, doc: `Steer a teammate's agent (D-058): main seals the text with the document
+key and sends it through the hub, which enforces the team's steer policy.
+Optional: an older desktop build cannot steer.` },
+    steerAnswer: { channel: "local:steerAnswer", params: ["id","approve"], pack: "object", type: `(id: string, approve: boolean) => Promise<{ ok: boolean; error?: string }>`, optional: true },
   },
   events: {
     onUpdate: { channel: "app:update", payload: "unknown", type: `(cb: (s: unknown) => void) => void` },
@@ -488,6 +492,8 @@ as the permit channel above, different event names.
 
 A question from an agent, and the answer back. Optional like the permit
 pair beside them: an older main process simply never sends one.` },
+    onSteerEvent: { channel: "local:steerEvent", payload: "unknown", type: `(cb: (e: { kind: string; id: string; [k: string]: unknown }) => void) => () => void`, optional: true, doc: `Steering (D-058): \`ask\` an approval card for a teammate's steer, \`done\`
+when one was injected or declined, \`status\` for a steer this person sent.` },
   },
 });
 

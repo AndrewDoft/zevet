@@ -506,6 +506,13 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * UI must not be able to, which is why the card is removed optimistically.
    */
   askAnswer: (id, picked) => ipcRenderer.invoke("local:askAnswer", { id, picked }),
+  /**
+   * Steer a teammate's agent (D-058): main seals the text with the document
+   * key and sends it through the hub, which enforces the team's steer policy.
+   * Optional: an older desktop build cannot steer.
+   */
+  steerSend: (to, session, repo, text) => ipcRenderer.invoke("local:steerSend", { to, session, repo, text }),
+  steerAnswer: (id, approve) => ipcRenderer.invoke("local:steerAnswer", { id, approve }),
   onUpdate: (fn) => subscribe("app:update", fn),
   onIndexEvent: (fn) => subscribe("local:indexEvent", fn),
   /**
@@ -556,6 +563,11 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * pair beside them: an older main process simply never sends one.
    */
   onAskRequest: (fn) => subscribe("local:askRequest", fn),
+  /**
+   * Steering (D-058): `ask` an approval card for a teammate's steer, `done`
+   * when one was injected or declined, `status` for a steer this person sent.
+   */
+  onSteerEvent: (fn) => subscribe("local:steerEvent", fn),
 });
 
 /**
