@@ -835,6 +835,7 @@
     transition: border-color 200ms;
   }
   .sbtn:hover:not(:disabled) { border-color: var(--cerulean); }
+  .sbtn[aria-pressed="true"] { border-color: var(--cerulean); color: var(--cerulean); font-weight: 600; }
   .sbtn:disabled { color: var(--subtle); cursor: default; }
   /* ⚠️ THE INVITE FIELD USED TO OVERLAP ITS BUTTON. The form carried
      class "row", which this stylesheet has never defined, so the input took
