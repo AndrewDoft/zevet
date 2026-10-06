@@ -23,6 +23,7 @@ import { Launcher } from "./launcher";
 import { QuoteToComposer } from "./guards";
 import { VoiceHint } from "./voicedialog";
 import { PermitPrompt, PermitQueue } from "./permits";
+import { SteerApprovals, SteerBanner } from "./steer";
 import { AskPrompt, AskQueue } from "./asks";
 import { DraftRestore } from "./findviews";
 import { ThreadMap } from "./mapviews";
@@ -206,6 +207,11 @@ export function Conversation() {
       {reading ? null : <PermitQueue />}
       {reading ? null : <AskPrompt />}
       {reading ? null : <AskQueue />}
+      {/* Steering (D-058): approval cards for teammates' steers aimed at my
+          agents, and whose agent my composer is aimed at with what happened
+          to each steer I sent. Above the transcript like the permits. */}
+      <SteerApprovals />
+      <SteerBanner />
       {/* Above the chat box, in both views - see StartupActivity's own
           comment for what it draws and why it is gone after the first
           message. */}

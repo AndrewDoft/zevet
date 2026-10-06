@@ -74,6 +74,7 @@ import { AgentLogo } from "./brand";
 import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
+import { SteerButton } from "./steer";
 
 function expandedStored(): string[] {
   try {
@@ -323,8 +324,9 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
 }
 
 /** A teammate's agent, as the hub reports it: what it was asked, what it is doing
- *  now, and where. Read-only — their session lives on their machine. */
-function TeamAgentRow({ a, hue, now }: { a: { key: string; agent: string; repo: string; branch: string; mission: string; current: string; lastTs: number; state?: string }; hue: number; now: number }) {
+ *  now, and where. Read-only — their session lives on their machine — except for
+ *  Steer (components/steer.tsx), which asks THEM, through the hub (D-058). */
+function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; session?: string; agent: string; repo: string; branch: string; mission: string; current: string; lastTs: number; state?: string }; hue: number; now: number }) {
   const where = a.repo ? a.repo + (a.branch ? " · " + a.branch : "") : "";
   return (
     <div className="agent-row-wrap" data-teammate-agent={a.key}>
@@ -339,6 +341,7 @@ function TeamAgentRow({ a, hue, now }: { a: { key: string; agent: string; repo: 
             <span className="agent-row-ago">{agoLabel(a.lastTs, now)}</span>
           )}
         </div>
+        <SteerButton a={a} />
       </div>
     </div>
   );

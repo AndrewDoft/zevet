@@ -36,6 +36,7 @@ import { MULTI_TURN } from "./constants";
 import { groupTurnTools } from "./turngroup.mjs";
 import { overlayDraft } from "./chat-stream.mjs";
 import { parseLocal } from "./slash.mjs";
+import { sendSteer, useSteer } from "./steer";
 import { ToolUIs } from "../components/tools";
 import type { ConsoleEntry } from "./types";
 
@@ -143,6 +144,10 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
   const openSession = useBoard((s) => s.sessions.open);
   const sessionMessages = useBoard((s) => s.sessions.openTranscript?.messages);
   const reading = Boolean(openSession);
+  /* Steering (D-058): while a teammate's agent is the target, Send goes to
+     THEM — no queue, no local agent started, nothing disabled for want of a
+     console of my own. */
+  const steering = useSteer((s) => s.target) !== null && !reading;
 
   /* Streamed text of the block in flight is laid over the open message; the
      complete block replaces it (chat-stream.mjs). Memoised because the runtime
@@ -262,12 +267,14 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
      * model picker names and asks it, which is the only reading of Send that
      * is true here. The one thing still required is somewhere to run: no open
      * repo means no cwd, and that is a real refusal rather than a UI one. */
-    isDisabled: reading ? true : !active && !canStart,
+    isDisabled: reading ? true : steering ? false : !active && !canStart,
     // `streaming` is no longer a refusal for a multi-turn agent: the queue
     // takes the prompt and sends it when the turn settles. A one-shot agent
     // keeps it, because for that one there is no later.
     isSendDisabled: reading
       ? true
+      : steering
+      ? false
       : active
       ? // A finished run that can be resumed is not a dead end; a running turn
         // still refuses a one-shot agent, because that process IS mid-prompt.
@@ -292,7 +299,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
      * looked correct on their own.
      *
      * A queue only means anything when there is a run to queue FOR. */
-    queue: reading || !active || oneShot ? undefined : queue.adapter,
+    queue: reading || steering || !active || oneShot ? undefined : queue.adapter,
 
     onNew: async (message) => {
       // A recording cannot be typed into. isDisabled already says so; this is
@@ -301,6 +308,12 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
       if (reading) return;
       const text = textOf(message);
       if (!text) return;
+      if (steering) {
+        // Never a slash command here: the text goes to someone else's agent,
+        // prefixed with my name, and zevet's own commands mean nothing there.
+        void sendSteer(text);
+        return;
+      }
       /* Slash commands zevet answers itself (lib/slash.mjs). Everything else
          starting with `/` is a prompt like any other: claude runs its own. */
       const local = parseLocal(text, active?.agent ?? launchAgent);
