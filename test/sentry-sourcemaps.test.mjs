@@ -41,6 +41,15 @@ describe("stageSourcemaps", () => {
     // the pair uploaded for a project is the injected one: bundle and map both carry what inject wrote
     assert.match(readFileSync(path.join(maps, "electron", "board.js"), "utf8"), /debugId=/);
   });
+  test("a Sentry failure warns and lets the ship continue", (t) => {
+    const d = tempDir("zevet-srcmap-"); t.after(() => d.cleanup());
+    const stage = path.join(d.dir, "tree"); bundle(t, stage);
+    for (const failAt of ["inject", "upload"]) {
+      const warned = [];
+      stageSourcemaps({ stage, maps: path.join(d.dir, "maps"), version: "1", warn: (m) => warned.push(m), run: (cmd, args) => { if (args[1] === failAt) throw new Error(`${failAt} boom`); } });
+      assert.match(warned.join(), new RegExp(`${failAt} boom`));
+    }
+  });
   test("refuses a git checkout", (t) => {
     const d = tempDir("zevet-srcmap-"); t.after(() => d.cleanup());
     bundle(t, d.dir); mkdirSync(path.join(d.dir, ".git"));

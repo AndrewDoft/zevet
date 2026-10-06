@@ -13,9 +13,10 @@ export const SENTRY_BUNDLES = [
 
 /** `stage` is an extracted copy of the release tree (never a git checkout); `maps` is scratch space beside it.
  *  Injects debug IDs into stage/hub/public, then uploads each project's pairs as release `version`. */
-export function stageSourcemaps({ stage, maps, version, run }) {
+export function stageSourcemaps({ stage, maps, version, run, warn = console.warn }) {
   if (existsSync(path.join(stage, ".git"))) throw new Error(`${stage} is a git checkout; sourcemaps are injected into extracted copies only`);
   const pub = path.join(stage, "hub", "public");
+  try {
   run("sentry", ["sourcemap", "inject", "--ext", ".js", pub], { cwd: stage, stream: true });
   rmSync(maps, { recursive: true, force: true });
   for (const { bundle, project } of SENTRY_BUNDLES) {
@@ -24,4 +25,5 @@ export function stageSourcemaps({ stage, maps, version, run }) {
     for (const f of [bundle, `${bundle}.map`]) copyFileSync(path.join(pub, f), path.join(dir, f));
     run("sentry", ["sourcemap", "upload", "--release", version, dir], { cwd: stage, env: { SENTRY_ORG, SENTRY_PROJECT: project }, stream: true });
   }
+  } catch (e) { warn(`sentry sourcemaps skipped (release continues): ${e.message}`); } // never block a release on Sentry
 }
