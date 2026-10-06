@@ -9,6 +9,7 @@ import { useAuiState } from "@assistant-ui/react";
 import { bridge } from "../lib/bridge";
 import { hueOf, selectActiveConsole, useBoard } from "../lib/board";
 import { ensurePresenceRoom, setHideMyDraft, setMyDraft, usePresenceStore } from "../lib/presence-room";
+import { draftFor } from "../lib/presence-drafts.mjs";
 
 /** Mounted next to the composer: publishes its text (debounced) and which agent it targets. */
 export function DraftPublisher() {
@@ -41,7 +42,9 @@ export function PromptGhost({ actor, me }: { actor: string; me: boolean }) {
     );
   }
 
-  const d = drafts[actor];
+  // The awareness name is the actor the room was joined with (the config's), the roster's is the
+  // hub's display name; they differ in case until whoami lands. Match without case.
+  const d = draftFor(drafts, actor);
   if (!d) return null;
   return (
     <div

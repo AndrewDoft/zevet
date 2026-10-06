@@ -211,3 +211,11 @@ describe("the comments file agents read", () => {
     }
   });
 });
+
+describe("draft lookup by roster name", () => {
+  test("a draft joined as 'mina' is found for the roster's 'Mina' (found in the live demo: the ghost never showed)", () => {
+    const drafts = { mina: { text: "hi", target: null, ts: 1 } };
+    assert.equal(D.draftFor(drafts, "Mina").text, "hi");
+    assert.equal(D.draftFor(drafts, "Bob"), undefined);
+  });
+});

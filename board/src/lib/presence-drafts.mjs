@@ -26,3 +26,12 @@ export function liveDrafts(states, selfId, now = Date.now()) {
   }
   return out;
 }
+
+/** One person's draft out of `liveDrafts`' map. The key is the name the room was joined with (the
+ *  config's actor), the roster's is the hub's display name; they differ in case until whoami lands. */
+export function draftFor(drafts, actor) {
+  if (drafts[actor]) return drafts[actor];
+  const want = String(actor).toLowerCase();
+  for (const [k, v] of Object.entries(drafts)) if (k.toLowerCase() === want) return v;
+  return undefined;
+}
