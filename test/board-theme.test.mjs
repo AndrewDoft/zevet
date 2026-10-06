@@ -124,19 +124,21 @@ describe("theme behaviours", () => {
     assert.ok(settings.includes('id="settingsClose"'), "the close button id is gone");
     assert.ok(settings.includes('id="settingsInvite"'), "the invitation field id is gone");
     assert.ok(settings.includes('ref={invite}'), "the invitation must survive rerenders as an uncontrolled field");
-    assert.ok(settings.includes('document.getElementById("settingsClose")?.focus()'), "opening must move focus into the sheet");
+    assert.ok(settings.includes('document.getElementById("settingsClose")?.focus()'), "opening must move focus into the page");
     assert.ok(settings.includes('document.getElementById("settingsLink")?.focus()'), "closing must return focus to the rail");
     const app = src("App.tsx");
-    assert.ok(app.includes('inert={sheetOpen ? true : undefined}'), "the shell beyond the sheet must be inert while it is open");
+    assert.ok(app.includes('data-settings={sheetOpen ? "open" : undefined}'), "the shell no longer says Settings is open, so the page cannot take over the app area");
   });
 
-  test("Settings traps Tab in both directions and Escape closes it", () => {
+  // Settings is a page beside the rail now, not a modal sheet: no focus trap,
+  // and the rail stays usable. Escape, Back, or touching the rail leave it.
+  test("Settings is a page: Escape, Back and the rail close it", () => {
     const settings = src("components/settings.tsx");
-    assert.ok(settings.includes('if (ev.key !== "Tab") return;'), "the Tab trap is gone");
-    assert.ok(settings.includes("list[list.length - 1]") && settings.includes("ev.shiftKey"), "the trap no longer wraps from the last control");
     const app = src("App.tsx");
-    assert.ok(app.includes('if (ev.key === "Escape") closeSettings();'), "Escape no longer closes the sheet from the shell");
-    assert.ok(settings.includes('id="sheetBack"'), "clicking outside the sheet no longer closes it");
+    assert.ok(app.includes('if (ev.key === "Escape") closeSettings();'), "Escape no longer closes Settings from the shell");
+    assert.ok(settings.includes("‹ Back") && settings.includes("onClick={() => closeSettings()}"), "the Back button is gone");
+    assert.ok(app.includes("onClickCapture") && app.includes('.closest(".railfoot")'), "touching the rail no longer leaves Settings");
+    assert.ok(!settings.includes('aria-label="Settings" aria-modal') && !settings.includes('id="sheetBack"'), "Settings is a modal sheet again");
   });
 
   // Andrew, on 0.2.43's sheet: "settings is ugly and has too many words... no

@@ -752,6 +752,58 @@
   .sheet-close { font-size: 12px; color: var(--ink-muted); }
   .sheet-close:hover { color: var(--ink); }
   .sset { border-bottom: 1px solid var(--line); }
+
+  /* ---- settings page ------------------------------------------------------
+     Fills the app beside the rail: every other child of .shell is hidden while
+     it is open, and this takes their cell. */
+  .shell[data-settings] > :not(.rail):not(.settings-page) { display: none; }
+  .settings-page {
+    grid-column: 2; grid-row: 2; min-width: 0; min-height: 0;
+    display: grid; grid-template-columns: 220px minmax(0, 1fr); background: var(--paper);
+  }
+  .settings-nav {
+    display: flex; flex-direction: column; gap: 2px; padding: 20px 14px; overflow-y: auto;
+    border-right: 1px solid var(--line);
+  }
+  .settings-nav h2 { margin: 18px 10px 8px; font-size: 11px; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; color: var(--subtle); }
+  .settings-back { align-self: flex-start; padding: 4px 10px; font-size: 12px; color: var(--ink-muted); border-radius: 6px; }
+  .settings-back:hover { color: var(--ink); background: var(--raise-soft); }
+  .settings-nav button[data-settings-tab] {
+    text-align: left; padding: 8px 10px; border-radius: 6px; font-size: 13px; color: var(--ink-muted);
+  }
+  .settings-nav button[data-settings-tab]:hover { color: var(--ink); background: var(--raise-soft); }
+  .settings-nav button[aria-current="page"] { color: var(--ink); background: var(--fill); }
+  .settings-main { overflow-y: auto; min-height: 0; }
+  .settings-content { max-width: 860px; padding: 32px 48px 80px; }
+  .settings-content h1 { margin: 0 0 28px; font-size: 22px; font-weight: 400; letter-spacing: 0.01em; }
+  .spage-sec { padding: 0 0 28px; margin: 0 0 28px; border-bottom: 1px solid var(--line); }
+  .spage-sec:last-child { border-bottom: 0; }
+  .spage-sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+  .spage-sec-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .spage-sum { color: var(--subtle); font-size: 12px; overflow-wrap: anywhere; }
+  .spage-body .srow { padding: 6px 0; font-size: 13px; }
+  .spage-body .srow .k { flex-basis: 220px; }
+  .spage-body .snote { max-width: 64ch; }
+  .spage-cards { display: grid; gap: 14px; }
+  .spage-card { border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
+  .spage-card[data-open] { border-color: var(--cerulean); }
+  .spage-card-title { display: flex; gap: 10px; align-items: baseline; margin-bottom: 10px; font-size: 14px; }
+  .spage-tag { font-size: 11px; color: var(--ink-muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; margin-left: 8px; }
+  .spage-dl { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 13px; }
+  .spage-dl dt { color: var(--ink-muted); }
+  .spage-dl dd { margin: 0; overflow-wrap: anywhere; }
+  .spage-dl .mono, .spage-body .mono { font-family: var(--font-mono); font-size: 12px; }
+  .spage-who { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; }
+  .spage-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .spage-table th { text-align: left; font-weight: 400; color: var(--subtle); font-size: 11.5px; padding: 0 12px 8px 0; }
+  .spage-table td { padding: 10px 12px 10px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  .spage-sub { color: var(--ink-muted); font-size: 12px; }
+  @media (max-width: 760px) {
+    .settings-page { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+    .settings-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 14px; }
+    .settings-nav h2 { display: none; }
+    .settings-content { padding: 20px 18px 60px; }
+  }
   /* The whole header is the hit target, not just the chevron -- a 12px twisty
      is a hard thing to click and there is nothing else on the row to hit. */
   .sset-head {
@@ -829,6 +881,12 @@
      It is a confirmation that the command registered, so it is only ever
      drawn for a name the agent announced — see components/slashtext.tsx. */
   .slash-said { color: var(--who); font-weight: 600; }
+  /* An @-mention in a sent message (components/slashtext.tsx). */
+  .mention-chip {
+    display: inline-block; padding: 0 6px; border-radius: 999px; font-weight: 600; font-size: 0.92em;
+    color: var(--cerulean); background: color-mix(in srgb, var(--cerulean) 12%, transparent);
+  }
+  .mention-chip[data-type="agent"] { color: var(--ink); background: var(--fill); border: 1px solid var(--line); }
 
   /* A `!` command run in the terminal, and whatever it printed. Both are
      recorded as user messages, so both land inside the sender's bubble —

@@ -27,7 +27,7 @@ describe("Team pane", () => {
   });
 
   test("Settings and the popup render the one TeamInvite", () => {
-    assert.match(src("components/settings.tsx"), /<TeamInvite key="team" \/>/);
+    assert.match(src("components/settings/team.tsx"), /<TeamInvite key="team" \/>/);
     const plus = invite.slice(invite.indexOf("export function InvitePlus"));
     assert.match(plus, /<Dialog open=\{open\} onOpenChange=\{setOpen\}>[\s\S]*<TeamInvite \/>/);
     assert.doesNotMatch(src("components/settings.tsx"), /\/auth\/allow/, "a second invite flow crept back into Settings");

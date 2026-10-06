@@ -26,6 +26,7 @@ import type { TextMessagePartComponent } from "@assistant-ui/react";
 import { hueOf, selectActiveConsole, useBoard } from "@/lib/board";
 import { readEnvelope } from "@/lib/envelope.mjs";
 import { commandsFor, slashLead } from "@/lib/slash.mjs";
+import { splitMentions } from "@/lib/mentions.mjs";
 import { ChatSurface } from "@/lib/surface";
 import { useChat } from "@/lib/chat";
 
@@ -81,6 +82,24 @@ export const UserText: TextMessagePartComponent = ({ text }) => {
       </>
     );
   }
+
+  /* @-mentions (components/mentionmenu.tsx) are directives in the text; draw
+     each as a chip. Everything else in the message stays exactly as typed. */
+  const segs = splitMentions(text);
+  if (segs.some((g) => g.kind === "mention"))
+    return (
+      <>
+        {segs.map((g, i) =>
+          g.kind === "text" ? (
+            g.text
+          ) : (
+            <span key={i} className="mention-chip" data-type={g.type} title={g.type === "agent" ? "Agent" : "Teammate"}>
+              @{g.label}
+            </span>
+          ),
+        )}
+      </>
+    );
 
   /* The rule lives in slash.mjs beside its siblings, and is tested there:
      a first token, and only a name this agent actually offers. */

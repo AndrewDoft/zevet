@@ -35,6 +35,7 @@ import {
   lastToolFor as rosterLastToolFor,
   newestHunk,
 } from "./roster.mjs";
+import { mentionsOf, plainMentions, type Mention } from "./mentions.mjs";
 import {
   HUES, IDLE_FALLBACK, MODELS, MODES, PANE_DEFAULTS, PANE_KEY, PANE_LIMITS,
   STATS_EVERY_MS, STATS_MAX_PATHS, STATUS_EVERY_MS,
@@ -819,7 +820,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       // C2/C4: when a first prompt is already known (a fork's queued
       // question), it goes to the main process too, so it can ask Masora for
       // a brief before the CLI starts -- not just be sent to it afterward.
-      ...(launch && launch.prompt ? { prompt: launch.prompt } : {}),
+      ...(launch && launch.prompt ? { prompt: plainMentions(launch.prompt) } : {}),
       ...(launch && launch.engine ? { engine: launch.engine } : {}),
       ...(launch && launch.label ? { label: launch.label } : {}),
     }).then((r) => {
@@ -926,6 +927,12 @@ export const useBoard = create<BoardState>((set, get) => ({
   },
 
   sendPrompt: (key, text) => {
+    /* @-mentions ride IN the text as directives (lib/mentions.mjs). The
+       transcript keeps them, so they draw as chips; the agent is told "@Kai",
+       and `mentions` goes out as an optional extra argument that an older
+       main process simply never reads. */
+    const mentions = mentionsOf(text);
+    const said = mentions.length ? plainMentions(text) : text;
     const before = get().myConsoles.find((x) => x.key === key);
     if (!before) return;
 
@@ -959,7 +966,11 @@ export const useBoard = create<BoardState>((set, get) => ({
       c.nextModel = null;
     }
 
-    pushConsoleLine(c, "you", text);
+    const send = (id: string) =>
+      mentions.length
+        ? (bridge.local!.sendToAgent as (id: string, text: string, mentions: Mention[]) => ReturnType<NonNullable<typeof bridge.local>["sendToAgent"]>)(id, said, mentions)
+        : bridge.local!.sendToAgent(id, said);
+    pushConsoleLine(c, "you", said);
     c.transcript = appendUserText(c.transcript, text, consoleModelName(c));
 
     /* ⚠️ A FOLLOW-UP TO A FINISHED RUN IS A NEW PROCESS, NOT A WRITE TO A DEAD
@@ -988,7 +999,7 @@ export const useBoard = create<BoardState>((set, get) => ({
         // console has to answer to it — `consoleById` matches on `c.id`.
         c.id = r.id ? String(r.id) : null;
         signalConsolesChanged();
-        if (c.id) void bridge.local?.sendToAgent(c.id, text);
+        if (c.id) void send(c.id);
       });
       return;
     }
@@ -1002,7 +1013,7 @@ export const useBoard = create<BoardState>((set, get) => ({
       signalConsolesChanged();
       return;
     }
-    bridge.local?.sendToAgent(c.id, text).then((r) => {
+    send(c.id).then((r) => {
       if (r && r.ok === false) {
         pushConsoleLine(c, "err", r.error || "could not send");
       }

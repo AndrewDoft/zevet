@@ -10,7 +10,7 @@ import { Conversation } from "./components/conversation";
 import { ConsoleRuntimeProvider } from "./lib/runtime";
 import { FollowControl, TreeFill } from "./components/tree";
 import { DetailPane } from "./components/detail";
-import { SettingsSheet } from "./components/settings";
+import { SettingsPage } from "./components/settings";
 import { VoiceDialog } from "./components/voicedialog";
 import { SubagentsPanel } from "./components/subagents-panel";
 import {
@@ -174,8 +174,10 @@ function App() {
 
   return (
     <ConsoleRuntimeProvider>
-      <div className="shell" inert={sheetOpen ? true : undefined}>
-        <aside className="pane rail">
+      <div className="shell" data-settings={sheetOpen ? "open" : undefined}>
+        {/* Settings is a page beside the rail (components/settings.tsx). Touching
+            anything in the rail's body — a person, an agent — leaves it. */}
+        <aside className="pane rail" onClickCapture={(e) => sheetOpen && !(e.target as HTMLElement).closest(".railfoot") && closeSettings()}>
           <ModeSwitch />
           <TeamName />
           <ChatRail />
@@ -282,8 +284,8 @@ function App() {
           </main>
         </div>
         <ChatMain />
+        <SettingsPage />
       </div>
-      <SettingsSheet />
       <Palette />
       <VoiceDialog />
       <SubagentsPanel />

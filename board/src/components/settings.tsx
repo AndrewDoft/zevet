@@ -1,5 +1,5 @@
 import { AgentSettings } from "./agentsettings";
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { useContext, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { bridge } from "../lib/bridge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { connectPhaseLabel, connectValue, disconnectValue } from "../lib/connect.mjs";
@@ -12,7 +12,11 @@ import { MODES, MODE_LABEL } from "../lib/constants";
 import { Twist } from "./twist";
 import { GithubMark, GoogleMark } from "./logos";
 import { IdentityRows } from "./identity";
-import { TeamInvite, handle } from "./invite";
+import { handle } from "./invite";
+import { InPage, PageSection } from "./settings/parts";
+import { ReposPanel } from "./settings/repos";
+import { TeamPanel } from "./settings/team";
+import { SteerPolicyControl } from "./steerpolicy";
 
 function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   return (
@@ -46,6 +50,8 @@ function SSection({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  // Under the Settings page a section is a heading and its body, always open.
+  if (useContext(InPage)) return <PageSection title={title} id={id} summary={summary}>{children}</PageSection>;
   return (
     <div className="sset" id={id}>
       <button className="sset-head" type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
@@ -320,13 +326,13 @@ function AccountSection() {
 
   if (!whoState) {
     return (
-      <SSection title="Account & Team" summary="loading…">{null}</SSection>
+      <SSection title="Account" summary="loading…">{null}</SSection>
     );
   }
 
   if (whoState.ok === false) {
     return (
-      <SSection title="Account & Team" summary="Error">
+      <SSection title="Account" summary="Error">
                 <button className={MAKE_BTN} type="button" onClick={() => refreshWhoami()}>
           Retry
         </button>
@@ -410,10 +416,9 @@ function AccountSection() {
   }
 
   out.push(<ReportingLine key="reporting" />);
-  out.push(<TeamInvite key="team" />);
 
   return (
-    <SSection title="Account & Team" summary={login ? handle(login) : "not signed in"}>
+    <SSection title="Account" summary={login ? handle(login) : "not signed in"}>
       {out}
     </SSection>
   );
@@ -1171,126 +1176,130 @@ function ConnectionsSection() {
   );
 }
 
-export function SettingsSheet() {
-  const sheetOpen = useBoard((s) => s.sheetOpen);
-  const closeSettings = useBoard((s) => s.closeSettings);
+type Tab = "account" | "repos" | "team" | "collab" | "agents" | "integrations" | "appearance";
+const TABS: Array<[Tab, string]> = [
+  ["account", "Account"],
+  ["repos", "Repos"],
+  ["team", "Team"],
+  ["collab", "Collaboration"],
+  ["agents", "Agents"],
+  ["integrations", "Integrations"],
+  ["appearance", "Appearance"],
+];
+
+function AccountPanel() {
+  const hub = bridge.cfg?.hub || window.location.origin;
+  return (
+    <>
+      <PageSection title="Connection">
+        <SRow k="Address" v={hub} mono />
+        <SRow k="This machine" v={bridge.cfg?.machine || "browser"} />
+      </PageSection>
+      <AccountSection />
+      <VersionSection />
+    </>
+  );
+}
+
+function AppearancePanel() {
   const viewMode = useBoard(selectViewMode);
   const setView = useBoard((s) => s.setView);
-  const localWorkspaces = useBoard((s) => s.localWorkspaces);
+  /* ⚠️ NO LIGHT/DARK TOGGLE HERE. Andrew: "that's already represented outside
+     of settings." It lives in the rail, one click away. */
+  return (
+    <SSection title="View" summary={viewMode === "ide" ? "Files" : "Agent"}>
+      <div className="sbtn-row">
+        {(
+          [
+            ["ide", "Files"],
+            ["agent", "Agent"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            className={MAKE_BTN}
+            id={"settingsView-" + id}
+            key={id}
+            type="button"
+            aria-pressed={viewMode === id}
+            disabled={viewMode === id}
+            onClick={() => setView(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </SSection>
+  );
+}
 
-  const sheetRef = useRef<HTMLDivElement>(null);
-  const wasOpen = useRef(false);
+/** Settings as a page: fills the app beside the rail (see `.settings-page`). Esc and Back close it. */
+export function SettingsPage() {
+  const sheetOpen = useBoard((s) => s.sheetOpen);
+  const closeSettings = useBoard((s) => s.closeSettings);
+  const [tab, setTab] = useState<Tab>("account");
+
   useEffect(() => {
-    if (sheetOpen) {
-      wasOpen.current = true;
-      document.getElementById("settingsClose")?.focus();
-      const sheetEl = sheetRef.current;
-      if (!sheetEl) return;
-      // Tab is trapped inside the sheet in both directions; Shift+Tab from the
-      // first control and Tab from the last both wrap.
-      const onKey = (ev: KeyboardEvent) => {
-        if (ev.key !== "Tab") return;
-        const list = Array.from(
-          sheetEl.querySelectorAll<HTMLElement>("button, input, select, textarea, [tabindex]"),
-        ).filter((el) => el.tabIndex >= 0 && el.offsetParent !== null && (!("disabled" in el) || !el.disabled));
-        if (!list.length) {
-          ev.preventDefault();
-          return;
-        }
-        const first = list[0];
-        const last = list[list.length - 1];
-        const active = document.activeElement;
-        if (ev.shiftKey && (active === first || !sheetEl.contains(active))) {
-          ev.preventDefault();
-          last.focus();
-        } else if (!ev.shiftKey && (active === last || !sheetEl.contains(active))) {
-          ev.preventDefault();
-          first.focus();
-        }
-      };
-      document.addEventListener("keydown", onKey);
-      return () => document.removeEventListener("keydown", onKey);
-    }
-    if (wasOpen.current) {
-      wasOpen.current = false;
-      document.getElementById("settingsLink")?.focus();
-    }
+    if (!sheetOpen) return;
+    document.getElementById("settingsClose")?.focus();
+    return () => document.getElementById("settingsLink")?.focus();
   }, [sheetOpen]);
 
   if (!sheetOpen) return null;
-  const local = Boolean(bridge.local);
 
   return (
-    <>
-      <div className="sheet-back" id="sheetBack" onClick={() => closeSettings()} />
-      <div className="sheet" id="sheet" role="dialog" aria-label="Settings" aria-modal="true" tabIndex={-1} ref={sheetRef}>
-        <div className="sheet-head">
-          <h2>Settings</h2>
-          <button className="sheet-close" id="settingsClose" type="button" onClick={() => closeSettings()}>
-            Close
+    <InPage.Provider value={true}>
+      <div className="settings-page" id="settingsPage" role="region" aria-label="Settings">
+        <nav className="settings-nav" aria-label="Settings sections">
+          <button className="settings-back" id="settingsClose" type="button" onClick={() => closeSettings()}>
+            ‹ Back
           </button>
-        </div>
-
-        {/* ⚠️ NO APPEARANCE SECTION. The light/dark toggle lives in the strip,
-            where it is one click away instead of three, and Andrew asked for
-            the duplicate here to go: "that's already represented outside of
-            settings." Two controls for one piece of state is also two places
-            for it to look wrong. */}
-        <SSection title="View" summary={viewMode === "ide" ? "Files" : "Agent"}>
-          <div className="sbtn-row">
-            {(
-              [
-                ["ide", "Files"],
-                ["agent", "Agent"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                className={MAKE_BTN}
-                id={"settingsView-" + id}
-                key={id}
-                type="button"
-                aria-pressed={viewMode === id}
-                disabled={viewMode === id}
-                onClick={() => setView(id)}
-              >
-                {label}
-              </button>
-            ))}
+          <h2>Settings</h2>
+          {TABS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              data-settings-tab={id}
+              aria-current={tab === id ? "page" : undefined}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-main">
+          <div className="settings-content">
+            <h1>{TABS.find(([id]) => id === tab)![1]}</h1>
+            {tab === "account" ? <AccountPanel /> : null}
+            {tab === "repos" ? (
+              <>
+                <ReposPanel />
+                <IndexSection />
+              </>
+            ) : null}
+            {tab === "team" ? <TeamPanel /> : null}
+            {tab === "collab" ? (
+              <PageSection title="Steering">
+                <SteerPolicyControl />
+              </PageSection>
+            ) : null}
+            {tab === "agents" ? (
+              <>
+                <PermissionSection />
+                <AgentSettings />
+                <CredentialsSection />
+              </>
+            ) : null}
+            {tab === "integrations" ? (
+              <>
+                <MasoraSection />
+                <FamilySection />
+                <ConnectionsSection />
+              </>
+            ) : null}
+            {tab === "appearance" ? <AppearancePanel /> : null}
           </div>
-        </SSection>
-
-        <PermissionSection />
-        <AgentSettings />
-
-        <SSection
-          title="Folders"
-          summary={!local ? "desktop only" : localWorkspaces.length ? String(localWorkspaces.length) : "none"}
-        >
-          {!local ? (
-            <SNote>Desktop only.</SNote>
-          ) : (
-            <>
-              {(localWorkspaces || []).map((w) => (
-                <div className="srow" key={w.dir}>
-                  <span className="k">{w.name + (w.repo ? "" : "  (folder)")}</span>
-                </div>
-              ))}
-              <button className={MAKE_BTN} type="button" style={{ marginTop: "10px" }} onClick={() => useBoard.getState().addWorkspace()}>
-                Add a folder…
-              </button>
-            </>
-          )}
-        </SSection>
-
-        <AccountSection />
-        <CredentialsSection />
-        <IndexSection />
-        <MasoraSection />
-        <FamilySection />
-        <ConnectionsSection />
-
-        <VersionSection />
+        </div>
       </div>
-    </>
+    </InPage.Provider>
   );
 }

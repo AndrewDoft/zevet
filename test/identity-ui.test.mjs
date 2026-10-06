@@ -129,8 +129,7 @@ describe("the owner's Settings: combine two people, rename anyone", { skip }, ()
 
       const { p, ctx } = await page(h.base, me.token, { login: "andrewdoft" });
       await p.locator('button[aria-label="Settings"]').first().click();
-      await p.locator("#sheet").waitFor();
-      await p.locator("#sheet").getByText("Account & Team", { exact: false }).first().click();
+      await p.locator("#settingsPage").waitFor(); // opens on Account
 
       const combine = p.locator('input[aria-label="Name to combine"]');
       await combine.waitFor({ timeout: 15000 });
