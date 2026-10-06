@@ -22,7 +22,8 @@ export function ReposPanel() {
 
   const hooked = (repo: string) => events.some((e) => e.repo === repo);
   const rows = new Map<string, { name: string; dir?: string; repo: string; branch?: string; lastTs?: number }>();
-  for (const w of local || []) rows.set(w.repo || w.name, { name: w.name, dir: w.dir, repo: w.repo || w.name });
+  // `w.repo` is a boolean ("is a git repo"); the hub names a repo by its folder name.
+  for (const w of local || []) rows.set(w.name, { name: w.name, dir: w.dir, repo: w.name });
   for (const r of repos) {
     const prev = rows.get(r.repo);
     rows.set(r.repo, { name: prev?.name || r.repo, dir: prev?.dir, repo: r.repo, branch: r.branch, lastTs: r.lastTs });
