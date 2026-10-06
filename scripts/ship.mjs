@@ -32,6 +32,7 @@ import { pipeline } from "node:stream/promises";
 import { brotliDecompressSync } from "node:zlib";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { stageSourcemaps } from "./sentry-sourcemaps.mjs";
 import { acquireLock, decide, nextDNumber, notesFrom, recordHeader, renderRecord, runSteps } from "./ship-lib.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -391,8 +392,14 @@ echo reloaded
         const wt = at(tag);
         const want = hubBuildId(wt);
         ctx.facts.hubBefore = JSON.parse((await io.https(`${HUB}/version`)).body.toString("utf8")).build;
-        const tgz = path.join(ctx.work, `zevet-${v}.tar.gz`);
-        io.git(["archive", "--format=tar.gz", "-o", tgz, tag], { cwd: wt });
+        // Debug IDs go into an extracted COPY of the tag: injecting into hub/public itself would dirty tracked files.
+        const tgz = path.join(ctx.work, `zevet-${v}.tar.gz`), tree = path.join(ctx.work, "hub-tree");
+        rmSync(tree, { recursive: true, force: true });
+        mkdirSync(tree, { recursive: true });
+        io.git(["archive", "--format=tar", "-o", `${tree}.tar`, tag], { cwd: wt });
+        io.run("tar", ["-xf", "hub-tree.tar", "-C", "hub-tree"], { cwd: ctx.work }); // relative: GNU tar reads "C:" as a host
+        stageSourcemaps({ stage: tree, maps: path.join(ctx.work, "hub-maps"), version: v, run: io.run });
+        io.run("tar", ["-czf", path.basename(tgz), "-C", "hub-tree", "."], { cwd: ctx.work });
         io.scp([tgz]);
         // In place over the top: /srv/zevet is a bind mount, replacing the directory strands the container.
         io.ssh(`set -e
