@@ -75,6 +75,8 @@ const CLIENT_FILES = [
   // because this list's job is to mirror what the hub ships, not to guess what
   // is currently reachable.
   "doc-crypto.mjs",
+  // Imported by updater.mjs and install.mjs (team activity, D-058).
+  "activity.mjs",
 ];
 
 let passed = 0;

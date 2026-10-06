@@ -28,6 +28,7 @@ import path from "node:path";
 import { resolveAuth, insecureHub } from "./secret.mjs";
 import { readSignedManifest } from "./signing.mjs";
 import { zevetHome, atomicWriteJson } from "./zevet-home.mjs";
+import { activityBlock, readComments, writeActivityFile } from "./activity.mjs";
 
 const HOME = zevetHome();
 const CLIENT_DIR = path.join(HOME, "client");
@@ -293,7 +294,31 @@ setTimeout(() => {
   process.exit(0);
 }, 60000).unref();
 
-main().catch((err) => {
-  log(`updater bug, ignored: ${err && err.message}`);
-  process.exitCode = 0;
-});
+/**
+ * Rewrite ~/.zevet/activity.md from the board (D-058), for an agent started
+ * in a plain terminal whose CLAUDE.md imports it (install.mjs --activity).
+ * Needs a personal session — the board refuses the shared token — so a
+ * hook-only machine simply has no file. Best effort, and only ever after the
+ * update check, never in anybody's turn.
+ */
+async function refreshActivity() {
+  const cfg = readConfig();
+  const hub = (process.env.ZEVET_HUB || cfg.hub || "").replace(/\/+$/, "");
+  const auth = resolveAuth({ env: process.env, file: cfg });
+  if (!hub || !auth.token || !auth.session || auth.error || insecureHub(hub)) return;
+  try {
+    const res = await fetch(`${hub}/api/state`, { headers: { "x-zevet-token": auth.token }, redirect: "error", signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return;
+    const block = activityBlock(await res.json(), { me: [cfg.actor, cfg.login].filter(Boolean), comments: readComments(HOME) });
+    writeActivityFile(HOME, block);
+  } catch (err) {
+    log(`could not refresh activity.md (${err.message})`);
+  }
+}
+
+main()
+  .catch((err) => {
+    log(`updater bug, ignored: ${err && err.message}`);
+    process.exitCode = 0;
+  })
+  .then(() => refreshActivity());

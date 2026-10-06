@@ -3,6 +3,8 @@
 //   node client/install.mjs <repo-path>
 //   node client/install.mjs <repo-path> --remove
 //   node client/install.mjs <repo-path> --agents=claude-code,codex,opencode
+//   node client/install.mjs <repo-path> --activity   (opt-in: CLAUDE.md imports
+//        ~/.zevet/activity.md, what teammates are doing — see activity.mjs)
 //
 // Nobody should have to tell zevet which agent they use: it looks, and wires
 // what it finds. Existing config is preserved; ours is stripped and rewritten
@@ -12,7 +14,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectAgents } from "./detect.mjs";
 import { installCodex, grantCodexHookTrust } from "./install-codex.mjs";
-import { atomicWriteJson } from "./zevet-home.mjs";
+import { atomicWriteJson, zevetHome } from "./zevet-home.mjs";
+import { setActivityImport } from "./activity.mjs";
 import {
   addOpencodeRepo,
   installOpencodeGlobal,
@@ -284,6 +287,16 @@ for (const agent of targets) {
             "opencode and pick OpenRouter, or set OPENROUTER_API_KEY.",
       );
     }
+  }
+}
+
+// Opt-in only; --remove always takes the line out again (a no-op if absent).
+if (remove || args.includes("--activity")) {
+  try {
+    const a = setActivityImport(repo, zevetHome(), { remove });
+    if (a.changed) console.log(remove ? `Activity      removed the import from ${a.file}` : `Activity      ${a.file} imports ~/.zevet/activity.md`);
+  } catch (err) {
+    console.error(`zevet: could not ${remove ? "remove" : "add"} the activity import: ${err.message}`);
   }
 }
 
