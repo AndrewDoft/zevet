@@ -12,6 +12,7 @@ import type { EditorViewState } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { Checkpoints, Schedules } from "./repoviews";
 import { SessionsPane } from "./sessions";
+import { CommentsPanel } from "./comments";
 import { CommitActivity, RepoTimeline } from "./historyviews";
 import { Memories } from "./runspec";
 import { IndexSearch } from "./search";
@@ -78,6 +79,7 @@ function EditorPane({ e }: { e: EditorViewState }) {
           <div className="riders" id="riders" />
         </div>
       )}
+      <CommentsPanel />
     </div>
   );
 }

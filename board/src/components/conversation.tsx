@@ -26,6 +26,7 @@ import { PermitPrompt, PermitQueue } from "./permits";
 import { SteerApprovals, SteerBanner } from "./steer";
 import { AskPrompt, AskQueue } from "./asks";
 import { DraftRestore } from "./findviews";
+import { DraftPublisher } from "./promptboxes";
 import { ThreadMap } from "./mapviews";
 
 const TURN_COMPONENTS = { ToolGroup: TurnToolGroup };
@@ -247,6 +248,7 @@ export function Conversation() {
         {/* A half-written prompt survives a reload now. Offered only while the
             composer is empty, so it never overwrites what you are typing. */}
         <DraftRestore />
+        <DraftPublisher />
         {reading ? null : <Thinking />}
       </div>
       {/* ⚠️ FIVE COLLAPSED ROWS USED TO SIT HERE — turn detail, find, read

@@ -75,6 +75,7 @@ import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
 import { SteerButton } from "./steer";
+import { PromptGhost } from "./promptboxes";
 
 function expandedStored(): string[] {
   try {
@@ -670,6 +671,7 @@ export function PeoplePane({
             </button>
             )}
             {open ? <PersonDetail r={r} /> : null}
+            <PromptGhost actor={r.actor} me={me} />
             {me ? myRepos(r.hue) : withState(teamAgents.filter((a) => a.actor === r.actor), now, idleAfterMs).slice(0, 12).map((a) => (
               <TeamAgentRow key={a.key} a={a} hue={r.hue} now={now} />
             ))}
@@ -688,6 +690,7 @@ export function PeoplePane({
             <span className="person-row-name">{who?.me?.name || myActor}</span>
             <span className="person-row-state">you</span>
           </div>
+          <PromptGhost actor={myActor} me />
           {myRepos(0)}
         </div>
       ) : null}

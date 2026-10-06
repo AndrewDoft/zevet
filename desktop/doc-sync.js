@@ -378,4 +378,31 @@ class DocSync {
   }
 }
 
-module.exports = { DocSync, socketUrl, backoffFor, SNAPSHOT_EVERY_MS, BACKOFF_MS };
+/**
+ * Unresolved comments, for agents to read: ~/.zevet/comments/<repo>/<path>.json.
+ * A file rather than hook stdout (hook rule 1). The renderer is the HUB'S page,
+ * so `room` is untrusted: every segment is checked and the final path must stay
+ * under the comments directory. Resolves to the path written, or null.
+ */
+function writeCommentsFile(home, room, data) {
+  const fs = require("node:fs");
+  const m = /^([^:/\\]+):(.+)$/.exec(String(room || ""));
+  if (!m) return null;
+  const segs = [m[1], ...m[2].split(/[\\/]+/)];
+  if (segs.some((s) => !s || s === "." || s === ".." || /[:\0]/.test(s))) return null;
+  const base = path.resolve(home, "comments");
+  const file = path.resolve(base, ...segs) + ".json";
+  if (!file.startsWith(base + path.sep)) return null;
+  if (!data || !Array.isArray(data.comments)) return null;
+  if (data.comments.length === 0) {
+    fs.rmSync(file, { force: true });
+    return file;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+  fs.renameSync(tmp, file);
+  return file;
+}
+
+module.exports = { DocSync, socketUrl, backoffFor, SNAPSHOT_EVERY_MS, BACKOFF_MS, writeCommentsFile };

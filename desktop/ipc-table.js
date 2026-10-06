@@ -604,6 +604,7 @@ function toUint8(value) {
     send: { channel: "doc:send", params: [["room","unknown"],["u8","unknown"],["opts","unknown"]], payload: "{ room, bytes: toUint8(u8), opts }", returns: "Promise<unknown>", optional: true, doc: `Send one plaintext Yjs update. \`opts.snapshot\` marks it as a full state
 that the hub may replace the room's whole log with — which is what keeps
 a long-lived room from being trimmed out from under a late joiner.` },
+    comments: { channel: "doc:comments", params: [["room","unknown"],["data","unknown"]], payload: "{ room, data }", returns: "Promise<unknown>", optional: true, doc: `Publish this room's unresolved comments to ~/.zevet/comments/<repo>/<path>.json, where agents can read them. \`{ ok }\`.` },
     leave: { channel: "doc:leave", params: [["room","unknown"]], returns: "Promise<unknown>", optional: true, doc: `Leave. Always \`{ ok: true }\`; leaving a room never joined is what a
  closing tab does and is not worth an error.` },
   },

@@ -678,6 +678,8 @@ contextBridge.exposeInMainWorld("zevetDoc", {
    * a long-lived room from being trimmed out from under a late joiner.
    */
   send: (room, u8, opts) => ipcRenderer.invoke("doc:send", { room, bytes: toUint8(u8), opts }),
+  /** Publish this room's unresolved comments to ~/.zevet/comments/<repo>/<path>.json, where agents can read them. `{ ok }`. */
+  comments: (room, data) => ipcRenderer.invoke("doc:comments", { room, data }),
   /**
    * Leave. Always `{ ok: true }`; leaving a room never joined is what a
    *  closing tab does and is not worth an error.
