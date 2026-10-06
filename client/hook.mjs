@@ -14,7 +14,7 @@
 //      stderr, which Claude Code surfaces without acting on.
 //
 // Everything else is best effort. If the hub is down, the turn does not care.
-import { readFileSync, existsSync, realpathSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync, writeFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -468,6 +468,42 @@ function describe(input) {
   return { file: null, detail: "" };
 }
 
+
+/**
+ * Remember WHAT an edit tool is about to write, locally, so the desktop can put
+ * the agent's name on the lines it changed. PreToolUse is all that is reported
+ * (see PostToolUse above), so the new text is only knowable now -- and it must
+ * not go to the hub, which is not trusted with file contents. It goes to a
+ * short-lived file under ~/.zevet/edit-hints that desktop/file-watch.js reads
+ * when the file changes on disk. Never writes stdout; failure is silent.
+ */
+const HINT_TOOLS = /^(edit|multiedit|apply_patch|patch)$/i;
+const HINT_TTL_MS = 60_000;
+function writeEditHint(tool, input, actor, agent, cwd) {
+  try {
+    if (!HINT_TOOLS.test(tool) || !input || typeof input !== "object") return;
+    const cut = (v) => (typeof v === "string" ? v.slice(0, 20000) : undefined);
+    const keep = {};
+    for (const k of ["file_path", "filePath", "path", "new_string", "newString", "command", "patch", "input"]) {
+      if (typeof input[k] === "string") keep[k] = cut(input[k]);
+    }
+    if (Array.isArray(input.edits)) {
+      keep.edits = input.edits.slice(0, 50).map((e) => ({ new_string: cut(e && (e.new_string ?? e.newString)) }));
+    }
+    const dir = path.join(zevetHome(), "edit-hints");
+    mkdirSync(dir, { recursive: true });
+    const now = Date.now();
+    for (const f of readdirSync(dir)) {
+      const t = Number(f.split("-")[0]);
+      if (Number.isFinite(t) && now - t > HINT_TTL_MS) rmSync(path.join(dir, f), { force: true });
+    }
+    const name = `${now}-${process.pid}.json`;
+    writeFileSync(path.join(dir, name), JSON.stringify({ ts: now, actor, agent, tool, cwd, input: keep }), { mode: 0o600 });
+  } catch {
+    // a hint is a nicety; the turn is what matters
+  }
+}
+
 async function main() {
   let raw = "";
   try {
@@ -542,6 +578,7 @@ async function main() {
   const agent = isCodex ? "codex" : "claude-code";
 
   const session = String(p.session_id || p.sessionId || "").slice(0, 64);
+  if (body.kind === "tool") writeEditHint(body.tool, p.tool_input || p.toolInput, ACTOR, agent, cwd);
   const payload = { ...body, actor: ACTOR, machine, repo, branch, agent, session, checkout: checkoutId(origin || root) };
 
   // The backlog goes first (oldest first, budgeted), so a teammate who was

@@ -39,6 +39,7 @@ import {
   HUES, IDLE_FALLBACK, MODELS, MODES, PANE_DEFAULTS, PANE_KEY, PANE_LIMITS,
   STATS_EVERY_MS, STATS_MAX_PATHS, STATUS_EVERY_MS,
 } from "./constants";
+import { attachPresence, presenceDiskChanged } from "./presence-session";
 import type {
   Collision, Conn, ConsoleEntry, ConsoleLine, HubEvent, LaunchMode, LocalEntry,
   LocalFileData, LocalWorkspace, RateWindow, RosterEntry, Snapshot, Theme, UpdateState, ViewMode,
@@ -2515,6 +2516,19 @@ async function mountEditor(e: EditorSession): Promise<void> {
   void watchFile(e);
 
   if (e.awareness) {
+    const zdoc = window.zevetDoc as { send?: (r: string, b: Uint8Array) => void } | undefined;
+    e.unsub.push(attachPresence({
+      E: E as never,
+      ydoc: e.ydoc,
+      awareness: e.awareness,
+      room: e.room,
+      relPath: e.relPath,
+      handle: handle as never,
+      getText: () => handle.getText(),
+      sendAwareness: (b) => { try { zdoc?.send?.(e.room, tagged(MSG_AWARENESS, b)); } catch { /* socket gone */ } },
+      colorOf: (a) => cssColour(hueOf(a)),
+      me: () => useBoard.getState().myActor || "me",
+    }));
     const onAware = () => {
       if (ed === e) drawRiders();
     };
@@ -2577,7 +2591,7 @@ function joinRoom(e: EditorSession): void {
   const ydoc = e.ydoc as { on: (t: string, f: (u: unknown, o: unknown) => void) => void; off: (t: string, f: (u: unknown, o: unknown) => void) => void };
   const onUpdate = (_u: unknown, origin: unknown) => {
     if (origin === "remote") return;
-    doc.send(e.room, tagged(MSG_DOC, (_u as { v: Uint8Array }).v));
+    doc.send(e.room, tagged(MSG_DOC, _u as Uint8Array));
     if (ed === e) scheduleSave(e);
   };
   ydoc.on("update", onUpdate);
@@ -2695,7 +2709,7 @@ function watchFile(e: EditorSession): void {
 
 /** An agent changed the file on disk: fold the text into the shared document
  *  rather than swapping the buffer, so cursors survive and local edits merge. */
-function onDiskChanged(e: EditorSession, payload: { text?: string; bom?: boolean; eol?: string }): void {
+function onDiskChanged(e: EditorSession, payload: { text?: string; bom?: boolean; eol?: string; hints?: unknown[] }): void {
   if (ed !== e || payload.text == null) return;
   const current = e.getText ? e.getText() : null;
   if (current === payload.text) return;
@@ -2704,6 +2718,7 @@ function onDiskChanged(e: EditorSession, payload: { text?: string; bom?: boolean
   e.eol = payload.eol || e.eol;
   e.lastWritten = payload.text;
   if (e.setText) e.setText(payload.text);
+  presenceDiskChanged(payload);
   useBoard.getState().refreshStats(false);
   void refreshAgentLine(e, true);
 }

@@ -490,6 +490,8 @@ export interface ZevetDocBridge {
    * a long-lived room from being trimmed out from under a late joiner.
    */
   send?(room: unknown, u8: unknown, opts: unknown): Promise<unknown>;
+  /** Publish this room's unresolved comments to ~/.zevet/comments/<repo>/<path>.json, where agents can read them. `{ ok }`. */
+  comments?(room: unknown, data: unknown): Promise<unknown>;
   /**
    * Leave. Always `{ ok: true }`; leaving a room never joined is what a
    *  closing tab does and is not worth an error.

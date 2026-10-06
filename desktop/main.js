@@ -3127,6 +3127,14 @@ bridge.handle("doc:send", (_e, { room, bytes, opts }) => {
   }
 });
 
+bridge.handle("doc:comments", (_e, { room, data }) => {
+  try {
+    return { ok: Boolean(require("./doc-sync.js").writeCommentsFile(zevetHome(), room, data)) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 bridge.handle("doc:leave", (_e, room) => {
   if (docSync) docSync.leave(String(room || ""));
   // Always ok. Leaving a room that was never joined is what a closing tab does

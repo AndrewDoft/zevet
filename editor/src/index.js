@@ -14,7 +14,7 @@
  * this task is forbidden to touch. `window.zevetEditor.*` costs nothing and
  * changes nothing.
  */
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, Compartment, StateField, StateEffect, RangeSet } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -26,6 +26,8 @@ import {
   dropCursor,
   rectangularSelection,
   crosshairCursor,
+  gutter,
+  GutterMarker,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import {
@@ -118,6 +120,12 @@ const transparentTheme = EditorView.theme({
     opacity: "0.55",
   },
   "&.cm-focused": { outline: "none" },
+  // Remote cursors/ranges always show their name (y-codemirror only shows it on
+  // hover): "Mina · Claude Code" is the point of an agent's presence.
+  ".cm-ySelectionInfo": { opacity: "1", fontFamily: "inherit", padding: "1px 5px", borderRadius: "3px 3px 3px 0" },
+  ".cm-commentGutter": { width: "16px" },
+  ".cm-commentMark": { cursor: "pointer", fontSize: "10px", lineHeight: "1", borderRadius: "8px", padding: "1px 5px", background: "var(--ink, #2c2f44)", color: "var(--paper, #fff)" },
+  ".cm-commentMark.resolved": { opacity: "0.4" },
   ".cm-activeLine": { backgroundColor: "transparent" },
   ".cm-activeLineGutter": { backgroundColor: "transparent" },
 });
@@ -192,6 +200,49 @@ function baseExtensions() {
 }
 
 /**
+ * Gutter markers for anchored comments. The board owns the comments (a Y.Array
+ * in the shared doc) and pushes plain `{ line, ids, resolved }` rows in; this
+ * only draws them and reports a click. Positions are mapped through edits, so a
+ * marker rides its line between pushes.
+ */
+const setCommentMarkers = StateEffect.define();
+
+class CommentMarker extends GutterMarker {
+  constructor(ids, resolved) {
+    super();
+    this.ids = ids;
+    this.resolved = resolved;
+  }
+  eq(o) {
+    return o.resolved === this.resolved && o.ids.join() === this.ids.join();
+  }
+  toDOM() {
+    const el = document.createElement("span");
+    el.className = "cm-commentMark" + (this.resolved ? " resolved" : "");
+    el.textContent = String(this.ids.length);
+    el.title = this.resolved ? "Resolved comment" : "Comment";
+    return el;
+  }
+}
+
+const commentField = StateField.define({
+  create: () => RangeSet.empty,
+  update(value, tr) {
+    value = value.map(tr.changes);
+    for (const e of tr.effects) {
+      if (!e.is(setCommentMarkers)) continue;
+      const lines = tr.state.doc.lines;
+      const marks = e.value
+        .filter((m) => m.line >= 1 && m.line <= lines)
+        .sort((a, b) => a.line - b.line)
+        .map((m) => new CommentMarker(m.ids, m.resolved).range(tr.state.doc.line(m.line).from));
+      value = RangeSet.of(marks, true);
+    }
+    return value;
+  },
+});
+
+/**
  * Mounts an editor.
  *
  * @param {Object} opts
@@ -215,6 +266,8 @@ export function createEditor({
    *  colours are the page's, inherited through `transparentTheme`. */
   dark = false,
   onChange = null,
+  /** (ids: string[]) => void — a comment gutter marker was clicked. */
+  onCommentClick = null,
 } = {}) {
   if (!parent) throw new Error("createEditor: `parent` is required");
 
@@ -263,6 +316,23 @@ export function createEditor({
     // here silently disables remote cursors — which is why the board must pass
     // one, and why this is a parameter rather than something invented here.
     extensions.push(keymap.of(yUndoManagerKeymap), yCollab(ytext, awareness));
+    extensions.push(
+      commentField,
+      gutter({
+        class: "cm-commentGutter",
+        markers: (v) => v.state.field(commentField),
+        domEventHandlers: {
+          mousedown(v, line) {
+            const cur = v.state.field(commentField).iter(line.from);
+            if (cur.value && cur.from === line.from && typeof handle.onCommentClick === "function") {
+              handle.onCommentClick(cur.value.ids);
+              return true;
+            }
+            return false;
+          },
+        },
+      }),
+    );
   } else {
     extensions.push(history(), keymap.of(historyKeymap));
   }
@@ -301,8 +371,14 @@ export function createEditor({
     parent,
   });
 
-  return {
+  const handle = {
     view,
+    onCommentClick,
+
+    /** Replace the gutter markers: `[{ line (1-based), ids, resolved }]`. */
+    setCommentMarkers(list) {
+      view.dispatch({ effects: setCommentMarkers.of(Array.isArray(list) ? list : []) });
+    },
 
     /**
      * Tears down the VIEW only.
@@ -339,6 +415,7 @@ export function createEditor({
       });
     },
   };
+  return handle;
 }
 
 export { languageForPath, LANGUAGE_NAMES };

@@ -87,6 +87,33 @@ const fs = require("node:fs");
 const path = require("node:path");
 const localFs = require("./local-fs.js");
 const { createHash } = require("node:crypto");
+const { zevetHome } = require("./zevet-home.js");
+
+/**
+ * What agents said they were about to write, newest last. client/hook.mjs spools
+ * one small file per edit-tool call under ~/.zevet/edit-hints (PreToolUse is the
+ * only event it reports, and file contents must not go to the hub). They ride
+ * along on a change event so the board can find the lines in the settled text;
+ * deciding WHICH file a hint is about is the board's job (lib/presence.mjs).
+ */
+const HINT_MAX_AGE_MS = 20_000;
+function readHints(dir, now = Date.now(), maxAgeMs = HINT_MAX_AGE_MS) {
+  const out = [];
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        const h = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+        if (h && Number.isFinite(h.ts) && now - h.ts <= maxAgeMs && now - h.ts >= -5000) out.push(h);
+      } catch {
+        // half-written or foreign file: not a hint
+      }
+    }
+  } catch {
+    // no directory yet: no agent has edited anything
+  }
+  return out.sort((a, b) => a.ts - b.ts);
+}
 
 /**
  * How long to wait after the last event before re-reading.
@@ -133,7 +160,8 @@ class FileWatch {
    *          bytes:number, bom:boolean, eol:"crlf"|"lf"}) => void,
    *          debounceMs?: number}} [options]
    */
-  constructor({ onChange, debounceMs = DEFAULT_DEBOUNCE_MS } = {}) {
+  constructor({ onChange, debounceMs = DEFAULT_DEBOUNCE_MS, hintsDir } = {}) {
+    this.hintsDir = hintsDir || null;
     this.onChange = typeof onChange === "function" ? onChange : () => {};
     this.debounceMs = Number.isFinite(debounceMs) && debounceMs >= 0 ? debounceMs : DEFAULT_DEBOUNCE_MS;
     /** Subscriptions by (root, relPath), which is the identity a renderer uses. */
@@ -361,8 +389,9 @@ class FileWatch {
       // commit blames whoever pressed save for a whole-file diff.
       bom: read.bom,
       eol: read.eol,
+      hints: readHints(this.hintsDir || path.join(zevetHome(), "edit-hints")),
     });
   }
 }
 
-module.exports = { FileWatch, DEFAULT_DEBOUNCE_MS };
+module.exports = { FileWatch, DEFAULT_DEBOUNCE_MS, readHints };
