@@ -82,6 +82,7 @@ const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const { MasoraLink } = require("./masora-link.js");
 const { Family, familyDir, frameable, FRAME_URLS } = require("./family.js");
+const { Sso } = require("./sso.js");
 const reportingHealth = require("./reporting-health.js");
 const credentials = require("./credentials.js");
 const credentialLadder = require("./credential-ladder.js");
@@ -1475,7 +1476,9 @@ async function awaitSignIn(what) {
       // repeats the domain on every line and hides the part that identifies.
       actor: existing.actor || String(r.login || "").split("@")[0],
       login: r.login,
+      provider: what.toLowerCase(),
     });
+    sso.publish("signed_in");
     return { ok: true, login: r.login, owner: r.owner, teamName: await fetchTeamName(hub, r.token) };
   } catch (err) {
     return { ok: false, error: err.message, cancelled: err.message === "cancelled" };
@@ -1593,6 +1596,7 @@ async function teamJoin(team, key) {
       actor: existing.actor || String(body.login || "").split("@")[0],
       login: body.login,
     });
+    sso.publish("signed_in");
     return { ok: true, login: body.login, owner: Boolean(body.owner), teamName: await fetchTeamName(base, body.token) };
   } catch {
     return { ok: false, error: "Offline" };
@@ -1627,6 +1631,7 @@ async function hubSignInFromMasora(hubUrl, assertion) {
       actor: existing.actor || String(body.login || "").split("@")[0],
       login: body.login,
     });
+    sso.publish("signed_in"); // Masora -> Zevet -> Voice: the same session reaches Voice through sso.json
     return { ok: true, login: body.login, owner: Boolean(body.owner) };
   } catch {
     return { ok: false, error: "Offline" };
@@ -1645,9 +1650,15 @@ async function hubSignInFromMasora(hubUrl, assertion) {
  * in reverse.
  */
 const signOut = async () => {
+  const r = await endSession();
+  if (r.hadSession) sso.publish("signed_out"); // and every other app in the family (sso.js)
+  return { ok: r.ok, loggedOut: r.loggedOut };
+};
+/** signOut without telling the family: also what a sign-out adopted FROM the family runs. */
+async function endSession() {
   const cfg = readConfig() || {};
   const session = typeof cfg.session === "string" ? cfg.session : "";
-  if (!session) return { ok: true, loggedOut: false };
+  if (!session) return { ok: true, loggedOut: false, hadSession: false };
   const hub = String(cfg.hub || "").replace(/\/+$/, "");
   let loggedOut = false;
   if (hub) {
@@ -1668,8 +1679,8 @@ const signOut = async () => {
   const rest = { ...cfg };
   delete rest.session;
   writeConfig(rest);
-  return { ok: true, loggedOut };
-};
+  return { ok: true, loggedOut, hadSession: true };
+}
 // Signing out ends a SESSION, and a session does not remember which provider
 // minted it — so this is one function, under the name each button expects.
 bridge.handle("zevet:githubLogout", signOut);
@@ -1718,6 +1729,7 @@ const signOutTeam = async () => {
   delete rest.secret;
   delete rest.hub;
   writeConfig(rest);
+  if (session) sso.publish("signed_out");
   if (boardWindow && !boardWindow.isDestroyed()) boardWindow.close();
   openSetup(null);
   return { ok: true };
@@ -1775,6 +1787,37 @@ const masoraLink = new MasoraLink({
 /* ── The family: Masora, Zevet and Voice find each other (desktop/family.js) ──
  * Pairs with a Masora on this machine with no click; the device-code flow above
  * stays the fallback for one on another machine. */
+/* Single sign-in (sso.js, docs/specs/2026-10-07-single-sign-in.md): a hub sign-in or sign-out here is published,
+ * encrypted, to the family dir; one Zevet Voice published is adopted here on the next poll, no click. The adopted
+ * session lands exactly where awaitSignIn puts one, so nothing downstream can tell the two apart. */
+const sso = new Sso({
+  dir: familyDir(),
+  hub: () => targetHub(),
+  session: () => {
+    const cfg = readConfig();
+    if (!cfg || typeof cfg.session !== "string" || !cfg.session) return null;
+    return { token: cfg.session, login: cfg.login, provider: cfg.provider, secret: cfg.secret };
+  },
+  adopt: (p, who) => {
+    const existing = readConfig() || {};
+    writeConfig({
+      ...existing,
+      hub: targetHub(),
+      // The envelope's secret belongs to the session's team; a key-only machine's own one is kept otherwise.
+      secret: (typeof p.secret === "string" && p.secret) || existing.secret || "",
+      session: p.token,
+      actor: existing.actor || String(who.login).split("@")[0],
+      login: who.login,
+      ...(typeof p.provider === "string" && p.provider ? { provider: p.provider } : {}),
+    });
+    teamNameCache = { at: 0, name: "" };
+  },
+  endSession: () => endSession(),
+  log: (m) => console.log(`[family] ${m}`),
+});
+const SSO_POLL_MS = 3000;
+let ssoTimer = null;
+
 const family = new Family({
   dir: familyDir(),
   readMasora: () => masora.readConfig(),
@@ -4214,6 +4257,7 @@ app.on("before-quit", () => {
   if (agentApiHandle) void agentApiHandle.close();
 });
 app.on("before-quit", () => family.stop());
+app.on("before-quit", () => clearInterval(ssoTimer));
 
 /* ==========================================================================
  * PAYLOAD SWAP (bootstrap.js loaded this file from the current payload build)
@@ -5191,6 +5235,9 @@ app.whenReady().then(async () => {
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();
   family.start();
+  void sso.sync();
+  ssoTimer = setInterval(() => void sso.sync(), SSO_POLL_MS);
+  if (typeof ssoTimer.unref === "function") ssoTimer.unref();
   watchShellInstall();
   startIdleInstall();
   // Only reliable after 'ready'; see the module's own docs.
