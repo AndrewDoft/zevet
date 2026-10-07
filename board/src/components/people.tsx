@@ -76,6 +76,7 @@ import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
 import { SteerButton } from "./steer";
 import { PromptGhost } from "./promptboxes";
+import { AgentPlan } from "./assistant-ui/elements/agent-plan";
 
 function expandedStored(): string[] {
   try {
@@ -320,6 +321,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
       {c && c.error ? (
         <div className="agent-row-err">{plainError(c.error, { model: c.model, fallback: "Couldn't start." })}</div>
       ) : null}
+      {c?.plan ? <AgentPlan steps={c.plan.steps.map((step) => step.text)} activeIndex={c.plan.done} className="agent-row-plan" /> : null}
     </div>
   );
 }
@@ -327,8 +329,13 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
 /** A teammate's agent, as the hub reports it: what it was asked, what it is doing
  *  now, and where. Read-only — their session lives on their machine — except for
  *  Steer (components/steer.tsx), which asks THEM, through the hub (D-058). */
-function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; session?: string; agent: string; repo: string; branch: string; mission: string; current: string; lastTs: number; state?: string }; hue: number; now: number }) {
+function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; session?: string; agent: string; repo: string; branch: string; mission: string; current: string; lastTs: number; state?: string; plan?: string }; hue: number; now: number }) {
   const where = a.repo ? a.repo + (a.branch ? " · " + a.branch : "") : "";
+  let plan: { text: string; status: "pending" | "in_progress" | "completed" }[] | null = null;
+  try {
+    const raw = a.plan ? JSON.parse(atob(a.plan)) : null;
+    if (Array.isArray(raw)) plan = raw.map((step, i) => ({ text: String(step?.content || step?.step || step?.text || `step ${i + 1}`), status: step?.status === "completed" || step?.status === "done" ? "completed" : step?.status === "in_progress" || step?.status === "active" ? "in_progress" : "pending" }));
+  } catch { /* malformed or unavailable teammate snapshot stays hidden */ }
   return (
     <div className="agent-row-wrap" data-teammate-agent={a.key}>
       <div className="agent-row" data-state={a.state} style={{ "--who": `var(--who-${((hue % HUES) + HUES) % HUES})` } as CSSProperties}>
@@ -344,6 +351,7 @@ function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; sessio
         </div>
         <SteerButton a={a} />
       </div>
+      {plan?.length ? <AgentPlan steps={plan.map((step) => step.text)} activeIndex={plan.filter((step) => step.status === "completed").length} className="agent-row-plan" /> : null}
     </div>
   );
 }

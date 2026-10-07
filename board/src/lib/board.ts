@@ -12,6 +12,7 @@ import {
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
 import { foldAgent } from "./agents.mjs";
+import { latestPlan } from "./plan-progress.mjs";
 import type { AgentRow } from "./agents.d.mts";
 import { draftAfter } from "./chat-stream.mjs";
 import { answerBoardRequest } from "./board-requests.mjs";
@@ -2002,6 +2003,7 @@ function ingressAgentEvent(evt: AgentEvent): void {
       c.routeWhy = String((zp as { reason?: string }).reason || "");
     }
     c.transcript = appendAgentPayload(c.transcript, evt.payload, { agent: said.agent || c.agent, localRoot, model: said.model || c.model });
+    c.plan = latestPlan(c.transcript.messages as unknown[]);
     c.draft = draftAfter(c.draft ?? "", evt.payload);
     // "zevet:auto" is not a model: a routed run's limit is the router's to
     // handle, and graying the picker's Zevet row over it would be wrong.

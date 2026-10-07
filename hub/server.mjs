@@ -2202,6 +2202,9 @@ async function handleRequest(req, res) {
       // Which agent session said it. Without it two agents one person runs in
       // one repo are one row on everybody else's board.
       session: String(parsed.session || "").slice(0, 64),
+      // Opaque client payload; the hub relays and orders it but never parses
+      // the step text.
+      plan: typeof parsed.plan === "string" ? parsed.plan.slice(0, 24000) : "",
     };
     if (auth.session) auth.accounts.noteSeen(auth.session, "event", { machine: evt.machine, build: String(req.headers["x-zevet-build"] || "").slice(0, 20) });
     boards.get(auth.team).record(evt, teamAccounts.get(auth.team).actorResolver());

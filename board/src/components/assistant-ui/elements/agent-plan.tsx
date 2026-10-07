@@ -19,6 +19,7 @@ export function AgentPlan({
   const completed = progressOf(activeIndex, total);
   const allDone = completed >= total;
   const progress = pct(completed, total);
+  const current = allDone ? "" : steps[completed] || steps[total - 1] || "";
 
   return (
     <div
@@ -27,19 +28,20 @@ export function AgentPlan({
 
       {...props}
     >
-      <div className="flex items-center justify-between">
-        <span className="text-[13.5px] font-medium">Plan</span>
-        <span className={cn(mono, "text-foreground/35 tabular-nums")}>
-          {completed} of {total}
-        </span>
-      </div>
+      <details open={false}>
+        <summary className="flex cursor-pointer list-none items-center justify-between">
+          <span className="min-w-0 truncate text-[13.5px] font-medium">{current || "Plan"}</span>
+          <span className={cn(mono, "ml-3 shrink-0 text-foreground/35 tabular-nums")}>
+            {completed}/{total}
+          </span>
+        </summary>
       <div className="bg-foreground/[0.06] h-[3px] w-full overflow-hidden rounded-full">
         <span
           className="bg-foreground/80 block h-full rounded-full transition-[width] duration-500"
           style={{ width: `${progress}%` }}
         />
       </div>
-      <ul className="flex flex-col gap-2.5">
+      <ul className="mt-3 flex flex-col gap-2.5">
         {steps.map((step, i) => {
           const done = allDone || i < completed;
           const active = !allDone && i === completed;
@@ -70,6 +72,7 @@ export function AgentPlan({
           );
         })}
       </ul>
+      </details>
     </div>
   );
 }

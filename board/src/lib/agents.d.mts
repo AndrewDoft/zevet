@@ -14,6 +14,7 @@ export type AgentRow = {
   current: string;
   ended: boolean;
   state?: "working" | "idle" | "finished";
+  plan?: string;
 };
 export function agentKey(e: EventLike & { session?: string; agent?: string; machine?: string; branch?: string }): string;
 export function foldAgent(map: Map<string, AgentRow>, e: unknown): AgentRow | null;

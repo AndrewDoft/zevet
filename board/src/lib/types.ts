@@ -22,6 +22,8 @@ export interface HubEvent {
   agent?: string;
   machine?: string;
   session?: string;
+  /** Opaque client-sealed plan snapshot; the hub only relays/orders it. */
+  plan?: string;
 }
 
 export interface RosterEntry {
@@ -150,6 +152,8 @@ export interface ConsoleEntry {
    *  nothing, always. Null for a console that was started rather than
    *  branched. */
   forkedFrom: number | null;
+  /** Latest native todo snapshot. Absent when the engine has no todo list. */
+  plan?: { steps: { text: string; status: "pending" | "in_progress" | "completed" }[]; done: number; total: number; current: string } | null;
 }
 
 /** One rate-limit window, exactly as the agent reported it. */

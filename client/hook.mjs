@@ -563,6 +563,13 @@ async function main() {
     if (detailLevel === "full") shown = scrub(detail);
     else if (detailLevel === "brief") shown = String(detail || "").trim().split(/\s+/)[0] || "";
     body = { kind: "tool", tool, target: file ? repoRelative(file, root, cwd) ?? siblingRelative(file, cwd, repo) : null, detail: shown };
+    // Plan text is carried as an opaque client payload. The relay folds and
+    // orders it but never parses it; the board is the only reader.
+    const todo = p.tool_input || p.toolInput;
+    if (/^(TodoWrite|todo_write|todo|update_plan)$/i.test(tool) && todo && typeof todo === "object") {
+      const steps = todo.todos || todo.items || todo.plan || todo.steps;
+      if (Array.isArray(steps)) body.plan = Buffer.from(JSON.stringify(steps)).toString("base64");
+    }
   }
 
   let machine = "";

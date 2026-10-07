@@ -1478,6 +1478,24 @@ launched by Zevet getting the hub hooks via `--settings` (`agent-console.js`), a
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
 
+## D-060 — Plan progress on read-only agent cards
+
+**2026-10-07**
+
+**Decision (Andrew, final).** Derive plans only from native engine todo snapshots:
+Claude `TodoWrite`, Codex `update_plan`, and OpenCode todo events. The latest
+snapshot replaces the previous one; no plan is inferred for an engine that did
+not emit a todo list. Local console cards read the existing transcript, while
+teammate cards receive an opaque client payload through the existing activity
+event so the relay only folds and orders it and does not parse step text.
+
+Cards show `done/total`, the active step, and an expandable step list with
+done/active/pending states. Step owners and offer-to-take are explicitly out of
+scope for this item.
+
+**Tests.** Recorded per-engine parser fixtures, replacement ordering, local
+card rendering, and teammate event folding.
+
 ## D-039 — Shipped: 0.2.96, Bundle for 0.2.96 (Zevet model, spawn via board) (shell release, hub deploy)
 
 **Decided (automatic, `npm run ship`, 2026-09-30).** ? commit(s) past v0.2.95.
