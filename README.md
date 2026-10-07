@@ -31,8 +31,9 @@ is three small files in `~/.zevet/client`.
 The hub is also the update server. Change a client file on the hub, and every
 teammate's client picks it up on its own within half an hour — no re-download,
 no re-install, nothing to email twice. Everyone who can use zevet at all can
-already reach the hub and already holds the shared token, so the update channel
-is exactly as available as the product.
+already reach the hub, so the update channel is exactly as available as the
+product. Both update channels are Ed25519-signed with one pinned key, and the
+hub holds no private key (D-026, D-027).
 
 ### Where it runs
 
@@ -67,8 +68,10 @@ credential.
     Caddyfile                      one site block, reverse_proxy zevet-hub:8787
                                    with flush_interval -1 (SSE must not buffer)
 
-To ship a new client build: push, then on the droplet
-`cd /srv/zevet && git pull && sudo docker restart zevet-hub`. Teammates
+To ship a new client build: push, then on `masora-app` (reached via IAP)
+`cd /srv/zevet && git pull`, and recreate the container from its compose
+project with `docker compose up -d --force-recreate zevet-hub`. `docker restart`
+does not re-read `env_file`, so it is not enough after an env change. Teammates
 converge on their next check.
 
 ### Running your own hub
@@ -101,7 +104,17 @@ domain door (Google's `hd` has no clean analogue); invite people by email instea
 
 ### Onboarding a teammate
 
-Send them **one command and one secret**. On macOS:
+**On a hub with sign-in (the default; D-007, D-021),** a teammate installs the
+desktop app and signs in. Invite them by email or login: if they
+are on the team's list, signing in with GitHub, Google or Microsoft is enough,
+and the hub gives their app the team secret. An invite also mints a one-time
+8-character key (14-day expiry), mailed to them when the hub has a mailer or
+shown to you when it does not; they enter team and key in the setup window.
+Nothing long is pasted. Each team created on a hub has its own master secret
+and allowlist (D-014).
+
+**On a shared-token hub (self-hosted, no sign-in),** or for a machine that only
+runs the hooks, send them **one command and one secret**. On macOS:
 
 ```bash
 curl -fsSL https://hub.usemasora.com/setup.sh -o setup.sh && bash setup.sh
@@ -130,12 +143,13 @@ They run it, answer three prompts, and they're on the board.
 > outside your own LAN.** The setup scripts warn about this; they do not
 > prevent it, because sometimes a trusted LAN is genuinely fine.
 >
-> The per-file sha256 in the manifest is a **corruption check, not a security
-> control.** The manifest and the files it describes come from the same place
-> over the same connection, so whoever can forge one can forge the other. It
-> catches a truncated download; it does not catch a hostile hub. Making it
-> load-bearing would need a signature the client checks against a key it did
-> not fetch from the hub. That is not built.
+> The per-file sha256 in the manifest is a corruption check. What makes it
+> a security control is the signature over the manifest: it is Ed25519, checked
+> against a public key pinned inside the client, not fetched from the hub, and
+> the hub holds no private key (D-026). A manifest that is unsigned or does not
+> cover exactly the files served is rejected, so updates pause instead of
+> shipping unsigned code. A client that predates signing takes its first signed
+> update on trust of the old channel; only later updates are protected.
 
 ```bash
 curl -fsSL <hub>/setup.sh -o setup.sh && bash setup.sh      # macOS
@@ -146,8 +160,8 @@ irm <hub>/setup.ps1 -OutFile setup.ps1; powershell -ExecutionPolicy Bypass -File
 ```
 
 The setup script checks every file it downloads against the hub's manifest and
-installs nothing unless all of them match — see the caveat above for what that
-check is and isn't worth. It also refuses any filename that is not a plain name,
+installs nothing unless all of them match, and the manifest is signature-checked
+as above. It also refuses any filename that is not a plain name,
 because `path.join` treats `../evil.mjs` as an instruction rather than a file.
 
 ### The master secret, and the cutover
@@ -195,7 +209,9 @@ been set up.
 out every machine that has not yet done step 3:
 
 1. Set the hub's `ZEVET_TOKEN` to the **derived token**.
-2. Restart the hub (`git pull && sudo docker restart zevet-hub` on the droplet).
+2. Recreate the hub on `masora-app` (`git pull`, then
+   `docker compose up -d --force-recreate zevet-hub`; `docker restart` does not
+   re-read `env_file`).
 3. Re-run `setup.sh` / `setup.ps1` on **every** machine, pasting the **master
    secret** where it asks for it. Each one derives the same token and is let
    back in.
