@@ -1918,3 +1918,17 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
 **Known limits.** A steer's owner card knows the console's agent but not its model, so an opencode steer card shows no payer. The second Max account (engine2) and team/auto-ladder credentials are unknown, so claude agents launched on them show nothing. A teammate on an older build shares nothing.
 
 **Tests.** `test/payer.test.mjs`: per-engine extraction from fixture files (and that no token or email other than the named one leaks), the sealed frame (session AAD, key), through a real hub (relay, late joiner, release, never in clear, not an agent turn, bad payloads refused), the board wording, and the steer/spawn/agent-card wiring.
+
+## D-NEXT-W2-4 — Comments pinned to turns, hunks and plan steps; comment to agent
+
+**2026-10-07**
+
+**Pre-existing.** Comments were already code-anchored only: a Y.Map in the file's encrypted Y.Doc (`board/src/lib/presence-comments.mjs`, panel `components/comments.tsx`), Y.RelativePosition anchor, replies, resolve, unresolved export to `~/.zevet/comments`.
+
+**Added.** Same Y.Map, so the same doc-key sealing; the hub still sees ciphertext only. `ref` pins a comment to a transcript **turn** (session, turn index, a quote capped at 600 chars; no text anchor) or a diff **hunk** (file plus up to 40 lines of 200 chars, optional text anchor so it follows edits). `step` pins it to a **plan step** from D-071 by position AND text, because plans are replaced wholesale; `stepState` matches by text, and a dropped step reads "gone". Refs are cleaned on write and again on read: a peer can put anything in a shared map.
+
+**Comment to agent.** `frameForAgent` builds the steer text: a fixed header saying the block is quoted data, not instructions; one `<<<zevet-comment … zevet-comment>>>` block holding the comment, then the anchored lines; delimiters inside the content are defanged; capped at 3600 chars (steer limit 4000, minus the `[from …]` prefix), cutting the quoted lines before the ask, with a visible `[cut: too long]`. It goes out through the existing steer channel (`sendSteerTo`), so the team steer policy (default ask), sealing, outcome rows and the receiving app's `[from …]` prefix all apply unchanged. Send needs a steer target already chosen.
+
+**Limits (known).** Turn and hunk comments live in the open file's doc, so they need a shared editor open; with none, the Comment buttons are hidden. No separate per-session comment room was built. Turn index is the last message of the active console. The step picker lists the plan of the ACTIVE LOCAL console only (teammate plans are an opaque blob, D-071).
+
+**Tests.** `test/comment-anchor.test.mjs`; each guard mutation-checked (defang, cap, data header, ref storage, step link, ref validation).
