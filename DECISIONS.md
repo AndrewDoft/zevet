@@ -2145,3 +2145,14 @@ per-token price.
 **Tests, each mutation-checked (break the code, red, restore).** payload-swap: busyReason mid-turn, swapper defers/surfaces/retries (gate line disabled: 2 fail). idle-install: deferral surfaced (onWaiting disabled: 1 fail). console-persistence: resumedIdentity + resumeAgent wiring (keep disabled: 1 fail). zevet-agent: wait rides out a restart (retry disabled: 2 fail). agent-api: /wait during relaunch (condition disabled: 1 fail).
 
 **Not verified.** No live app was launched. The `resumeAgent` trigger for zv-int126 is inferred from code; the incident logs were not available. Full `npm test` was not run locally (it opens sign-in windows until fix/no-signin-popup-in-tests lands); CI runs it on the branch.
+
+## D-085 — Shipped: 0.2.126, Merge remote-tracking branch 'origin/main' into int/w2-10-4 (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 37 commit(s) past v0.2.125.
+
+- **Shell release.** desktop/zevet-agent.mjs changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.126) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.126`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `98886b5e…` (153144064 B), dmg `8a808601…` (205296251 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2126 on both platforms. Manifests win `1517c541…`, mac `64ce6473…`. Delta: 14 new blob(s) uploaded. 90 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9b6196041fef` -> `f5ebdfe979d7`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
