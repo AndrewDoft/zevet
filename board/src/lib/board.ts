@@ -1871,6 +1871,11 @@ function notifyConsole(evt: AgentEvent): void {
   agentNotifier.notify({ ...c, label: ct.label || ct.title || ct.autoTitle || ct.agent, key: String(ct.key) });
 }
 
+/** A needs-attention native notification from outside the console paths (team chat @mention). */
+export function notifyAttention(label: string, reason: string, key: string): void {
+  agentNotifier.notify({ kind: "attention", label, reason, key });
+}
+
 function notifyRequest(type: "permit" | "ask", label: string): void {
   agentNotifier.notify({ ...classifyRequest(type), label, key: "" });
 }

@@ -97,6 +97,36 @@ export const unread = (state, lastRead, me) => Object.values(state.msgs).filter(
 /** The marker to store once everything shown has been read. */
 export const readMark = (state) => Object.values(state.msgs).reduce((a, m) => Math.max(a, m.t), 0);
 
+/** Does `text` @-mention any of `names` (login or display name, case-insensitive)? */
+export function mentions(text, names) {
+  const t = String(text || "");
+  return names.some((n) => {
+    const name = String(n || "").toLowerCase().replace(/^@/, "").trim();
+    if (!name) return false;
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^\\w])@${esc}(?![\\w-])`, "i").test(t);
+  });
+}
+
+/**
+ * Raise a needs-attention notification for each message that mentions me, that
+ * someone else wrote, that is newer than my last-read marker, and that this
+ * session has not already announced. `seen` is mutated. The notifier
+ * (notify.mjs) applies the person's toggle and folds bursts.
+ * ctx: { names, me, lastRead, seen: Set, notifier: { notify(n) } }
+ */
+export function raiseMentions(state, { names, me, lastRead, seen, notifier }) {
+  let n = 0;
+  for (const m of messages(state)) {
+    if (seen.has(m.id)) continue;
+    seen.add(m.id);
+    if (m.t <= (lastRead || 0) || m.by.toLowerCase() === String(me || "").toLowerCase() || !mentions(m.text, names)) continue;
+    notifier.notify({ kind: "attention", label: m.by, reason: m.text.slice(0, 80), key: `chat:${m.id}` });
+    n++;
+  }
+  return n;
+}
+
 export const encode = (state) => new TextEncoder().encode(JSON.stringify(state));
 
 /** A frame's state, or null when it is not one. Never throws. */

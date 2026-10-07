@@ -12,6 +12,8 @@ export function messages(state: ChatState): Msg[];
 export function countByCard(state: ChatState): Record<string, number>;
 export function unread(state: ChatState, lastRead: number | null | undefined, me: string): number;
 export function readMark(state: ChatState): number;
+export function mentions(text: string, names: string[]): boolean;
+export function raiseMentions(state: ChatState, ctx: { names: string[]; me: string; lastRead: number; seen: Set<string>; notifier: { notify(n: { kind: "attention"; label: string; reason: string; key: string }): boolean } }): number;
 export function encode(state: ChatState): Uint8Array;
 export function decode(bytes: Uint8Array): ChatState | null;
 export function newId(rand?: () => string, now?: () => number): string;

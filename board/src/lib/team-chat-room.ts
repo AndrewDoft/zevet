@@ -4,15 +4,20 @@
  */
 import { useSyncExternalStore } from "react";
 import { bridge } from "./bridge";
-import { useBoard } from "./board";
+import { myActorNames, notifyAttention, useBoard } from "./board";
 import { createChatSync } from "./team-chat-sync.mjs";
-import { countByCard, newId, readMark, unread, type Msg, type Op } from "./team-chat.mjs";
+import { countByCard, newId, raiseMentions, readMark, unread, type Msg, type Op } from "./team-chat.mjs";
 import { roleTable } from "./tasks-room";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let sync: ReturnType<typeof createChatSync> | null = null;
 let syncTeam = "";
-let snapshot: { messages: Msg[]; unread: number; byCard: Record<string, number>; error: string } = { messages: [], unread: 0, byCard: {}, error: "" };
+let snapshot: { messages: Msg[]; unread: number; byCard: Record<string, number>; error: string; focus: { id: string; n: number } | null } = { messages: [], unread: 0, byCard: {}, error: "", focus: null };
+let focus: { id: string; n: number } | null = null;
+let panelOpen = false;
+const seen = new Set<string>();
+let offClick: (() => void) | null = null;
+const notifier = { notify: (n: { kind: "attention"; label: string; reason: string; key: string }) => (notifyAttention(n.label, n.reason, n.key), true) };
 const listeners = new Set<() => void>();
 
 const markKey = () => `zevet.chat.lastRead.${syncTeam}`;
@@ -25,10 +30,30 @@ function lastRead(): number {
 }
 const emit = (error = snapshot.error) => {
   snapshot = sync
-    ? { messages: sync.messages(), unread: unread(sync.state, lastRead(), roleTable().me), byCard: countByCard(sync.state), error }
-    : { messages: [], unread: 0, byCard: {}, error };
+    ? { messages: sync.messages(), unread: unread(sync.state, lastRead(), roleTable().me), byCard: countByCard(sync.state), error, focus }
+    : { messages: [], unread: 0, byCard: {}, error, focus };
   listeners.forEach((l) => l());
 };
+
+/** The panel tells us whether it is open: a mention is not announced while you are reading. */
+export function setChatPanelOpen(open: boolean): void {
+  panelOpen = open;
+}
+
+/** Ask the panel to open and scroll to a message. */
+export function openChatAt(id: string): void {
+  focus = { id, n: (focus?.n ?? 0) + 1 };
+  emit();
+}
+
+function announceMentions(): void {
+  if (!sync) return;
+  const who = useBoard.getState().who.state;
+  const names = [...(who?.me ? myActorNames(who.me) : []), String(who?.login || "").toLowerCase()].filter(Boolean);
+  // While the panel is open and focused the person is reading; mark them seen and say nothing.
+  const quiet = panelOpen && document.hasFocus();
+  raiseMentions(sync.state, { names, me: roleTable().me, lastRead: lastRead(), seen, notifier: quiet ? { notify: () => false } : notifier });
+}
 
 /** Join the team's chat room (safe to call on every render). */
 export function ensureChat(): void {
@@ -39,8 +64,15 @@ export function ensureChat(): void {
   closeChat();
   const me = roleTable().me;
   // Re-read on every call, so a demotion takes effect on the next post.
-  sync = createChatSync({ doc: (window as any).zevetDoc, team, me, roleOf: (l) => (String(l).toLowerCase().replace(/^@/, "") === me ? roleTable().mine() : roleTable().roleOf(l)), onChange: () => emit() });
+  sync = createChatSync({ doc: (window as any).zevetDoc, team, me, roleOf: (l) => (String(l).toLowerCase().replace(/^@/, "") === me ? roleTable().mine() : roleTable().roleOf(l)), onChange: () => (announceMentions(), emit()) });
   syncTeam = team;
+  seen.clear();
+  const l = bridge.local;
+  if (!offClick && l && typeof l.onNotifyClick === "function") {
+    offClick = l.onNotifyClick((key) => {
+      if (typeof key === "string" && key.startsWith("chat:")) openChatAt(key.slice(5));
+    }) as unknown as () => void;
+  }
   emit();
 }
 
@@ -48,6 +80,8 @@ export function closeChat(): void {
   sync?.close();
   sync = null;
   syncTeam = "";
+  offClick?.();
+  offClick = null;
   emit("");
 }
 

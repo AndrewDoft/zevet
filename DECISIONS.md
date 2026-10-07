@@ -2334,11 +2334,11 @@ make-feed TARGETS entries turns them red. Dropping the chmod does NOT (mode asse
 
 **Unread.** A local last-read marker (ms timestamp, `localStorage` key `zevet.chat.lastRead.<team>`); unread = other people's messages with `t` above it. Opening the panel or posting moves it. Timestamps are the sender's clock: a machine whose clock is behind can post messages that count as already read.
 
-**Notifications.** `board/src/lib/notify.mjs` (W2-14) is not on this base. Not built; follow-up: raise a needs-attention notification when a message `@mention`s me, through that module once it lands.
+**Notifications.** A message that `@mentions` me (my login, display name, alias or linked login; case-insensitive; `@` must start a word) raises a needs-attention notification through W2-14's `notify.mjs` (`raiseMentions` in `team-chat.mjs`, wired in `team-chat-room.ts`, raised via `board.ts` `notifyAttention`). It therefore follows the person's `attention` toggle and the burst coalescing (two shown, the rest folded). Only messages by others, newer than my last-read marker and not already announced this session notify; nothing is raised while the panel is open and focused. The notification key is `chat:<messageId>`; clicking it (`onNotifyClick`) opens the Chat panel and scrolls to that message. A mention in a Viewer-dropped or unknown-author message never arrives (merge drops it first).
 
 **Persistence.** Same as tasks: the room lives in hub memory (log capped, `ROOM_LOG_MAX_BYTES`), replayed to a late joiner, and every (re)connect re-sends the client's whole log. If every client leaves and the hub restarts, history is gone. No local copy on disk (plaintext at rest for a feature whose copy is the room). A reconnect re-sends up to 500 messages of 4000 characters (2 MB worst case).
 
-**Not done.** `@mention` notifications; message edit/delete; threads beyond `replyTo`; moving a card's message count into a click-through; a browser walk.
+**Not done.** Message edit/delete; threads beyond `replyTo`; moving a card's message count into a click-through; a browser walk.
 
 **Reversibility.** Additive: one room name, one `ACTION_ROLE` key, one panel. `tasks-sync` behaviour is unchanged (its tests are the proof).
 

@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { useBoard } from "../lib/board";
-import { closeChat, ensureChat, markRead, postChat, useChat } from "../lib/team-chat-room";
+import { closeChat, ensureChat, markRead, postChat, setChatPanelOpen, useChat } from "../lib/team-chat-room";
 import { myRole, useTasks } from "../lib/tasks-room";
 import { LIMITS, may } from "../lib/team-chat.mjs";
 
@@ -19,12 +19,22 @@ export function TeamChatPanel() {
   const [cardId, setCardId] = useState(NO_CARD);
   const [replyTo, setReplyTo] = useState("");
   const who = useBoard((s) => s.who.state);
-  const { messages, unread, error } = useChat();
+  const { messages, unread, error, focus } = useChat();
   const { cards } = useTasks();
   useEffect(() => {
     ensureChat();
   }, [who?.team, who?.login]);
   useEffect(() => () => closeChat(), []);
+  useEffect(() => {
+    setChatPanelOpen(open);
+    return () => setChatPanelOpen(false);
+  }, [open]);
+  useEffect(() => {
+    if (!focus) return;
+    setOpen(true);
+    const el = document.getElementById(`chat-msg-${focus.id}`);
+    el?.scrollIntoView?.({ block: "center" });
+  }, [focus, open, messages.length]);
   useEffect(() => {
     if (open && unread) markRead();
   }, [open, unread, messages.length]);
@@ -49,7 +59,7 @@ export function TeamChatPanel() {
           {messages.map((m) => {
             const parent = m.replyTo ? byId.get(m.replyTo) : undefined;
             return (
-              <div className="tasks-card chat-msg" key={m.id}>
+              <div className="tasks-card chat-msg" id={`chat-msg-${m.id}`} data-focus={focus?.id === m.id || undefined} key={m.id}>
                 {parent ? <div className="tasks-comment">re {parent.by}: {parent.text.slice(0, 80)}</div> : null}
                 <div><b>{m.by}</b> {m.text}</div>
                 <div className="tasks-meta">

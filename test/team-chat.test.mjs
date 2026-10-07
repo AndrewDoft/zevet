@@ -11,7 +11,8 @@ import { Accounts } from "../hub/accounts.mjs";
 import { startHub, ROOT } from "./helpers.mjs";
 import { deriveAuthToken, deriveDocKey } from "../client/secret.mjs";
 import { open as openSealed } from "../client/doc-crypto.mjs";
-import { apply, countByCard, decode, emptyState, LIMITS, merge, messages, readMark, unread } from "../board/src/lib/team-chat.mjs";
+import { apply, countByCard, decode, emptyState, LIMITS, mentions, merge, messages, raiseMentions, readMark, unread } from "../board/src/lib/team-chat.mjs";
+import { createNotifier } from "../board/src/lib/notify.mjs";
 import { createChatSync } from "../board/src/lib/team-chat-sync.mjs";
 
 const require = createRequire(import.meta.url);
@@ -114,6 +115,73 @@ describe("unread counts", () => {
     assert.equal(unread(s, readMark(s), "ann"), 0, "all read");
     s = post(s, { id: "m4", text: "d" }, "bo").state;
     assert.equal(unread(s, s.msgs.m3.t, "ann"), 1, "one new since");
+  });
+});
+
+describe("@mention notifications", () => {
+  /** A real notify.mjs notifier with fake clock/timer/OS call; `prefs` is live. */
+  function rig(prefs = { finished: false, attention: true }) {
+    const shown = [];
+    let t = 1000;
+    const notifier = createNotifier({ prefs: () => prefs, now: () => t, schedule: () => 1, show: (x) => shown.push(x) });
+    return { notifier, shown, prefs, tick: (ms) => (t += ms) };
+  }
+  const ctx = (r, over = {}) => ({ names: ["bo", "Bo Lee"], me: "bo", lastRead: 0, seen: new Set(), notifier: r.notifier, ...over });
+
+  test("a message that mentions me notifies, keyed to that message", () => {
+    const r = rig();
+    const s = post(emptyState(), { id: "m1", text: "ping @bo, look at this" }, "ann").state;
+    assert.equal(raiseMentions(s, ctx(r)), 1);
+    assert.equal(r.shown.length, 1);
+    assert.equal(r.shown[0].key, "chat:m1");
+    assert.equal(r.shown[0].title, "ann");
+    assert.match(r.shown[0].body, /look at this/);
+  });
+
+  test("a message that does not mention me, mentions someone else, or is my own does not notify", () => {
+    const r = rig();
+    let s = post(emptyState(), { id: "m1", text: "hello team" }, "ann").state;
+    s = post(s, { id: "m2", text: "@ann see this, and mail bo@x.com" }, "ann").state;
+    s = post(s, { id: "m3", text: "@bobby not me" }, "ann").state;
+    s = post(s, { id: "m4", text: "note to self @bo" }, "bo").state;
+    assert.equal(raiseMentions(s, ctx(r)), 0);
+    assert.equal(r.shown.length, 0);
+    assert.equal(mentions("hey @Bo Lee!", ["Bo Lee"]), true, "a display name matches");
+    assert.equal(mentions("hey @bo", ["bo"]), true);
+    assert.equal(mentions("bo", ["bo"]), false, "no @, no mention");
+  });
+
+  test("the attention toggle off suppresses it, and a toggle flipped later applies at once", () => {
+    const r = rig({ finished: false, attention: false });
+    const s = post(emptyState(), { id: "m1", text: "@bo ping" }, "ann").state;
+    raiseMentions(s, ctx(r));
+    assert.equal(r.shown.length, 0, "toggle off");
+    r.prefs.attention = true;
+    const s2 = post(s, { id: "m2", text: "@bo again" }, "ann").state;
+    raiseMentions(s2, ctx(r, { seen: new Set(["m1"]) }));
+    assert.equal(r.shown.length, 1);
+  });
+
+  test("a burst is coalesced by notify.mjs, and an already-read or already-announced message is quiet", () => {
+    const r = rig();
+    let s = emptyState();
+    for (let i = 0; i < 5; i++) s = post(s, { id: `b${i}`, text: `@bo ${i}` }, "ann").state;
+    const seen = new Set();
+    raiseMentions(s, ctx(r, { seen }));
+    assert.equal(r.shown.length, 2, "only the first two are shown one by one; the rest are held");
+    raiseMentions(s, ctx(r, { seen }));
+    assert.equal(r.shown.length, 2, "seen messages are not announced twice");
+    const old = rig();
+    raiseMentions(s, ctx(old, { lastRead: readMark(s) }));
+    assert.equal(old.shown.length, 0, "read before launch");
+  });
+
+  test("clicking is wired: the notify key opens the Chat panel at that message", () => {
+    const room = readFileSync(path.join(ROOT, "board/src/lib/team-chat-room.ts"), "utf8");
+    assert.match(room, /startsWith\("chat:"\)\) openChatAt\(key\.slice\(5\)\)/);
+    const panel = readFileSync(path.join(ROOT, "board/src/components/team-chat.tsx"), "utf8");
+    assert.match(panel, /getElementById\(`chat-msg-\$\{focus\.id\}`\)/);
+    assert.match(panel, /setOpen\(true\)/);
   });
 });
 
