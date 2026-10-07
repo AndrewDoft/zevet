@@ -1493,6 +1493,84 @@ function steerRateLimited(team, key, now = Date.now(), max = STEER_RATE_MAX) {
   return false;
 }
 
+/* ── Cross-machine approval cards (D-NEXT-W2-8) ──────────────────────────────
+ *
+ * An agent on one machine asks permission to run a tool. With the team policy
+ * `approve` ≠ off, that machine ("the executing side") publishes a card, sealed
+ * with the document key, and any Editor on the team may answer it.
+ *
+ *   • The hub NEVER decides. It relays sealed frames and arbitrates ONE thing:
+ *     the first answer from an Editor wins (this is synchronous, so atomic);
+ *     later ones get 409 and who won. It sees ids, names, the allow/deny bit
+ *     and timestamps — never the tool or its arguments.
+ *   • Whether an answer AUTHORISES anything is decided on the executing
+ *     machine, which checks the sealed answer against its own pending prompt
+ *     (nonce + hash of tool and arguments). An answer it rejects is reported
+ *     `invalid` and the card re-opens (REOPEN_MAX times), so a bad answer
+ *     cannot burn the slot.
+ *   • `approve` is policy-gated (default off) and role-gated (Editor).
+ *   • Statuses everyone sees: open, answered (relayed, not yet applied), held
+ *     (policy ask: waiting for the owner's own click), approved, denied,
+ *     expired, unknown ("outcome unknown": an answer was relayed or an approval
+ *     released and the executing machine went away before it could be
+ *     confirmed). In memory only.
+ */
+const APPROVAL_SEALED_MAX = 24 * 1024;
+const APPROVAL_TTL_MS = Number(process.env.ZEVET_APPROVAL_TTL_MS || 120 * 1000);
+const APPROVAL_INFLIGHT_MS = 30 * 1000;
+const APPROVAL_KEEP = 100;
+const APPROVAL_PENDING_MAX = 3;
+const APPROVAL_REOPEN_MAX = 3;
+const APPROVAL_RATE_MAX = 20;
+const APPROVAL_LIVE = new Set(["open", "answered", "held"]);
+const APPROVAL_REPORTS = new Set(["approved", "denied", "held", "invalid", "expired", "unknown"]);
+const SEALED_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+
+function approvalMap(team) {
+  const t = steerTeam(team);
+  if (!t.approvals) t.approvals = new Map();
+  return t.approvals;
+}
+
+function approvalPublic(rec) {
+  const live = rec.status === "open";
+  return { id: rec.id, status: rec.status, from: rec.from, session: rec.session, repo: rec.repo, at: rec.at, expiresAt: rec.expiresAt, decision: rec.decision || "", by: rec.by || "", via: rec.via || "", reason: rec.reason || "", ...(live ? { sealed: rec.sealed } : {}) };
+}
+
+function approvalBroadcast(team, rec) {
+  for (const res of steerTeam(team).listeners) steerFrame(res, "approval", approvalPublic(rec));
+}
+
+function approvalSet(team, rec, patch) {
+  Object.assign(rec, patch);
+  if (!APPROVAL_LIVE.has(rec.status)) rec.settledAt = Date.now();
+  approvalBroadcast(team, rec);
+}
+
+/** Time out what nobody answered. An answer that was relayed and never
+ *  confirmed is `unknown`, not `expired`: something may have run. */
+function approvalSweep(team, now = Date.now()) {
+  for (const rec of approvalMap(team).values()) {
+    if (!APPROVAL_LIVE.has(rec.status) || now < rec.expiresAt) continue;
+    approvalSet(team, rec, rec.status === "answered" ? { status: "unknown", reason: "the answer was sent and never confirmed" } : { status: "expired", reason: "nobody answered in time" });
+  }
+}
+
+setInterval(() => {
+  for (const team of steerTeams.keys()) approvalSweep(team);
+}, 15 * 1000).unref();
+
+/** The executing person's last desktop channel closed: what was in flight is unknown. */
+function approvalOwnerGone(team, acc, ownerKey) {
+  if (!ownerKey) return;
+  for (const res of steerTeam(team).listeners) if (!res.destroyed && personKey(acc, res.zevetSteer.session) === ownerKey) return;
+  const now = Date.now();
+  for (const rec of approvalMap(team).values()) {
+    if (rec.fromKey !== ownerKey) continue;
+    if (rec.status === "answered" || (rec.status === "approved" && now - rec.settledAt < APPROVAL_INFLIGHT_MS)) approvalSet(team, rec, { status: "unknown", reason: "their app went away before it could confirm" });
+  }
+}
+
 async function handleRequest(req, res) {
   // Central, so no route can forget them. Nothing in this repo frames the hub
   // (the board's iframes point at usemasora.com), hence DENY for every route.
@@ -2579,6 +2657,128 @@ async function handleRequest(req, res) {
     return json(res, 200, { ok: true });
   }
 
+  /* Approval cards (D-NEXT-W2-8) — see the block comment above `approvalMap`.
+   * open: the executing person's desktop publishes a sealed card.
+   * answer: an Editor answers it; the first valid answer wins.
+   * status: the executing desktop reports what it did with an answer. */
+  if (url.pathname === "/api/approval/open" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    if (acc.policy.approve === "off") return json(res, 403, { ok: false, status: "refused-by-policy", error: "answering teammates' approvals is turned off for this team" });
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, APPROVAL_SEALED_MAX + 4 * 1024));
+    } catch (err) {
+      const big = /too large/.test(String(err && err.message));
+      return json(res, big ? 413 : 400, { error: big ? "approval too large" : "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
+    const fromKey = personKey(acc, auth.session) || auth.session.login;
+    const id = typeof body.id === "string" ? body.id : "";
+    const session = typeof body.session === "string" ? body.session.slice(0, 64) : "";
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    if (!STEER_ID_RE.test(id) || !session || !sealed) return json(res, 400, { error: "an approval needs id, session and sealed" });
+    if (sealed.length > APPROVAL_SEALED_MAX) return json(res, 413, { error: "approval too large" });
+    if (!SEALED_RE.test(sealed)) return json(res, 400, { error: "sealed must be base64" });
+    if (steerRateLimited(auth.team, `approval\u0000${fromKey}`, Date.now(), APPROVAL_RATE_MAX)) return json(res, 429, { error: "too many approvals — wait a minute" });
+    approvalSweep(auth.team);
+    const all = approvalMap(auth.team);
+    if (all.has(id)) return json(res, 409, { error: "that approval id was already used" });
+    if ([...all.values()].filter((r) => r.fromKey === fromKey && APPROVAL_LIVE.has(r.status)).length >= APPROVAL_PENDING_MAX) return json(res, 429, { error: "too many approvals waiting" });
+    const now = Date.now();
+    const rec = { id, status: "open", at: now, expiresAt: now + APPROVAL_TTL_MS, from: (acc.profile(auth.session) || {}).name || auth.session.login, fromKey, session, repo: typeof body.repo === "string" ? body.repo.slice(0, 120) : "", sealed, attempts: 0 };
+    all.set(id, rec);
+    while (all.size > APPROVAL_KEEP) all.delete(all.keys().next().value);
+    approvalBroadcast(auth.team, rec);
+    return json(res, 200, { ok: true, id, status: "open", expiresAt: rec.expiresAt });
+  }
+
+  if (url.pathname === "/api/approval/answer" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const denied = roleRefusal(auth, "approve");
+    if (denied) return json(res, 403, denied);
+    if (acc.policy.approve === "off") return json(res, 403, { ok: false, status: "refused-by-policy", error: "answering teammates' approvals is turned off for this team" });
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, APPROVAL_SEALED_MAX + 4 * 1024));
+    } catch (err) {
+      const big = /too large/.test(String(err && err.message));
+      return json(res, big ? 413 : 400, { error: big ? "answer too large" : "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    const decision = body.decision === "allow" || body.decision === "deny" ? body.decision : "";
+    if (!decision || !sealed || sealed.length > APPROVAL_SEALED_MAX || !SEALED_RE.test(sealed)) return json(res, 400, { error: "an answer needs decision (allow|deny) and a sealed base64 answer" });
+    approvalSweep(auth.team);
+    const rec = typeof body.id === "string" ? approvalMap(auth.team).get(body.id) : null;
+    if (!rec) return json(res, 404, { error: "no such approval" });
+    const fromKey = personKey(acc, auth.session) || auth.session.login;
+    if (fromKey === rec.fromKey) return json(res, 400, { error: "that is your own agent — answer it in your app" });
+    if (rec.status !== "open") {
+      const who = rec.by ? ` by ${rec.by}` : "";
+      return json(res, 409, { ok: false, id: rec.id, status: rec.status, by: rec.by || "", decision: rec.decision || "", error: `already ${rec.status}${who}` });
+    }
+    const channels = [...steerTeam(auth.team).listeners].filter((ch) => !ch.destroyed && personKey(acc, ch.zevetSteer.session) === rec.fromKey);
+    if (!channels.length) return json(res, 409, { ok: false, id: rec.id, status: rec.status, error: "their app is offline" });
+    const by = (acc.profile(auth.session) || {}).name || auth.session.login;
+    approvalSet(auth.team, rec, { status: "answered", decision, by, via: "remote" });
+    const msg = { id: rec.id, decision, by, sealed, confirm: acc.policy.approve !== "on" };
+    for (const ch of channels) steerFrame(ch, "approval-answer", msg);
+    console.log(`zevet: approval ${rec.id} ${rec.from} <- ${by} ${decision}`);
+    return json(res, 200, { ok: true, id: rec.id, status: "answered", by });
+  }
+
+  if (url.pathname === "/api/approval/status" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const rec = body && typeof body.id === "string" ? approvalMap(auth.team).get(body.id) : null;
+    if (!rec) return json(res, 404, { error: "no such approval" });
+    if ((personKey(acc, auth.session) || auth.session.login) !== rec.fromKey) return json(res, 403, { error: "that approval is not yours to report on" });
+    const status = String(body.status || "");
+    if (!APPROVAL_REPORTS.has(status)) return json(res, 400, { error: "not a status the executing side can report" });
+    const local = body.via === "local";
+    const reason = typeof body.reason === "string" ? body.reason.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 200) : "";
+    const st = rec.status;
+    const conflict = () => json(res, 409, { error: `already ${st}`, status: st });
+    if (status === "unknown") {
+      if (!(APPROVAL_LIVE.has(st) || st === "approved")) return conflict();
+      approvalSet(auth.team, rec, { status, reason });
+    } else if (status === "expired") {
+      if (!APPROVAL_LIVE.has(st)) return conflict();
+      approvalSet(auth.team, rec, { status, reason });
+    } else if (status === "invalid") {
+      if (st !== "answered") return conflict();
+      rec.attempts += 1;
+      if (rec.attempts >= APPROVAL_REOPEN_MAX) approvalSet(auth.team, rec, { status: "expired", reason: "too many answers that did not match" });
+      else approvalSet(auth.team, rec, { status: "open", decision: "", by: "", via: "", reason: reason || "an answer did not match and was ignored" });
+    } else if (status === "held") {
+      if (st !== "answered") return conflict();
+      approvalSet(auth.team, rec, { status, reason });
+    } else {
+      // approved / denied. Remote: only what was answered, as answered. Local: the
+      // owner's own click always settles it, even over a relayed remote answer.
+      const want = status === "approved" ? "allow" : "deny";
+      if (local) {
+        if (!APPROVAL_LIVE.has(st)) return conflict();
+        approvalSet(auth.team, rec, { status, decision: want, by: rec.from, via: "local", reason });
+      } else {
+        if (st !== "answered" || rec.decision !== want) return conflict();
+        approvalSet(auth.team, rec, { status, reason });
+      }
+    }
+    return json(res, 200, { ok: true, status: rec.status });
+  }
+
   if (url.pathname === "/api/state") {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
@@ -2599,6 +2799,8 @@ async function handleRequest(req, res) {
       claimsPrune(t);
       for (const c of t.claims.values()) steerFrame(res, "claim", c.frame);
       for (const c of t.payers.values()) steerFrame(res, "payer", c.frame);
+      approvalSweep(auth.team);
+      for (const rec of approvalMap(auth.team).values()) steerFrame(res, "approval", approvalPublic(rec));
       t.listeners.add(res);
       const ping = setInterval(() => {
         try {
@@ -2610,6 +2812,7 @@ async function handleRequest(req, res) {
       req.on("close", () => {
         clearInterval(ping);
         t.listeners.delete(res);
+        approvalOwnerGone(auth.team, auth.accounts, personKey(auth.accounts, auth.session) || auth.session.login);
       });
       return;
     }

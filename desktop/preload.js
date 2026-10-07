@@ -542,6 +542,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   /** Seal this session's payer with the document key and share it with the team (a release when unknown). */
   sharePayer: (session, agent, model, engine) => ipcRenderer.invoke("local:sharePayer", { session, agent, model, engine }),
   steerAnswer: (id, approve) => ipcRenderer.invoke("local:steerAnswer", { id, approve }),
+  /** Answer a teammate agent's permission prompt (D-NEXT-W2-8). Main seals the answer with the exact action it was shown; the hub only arbitrates the first answer, and the teammate's app checks it before acting. Editor and above; refused while the team policy is off. */
+  approvalAnswer: (id, allow) => ipcRenderer.invoke("local:approvalAnswer", { id, allow }),
   onUpdate: (fn) => subscribe("app:update", fn),
   onIndexEvent: (fn) => subscribe("local:indexEvent", fn),
   /**

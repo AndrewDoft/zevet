@@ -23,7 +23,7 @@ import { Launcher } from "./launcher";
 import { QuoteToComposer } from "./guards";
 import { VoiceHint } from "./voicedialog";
 import { PermitPrompt, PermitQueue } from "./permits";
-import { SteerApprovals, SteerBanner } from "./steer";
+import { ApprovalCards, SteerApprovals, SteerBanner } from "./steer";
 import { ComposerPayer } from "./payer";
 import { useSteer } from "../lib/steer";
 import { RunAsPicker } from "./spawn";
@@ -218,6 +218,7 @@ export function Conversation() {
           agents, and whose agent my composer is aimed at with what happened
           to each steer I sent. Above the transcript like the permits. */}
       <SteerApprovals />
+      <ApprovalCards />
       <SteerBanner />
       <ComposerPayer />
       {/* "Run as" (D-060): only while starting a new agent. */}

@@ -83,6 +83,7 @@
       "agent-engine.js",
       "agent-api.js",
       "agent-steer.js",
+      "agent-approval.js",
       "agent-spawn.js",
       "chat.js",
       "chat-claude.js",

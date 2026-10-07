@@ -16,16 +16,32 @@ const OPTIONS: Array<{ value: SteerPolicy; label: string; note: string }> = [
 ];
 
 export function SteerPolicyControl() {
+  return <PolicyControl field="steer" options={OPTIONS} label="Steering and starting teammates' agents" row="Steering and starting agents" slot="steer-policy" />;
+}
+
+const APPROVE_OPTIONS: Array<{ value: SteerPolicy; label: string; note: string }> = [
+  { value: "on", label: "Always on", note: "An Editor's answer to a teammate's agent prompt is applied." },
+  { value: "ask", label: "Ask first", note: "An Editor's answer is shown to the agent's owner, who still clicks." },
+  { value: "off", label: "Always off", note: "Only the person at the machine answers their agent's prompts." },
+];
+
+/** Default off: answering lets a remote person authorise a tool on another machine. */
+export function ApprovePolicyControl() {
+  return <PolicyControl field="approve" options={APPROVE_OPTIONS} label="Answering teammates' agent prompts" row="Answering prompts" slot="approve-policy" />;
+}
+
+function PolicyControl({ field, options: OPTS, label, row, slot }: { field: "steer" | "approve"; options: typeof OPTIONS; label: string; row: string; slot: string }) {
   const policy = usePolicy();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const current = OPTIONS.find((o) => o.value === policy.steer) || OPTIONS[1];
+  const value = policy[field];
+  const current = OPTS.find((o) => o.value === value) || OPTS[field === "steer" ? 1 : 2];
 
   if (!policy.admin) {
     return (
-      <div data-slot="steer-policy" data-readonly="true">
+      <div data-slot={slot} data-readonly="true">
         <div className="srow">
-          <span className="k">Steering and starting agents</span>
+          <span className="k">{row}</span>
           <span className="v">{current.label}</span>
         </div>
         <div className="snote">
@@ -40,21 +56,21 @@ export function SteerPolicyControl() {
   /* Settings' own segmented idiom (`.sbtn-row`/`.sbtn`, as View uses): the
      current choice is pressed and disabled, the other two are buttons. */
   return (
-    <div data-slot="steer-policy">
-      <div role="radiogroup" aria-label="Steering and starting teammates' agents" className="sbtn-row">
-        {OPTIONS.map((o) => (
+    <div data-slot={slot}>
+      <div role="radiogroup" aria-label={label} className="sbtn-row">
+        {OPTS.map((o) => (
           <button
             key={o.value}
             type="button"
             role="radio"
             className="sbtn"
-            aria-checked={policy.steer === o.value}
-            aria-pressed={policy.steer === o.value}
-            disabled={busy || policy.steer === o.value}
+            aria-checked={value === o.value}
+            aria-pressed={value === o.value}
+            disabled={busy || value === o.value}
             onClick={async () => {
               setBusy(true);
               setError("");
-              const r = await setPolicy(o.value);
+              const r = await setPolicy(o.value, field);
               setBusy(false);
               if (!r.ok) setError(r.error || "could not save");
             }}

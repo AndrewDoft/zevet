@@ -16,7 +16,7 @@ import { handle } from "./invite";
 import { InPage, PageSection } from "./settings/parts";
 import { ReposPanel } from "./settings/repos";
 import { TeamPanel } from "./settings/team";
-import { SteerPolicyControl } from "./steerpolicy";
+import { ApprovePolicyControl, SteerPolicyControl } from "./steerpolicy";
 
 function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   return (
@@ -1287,9 +1287,14 @@ export function SettingsPage() {
             ) : null}
             {tab === "team" ? <TeamPanel /> : null}
             {tab === "collab" ? (
-              <PageSection title="Steering and starting agents">
-                <SteerPolicyControl />
-              </PageSection>
+              <>
+                <PageSection title="Steering and starting agents">
+                  <SteerPolicyControl />
+                </PageSection>
+                <PageSection title="Answering teammates' prompts">
+                  <ApprovePolicyControl />
+                </PageSection>
+              </>
             ) : null}
             {tab === "agents" ? (
               <>

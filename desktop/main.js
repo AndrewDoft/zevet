@@ -3524,7 +3524,25 @@ function ensureAskServer() {
             return;
           }
           const id = `p${++permitSeq}`;
+          // A teammate may answer this too (D-NEXT-W2-8) when the team allows it.
+          // The card id is separate from the local id, and unique across restarts.
+          const cardId = approvalCanShare() ? crypto.randomUUID() : "";
+          if (cardId) {
+            approvalHost().begin({
+              id: cardId,
+              tool: request && request.tool,
+              arguments: request && request.arguments,
+              session: run || "run",
+              agent: String((request && request.via) || ""),
+              resolve: (answer) => {
+                pendingPermits.delete(id);
+                toBoard("local:steerEvent", { kind: "permit-gone", id: cardId, permitId: id });
+                resolve(answer);
+              },
+            });
+          }
           pendingPermits.set(id, (answer) => {
+            if (cardId) approvalHost().local(cardId, answer.ok === true);
             if (answer.ok && answer.always && request && request.via === "claude") {
               permitGrants.grant(run, request.tool, request.arguments);
             }
@@ -4080,6 +4098,7 @@ app.on("before-quit", () => {
   fs.rmSync(AGENT_API_FILE, { force: true });
   if (agentApiHandle) void agentApiHandle.close();
 });
+app.on("before-quit", () => { if (approvalHostInst) approvalHostInst.interrupt("their app closed"); });
 app.on("before-quit", () => family.stop());
 
 /* ==========================================================================
@@ -4608,6 +4627,73 @@ let activityTimer = null;
 /** Approval cards waiting on the person, by steer id. */
 const pendingSteers = new Map();
 
+/* ── Teammates answering MY agents' permission prompts (D-NEXT-W2-8) ───────
+ * desktop/agent-approval.js holds the rules (exact action, once, local wins).
+ * This is the wiring: the hub arbitrates and relays sealed frames, and only
+ * what this host accepts ever resolves a permit. Needs a signed-in session
+ * and a team secret; the hub refuses to open a card when the team policy
+ * `approve` is off (the default), and then the prompt is local-only. */
+const agentApproval = require("./agent-approval.js");
+let approvalHostInst = null;
+
+function approvalCanShare() {
+  const a = steerAuth(readConfig());
+  return Boolean(a.hub && a.token && a.session && a.key && agentApproval.loadDocCrypto());
+}
+
+async function approvalCall(route, body) {
+  const a = steerAuth(readConfig());
+  if (!a.hub || !a.token) return { ok: false };
+  const res = await fetch(`${a.hub}/api/approval/${route}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-zevet-token": a.token },
+    body: JSON.stringify(body),
+    redirect: "error",
+    signal: AbortSignal.timeout(10000),
+  });
+  const out = await res.json().catch(() => ({}));
+  return { ...out, ok: res.ok && out.ok !== false };
+}
+
+function approvalHost() {
+  if (!approvalHostInst) {
+    const dc = () => agentApproval.loadDocCrypto();
+    const key = () => steerAuth(readConfig()).key;
+    approvalHostInst = agentApproval.createApprovalHost({
+      sealCard: (meta, card) => agentApproval.sealCard(dc(), key(), meta, card),
+      openAnswer: (frame, hash, session) => agentApproval.openAnswer(dc(), key(), { id: frame.id, session, hash }, frame.sealed),
+      publish: (card) => approvalCall("open", card),
+      report: (id, status, via, reason) => approvalCall("status", { id, status, via, reason }),
+      advise: (a) => toBoard("local:steerEvent", { kind: "approval-advice", id: a.id, by: a.by, decision: a.decision }),
+    });
+  }
+  return approvalHostInst;
+}
+
+/** What the board needs to render a card a teammate's agent is waiting on. */
+function approvalCardForBoard(data) {
+  const out = { kind: "approval", id: String(data.id || ""), status: String(data.status || ""), from: String(data.from || ""), repo: String(data.repo || ""), session: String(data.session || ""), by: String(data.by || ""), via: String(data.via || ""), decision: String(data.decision || ""), reason: String(data.reason || ""), expiresAt: Number(data.expiresAt) || 0, mine: Boolean(approvalHostInst && approvalHostInst.has(String(data.id || ""))) || approvalMine.has(String(data.id || "")) };
+  if (out.mine) approvalMine.add(out.id);
+  if (data.status === "open" && typeof data.sealed === "string") {
+    try {
+      const card = agentApproval.openCard(agentApproval.loadDocCrypto(), steerAuth(readConfig()).key, { id: out.id, session: out.session }, data.sealed);
+      out.tool = String(card.tool || "").slice(0, 200);
+      out.args = String(card.arguments || "").slice(0, 3000);
+      out.agent = String(card.agent || "").slice(0, 40);
+      // Held here, never sent to the board page: the nonce and hash ride in the
+      // answer the main process seals itself.
+      approvalCards.set(out.id, { hash: String(card.hash || ""), nonce: String(card.nonce || ""), session: out.session });
+      while (approvalCards.size > 200) approvalCards.delete(approvalCards.keys().next().value);
+    } catch {
+      out.status = "unreadable";
+    }
+  }
+  return out;
+}
+const approvalCards = new Map();
+/** Cards for my own agents: answered in my own prompt, not through the hub. */
+const approvalMine = new Set();
+
 function steerAuth(cfg) {
   const c = cfg || {};
   const auth = authFor(c);
@@ -4722,7 +4808,11 @@ function startSteerChannel(cfg) {
     token: a.token,
     signal: ctl.signal,
     onFrame: (name, data) => {
-      if (name === "steer") {
+      if (name === "approval" && data && typeof data.id === "string") {
+        toBoard("local:steerEvent", approvalCardForBoard(data));
+      } else if (name === "approval-answer" && data && typeof data.id === "string") {
+        approvalHost().remote(data);
+      } else if (name === "steer") {
         void steerInbox.handle(data).then((status) => {
           const id = data && typeof data.id === "string" ? data.id : "";
           pendingSteers.delete(id);
@@ -4757,6 +4847,7 @@ function startSteerChannel(cfg) {
 }
 
 function stopSteerChannel() {
+  if (approvalHostInst) approvalHostInst.interrupt("their app lost its connection");
   if (steerAbort) steerAbort.abort();
   steerAbort = null;
   if (activityTimer) clearInterval(activityTimer);
@@ -4796,6 +4887,30 @@ bridge.handle("local:spawnSend", async (_e, arg) => {
     model: String((arg && arg.model) || ""),
     text: String((arg && arg.text) || ""),
   });
+});
+
+/** An Editor answering a teammate's agent's permission prompt. The answer is
+ *  sealed here with the nonce and hash the card carried; the hub only
+ *  arbitrates, and the teammate's app checks them before acting. */
+bridge.handle("local:approvalAnswer", async (_e, arg) => {
+  const id = arg && typeof arg.id === "string" ? arg.id : "";
+  const card = approvalCards.get(id);
+  if (!card) return { ok: false, error: "that prompt is no longer here" };
+  const a = steerAuth(readConfig());
+  if (!a.session || !a.key) return { ok: false, error: "Sign in to your team to answer a teammate's prompt." };
+  const decision = arg && arg.allow === true ? "allow" : "deny";
+  let sealed;
+  try {
+    sealed = agentApproval.sealAnswer(agentApproval.loadDocCrypto(), a.key, { id, session: card.session, hash: card.hash }, { nonce: card.nonce, hash: card.hash, decision });
+  } catch (err) {
+    return { ok: false, error: `Could not seal the answer: ${err.message}` };
+  }
+  try {
+    const r = await approvalCall("answer", { id, decision, sealed });
+    return r.ok ? { ok: true, status: String(r.status || "") } : { ok: false, status: String(r.status || ""), by: String(r.by || ""), error: String(r.error || "not accepted") };
+  } catch (err) {
+    return { ok: false, error: `Could not reach your team: ${err.message}` };
+  }
 });
 
 /** The person's answer to one steer (or spawn) approval card. */

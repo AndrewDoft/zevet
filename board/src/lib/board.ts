@@ -3106,6 +3106,13 @@ export function boot(): void {
       useBoard.setState((g) => ({ permits: [...g.permits, req] }));
     });
   }
+  if (bridge.local && typeof bridge.local.onSteerEvent === "function") {
+    /* A teammate answered this machine's permit first (D-NEXT-W2-8): the local
+       card has nothing left to ask. */
+    bridge.local.onSteerEvent((e) => {
+      if (e && e.kind === "permit-gone" && typeof e.permitId === "string") useBoard.setState((g) => ({ permits: g.permits.filter((p) => p.id !== e.permitId) }));
+    });
+  }
   if (bridge.local && typeof bridge.local.onAskRequest === "function") {
     /* An agent has asked the PERSON something and is blocked on the answer.
        Unlike a permit, silence here is not a refusal — the gate answers "no
