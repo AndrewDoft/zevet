@@ -1961,3 +1961,24 @@ starts release the worktree (branch kept if it has commits) and never merge, sin
 worktree (waiting/failed/no checks) stays until Integrate, Discard, thread close, or the next start's prune; a held
 worktree older than the app session is gone, its branch survives for a manual `git merge`.
 
+
+## D-NEXT-W2-16 — Read-only model catalogue in Settings > Agents
+
+**2026-10-07**
+
+**Decision.** Settings > Agents gets a "Models" section under Model credentials: one row per model the
+engines can run (claude and codex from their own catalogues, opencode's free list), showing readiness, who
+pays, list price per MTok in/out, and the median cost of this board's recent runs on it. Read-only, no
+resale (build order §4); nothing is metered or sold.
+
+**Why there.** The credentials, the Auto ladder and the engine settings already live in that tab, and the
+section reads exactly those (D-018 credentials and ladder rung, `local:agents` detection). No new IPC, no
+desktop module: everything the rows need is already in the board store.
+
+**Prices.** `board/src/lib/model-prices.mjs` is the only price source; each entry has `source` and `as_of`.
+No entry means "—". Read 2026-10-07: Anthropic and OpenAI list prices from their pricing pages; free rows
+from OpenRouter's models API and opencode Zen docs. List API prices only; a subscription login pays no
+per-token price.
+
+**Not done.** Per-turn cost: the board keeps one cumulative cost per console, so the figure is per run
+(INSUFFICIENCIES INSUF-W2-16). Teammate payer (D-073) is per session and is not a row.
