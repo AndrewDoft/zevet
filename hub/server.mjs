@@ -1421,11 +1421,33 @@ const SPAWN_RATE_MAX = Number(process.env.ZEVET_SPAWN_RATE_MAX || 5);
 /** Spawns waiting on one person's answer at once — a flood of cards is a DoS. */
 const SPAWN_PENDING_MAX = 3;
 const SPAWN_OWNER_STATUSES = new Set(["delivered", "accepted", "started", "start-failed", "declined", "no-such-repo"]);
+/* ── Taking over a teammate's running turn (D-NEXT-W2-2) ────────────────────
+ * Same seal, same channel, same policy (`steer`: off refuses, ask asks the
+ * owner, on goes straight through). The taker's request is sealed {agent,
+ * payer}; the owner's desktop answers with a sealed baton (transcript tail +
+ * diff summary) that this relays to the taker and never reads. ONE WINNER: the
+ * first request for a session holds it (`takeovers`, keyed owner+session,
+ * decided synchronously, so concurrent requests cannot both win); every other
+ * taker is answered `lost`, naming the winner. A decline, an offline taker or a
+ * failed start releases the hold so the next request can try (a decline or
+ * an expired ask needs no release: the hold only counts while the request is
+ * still queued, delivered or accepted). */
+const TAKEOVER_SEALED_MAX = 96 * 1024;
+const TAKEOVER_PENDING_MS = 15 * 60 * 1000;
+const TAKEOVER_RATE_MAX = Number(process.env.ZEVET_TAKEOVER_RATE_MAX || 5);
+const TAKEOVER_OWNER_STATUSES = new Set(["delivered", "declined"]);
+const TAKEOVER_TAKER_STATUSES = new Set(["started", "start-failed"]);
+/** ROLE HOOK (build-order item 7): who may take over. Editor or above once
+ *  roles exist; today every signed-in team member (teamFromSession already
+ *  refused anyone else), exactly what steering and spawning allow. */
+function mayTakeOver(acc, sess) {
+  return Boolean(acc && sess);
+}
 const steerTeams = new Map(); // team -> { listeners:Set<res>, byId:Map<id,rec>, rate:Map<person,ts[]> }
 
 function steerTeam(team) {
   let t = steerTeams.get(team);
-  if (!t) steerTeams.set(team, (t = { listeners: new Set(), byId: new Map(), rate: new Map(), claims: new Map(), payers: new Map() }));
+  if (!t) steerTeams.set(team, (t = { listeners: new Set(), byId: new Map(), rate: new Map(), claims: new Map(), payers: new Map(), takeovers: new Map() }));
   return t;
 }
 
@@ -1492,11 +1514,16 @@ function steerChannelsFor(team, acc, name) {
   return [...steerTeam(team).listeners].filter((res) => !res.destroyed && acc.namesOfSession(res.zevetSteer.session).includes(want));
 }
 
+/** Open steer channels of the person `fromKey` (their primary login). */
+function steerChannelsOfPerson(team, acc, fromKey) {
+  return [...steerTeam(team).listeners].filter((res) => !res.destroyed && personKey(acc, res.zevetSteer.session) === fromKey);
+}
+
 /** Tell the sender's own desktop(s) where their steer stands. */
 function steerTellSender(team, acc, rec) {
   for (const res of steerTeam(team).listeners) {
     if (personKey(acc, res.zevetSteer.session) === rec.fromKey) {
-      steerFrame(res, "steer-status", { id: rec.id, kind: rec.kind || "steer", to: rec.to, status: rec.status, reason: rec.reason || "", ...(rec.kind === "spawn" && rec.session ? { session: rec.session } : {}) });
+      steerFrame(res, "steer-status", { id: rec.id, kind: rec.kind || "steer", to: rec.to, status: rec.status, reason: rec.reason || "", ...((rec.kind === "spawn" || rec.kind === "takeover") && rec.session ? { session: rec.session } : {}) });
     }
   }
 }
@@ -2567,6 +2594,146 @@ async function handleRequest(req, res) {
     return json(res, 200, { ok: true, id, status: "queued", approval });
   }
 
+  /* Ask to take over a teammate's running turn — see TAKEOVER_SEALED_MAX. */
+  if (url.pathname === "/api/takeover" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, STEER_SEALED_MAX + 4 * 1024));
+    } catch (err) {
+      const big = /too large/.test(String(err && err.message));
+      return json(res, big ? 413 : 400, { error: big ? "take-over too large" : "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
+    if (!mayTakeOver(acc, sess)) return json(res, 403, { error: "your role cannot take over an agent" });
+    const fromKey = personKey(acc, sess) || sess.login;
+    if (steerRateLimited(auth.team, `takeover\u0000${fromKey}`, Date.now(), TAKEOVER_RATE_MAX)) return json(res, 429, { error: "too many take-overs — wait a minute" });
+    const smuggled = SPAWN_FORBIDDEN.find((k) => Object.hasOwn(body, k));
+    if (smuggled) return json(res, 400, { error: `a take-over cannot carry "${smuggled}"` });
+    const id = typeof body.id === "string" ? body.id : "";
+    const to = typeof body.to === "string" ? body.to.trim().slice(0, 40) : "";
+    const session = typeof body.session === "string" ? body.session.slice(0, 64) : "";
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    if (!STEER_ID_RE.test(id) || !to || !session || !sealed) return json(res, 400, { error: "a take-over needs id, to, session and sealed" });
+    if (sealed.length > STEER_SEALED_MAX) return json(res, 413, { error: "take-over too large" });
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(sealed)) return json(res, 400, { error: "sealed must be base64" });
+    const t = steerTeam(auth.team);
+    if (t.byId.has(id)) return json(res, 409, { error: "that id was already used" });
+    const from = (acc.profile(sess) || {}).name || sess.login;
+    const rec = { id, kind: "takeover", at: Date.now(), from, fromKey, to, session, repo: typeof body.repo === "string" ? body.repo.slice(0, 120) : "", status: "", reason: "" };
+    const tag = `${from} -> ${to}${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`;
+    const policy = acc.policy.steer;
+    if (policy === "off") {
+      steerRemember(auth.team, { ...rec, status: "refused-by-policy" });
+      console.log(`zevet: takeover ${id} ${tag} refused: policy is off`);
+      return json(res, 403, { ok: false, id, status: "refused-by-policy", error: "taking over agents is turned off for this team" });
+    }
+    const resolve = acc.actorResolver();
+    const want = resolve(to).toLowerCase();
+    if (acc.namesOfSession(sess).includes(want.replace(/^@/, ""))) return json(res, 400, { error: "that agent is already yours" });
+    const agent = boards.get(auth.team).snapshot(resolve).agents.find((a) => a.session === session && String(a.actor).toLowerCase() === want);
+    if (!agent) {
+      steerRemember(auth.team, { ...rec, status: "unknown-agent" });
+      return json(res, 404, { ok: false, id, status: "unknown-agent", error: `no agent of ${to}'s with that session is on the board` });
+    }
+    const channels = steerChannelsFor(auth.team, acc, to);
+    if (!channels.length) {
+      steerRemember(auth.team, { ...rec, status: "offline" });
+      console.log(`zevet: takeover ${id} ${tag}: offline`);
+      return json(res, 200, { ok: true, id, status: "offline" });
+    }
+    // The one-winner decision. No await between this read and the set below.
+    const lockKey = `${want}\u0000${session}`;
+    const held = t.takeovers.get(lockKey);
+    const heldRec = held ? t.byId.get(held.id) : null;
+    const live = held && heldRec && (held.taken || (Date.now() - held.at < TAKEOVER_PENDING_MS && ["queued", "delivered", "accepted"].includes(heldRec.status)));
+    if (live) {
+      steerRemember(auth.team, { ...rec, status: "lost", reason: `${held.from} has it` });
+      console.log(`zevet: takeover ${id} ${tag} lost to ${held.from}`);
+      return json(res, 409, { ok: false, id, status: "lost", winner: held.from, error: `${held.from} ${held.taken ? "took it over" : "is taking it over"}` });
+    }
+    t.takeovers.set(lockKey, { id, from, fromKey, at: rec.at, taken: false });
+    while (t.takeovers.size > STEER_KEEP) t.takeovers.delete(t.takeovers.keys().next().value);
+    const approval = policy === "ask";
+    const msg = { id, from, to, repo: rec.repo, session, agent: agent.agent, sealed, approval, at: rec.at };
+    for (const ch of channels) steerFrame(ch, "takeover", msg);
+    steerRemember(auth.team, { ...rec, status: "queued", lockKey });
+    console.log(`zevet: takeover ${id} ${tag} queued (${approval ? "needs approval" : "policy on"})`);
+    return json(res, 200, { ok: true, id, status: "queued", approval });
+  }
+
+  /* The owner handing the sealed baton for an approved take-over: relayed to the
+   * taker's own channel, ciphertext only. No taker channel open is `offline`
+   * (the hold is released and the owner's turn is NOT stopped). */
+  if (url.pathname === "/api/takeover/baton" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, TAKEOVER_SEALED_MAX + 4 * 1024));
+    } catch (err) {
+      const big = /too large/.test(String(err && err.message));
+      return json(res, big ? 413 : 400, { error: big ? "baton too large" : "expected JSON" });
+    }
+    const t = steerTeam(auth.team);
+    const rec = body && typeof body.id === "string" ? t.byId.get(body.id) : null;
+    if (!rec || rec.kind !== "takeover") return json(res, 404, { error: "no such take-over" });
+    if (!acc.namesOfSession(auth.session).includes(rec.to.toLowerCase().replace(/^@/, ""))) return json(res, 403, { error: "that take-over was not sent to you" });
+    if (!["queued", "delivered"].includes(rec.status)) return json(res, 409, { error: `already ${rec.status}` });
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    if (!sealed || sealed.length > TAKEOVER_SEALED_MAX || !/^[A-Za-z0-9+/]+={0,2}$/.test(sealed)) return json(res, 400, { error: "a baton needs a sealed base64 payload" });
+    const channels = steerChannelsOfPerson(auth.team, acc, rec.fromKey);
+    if (!channels.length) {
+      rec.status = "offline";
+      rec.reason = "";
+      t.takeovers.delete(rec.lockKey);
+      steerTellSender(auth.team, acc, rec);
+      console.log(`zevet: takeover ${rec.id} ${rec.from} -> ${rec.to}: taker offline`);
+      return json(res, 200, { ok: true, status: "offline" });
+    }
+    const owner = (acc.profile(auth.session) || {}).name || auth.session.login;
+    for (const ch of channels) steerFrame(ch, "baton", { id: rec.id, from: owner, to: rec.to, session: rec.session, repo: rec.repo, sealed });
+    rec.status = "accepted";
+    steerTellSender(auth.team, acc, rec);
+    console.log(`zevet: takeover ${rec.id} ${rec.from} -> ${rec.to} accepted`);
+    return json(res, 200, { ok: true, status: "accepted" });
+  }
+
+  /* The taker's desktop reporting how the new turn started. Only the taker,
+   * only after `accepted`; `started` makes the hold final. */
+  if (url.pathname === "/api/takeover/status" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const t = steerTeam(auth.team);
+    const rec = body && typeof body.id === "string" ? t.byId.get(body.id) : null;
+    if (!rec || rec.kind !== "takeover") return json(res, 404, { error: "no such take-over" });
+    if ((personKey(acc, auth.session) || auth.session.login) !== rec.fromKey) return json(res, 403, { error: "that take-over was not yours" });
+    const status = String(body.status || "");
+    if (!TAKEOVER_TAKER_STATUSES.has(status)) return json(res, 400, { error: "not a status the taker can report" });
+    if (rec.status !== "accepted") return json(res, 409, { error: `not handed over yet (${rec.status})` });
+    rec.status = status;
+    rec.reason = typeof body.reason === "string" ? body.reason.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 200) : "";
+    const lock = t.takeovers.get(rec.lockKey);
+    if (status === "started") {
+      rec.session = typeof body.session === "string" ? body.session.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 64) : "";
+      if (lock && lock.id === rec.id) lock.taken = true;
+    } else if (lock && lock.id === rec.id) t.takeovers.delete(rec.lockKey);
+    steerTellSender(auth.team, acc, rec);
+    console.log(`zevet: takeover ${rec.id} ${rec.from} -> ${rec.to} ${status}`);
+    return json(res, 200, { ok: true });
+  }
+
   /* The target's desktop reporting what happened to a steer or a spawn. Only
    * the person it was sent TO may, only that kind's owner-side statuses, and
    * never after it settled. A spawn is `started` only after `accepted`, and
@@ -2586,8 +2753,9 @@ async function handleRequest(req, res) {
     if (!rec) return json(res, 404, { error: "no such steer" });
     if (!acc.namesOfSession(auth.session).includes(rec.to.toLowerCase().replace(/^@/, ""))) return json(res, 403, { error: "that steer was not sent to you" });
     const spawn = rec.kind === "spawn";
+    const takeover = rec.kind === "takeover";
     const status = String(body.status || "");
-    if (!(spawn ? SPAWN_OWNER_STATUSES : STEER_OWNER_STATUSES).has(status)) return json(res, 400, { error: "not a status the owner can report" });
+    if (!(spawn ? SPAWN_OWNER_STATUSES : takeover ? TAKEOVER_OWNER_STATUSES : STEER_OWNER_STATUSES).has(status)) return json(res, 400, { error: "not a status the owner can report" });
     // `start-failed` is the one thing that may follow `started`: the agent came up and could not work. Once, and final.
     const open = status === "start-failed" ? ["started"] : spawn ? ["queued", "delivered", "accepted"] : ["queued", "delivered"];
     if (!open.includes(rec.status)) return json(res, 409, { error: status === "start-failed" ? `not started yet (${rec.status})` : `already ${rec.status}` });
@@ -2604,7 +2772,7 @@ async function handleRequest(req, res) {
       }
     }
     steerTellSender(auth.team, acc, rec);
-    if (status !== "delivered") console.log(`zevet: ${spawn ? "spawn" : "steer"} ${rec.id} ${rec.from} -> ${rec.to} ${status}`);
+    if (status !== "delivered") console.log(`zevet: ${spawn ? "spawn" : takeover ? "takeover" : "steer"} ${rec.id} ${rec.from} -> ${rec.to} ${status}`);
     return json(res, 200, { ok: true });
   }
 

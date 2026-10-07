@@ -4854,6 +4854,86 @@ const spawnInbox = agentSpawn.createSpawnInbox({
   report: reportSteerStatus,
 });
 
+/* ── Taking over a teammate's running turn (desktop/agent-takeover.js) ──────
+ * OWNER side: approve (policy ask), capture transcript + git diff summary,
+ * seal the baton, hand it to the hub, then stop this turn. TAKER side: the
+ * baton opens here, the repo resolves against THIS app's workspaces by folder
+ * name, and a new turn starts on the engine this person asked for, under their
+ * own login and their own safe mode (plan or ask), never the owner's. */
+const agentTakeover = require("./agent-takeover.js");
+/** Take-overs I asked for, id -> the engine I chose: the baton cannot pick one. */
+const takeoversAsked = new Map();
+
+function takeoverPost(route, payload) {
+  const a = steerAuth(readConfig());
+  if (!a.hub || !a.token) return Promise.resolve({ ok: false, error: "not signed in" });
+  return fetch(`${a.hub}/api/takeover${route}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-zevet-token": a.token },
+    body: JSON.stringify(payload),
+    redirect: "error",
+    signal: AbortSignal.timeout(15000),
+  }).then(async (res) => {
+    let out = {};
+    try {
+      out = await res.json();
+    } catch {
+      out = {};
+    }
+    return res.ok ? { ok: true, ...out } : { ok: false, ...out, error: out.error || `the team server answered ${res.status}` };
+  });
+}
+
+const takeoverInbox = agentTakeover.createTakeoverInbox({
+  open: (msg) => agentTakeover._internals.openJson(agentSteer.loadDocCrypto(), steerAuth(readConfig()).key, agentTakeover._internals.requestAad(msg), msg.sealed),
+  findConsole: (session) => {
+    const c = findSteerConsole(session);
+    const full = c ? consoleLog.get(c.id) : null;
+    return c && full ? { ...c, repo: path.basename(String(full.root || "")) } : null;
+  },
+  askOwner: (req) =>
+    new Promise((resolve) => {
+      if (!boardWindow || boardWindow.isDestroyed()) return resolve(null);
+      pendingSteers.set(req.id, resolve);
+      toBoard("local:steerEvent", { kind: "takeover-ask", id: req.id, from: req.from, agent: req.agent, repo: req.repo, consoleId: req.consoleId, payer: req.payer });
+    }),
+  capture: async (consoleId) => {
+    const c = consoleLog.get(consoleId);
+    if (!c) throw new Error("the session is gone");
+    const place = placementOf(consoleId);
+    const where = diffWhere(c, place);
+    return { events: c.events, turns: c.turns, ...(await agentTakeover.diffSummary(where)) };
+  },
+  sealBaton: (msg, baton) => agentTakeover._internals.sealJson(agentSteer.loadDocCrypto(), steerAuth(readConfig()).key, agentTakeover._internals.batonAad(msg), baton),
+  sendBaton: (id, sealed) => takeoverPost("/baton", { id, sealed }),
+  halt: (consoleId) => stopAgentCore(consoleId),
+  report: reportSteerStatus,
+});
+
+function diffWhere(c, place) {
+  return (place && place.cwd) || c.worktree || c.root || "";
+}
+
+const batonInbox = agentTakeover.createBatonInbox({
+  open: (msg) => agentTakeover._internals.openJson(agentSteer.loadDocCrypto(), steerAuth(readConfig()).key, agentTakeover._internals.batonAad(msg), msg.sealed),
+  requested: (id) => takeoversAsked.get(id) || "",
+  resolveRepo: (name) => agentTakeover.resolveRepo(name, readWorkspaces()),
+  start: async ({ agent, dir, from, prompt }) => {
+    const who = String(from || "a teammate").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 40);
+    const r = await startAgentCore({ agent, cwd: dir, opts: { mode: agentTakeover.safeMode(storedMode()), label: `taken over from ${who}` } });
+    if (!r.ok) return r;
+    const sent = sendToAgentCore(r.id, prompt);
+    announceConsole(r.id);
+    if (!sent || sent.ok === false) return { ok: false, error: (sent && sent.error) || "the prompt could not be sent" };
+    return { ok: true, id: r.id };
+  },
+  sessionOf: (id) => {
+    const c = consoleLog.get(id);
+    return (c && c.sessionId) || "";
+  },
+  report: (id, status, reason, extra) => takeoverPost("/status", { id, status, reason, ...(extra && typeof extra.session === "string" ? { session: extra.session } : {}) }),
+});
+
 function startSteerChannel(cfg) {
   stopSteerChannel();
   const a = steerAuth(cfg);
@@ -4879,6 +4959,16 @@ function startSteerChannel(cfg) {
           pendingSteers.delete(id);
           if (status !== "replay" && status !== "ignored") toBoard("local:steerEvent", { kind: "done", id, from: String((data && data.from) || ""), status });
         });
+      } else if (name === "takeover") {
+        void takeoverInbox.handle(data).then((status) => {
+          const id = data && typeof data.id === "string" ? data.id : "";
+          pendingSteers.delete(id);
+          if (status !== "replay" && status !== "ignored") toBoard("local:steerEvent", { kind: "done", id, from: String((data && data.from) || ""), status });
+        });
+      } else if (name === "baton") {
+        void batonInbox.handle(data).then((status) => {
+          if (status === "started" || status === "start-failed") takeoversAsked.delete(String((data && data.id) || ""));
+        });
       } else if (name === "hello" || name === "payer" || name === "payer-release") {
         if (payerLib.applyPayerFrame(teamPayers, name, data, { docCrypto: agentSteer.loadDocCrypto(), key: steerAuth(readConfig()).key, isMine: (session) => myPayers.has(session) })) pushClaims();
         if (name !== "hello") return;
@@ -4893,7 +4983,7 @@ function startSteerChannel(cfg) {
         });
         if (changed) pushClaims();
       } else if (name === "steer-status" && data && typeof data.id === "string") {
-        toBoard("local:steerEvent", { kind: "status", id: data.id, of: data.kind === "spawn" ? "spawn" : "steer", to: String(data.to || ""), status: String(data.status || ""), reason: String(data.reason || ""), session: String(data.session || "") });
+        toBoard("local:steerEvent", { kind: "status", id: data.id, of: data.kind === "spawn" ? "spawn" : data.kind === "takeover" ? "takeover" : "steer", to: String(data.to || ""), status: String(data.status || ""), reason: String(data.reason || ""), session: String(data.session || "") });
       }
     },
   });
@@ -4941,6 +5031,28 @@ bridge.handle("local:spawnSend", async (_e, arg) => {
     model: String((arg && arg.model) || ""),
     text: String((arg && arg.text) || ""),
   });
+});
+
+bridge.handle("local:takeoverSend", async (_e, arg) => {
+  const a = steerAuth(readConfig());
+  if (!a.session) return { ok: false, error: "Sign in to your team to take over a teammate's agent." };
+  const agent = String((arg && arg.agent) || "");
+  const payer = payerOf(agent).label;
+  const r = await agentTakeover.sendTakeover({
+    hub: a.hub,
+    token: a.token,
+    key: a.key,
+    to: String((arg && arg.to) || ""),
+    session: String((arg && arg.session) || ""),
+    repo: String((arg && arg.repo) || ""),
+    agent,
+    payer,
+  });
+  if (r.ok && r.id) {
+    takeoversAsked.set(r.id, agent);
+    while (takeoversAsked.size > 50) takeoversAsked.delete(takeoversAsked.keys().next().value);
+  }
+  return { ...r, payer };
 });
 
 /** The person's answer to one steer (or spawn) approval card. */

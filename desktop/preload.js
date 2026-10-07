@@ -554,6 +554,13 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * mode and resolves the repo by name. Optional: an older desktop build cannot.
    */
   spawnSend: (to, repo, agent, model, text) => ipcRenderer.invoke("local:spawnSend", { to, repo, agent, model, text }),
+  /**
+   * Take over a teammate's running turn: main seals the request with the document
+   * key; the hub allows one winner per session and enforces the team's steer
+   * policy. The new turn runs on THIS machine's account, on the engine named.
+   * Optional: an older desktop build cannot.
+   */
+  takeoverSend: (to, session, repo, agent) => ipcRenderer.invoke("local:takeoverSend", { to, session, repo, agent }),
   /** Who pays for an agent's turns on this machine: engine and account, from the engine's own login (never a token). Empty label = unknown. */
   payerFor: (agent, model, engine) => ipcRenderer.invoke("local:payerFor", { agent, model, engine }),
   /** Seal this session's payer with the document key and share it with the team (a release when unknown). */

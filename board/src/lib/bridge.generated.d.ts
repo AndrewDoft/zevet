@@ -476,6 +476,13 @@ export interface LocalBridge {
    * mode and resolves the repo by name. Optional: an older desktop build cannot.
    */
   spawnSend?: (to: string, repo: string, agent: string, model: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>;
+  /**
+   * Take over a teammate's running turn: main seals the request with the document
+   * key; the hub allows one winner per session and enforces the team's steer
+   * policy. The new turn runs on THIS machine's account, on the engine named.
+   * Optional: an older desktop build cannot.
+   */
+  takeoverSend?: (to: string, session: string, repo: string, agent: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; winner?: string; payer?: string; error?: string }>;
   /** Who pays for an agent's turns on this machine: engine and account, from the engine's own login (never a token). Empty label = unknown. */
   payerFor?: (agent: string, model?: string, engine?: string) => Promise<{ engine: string; account: string; label: string }>;
   /** Seal this session's payer with the document key and share it with the team (a release when unknown). */
