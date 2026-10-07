@@ -371,6 +371,25 @@ credentials, which is why the default asks. The hub holds the team secret on
 disk (see `hub/accounts.mjs`), so "cannot open it" means the hub process never
 does, not that it could not.
 
+**You can also start an agent on a teammate's machine (D-060).** "Run as" in
+the new-agent flow, or "+ agent on <name>'s machine" on their row, aims your
+composer at them: pick one of their repos (the board lists the ones it has
+seen them work in; you can type a folder name), pick Claude, Codex or
+OpenCode, and your message becomes the new agent's first prompt. It runs in
+THEIR Zevet app, in their copy of that repo, with their account, and shows on
+the board under their name, marked "by <you>". The same team setting governs
+it: under **Ask first** their app shows a card with the agent, the exact
+folder and the whole prompt, and nothing starts until they click Start. It is
+higher risk than a steer, so: the repo must be a folder name their app already
+has open (anything path-like is refused, and a name they do not have answers
+"no such repo on their machine"); the agent always starts in the owner's own
+default safe mode (plan or ask first — never auto, never skip permissions),
+whatever the sender wanted; a request carrying a mode, flags, a folder path or
+an environment is refused by the hub; at most three agents started by
+teammates run on one machine at a time; and senders are rate limited. You see
+sent, delivered, accepted, started (with the new session), declined, no such
+repo, refused by policy, or offline.
+
 **Prompt text is shared, including into agents.** Every teammate already sees
 everyone's prompts on the board; now agents see a short summary too. A
 desktop-launched Claude gets a bounded "team activity" block (who is working

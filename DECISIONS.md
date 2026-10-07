@@ -1764,3 +1764,62 @@ one steer end to end through a real hub), `test/activity.test.mjs`.
 - **Hub** redeployed from the tag in place; `BUILD_ID` `ae51dcbb3e12` -> `f7c2582d3539`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-060 — A teammate can start an agent on your machine, gated by the steer policy
+
+**2026-10-07**
+
+**Decision (Andrew).** People can create an agent under another teammate's
+account: it RUNS on the teammate's machine, in their Zevet app, in their repo,
+with their credentials, and shows on the board under their name. Built as a
+sibling of D-058's steering, on the same machinery: the prompt is sealed with
+the document key (AAD binding id, target person, repo, agent and model, so the
+relay cannot re-aim any of them), `POST /api/spawn` relays it over the same
+per-person channel (`/events?steer=1`, frame `spawn`), and the owner's app
+reports through the same `/api/steer/status`. Statuses: queued, delivered,
+accepted, started (carrying the new session id), declined, no-such-repo,
+refused-by-policy, offline.
+
+**Same policy, enforced by the hub.** The team's `steer` setting governs it
+(no second knob): `off` refuses at the hub; `ask` (default) relays with
+`approval: true` and the owner's card spells out the agent, the exact folder
+and the full prompt — nothing starts before Start; `on` starts it directly.
+
+**Why it is stricter than a steer.** A spawn starts a NEW process with the
+owner's credentials. So:
+- The repo is a folder NAME (`^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$`, no `..`),
+  checked by the sender's app, the hub and the owner's app, and resolved only
+  against the owner's open workspaces by folder name — what the hook reports
+  as `repo`. Not open there: `no-such-repo`. Two open folders with that name:
+  also refused, never guessed.
+- The mode is the owner's own stored default when it is a safe one (`plan`,
+  `ask`), otherwise `ask` — never `auto` or `dangerous`. The engine is the
+  machine's default login. The hub refuses a body carrying `mode`,
+  `permissionMode`, permissions, flags/args, `cwd`, `env`, `engine`,
+  `systemPrompt` and similar; the owner's app reads none of them anyway.
+- It is started directly by the main process (`startAgentCore`), not through
+  the board page, because that page is served by the hub.
+- At most 3 remote-started agents run on one machine at once (checked before
+  the card and again after approval); at most 3 spawns wait on one person's
+  answer at a time (hub); 5 per minute per sender (hub).
+- `started` is accepted by the hub only after `accepted`; then the session is
+  recorded as started by the sender and folded onto that agent in every
+  board's snapshot (`agents[].startedBy`), shown as "by <sender>" on the row.
+  The owner's own console is labelled "started by <sender>" and its first
+  turn reads `[started by <sender>] <prompt>`.
+
+**Known limits.** The repo list the sender sees is what the board has seen the
+teammate work in (event `repo` names), not what they have open; their app's
+`no-such-repo` is the authority. An unanswered card declines after 10 minutes.
+If the new agent has not reported a session within 30 seconds, `started` is
+sent with an empty session and the board mark is skipped. "started by" lives
+in the hub's memory (lost on a hub restart). Codex/OpenCode take their first
+prompt and exit (existing behaviour); a follow-up is the owner's to make.
+
+**Tests.** `test/spawn-hub.test.mjs` (path repos, smuggled modes/flags, bad
+agents/models, policy off, replay, oversize, shared token, card flood, rate
+limit, offline, forged from, only-to-target, started-before-accepted,
+wrong-person status, the startedBy mark), `test/agent-spawn.test.mjs` (AAD
+binding, repo resolution, safe mode, ask approve/decline/timeout, no-such-repo,
+cap before and after approval, replay, ignored sender fields, and one spawn end
+to end through a real hub).
