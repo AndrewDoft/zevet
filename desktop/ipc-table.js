@@ -443,6 +443,8 @@ stream of events.` },
     agents: { channel: "local:agents", params: [], type: `() => Promise<UsableAgent[]>`, doc: `Which agents are installed on this machine.` },
     startAgent: { channel: "local:startAgent", params: ["agent","cwd","opts"], pack: "object", type: `(name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean; engine?: string; label?: string }) => Promise<StartAgentResult>`, doc: `Start an agent in a folder. Returns { ok, id }.` },
     sendToAgent: { channel: "local:sendToAgent", params: ["id","text"], pack: "object", type: `(id: string, text: string) => Promise<{ ok: boolean; error?: string }>` },
+    notify: { channel: "local:notify", params: ["title","body","key"], pack: "object", type: `(title: string, body: string, key: string) => Promise<{ ok: boolean }>`, optional: true, doc: `An OS notification for an agent that finished or needs a person. The board
+decides whether one is wanted (lib/notify.mjs); this only shows it.` },
     boardReply: { channel: "local:boardReply", params: ["reqId","result"], pack: "object", type: `(reqId: string, result: unknown) => Promise<unknown>`, optional: true },
     stopAgent: { channel: "local:stopAgent", params: ["id"], type: `(id: string) => Promise<unknown>` },
     consoles: { channel: "local:consoles", params: [], type: `() => Promise<{ seq: number; consoles: HeldConsole[] }>`, optional: true, doc: `The consoles still held by this app, with every event each has sent —
@@ -494,6 +496,7 @@ next commit is a whole-file diff blamed on whoever pressed save.
 A DELETED file produces no event. There is no text to carry and sending an
 empty string would tell the editor to publish an empty document — the exact
 clobber this exists to prevent. See \`fire()\` in desktop/file-watch.js.` },
+    onNotifyClick: { channel: "local:notifyClick", payload: "unknown", type: `(cb: (key: string) => void) => () => void`, optional: true, doc: `A notification from notify() was clicked; key is the one it was sent with.` },
     onSchedulesChanged: { channel: "local:schedulesChanged", payload: "unknown", type: `(cb: (list: unknown) => void) => () => void`, optional: true, doc: `A due schedule just ran (or was skipped); the board's own list is
 otherwise only refreshed after a save/toggle/remove round-trip.` },
     onChatEvent: { channel: "chat:event", payload: "unknown", type: `(cb: (p: { id: string; evt: { type: string; [k: string]: unknown } }) => void) => () => void`, optional: true },

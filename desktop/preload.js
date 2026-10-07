@@ -501,6 +501,11 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   /** Start an agent in a folder. Returns { ok, id }. */
   startAgent: (agent, cwd, opts) => ipcRenderer.invoke("local:startAgent", { agent, cwd, opts }),
   sendToAgent: (id, text) => ipcRenderer.invoke("local:sendToAgent", { id, text }),
+  /**
+   * An OS notification for an agent that finished or needs a person. The board
+   * decides whether one is wanted (lib/notify.mjs); this only shows it.
+   */
+  notify: (title, body, key) => ipcRenderer.invoke("local:notify", { title, body, key }),
   boardReply: (reqId, result) => ipcRenderer.invoke("local:boardReply", { reqId, result }),
   stopAgent: (id) => ipcRenderer.invoke("local:stopAgent", id),
   /**
@@ -568,6 +573,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * clobber this exists to prevent. See `fire()` in desktop/file-watch.js.
    */
   onFileChanged: (fn) => subscribe("local:fileChanged", fn),
+  /** A notification from notify() was clicked; key is the one it was sent with. */
+  onNotifyClick: (fn) => subscribe("local:notifyClick", fn),
   /**
    * A due schedule just ran (or was skipped); the board's own list is
    * otherwise only refreshed after a save/toggle/remove round-trip.

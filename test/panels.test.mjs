@@ -118,8 +118,9 @@ describe("the command palette", () => {
   });
 
   test("Ctrl and Cmd both open it, and Escape closes it", () => {
-    assert.match(src, /metaKey \|\| event\.ctrlKey/);
-    assert.match(src, /toLowerCase\(\) === "k"/);
+    // The key is rebindable now: the handler asks the shortcut table, whose
+    // default (Ctrl or Cmd + K) is pinned in notify-keys.test.mjs.
+    assert.match(src, /matches\(event, "palette"/);
     assert.match(src, /"Escape"/);
   });
 

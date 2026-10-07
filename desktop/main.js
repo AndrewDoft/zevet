@@ -4721,6 +4721,21 @@ const boardAsk = createBoardAsk({
     return true;
   },
 });
+// Agent notifications. The board decides whether one is wanted and passes the
+// text; a click raises the window and hands the key back so it can focus the card.
+bridge.handle("local:notify", (_e, { title, body, key }) => {
+  if (!Notification.isSupported()) return { ok: false };
+  const n = new Notification({ title: String(title || "Zevet").slice(0, 120), body: String(body || "").slice(0, 240), silent: false });
+  n.on("click", () => {
+    if (!boardWindow || boardWindow.isDestroyed()) return;
+    if (boardWindow.isMinimized()) boardWindow.restore();
+    boardWindow.show();
+    boardWindow.focus();
+    toBoard("local:notifyClick", String(key || ""));
+  });
+  n.show();
+  return { ok: true };
+});
 bridge.handle("local:boardReply", (_e, { reqId, result }) => boardAsk.reply(reqId, result));
 
 /* ── Steering a teammate's agent, and shared team context (D-058) ──────────

@@ -419,6 +419,11 @@ export interface LocalBridge {
   /** Start an agent in a folder. Returns { ok, id }. */
   startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean; engine?: string; label?: string }) => Promise<StartAgentResult>;
   sendToAgent: (id: string, text: string) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * An OS notification for an agent that finished or needs a person. The board
+   * decides whether one is wanted (lib/notify.mjs); this only shows it.
+   */
+  notify?: (title: string, body: string, key: string) => Promise<{ ok: boolean }>;
   boardReply?: (reqId: string, result: unknown) => Promise<unknown>;
   stopAgent: (id: string) => Promise<unknown>;
   /**
@@ -490,6 +495,8 @@ export interface LocalBridge {
    * clobber this exists to prevent. See `fire()` in desktop/file-watch.js.
    */
   onFileChanged: (cb: (p: { root: string; relPath: string; text?: string; bom?: boolean; eol?: string }) => void) => () => void;
+  /** A notification from notify() was clicked; key is the one it was sent with. */
+  onNotifyClick?: (cb: (key: string) => void) => () => void;
   /**
    * A due schedule just ran (or was skipped); the board's own list is
    * otherwise only refreshed after a save/toggle/remove round-trip.
