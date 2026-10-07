@@ -222,7 +222,7 @@ export interface LocalBridge {
   /** Retire a note. */
   memoryRetire?: (input: { root: string; id: string }) => Promise<{ ok: boolean; error?: string }>;
   /** Live claims, mine and the team's. */
-  claims?: () => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }> }>;
+  claims?: () => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }>; steps?: Array<{ session: string; step: string; actor: string }> }>;
   /** One text file, by path relative to its root. */
   read: (root: string, relPath: string) => Promise<ReadResult>;
   /**
@@ -525,7 +525,7 @@ export interface LocalBridge {
   /** Pinned notes changed (a teammate's note arrived or one was edited). */
   onMemoryEvent?: (cb: (e: { repo: string }) => void) => () => void;
   /** The live claims changed (a claim, a release, an expiry, a teammate's frame). */
-  onClaimsEvent?: (cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }> }) => void) => () => void;
+  onClaimsEvent?: (cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }>; steps?: Array<{ session: string; step: string; actor: string }> }) => void) => () => void;
   /**
    * Steering (D-058): `ask` an approval card for a teammate's steer, `done`
    * when one was injected or declined, `status` for a steer this person sent.
