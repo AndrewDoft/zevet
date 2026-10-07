@@ -181,6 +181,13 @@ export interface AgentEvent {
   title?: string;
 }
 
+/** Where a subagent run's work went (desktop/agent-integration.js). */
+export interface AgentIntegration {
+  status: "integrated" | "waiting" | "failed" | "no checks" | "discarded";
+  why?: string;
+  files?: string[];
+}
+
 export interface HeldConsole {
   id: string;
   agent: string;
@@ -198,6 +205,7 @@ export interface HeldConsole {
   /** Set only for a console the local control API spawned (desktop/
    *  agent-api.js), never for one the board's own UI started. */
   label?: string;
+  integration?: AgentIntegration;
 }
 
 export interface ChatSummary {

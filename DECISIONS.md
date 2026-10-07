@@ -1900,14 +1900,34 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
 - **Hub** redeployed from the tag in place; `BUILD_ID` `e65b755bd3fc` -> `79c173a36ba9`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
-## D-073 — Subagent work integrates exactly once, only after green checks
+## D-074 — Subagent work integrates exactly once, only when it is safe (renumbered at merge from D-073)
 
-Verification against `origin/main` (2026-10-07): `desktop/agent-worktree.js`
-created isolated branches and `releasePlacement()` only committed/released them;
-there was no branch integration, check gate, retry key, restart handling, or
-outcome sent to `SubagentsPanel`. Therefore red and still-running work could be
-silently discarded and a second trigger had no defined behavior.
+Verified against `origin/main` (2026-10-07): `desktop/agent-worktree.js` made an isolated `zevet/<slug>` branch
+and `releasePlacement()` only committed and released it. There was no merge back, no check gate, no per-run key,
+and nothing on the subagent row.
 
-The desktop now records an idempotency marker per subagent run, runs the injected
-checks before merging, merges only a green result, and returns `integrated` or
-`failed` with a reason. A later trigger for the same run is a no-op.
+First attempt (65f4724) was rejected: it ran `npm test` + `npm run typecheck` in any repo on every release and
+`git merge --no-ff` straight into the user's own checkout. Decided rules, all in `desktop/agent-integration.js`:
+
+1. **Parent checkout is never touched while dirty** (tracked or untracked changes) **or mid-merge/rebase/cherry-pick/revert**:
+   outcome `waiting` with the reason. Checked before the checks and again right before the merge (checks take minutes).
+2. **A failed merge never leaves the repo half-merged.** Conflict files are listed, `git merge --abort` runs, and
+   status is verified clean; outcome `failed: conflicts in <n> files` (files in `files`).
+3. **Checks come from the repo**, read from the parent checkout (an agent cannot rewrite its own gate): `checks` in
+   `.zevet/config` or `zevet.checks` in package.json, else `scripts.test` (+ `typecheck` only if that script exists;
+   `npm init`'s placeholder test is not a check). None declared: the automatic trigger stops at `no checks` and never merges.
+4. **Exactly once**: a per-run marker (`<zevet home>/integrations/<run>.json`) plus an in-flight map. The automatic
+   trigger never retries a recorded outcome; `integrated` is final. The parent must still be the branch the worktree
+   was cut from (`parentBranch` in the worktree record), else `waiting: parent moved to <branch>`.
+5. **Checks run with a 15 min timeout** and are killed as a process tree (`taskkill /T` / process group) on timeout
+   and on app quit.
+6. **Visible**: the outcome is console meta plus `local:agentIntegration`, shown on the subagent row as
+   integrated / waiting: why / failed: why / no checks, with Integrate and Discard (confirm on second click) once the
+   agent is no longer running. Integrate (manual) retries a recorded outcome and, with no declared checks, merges
+   after rules 1, 2 and 4. It still needs green checks when the repo declares them.
+
+Trigger scope: only the end of a scheduled run integrates automatically. Closing a thread, quitting and failed
+starts release the worktree (branch kept if it has commits) and never merge, since no row could show it. A held
+worktree (waiting/failed/no checks) stays until Integrate, Discard, thread close, or the next start's prune; a held
+worktree older than the app session is gone, its branch survives for a manual `git merge`.
+

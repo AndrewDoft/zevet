@@ -99,12 +99,15 @@ function createAgentWorktrees({ home, git = runGit, platform = process.platform 
         // this path against the workspace as the user opened it.
         const top = path.resolve(repo, (await git(["rev-parse", "--show-cdup"], repo)).trim());
         const base = (await git(["rev-parse", "--verify", "HEAD"], top)).trim();
+        // What an integration must still find checked out; "" when detached.
+        const head = (await git(["rev-parse", "--abbrev-ref", "HEAD"], top)).trim();
+        const parentBranch = head === "HEAD" ? "" : head;
         const slug = crypto.randomBytes(3).toString("hex");
         const dir = path.join(root, `${path.basename(top)}-${slug}`);
         const branch = `zevet/${slug}`;
         fs.mkdirSync(root, { recursive: true });
         await git(["worktree", "add", "-q", "-b", branch, dir, base], top);
-        const wt = { dir, branch, base, repo: top };
+        const wt = { dir, branch, base, repo: top, parentBranch };
         fs.writeFileSync(sidecar(dir), JSON.stringify(wt));
         await linkDeps(top, dir);
         return { ...wt, cwd: path.join(dir, path.relative(top, path.resolve(repo))) };
@@ -152,6 +155,17 @@ function createAgentWorktrees({ home, git = runGit, platform = process.platform 
       } catch {
         return false;
       }
+    },
+
+    /** Throw the work away: the worktree and its branch, commits and all. */
+    async discard(wt) {
+      if (!wt || !(await api.release(wt))) return false;
+      try {
+        await git(["branch", "-D", wt.branch], wt.repo);
+      } catch {
+        // release already deleted a branch with nothing on it.
+      }
+      return true;
     },
 
     /** Every worktree this module made and nobody is using: at app start,

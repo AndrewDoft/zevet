@@ -91,7 +91,7 @@ contextBridge.exposeInMainWorld("zevetSentry", {
   declareWindow: false, // board/src/lib/bridge.ts declares the (looser, optional) Window shape
   dtsHeader: `import type { SessionsResult, SessionResult, SessionAgentsResult } from "./sessions.d.mts";
 import type { LocalWorkspace, LocalEntry, UsableAgent, ColorThemeSpec } from "./types";
-import type { ReadResult, StartAgentResult, StatsResult, AgentSchedule, SchedulesResult, CommitsResult, IndexSearchResult, MemoriesResult, PermitRequest, AgentSettings, AgentSettingsResult, StatusResult, AskRequest, AgentEvent, HeldConsole, ChatSummary, StoredChat, ZevetConfig } from "./bridge";`,
+import type { ReadResult, StartAgentResult, StatsResult, AgentSchedule, SchedulesResult, CommitsResult, IndexSearchResult, MemoriesResult, PermitRequest, AgentSettings, AgentSettingsResult, StatusResult, AskRequest, AgentEvent, AgentIntegration, HeldConsole, ChatSummary, StoredChat, ZevetConfig } from "./bridge";`,
   header: `The only bridge between a renderer and this machine: named calls, no
 \`require\`, no \`ipcRenderer\` handle, nothing that takes a channel name from
 the page.
@@ -447,6 +447,8 @@ stream of events.` },
 What the app still holds from before a reload. Optional: an older desktop
  build reaps its agents on reload instead.` },
     forgetAgent: { channel: "local:forgetAgent", params: ["id"], type: `(id: string) => Promise<unknown>`, optional: true },
+    integrateAgent: { channel: "local:integrateAgent", params: ["id"], type: `(id: string) => Promise<AgentIntegration>`, optional: true, doc: `Bring a subagent's worktree branch back into the checkout it was cut from.` },
+    discardAgent: { channel: "local:discardAgent", params: ["id"], type: `(id: string) => Promise<AgentIntegration>`, optional: true, doc: `Throw a subagent's worktree and branch away.` },
     chatList: { channel: "chat:list", params: ["query"], pack: "object", type: `(query?: string) => Promise<ChatSummary[]>`, optional: true, doc: `Zevet Chat (desktop/chat.js): repo-independent conversations.
 
 Zevet Chat (desktop/chat.js). Optional: an older desktop build has none,
@@ -490,6 +492,7 @@ clobber this exists to prevent. See \`fire()\` in desktop/file-watch.js.` },
 otherwise only refreshed after a save/toggle/remove round-trip.` },
     onChatEvent: { channel: "chat:event", payload: "unknown", type: `(cb: (p: { id: string; evt: { type: string; [k: string]: unknown } }) => void) => () => void`, optional: true },
     onAgentEvent: { channel: "local:agentEvent", payload: "unknown", type: `(cb: (evt: AgentEvent) => void) => () => void`, doc: `Stream of console events; returns an unsubscribe function.` },
+    onAgentIntegration: { channel: "local:agentIntegration", payload: "unknown", type: `(cb: (r: AgentIntegration & { id: string }) => void) => () => void`, optional: true, doc: `A subagent run's integration outcome changed.` },
     onAgentAttached: { channel: "local:agentAttached", payload: "unknown", type: `(cb: (c: HeldConsole) => void) => () => void`, optional: true, doc: `A console the board did not start itself (the loopback agent API, a schedule)
 just opened. Without it such an agent only reached the board on a page reload.` },
     onBoardRequest: { channel: "local:boardRequest", payload: "unknown", type: `(cb: (req: { reqId: string; kind: string; [k: string]: unknown }) => void) => () => void`, optional: true, doc: `The loopback agent API asks the board to start or message an agent through

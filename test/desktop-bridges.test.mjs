@@ -170,7 +170,7 @@ describe("the bridge surface the renderer is written against", () => {
       //   the answer goes back as an invoke (steerAnswer). `done`/`status`:
       //   how a steer ended, so a sender is never left guessing. Silence
       //   declines (10 minutes), never injects.
-      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentAttached", "local:agentEvent", "local:askRequest", "local:boardRequest", "local:claimsEvent", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged", "local:steerEvent"],
+      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentAttached", "local:agentEvent", "local:agentIntegration", "local:askRequest", "local:boardRequest", "local:claimsEvent", "local:fileChanged", "local:indexEvent", "local:permitRequest", "local:schedulesChanged", "local:steerEvent"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {

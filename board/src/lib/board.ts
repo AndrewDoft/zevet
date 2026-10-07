@@ -1836,6 +1836,7 @@ function reattachConsoles(held: HeldConsole[]): void {
       ...(h.title ? { autoTitle: h.title } : {}),
       ...(h.engine ? { engine: h.engine } : {}),
       ...(h.label ? { label: h.label } : {}),
+      ...(h.integration ? { integration: h.integration } : {}),
     };
     useBoard.setState((g) => ({ myConsoles: [...g.myConsoles, c] }));
     for (const evt of h.events) ingressAgentEvent(evt);
@@ -3128,6 +3129,11 @@ export function boot(): void {
         .catch((err: unknown) => ({ ok: false, error: err instanceof Error ? err.message : "board failed" }))
         .then((r) => asked.boardReply!(req.reqId, r));
     });
+  }
+  if (bridge.local && typeof bridge.local.onAgentIntegration === "function") {
+    bridge.local.onAgentIntegration(({ id, ...integration }) =>
+      useBoard.setState((g) => ({ myConsoles: g.myConsoles.map((x) => (x.id === id ? { ...x, integration } : x)) })),
+    );
   }
   if (bridge.local && typeof bridge.local.onAgentAttached === "function") {
     bridge.local.onAgentAttached((h) => reattachConsoles([h]));

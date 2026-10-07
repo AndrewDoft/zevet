@@ -77,7 +77,7 @@ const agentCatalogs = require("./agent-catalogs.js");
 const { createConsoleLog } = require("./console-log.js");
 const consolePersistence = require("./console-persistence.js");
 const { createAgentWorktrees } = require("./agent-worktree.js");
-const { integrateAgent, runAgentChecks } = require("./agent-integration.js");
+const { integrateAgent, runAgentChecks, killChecks } = require("./agent-integration.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const { MasoraLink } = require("./masora-link.js");
@@ -2782,7 +2782,7 @@ async function runDueSchedules() {
             if (evt && evt.type === "agent") noteBurn(evt.payload, handle.id);
             notePlacement(place, evt, handle.id);
             // A scheduled run's worktree goes when the run ends.
-            if (evt && evt.type === "exit") void releasePlacement(place);
+            if (evt && evt.type === "exit") void releasePlacement(place, { integrate: true });
             // Routed through consoleLog like any other console, so a scheduled
             // run reattaches on a board reload instead of vanishing from the
             // rail — see console-log.js.
@@ -3312,20 +3312,66 @@ function notePlacement(p, evt, id) {
  *  own worktrees after the relaunch, so nothing may be released under them. */
 let relaunching = false;
 
-async function releasePlacement(p) {
+/** Placements whose integration did not finish (waiting, failed, no checks):
+ *  their worktree stays until the person integrates, discards or closes the
+ *  thread. Keyed by run id, which is what the subagent row names. */
+const pendingIntegrations = new Map();
+
+const gitRun = (args) => new Promise((resolve, reject) => execFile("git", args, { windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, out) => err ? reject(err) : resolve(String(out))));
+
+/** One integration attempt, its outcome shown on the subagent row. */
+async function integratePlacement(p, manual) {
+  const result = await integrateAgent({ worktree: p.worktree, runId: p.id, manual, git: gitRun, checks: runAgentChecks, markerDir: path.join(HOME, "integrations") });
+  p.integration = result.status;
+  consoleLog.updateMeta(p.id, { integration: result });
+  toBoard("local:agentIntegration", { id: p.id, ...result });
+  if (result.status === "integrated") pendingIntegrations.delete(p.id);
+  else pendingIntegrations.set(p.id, p);
+  return result;
+}
+
+/** `integrate`: this is the end of the run (a scheduled run), so try to bring
+ *  its work back. Thread close, quit and failed starts only release: nothing
+ *  may merge into the user's checkout where no row can show it. */
+async function releasePlacement(p, { integrate = false } = {}) {
   if (relaunching) return;
   if (!placements.delete(p) || !p.worktree) return;
   // A fork shares its source's worktree; the last one out removes it.
   if ([...placements].some((q) => q.worktree === p.worktree)) return;
   // Not from under a process that may still have files open in it.
   await Promise.race([p.gone, new Promise((r) => setTimeout(r, 5000))]);
-  if (p.worktree && p.integration !== "integrated") {
-    const result = await integrateAgent({ worktree: p.worktree, runId: p.id, git: (args) => new Promise((resolve, reject) => execFile("git", args, { windowsHide: true }, (err, out) => err ? reject(err) : resolve(String(out)))), checks: runAgentChecks });
-    p.integration = result.status;
-    consoleLog.updateMeta(p.id, { integration: result });
-    toBoard("local:agentIntegration", { id: p.id, ...result });
+  if (integrate && p.id && p.integration !== "integrated") {
+    const result = await integratePlacement(p, false);
+    if (result.status !== "integrated") return;
   }
   await worktrees.release(p.worktree, p.title);
+}
+
+/** The Integrate button. Same guards as the automatic trigger, and it still
+ *  waits for a process that is running. */
+async function integrateAgentById(id) {
+  const p = pendingIntegrations.get(id) || placementOf(id);
+  if (!p || !p.worktree) return { status: "failed", why: "nothing to integrate" };
+  const held = consoleLog.get(id);
+  if (held && held.running) return { status: "waiting", why: "agent is still running" };
+  const result = await integratePlacement(p, true);
+  if (result.status === "integrated" && !placements.has(p)) await worktrees.release(p.worktree, p.title);
+  return result;
+}
+
+/** The Discard button: the worktree and its branch go. */
+async function discardAgentById(id) {
+  const p = pendingIntegrations.get(id) || placementOf(id);
+  if (!p || !p.worktree) return { status: "failed", why: "nothing to discard" };
+  const held = consoleLog.get(id);
+  if (held && held.running) return { status: "waiting", why: "agent is still running" };
+  if (!(await worktrees.discard(p.worktree))) return { status: "failed", why: "could not remove the worktree" };
+  pendingIntegrations.delete(id);
+  placements.delete(p);
+  const result = { status: "discarded" };
+  consoleLog.updateMeta(id, { integration: result });
+  toBoard("local:agentIntegration", { id, ...result });
+  return result;
 }
 
 function toBoard(channel, payload) {
@@ -4001,10 +4047,15 @@ bridge.handle("local:stopAgent", (_e, id) => stopAgentCore(id));
 bridge.handle("local:consoles", () => consoleLog.snapshot());
 
 /** The board closed a thread; a reload should not bring it back. */
+bridge.handle("local:integrateAgent", (_e, id) => integrateAgentById(String(id || "")));
+bridge.handle("local:discardAgent", (_e, id) => discardAgentById(String(id || "")));
+
 bridge.handle("local:forgetAgent", (_e, id) => {
   consoleLog.forget(String(id || ""));
   const place = placementOf(String(id || ""));
   if (place) void releasePlacement(place);
+  const left = pendingIntegrations.get(String(id || ""));
+  if (left) { pendingIntegrations.delete(left.id); void worktrees.release(left.worktree, left.title); }
   return { ok: true };
 });
 
@@ -4012,6 +4063,7 @@ bridge.handle("local:forgetAgent", (_e, id) => {
 // and nobody asked for. Called on quit and on window close — NOT on reload,
 // which re-attaches instead; see releaseBoardResources.
 function stopAllConsoles() {
+  killChecks();
   for (const c of consoles.values()) {
     try {
       c.stop();
