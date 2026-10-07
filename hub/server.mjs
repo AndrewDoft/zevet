@@ -402,7 +402,9 @@ function makeBoard(file) {
     console.error(`zevet: event log unreadable (${err.message}) — starting with an empty board`);
   }
 
-  const board = { events, listeners, file, warned: false };
+  // session -> who started it on this person's machine (D-060, remote
+  // spawn). Bounded; folded onto `agents` in the snapshot below.
+  const board = { events, listeners, file, warned: false, startedBy: new Map() };
 
   /** Every SSE push on this board's listeners goes through here — `record`
    *  below for the activity log, and `notifyPeopleChanged` (module scope)
@@ -529,7 +531,9 @@ function makeBoard(file) {
     // `agents` is folded from EVERYTHING retained, not the 300-event tail below: an
     // agent that has been quiet for an hour is still somebody's agent, and a busy
     // teammate would otherwise push every other agent off the board.
-    const agents = agentsOf(named.map(show), now, IDLE_AFTER_MS);
+    const agents = agentsOf(named.map(show), now, IDLE_AFTER_MS).map((a) =>
+      a.session && board.startedBy.has(a.session) ? { ...a, startedBy: board.startedBy.get(a.session) } : a,
+    );
     return { now, roster, collisions, agents, events: named.slice(-300).map(show), windowMs: COLLISION_WINDOW_MS, idleAfterMs: IDLE_AFTER_MS };
   };
 
@@ -1312,6 +1316,23 @@ const STEER_KEEP = 500; // per team, oldest dropped — also bounds the replay w
 const STEER_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 const STEER_FINAL = new Set(["accepted", "declined"]);
 const STEER_OWNER_STATUSES = new Set(["delivered", "accepted", "declined"]);
+
+/* ── Starting an agent on a teammate's machine (D-060) ──────────────────────
+ * The sibling of a steer, and riskier: it starts a NEW process with the
+ * owner's credentials. Same seal, same channel, same policy (`steer`), same
+ * statuses plus `started` (with the new session id) and `no-such-repo`. The
+ * hub refuses anything that looks like a permission or a path: the repo is a
+ * folder NAME the owner's desktop resolves against its own open workspaces,
+ * the mode is the owner's (their desktop decides, never the sender), and a
+ * body naming a mode, flags, a cwd or an env is refused outright. */
+const SPAWN_AGENTS = new Set(["claude", "codex", "opencode"]);
+const SPAWN_REPO_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/;
+const SPAWN_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,79}$/;
+const SPAWN_FORBIDDEN = ["mode", "permissionMode", "permission_mode", "permissions", "allowedTools", "allowed_tools", "disallowedTools", "dangerouslySkipPermissions", "skipPermissions", "flags", "args", "argv", "env", "cwd", "dir", "path", "engine", "addDirs", "systemPrompt", "permissionTool", "mcpConfig", "always"];
+const SPAWN_RATE_MAX = Number(process.env.ZEVET_SPAWN_RATE_MAX || 5);
+/** Spawns waiting on one person's answer at once — a flood of cards is a DoS. */
+const SPAWN_PENDING_MAX = 3;
+const SPAWN_OWNER_STATUSES = new Set(["delivered", "accepted", "started", "declined", "no-such-repo"]);
 const steerTeams = new Map(); // team -> { listeners:Set<res>, byId:Map<id,rec>, rate:Map<person,ts[]> }
 
 function steerTeam(team) {
@@ -1342,7 +1363,7 @@ function steerChannelsFor(team, acc, name) {
 function steerTellSender(team, acc, rec) {
   for (const res of steerTeam(team).listeners) {
     if (personKey(acc, res.zevetSteer.session) === rec.fromKey) {
-      steerFrame(res, "steer-status", { id: rec.id, to: rec.to, status: rec.status, reason: rec.reason || "" });
+      steerFrame(res, "steer-status", { id: rec.id, kind: rec.kind || "steer", to: rec.to, status: rec.status, reason: rec.reason || "", ...(rec.kind === "spawn" && rec.session ? { session: rec.session } : {}) });
     }
   }
 }
@@ -1354,10 +1375,10 @@ function steerRemember(team, rec) {
 }
 
 /** true when this person is over the limit; counts the attempt otherwise. */
-function steerRateLimited(team, key, now = Date.now()) {
+function steerRateLimited(team, key, now = Date.now(), max = STEER_RATE_MAX) {
   const t = steerTeam(team);
   const recent = (t.rate.get(key) || []).filter((ts) => now - ts < STEER_RATE_WINDOW_MS);
-  if (recent.length >= STEER_RATE_MAX) {
+  if (recent.length >= max) {
     t.rate.set(key, recent);
     return true;
   }
@@ -2296,14 +2317,74 @@ async function handleRequest(req, res) {
     const approval = policy === "ask";
     const msg = { id, from, to, repo: rec.repo, session, agent: agent.agent, sealed, approval, at: rec.at };
     for (const ch of channels) steerFrame(ch, "steer", msg);
-    steerRemember(auth.team, { ...rec, status: "queued" });
+    steerRemember(auth.team, { ...rec, kind: "steer", status: "queued" });
     console.log(`zevet: steer ${id} ${tag} queued (${approval ? "needs approval" : "policy on"})`);
     return json(res, 200, { ok: true, id, status: "queued", approval });
   }
 
-  /* The target's desktop reporting what happened to a steer. Only the person
-   * it was sent TO may, only the owner-side statuses, and never after it was
-   * accepted or declined. Relayed to the sender's own channel. */
+  /* Start an agent on a teammate's machine (D-060) — see SPAWN_AGENTS. */
+  if (url.pathname === "/api/spawn" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, STEER_SEALED_MAX + 4 * 1024));
+    } catch (err) {
+      const big = /too large/.test(String(err && err.message));
+      return json(res, big ? 413 : 400, { error: big ? "spawn too large" : "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
+    const fromKey = personKey(acc, sess) || sess.login;
+    if (steerRateLimited(auth.team, `spawn\u0000${fromKey}`, Date.now(), SPAWN_RATE_MAX)) return json(res, 429, { error: "too many new agents — wait a minute" });
+    const smuggled = SPAWN_FORBIDDEN.find((k) => Object.hasOwn(body, k));
+    if (smuggled) return json(res, 400, { error: `a spawn cannot carry "${smuggled}": the owner's app decides how it runs` });
+    const id = typeof body.id === "string" ? body.id : "";
+    const to = typeof body.to === "string" ? body.to.trim().slice(0, 40) : "";
+    const repo = typeof body.repo === "string" ? body.repo : "";
+    const agent = typeof body.agent === "string" ? body.agent : "";
+    const model = typeof body.model === "string" ? body.model : "";
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    if (!STEER_ID_RE.test(id) || !to || !sealed) return json(res, 400, { error: "a spawn needs id, to, repo, agent and sealed" });
+    if (!SPAWN_AGENTS.has(agent)) return json(res, 400, { error: "agent must be claude, codex or opencode" });
+    if (!SPAWN_REPO_RE.test(repo) || repo.includes("..")) return json(res, 400, { error: "repo must be a folder name, not a path" });
+    if (model && !SPAWN_MODEL_RE.test(model)) return json(res, 400, { error: "that is not a model name" });
+    if (sealed.length > STEER_SEALED_MAX) return json(res, 413, { error: "spawn too large" });
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(sealed)) return json(res, 400, { error: "sealed must be base64" });
+    const t = steerTeam(auth.team);
+    if (t.byId.has(id)) return json(res, 409, { error: "that id was already used" });
+    const from = (acc.profile(sess) || {}).name || sess.login;
+    const rec = { id, kind: "spawn", at: Date.now(), from, fromKey, to, repo, agent, model, session: "", status: "", reason: "" };
+    const tag = `${from} -> ${to} (${agent} in ${repo})${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`;
+    const policy = acc.policy.steer;
+    if (policy === "off") {
+      steerRemember(auth.team, { ...rec, status: "refused-by-policy" });
+      console.log(`zevet: spawn ${id} ${tag} refused: policy is off`);
+      return json(res, 403, { ok: false, id, status: "refused-by-policy", error: "starting agents for teammates is turned off for this team" });
+    }
+    const want = to.toLowerCase().replace(/^@/, "");
+    const waiting = [...t.byId.values()].filter((r) => r.kind === "spawn" && r.to.toLowerCase().replace(/^@/, "") === want && (r.status === "queued" || r.status === "delivered")).length;
+    if (waiting >= SPAWN_PENDING_MAX) return json(res, 429, { error: `${to} already has ${waiting} new agents waiting on an answer` });
+    const channels = steerChannelsFor(auth.team, acc, to);
+    if (!channels.length) {
+      steerRemember(auth.team, { ...rec, status: "offline" });
+      console.log(`zevet: spawn ${id} ${tag}: offline`);
+      return json(res, 200, { ok: true, id, status: "offline" });
+    }
+    const approval = policy === "ask";
+    const msg = { id, from, to, repo, agent, model, sealed, approval, at: rec.at };
+    for (const ch of channels) steerFrame(ch, "spawn", msg);
+    steerRemember(auth.team, { ...rec, status: "queued" });
+    console.log(`zevet: spawn ${id} ${tag} queued (${approval ? "needs approval" : "policy on"})`);
+    return json(res, 200, { ok: true, id, status: "queued", approval });
+  }
+
+  /* The target's desktop reporting what happened to a steer or a spawn. Only
+   * the person it was sent TO may, only that kind's owner-side statuses, and
+   * never after it settled. A spawn is `started` only after `accepted`, and
+   * its new session is then marked "started by" on everybody's board.
+   * Relayed to the sender's own channel. */
   if (url.pathname === "/api/steer/status" && req.method === "POST") {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
@@ -2317,13 +2398,24 @@ async function handleRequest(req, res) {
     const rec = body && typeof body.id === "string" ? steerTeam(auth.team).byId.get(body.id) : null;
     if (!rec) return json(res, 404, { error: "no such steer" });
     if (!acc.namesOfSession(auth.session).includes(rec.to.toLowerCase().replace(/^@/, ""))) return json(res, 403, { error: "that steer was not sent to you" });
+    const spawn = rec.kind === "spawn";
     const status = String(body.status || "");
-    if (!STEER_OWNER_STATUSES.has(status)) return json(res, 400, { error: "status must be delivered, accepted or declined" });
-    if (!["queued", "delivered"].includes(rec.status)) return json(res, 409, { error: `already ${rec.status}` });
+    if (!(spawn ? SPAWN_OWNER_STATUSES : STEER_OWNER_STATUSES).has(status)) return json(res, 400, { error: "not a status the owner can report" });
+    if (!(spawn ? ["queued", "delivered", "accepted"] : ["queued", "delivered"]).includes(rec.status)) return json(res, 409, { error: `already ${rec.status}` });
+    if (spawn && status === "started" && rec.status !== "accepted") return json(res, 409, { error: "started before it was accepted" });
     rec.status = status;
     rec.reason = typeof body.reason === "string" ? body.reason.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 200) : "";
+    if (spawn && status === "started") {
+      rec.session = typeof body.session === "string" ? body.session.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 64) : "";
+      const board = boards.get(auth.team);
+      if (rec.session && board) {
+        board.startedBy.set(rec.session, rec.from);
+        while (board.startedBy.size > 500) board.startedBy.delete(board.startedBy.keys().next().value);
+        notifyPeopleChanged(auth.team);
+      }
+    }
     steerTellSender(auth.team, acc, rec);
-    if (status !== "delivered") console.log(`zevet: steer ${rec.id} ${rec.from} -> ${rec.to} ${status}`);
+    if (status !== "delivered") console.log(`zevet: ${spawn ? "spawn" : "steer"} ${rec.id} ${rec.from} -> ${rec.to} ${status}`);
     return json(res, 200, { ok: true });
   }
 
