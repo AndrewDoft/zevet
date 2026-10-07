@@ -51,6 +51,8 @@
       "zevet-mcp.js",
       "permit-grants.js",
       "embedder.js",
+      "overlap-check.js",
+      "claims.js",
       "index-capability.js",
       "code-index.js",
       "zevet-voice.js",

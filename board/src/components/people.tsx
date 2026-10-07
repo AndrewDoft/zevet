@@ -47,6 +47,7 @@
  * which is a column built for a long list rather than a 250px rail. The plus
  * is in this pane's own title row (App.tsx).
  */
+import { SessionClaimChip } from "./claimviews";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { Twist } from "./twist";
 import {
@@ -283,6 +284,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
             <span className="agent-row-name">{row.blurb}</span>
             <span className="agent-row-detail">{agentDetail(row)}</span>
           </span>
+          <SessionClaimChip session={c?.sessionId} />
           {c && c.running ? (
             <span className="agent-row-live" role="img" aria-label="Running" />
           ) : unseen ? (
@@ -341,6 +343,7 @@ function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; sessio
             {a.startedBy ? <span data-started-by={a.startedBy} title={`Started on ${a.actor}'s machine by ${a.startedBy}`} style={{ opacity: 0.6 }}>by {a.startedBy}: </span> : null}
             {a.mission || where || "working"}
           </span>
+          <SessionClaimChip session={a.session} />
           {a.state === "working" ? (
             <span className="agent-row-live" role="img" aria-label="Running" />
           ) : (

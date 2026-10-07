@@ -54,6 +54,7 @@ const statusSources = require("./status-sources.js");
 const crypto = require("node:crypto");
 const indexCapability = require("./index-capability.js");
 const embedder = require("./embedder.js");
+const { classifyOverlap } = require("./overlap-check.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
 const { AppUpdater, loopbackProofKeys, INSTALL_ARGS, winInstallArgs } = bootShell.require("./app-update.js");
@@ -2474,6 +2475,89 @@ bridge.handle("local:indexSearch", async (_e, arg) => {
   }
 });
 
+/* Advisory path claims (D-070). `myClaims` are this machine's, shared with the
+ * team as one sealed frame per session (desktop/claims.js, relayed by the hub
+ * on the steer channel); `teamClaims` are the teammates' frames, opened here
+ * with the document key. Nothing here ever blocks a write. */
+const claimsLib = require("./claims.js");
+const shareClaim = async (actor, session, entry) => {
+  try {
+    const a = steerAuth(readConfig());
+    const docCrypto = agentSteer.loadDocCrypto();
+    if (!a.hub || !a.token || !a.key || !docCrypto) return;
+    await fetch(`${a.hub}/ingest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zevet-token": a.token },
+      body: JSON.stringify(claimsLib.claimBody(docCrypto, a.key, actor, session, entry)),
+      redirect: "error",
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    // Local claims still work; teammates see them at the next change.
+  }
+};
+const myClaims = new claimsLib.ClaimStore({
+  broadcast: (actor, session, entry) => {
+    void shareClaim(actor, session, entry);
+    pushClaims();
+  },
+});
+const teamClaims = new claimsLib.ClaimStore();
+function allClaims() {
+  const mine = myClaims.claims().map((e) => ({ ...e, mine: true }));
+  const own = new Set(mine.map((e) => e.session));
+  return [...mine, ...teamClaims.claims().filter((e) => !own.has(e.session)).map((e) => ({ ...e, mine: false }))];
+}
+function pushClaims() {
+  toBoard("local:claimsEvent", { claims: allClaims() });
+}
+setInterval(() => {
+  if (myClaims.expire() | teamClaims.expire()) pushClaims();
+}, 30 * 1000).unref();
+
+/** A claimable path: relative, inside the folder, no `..`. */
+function claimablePath(p) {
+  const rel = String(p || "").replaceAll("\\", "/").replace(/^\.\//, "");
+  return rel && !rel.startsWith("/") && !/^[A-Za-z]:/.test(rel) && !rel.split("/").includes("..") ? rel : "";
+}
+
+bridge.handle("local:overlapCheck", async (_e, arg) => {
+  const input = arg && typeof arg.input === "object" && arg.input ? arg.input : {};
+  const active = (Array.isArray(input.active) ? input.active : []).concat(
+    claimsLib.claimsAsActive(allClaims(), { skip: String(input.session || ""), repo: String(input.repo || "") }),
+  );
+  try {
+    // Never a model download: createEmbedder refuses when the model is absent.
+    // A cold load must not hold the Send button, so it gets four seconds.
+    const emb = sharedEmbedder || (await Promise.race([ensureEmbedder(), new Promise((r) => setTimeout(r, 4000))]));
+    const embed = emb && emb.ok ? emb.embed : undefined;
+    return { ok: true, hits: await classifyOverlap({ ...input, active, embed }) };
+  } catch {
+    return { ok: true, hits: await classifyOverlap({ ...input, active }).catch(() => []) };
+  }
+});
+bridge.handle("local:claim", async (_e, arg) => {
+  const input = arg && typeof arg.input === "object" && arg.input ? arg.input : {};
+  const root = typeof input.root === "string" ? knownRoot(input.root) : null;
+  const session = typeof input.session === "string" ? input.session : "";
+  const paths = (Array.isArray(input.paths) ? input.paths : []).map(claimablePath).filter(Boolean).slice(0, claimsLib.MAX_PATHS);
+  if (!root || !session || !paths.length) return { ok: false, error: "a folder, a session and a path are required" };
+  // A path an agent merely mentioned is only claimed when the file is there.
+  const real = input.auto === true ? paths.filter((p) => fs.existsSync(path.join(root, p))) : paths;
+  if (!real.length) return { ok: true, claim: null, shared: false };
+  const cfg = readConfig();
+  const actor = String(input.actor || (cfg && cfg.actor) || "");
+  const claim = myClaims.claim({ paths: real, session, actor, repo: path.basename(root), timeoutMs: Number(input.timeoutMs) || undefined });
+  const a = steerAuth(cfg);
+  return { ok: true, claim, shared: Boolean(a.hub && a.token && a.key && agentSteer.loadDocCrypto()) };
+});
+bridge.handle("local:releaseClaims", async (_e, arg) => {
+  const session = String((arg && arg.session) || "");
+  if (session) myClaims.release({ session, path: typeof (arg && arg.path) === "string" ? arg.path : undefined });
+  return { ok: true };
+});
+bridge.handle("local:claims", async () => ({ ok: true, claims: allClaims() }));
+
 bridge.handle("local:status", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
   const dir = root ? knownRoot(root) : null;
@@ -3667,6 +3751,11 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
       notePlacement(place, evt, handle.id);
       if (evt && evt.type === "agent" && evt.payload && evt.payload.session_id) consoleLog.updateMeta(handle.id, { sessionId: String(evt.payload.session_id) });
       toBoard("local:agentEvent", consoleLog.record(handle.id, evt));
+      // The session is over: what it claimed goes, for teammates too.
+      if (evt && evt.type === "exit") {
+        const c = consoleLog.snapshot().consoles.find((x) => x.id === handle.id);
+        if (c && c.sessionId) myClaims.endSession(c.sessionId);
+      }
     },
   };
   const started = isZevet ? startZevetConsole(spec, claudeOnly) : instrumentedStartConsole(spec);
@@ -4591,6 +4680,14 @@ function startSteerChannel(cfg) {
           pendingSteers.delete(id);
           if (status !== "replay" && status !== "ignored") toBoard("local:steerEvent", { kind: "done", id, from: String((data && data.from) || ""), status });
         });
+      } else if (name === "hello" || name === "claim" || name === "claim-release") {
+        const mine = new Set(myClaims.claims().map((e) => e.session));
+        const changed = claimsLib.applyFrame(teamClaims, name, data, {
+          docCrypto: agentSteer.loadDocCrypto(),
+          key: steerAuth(readConfig()).key,
+          isMine: (session) => mine.has(session),
+        });
+        if (changed) pushClaims();
       } else if (name === "steer-status" && data && typeof data.id === "string") {
         toBoard("local:steerEvent", { kind: "status", id: data.id, of: data.kind === "spawn" ? "spawn" : "steer", to: String(data.to || ""), status: String(data.status || ""), reason: String(data.reason || ""), session: String(data.session || "") });
       }
@@ -4607,6 +4704,8 @@ function stopSteerChannel() {
   activityTimer = null;
   for (const resolve of pendingSteers.values()) resolve(null);
   pendingSteers.clear();
+  teamClaims.clear();
+  pushClaims();
 }
 
 bridge.handle("local:steerSend", async (_e, arg) => {

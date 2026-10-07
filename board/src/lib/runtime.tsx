@@ -37,6 +37,9 @@ import { groupTurnTools } from "./turngroup.mjs";
 import { overlayDraft } from "./chat-stream.mjs";
 import { parseLocal } from "./slash.mjs";
 import { sendSpawn, sendSteer, useSteer } from "./steer";
+import { type OverlapHit, claimedBySession, gateSend, pathsIn, repoNameOf } from "./claims.mjs";
+import { askOverlap, claimPaths, useClaims } from "./claimstore";
+import { withState } from "./agents.mjs";
 import { ToolUIs } from "../components/tools";
 import type { ConsoleEntry } from "./types";
 
@@ -89,6 +92,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
   const setActiveConsole = useBoard((s) => s.setActiveConsole);
   const openLauncher = useBoard((s) => s.openLauncher);
   const startAgent = useBoard((s) => s.startAgent);
+  const teamAgents = useBoard((s) => s.teamAgents);
   const launchAgent = useBoard((s) => s.launchAgent);
   const localRoot = useBoard((s) => s.localRoot);
   const setModelSelectorOpen = useBoard((s) => s.setModelSelectorOpen);
@@ -206,24 +210,39 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
    * refusal. */
   const sendRef = useRef<(text: string) => void>(() => {});
   sendRef.current = (text: string) => {
-    if (active) sendPrompt(active.key, text);
+    if (!active) return;
+    sendPrompt(active.key, text);
+    // The agent is about to work on the files its prompt names: say so. Only
+    // for a session that exists, and the desktop keeps only files that exist.
+    const planned = pathsIn(text);
+    if (active.sessionId && localRoot && planned.length) void claimPaths(localRoot, planned, active.sessionId, true);
   };
   const stopRef = useRef<() => void>(() => {});
   stopRef.current = () => {
     if (active) stopConsole(active.key);
   };
 
-  const queue = useMemo(
-    () =>
-      createMessageQueue({
-        run: (message) => {
-          const text = textOf(message);
-          if (text) sendRef.current(text);
-        },
-        cancel: () => stopRef.current(),
-      }),
-    [],
-  );
+  /* The overlap gate (D-070) has to sit at the queue's door as well as in
+   * onNew: with a queue present the runtime never calls onNew (the rule above),
+   * so a gate only in onNew never sees a prompt to a running agent. The text
+   * is asked about when it is TYPED, not when the queue later drains it. */
+  const gateRef = useRef<(text: string) => Promise<boolean>>(async () => true);
+  const queue = useMemo(() => {
+    const q = createMessageQueue({
+      run: (message) => {
+        const text = textOf(message);
+        if (text) sendRef.current(text);
+      },
+      cancel: () => stopRef.current(),
+    });
+    for (const name of ["enqueue", "steer"] as const) {
+      const through = q.adapter[name].bind(q.adapter);
+      q.adapter[name] = (message: AppendMessage) => {
+        void gateRef.current(textOf(message)).then((ok) => { if (ok) through(message); });
+      };
+    }
+    return q;
+  }, []);
 
   // The queue advances on the run's edges, and nothing else tells it. A turn
   // that opened is busy; a turn that closed is idle and releases the next one.
@@ -231,6 +250,52 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
     if (streaming) queue.notifyBusy();
     else queue.notifyIdle();
   }, [streaming, queue]);
+
+  const runtimeRef = useRef<{ thread: { composer: { setText: (t: string) => void } } } | null>(null);
+  const asking = useRef(false);
+  /** The pre-prompt overlap check (D-070): advisory, local, and it never sends
+   *  or drops anything on its own. Cancel puts the text back in the composer. */
+  gateRef.current = async (text: string) => {
+    // A steer goes to a teammate's agent and a slash command stays in zevet:
+    // neither starts work on files here.
+    if (reading || steering || parseLocal(text, active?.agent ?? launchAgent)) return true;
+    const back = () => runtimeRef.current?.thread.composer.setText(text);
+    if (asking.current) {
+      back();
+      return false;
+    }
+    asking.current = true;
+    try {
+      const ok = await gateSend(() => checkOverlap(text), askOverlap);
+      if (!ok) back();
+      return ok;
+    } finally {
+      asking.current = false;
+    }
+  };
+  const checkOverlap = async (text: string): Promise<OverlapHit[]> => {
+    const l = bridge.local;
+    if (typeof l?.overlapCheck !== "function") return [];
+    const mine = active?.sessionId || "";
+    const g = useBoard.getState();
+    try {
+      const r = await l.overlapCheck({
+        task: text,
+        branch: teamAgents.find((a) => mine && a.session === mine)?.branch || "",
+        repo: repoNameOf(localRoot),
+        session: mine,
+        openPaths: claimedBySession(useClaims.getState().claims, mine),
+        plannedPaths: pathsIn(text),
+        // Everyone still at it, not the agent this prompt is going to.
+        active: withState(teamAgents, Date.now(), g.idleAfterMs)
+          .filter((a) => a.state !== "finished" && (!mine || a.session !== mine))
+          .map((a) => ({ actor: a.actor, session: a.session, branch: a.branch, openPaths: [], plannedPaths: [], task: a.current || a.mission || "" })),
+      });
+      return r && r.ok ? r.hits : [];
+    } catch {
+      return [];
+    }
+  };
 
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages,
@@ -312,6 +377,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
       if (reading) return;
       const text = textOf(message);
       if (!text) return;
+      if (!(await gateRef.current(text))) return;
       if (steering) {
         // Never a slash command here: the text goes to someone else's agent,
         // prefixed with my name, and zevet's own commands mean nothing there.
@@ -341,7 +407,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
         return;
       }
       if (active) {
-        sendPrompt(active.key, text);
+        sendRef.current(text);
         return;
       }
       // Nothing running: start what the picker names and ask it. The agent,
@@ -373,6 +439,8 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
       },
     },
   });
+
+  runtimeRef.current = runtime;
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>

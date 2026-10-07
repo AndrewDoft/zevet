@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useMemo } from "react";
+import { type CSSProperties, type ReactNode, useMemo, useState } from "react";
 import { FileIcon, FolderIcon } from "lucide-react";
 import { Twist } from "./twist";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -11,6 +11,7 @@ import {
   hueOf,
   authorStyle,
   myAuthorStyle,
+  selectActiveConsole,
   selectCollapsed,
   selectEvents,
   selectStats,
@@ -23,6 +24,9 @@ import { DiffCounts } from "./diffcounts";
 import { lastAuthor } from "../lib/authorcolor.mjs";
 import { bridge } from "../lib/bridge";
 import { ago } from "../lib/text";
+import { claimOfPath, repoNameOf } from "../lib/claims.mjs";
+import { claimPaths, releasePath, useClaims } from "../lib/claimstore";
+import { ClaimMark, ClaimMenu } from "./claims";
 
 /** `author`: whoever touched the file last; null falls back to green/red. */
 function StatBadge({ path, author }: { path: string; author: string | null }) {
@@ -106,6 +110,15 @@ function NodeRow({
     .sort((a, b) => node.who[b] - node.who[a])
     .slice(0, 4);
   const spritesForRow = !isDir ? sprites[path] : undefined;
+  const localRoot = useBoard((s) => s.localRoot);
+  const myActor = useBoard((s) => s.myActor);
+  // The id alone: a whole console changes every token, and this is every row.
+  const activeSession = useBoard((s) => selectActiveConsole(s)?.sessionId || "");
+  const repo = repoNameOf(localRoot);
+  const claim = useClaims((s) => (isDir ? null : claimOfPath(s.claims, path, repo)));
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // The claim belongs to the agent in front; with none, to a hand-made one.
+  const session = activeSession || "manual";
 
   return (
     <>
@@ -128,6 +141,7 @@ function NodeRow({
         data-sel={String(!isDir && selectedPath === path)}
         // The element's own indent formula, in the units it uses.
         style={{ paddingInlineStart: `${0.85 + depth * 0.85}rem` }}
+        onContextMenu={!isDir && localRoot ? (e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); } : undefined}
         onClick={() => {
           // `open` IS the new collapsed state: this row is open, so collapse
           // it. Passing `!open` wrote the current value back — see board.ts.
@@ -145,6 +159,7 @@ function NodeRow({
           <span className="name">{node.name}</span>
         </span>
         {!isDir ? <StatBadge path={path} author={lastAuthor(node.who)} /> : null}
+        {claim ? <ClaimMark actor={claim.actor} colour={hueOf(claim.mine ? myActor : claim.actor)} /> : null}
         <span className="marks">
           {marks.map((a) => (
             <span
@@ -163,6 +178,18 @@ function NodeRow({
           </span>
         ) : null}
       </button>
+      {menu && localRoot ? (
+        <ClaimMenu
+          x={menu.x}
+          y={menu.y}
+          mine={Boolean(claim && claim.mine)}
+          onClose={() => setMenu(null)}
+          onPick={() => {
+            setMenu(null);
+            void (claim && claim.mine ? releasePath(claim.session, path) : claimPaths(localRoot, [path], session));
+          }}
+        />
+      ) : null}
       {isDir && open ? (
         <TreeChildren node={node} depth={depth + 1} prefix={path} now={now} sprites={sprites} />
       ) : null}

@@ -294,6 +294,10 @@ const zevetLocal = defineIpc({
 C1's per-repo opt-in, keyed by resolved folder path; default none.` },
     masoraRepoToggle: { channel: "local:masoraRepoToggle", params: ["root","on"], pack: "object", type: `(root: string, on: boolean) => Promise<{ ok: boolean; error?: string; repos?: Record<string, boolean> }>`, optional: true },
     tree: { channel: "local:tree", params: ["root"], type: `(dir: string) => Promise<{ ok: boolean; entries?: LocalEntry[]; truncated?: boolean; origin?: string; error?: string }>`, doc: `A file tree under one of those folders.` },
+    overlapCheck: { channel: "local:overlapCheck", params: ["input"], pack: "object", type: `(input: { task: string; branch: string; repo: string; session: string; openPaths: string[]; plannedPaths: string[]; active: unknown[] }) => Promise<{ ok: boolean; hits: Array<{ actor: string; session: string; label: "overlapping" | "adjacent"; claimed?: boolean }> }>`, optional: true, doc: `The pre-prompt overlap check (D-070): the task against every agent the board knows and every claim, locally.` },
+    claim: { channel: "local:claim", params: ["input"], pack: "object", type: `(input: { root: string; paths: string[]; session: string; actor?: string; auto?: boolean }) => Promise<{ ok: boolean; claim?: unknown; shared?: boolean; error?: string }>`, optional: true, doc: `Advisory claim of paths for one agent session; sealed and shared with the team. Never blocks a write.` },
+    releaseClaims: { channel: "local:releaseClaims", params: ["session","path"], pack: "object", type: `(session: string, path?: string) => Promise<{ ok: boolean }>`, optional: true, doc: `Release one path, or every path of a session when none is given.` },
+    claims: { channel: "local:claims", params: [], type: `() => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }> }>`, optional: true, doc: `Live claims, mine and the team's.` },
     read: { channel: "local:read", params: ["root","relPath"], pack: "object", type: `(root: string, relPath: string) => Promise<ReadResult>`, doc: `One text file, by path relative to its root.` },
     write: { channel: "local:write", params: ["root","relPath","text","opts"], pack: "object", type: `(root: string, relPath: string, text: string, opts: { bom?: boolean; eol?: string }) => Promise<{ ok: boolean; error?: string }>`, doc: `One text file back, by path relative to its root.
 
@@ -502,6 +506,7 @@ as the permit channel above, different event names.
 
 A question from an agent, and the answer back. Optional like the permit
 pair beside them: an older main process simply never sends one.` },
+    onClaimsEvent: { channel: "local:claimsEvent", payload: "unknown", type: `(cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }> }) => void) => () => void`, optional: true, doc: `The live claims changed (a claim, a release, an expiry, a teammate's frame).` },
     onSteerEvent: { channel: "local:steerEvent", payload: "unknown", type: `(cb: (e: { kind: string; id: string; [k: string]: unknown }) => void) => () => void`, optional: true, doc: `Steering (D-058): \`ask\` an approval card for a teammate's steer, \`done\`
 when one was injected or declined, \`status\` for a steer this person sent.` },
   },

@@ -8,6 +8,7 @@ import {
 import { File } from "@/components/assistant-ui/elements/file";
 import { ComposerControls, ComposerExtras } from "@/components/composercontrols";
 import { SlashMenu } from "@/components/slashmenu";
+import { OverlapNotice } from "@/components/claimviews";
 import { MentionRoot } from "@/components/mentionmenu";
 import { UserText } from "@/components/slashtext";
 import { ThreadFollowupSuggestions } from "@/components/assistant-ui/elements/follow-up-suggestions.aui";
@@ -404,6 +405,7 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <MentionRoot>
+      <OverlapNotice />
       <SlashMenu />
       <ComposerPrimitive.AttachmentDropzone render={<div data-slot="aui_composer-shell" className="border-foreground/10 focus-within:border-foreground/25 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]" />}><ComposerAttachments /><ComposerPrimitive.Input
                       placeholder="Send a message..."

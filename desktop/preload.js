@@ -306,6 +306,14 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   masoraRepoToggle: (root, on) => ipcRenderer.invoke("local:masoraRepoToggle", { root, on }),
   /** A file tree under one of those folders. */
   tree: (root) => ipcRenderer.invoke("local:tree", root),
+  /** The pre-prompt overlap check (D-070): the task against every agent the board knows and every claim, locally. */
+  overlapCheck: (input) => ipcRenderer.invoke("local:overlapCheck", { input }),
+  /** Advisory claim of paths for one agent session; sealed and shared with the team. Never blocks a write. */
+  claim: (input) => ipcRenderer.invoke("local:claim", { input }),
+  /** Release one path, or every path of a session when none is given. */
+  releaseClaims: (session, path) => ipcRenderer.invoke("local:releaseClaims", { session, path }),
+  /** Live claims, mine and the team's. */
+  claims: () => ipcRenderer.invoke("local:claims"),
   /** One text file, by path relative to its root. */
   read: (root, relPath) => ipcRenderer.invoke("local:read", { root, relPath }),
   /**
@@ -580,6 +588,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * pair beside them: an older main process simply never sends one.
    */
   onAskRequest: (fn) => subscribe("local:askRequest", fn),
+  /** The live claims changed (a claim, a release, an expiry, a teammate's frame). */
+  onClaimsEvent: (fn) => subscribe("local:claimsEvent", fn),
   /**
    * Steering (D-058): `ask` an approval card for a teammate's steer, `done`
    * when one was injected or declined, `status` for a steer this person sent.
