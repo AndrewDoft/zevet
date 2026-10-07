@@ -312,6 +312,14 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   claim: (input) => ipcRenderer.invoke("local:claim", { input }),
   /** Release one path, or every path of a session when none is given. */
   releaseClaims: (session, path) => ipcRenderer.invoke("local:releaseClaims", { session, path }),
+  /** Pinned notes for a folder (or one file), each flagged stale when the file's hash moved. Computed locally. */
+  memoryList: (input) => ipcRenderer.invoke("local:memoryList", { input }),
+  /** Pin a note to a file at its current hash; sealed with the document key. */
+  memoryCreate: (input) => ipcRenderer.invoke("local:memoryCreate", { input }),
+  /** Edit a note; rehash re-pins it to the file as it is now. */
+  memoryEdit: (input) => ipcRenderer.invoke("local:memoryEdit", { input }),
+  /** Retire a note. */
+  memoryRetire: (input) => ipcRenderer.invoke("local:memoryRetire", { input }),
   /** Live claims, mine and the team's. */
   claims: () => ipcRenderer.invoke("local:claims"),
   /** One text file, by path relative to its root. */
@@ -598,6 +606,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * pair beside them: an older main process simply never sends one.
    */
   onAskRequest: (fn) => subscribe("local:askRequest", fn),
+  /** Pinned notes changed (a teammate's note arrived or one was edited). */
+  onMemoryEvent: (fn) => subscribe("local:memoryEvent", fn),
   /** The live claims changed (a claim, a release, an expiry, a teammate's frame). */
   onClaimsEvent: (fn) => subscribe("local:claimsEvent", fn),
   /**

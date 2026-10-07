@@ -157,6 +157,8 @@ describe("the bridge surface the renderer is written against", () => {
       //   The words are the person's own conversation, which the page already
       //   holds because it sent them; it is a separate channel only so a chat
       //   is never drawn as a console in Code.
+      //   local:memoryEvent — pinned notes changed (a teammate's arrived, or one
+      //   was edited); carries only the repo name, the board re-lists over invoke.
       //   local:schedulesChanged — a due schedule just ran (or was skipped);
       //   the board's own scheduled-run list is otherwise only refreshed
       //   after a save/toggle/remove round-trip it initiated itself. Carries

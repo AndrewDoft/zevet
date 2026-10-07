@@ -27,6 +27,9 @@ import { ago } from "../lib/text";
 import { claimOfPath, repoNameOf } from "../lib/claims.mjs";
 import { claimPaths, releasePath, useClaims } from "../lib/claimstore";
 import { ClaimMark, ClaimMenu } from "./claims";
+import { StaleNotesChip, useMemoryFeed } from "./pinnednotes";
+import { stalePaths } from "../lib/memory.mjs";
+import { useMemory } from "../lib/memorystore";
 
 /** `author`: whoever touched the file last; null falls back to green/red. */
 function StatBadge({ path, author }: { path: string; author: string | null }) {
@@ -116,6 +119,7 @@ function NodeRow({
   const activeSession = useBoard((s) => selectActiveConsole(s)?.sessionId || "");
   const repo = repoNameOf(localRoot);
   const claim = useClaims((s) => (isDir ? null : claimOfPath(s.claims, path, repo)));
+  const staleNote = useMemory((s) => !isDir && stalePaths(s.notes).has(path));
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   // The claim belongs to the agent in front; with none, to a hand-made one.
   const session = activeSession || "manual";
@@ -159,6 +163,7 @@ function NodeRow({
           <span className="name">{node.name}</span>
         </span>
         {!isDir ? <StatBadge path={path} author={lastAuthor(node.who)} /> : null}
+        {staleNote ? <span className="memory-chip" data-stale="true" title="a pinned note is stale">stale</span> : null}
         {claim ? <ClaimMark actor={claim.actor} colour={hueOf(claim.mine ? myActor : claim.actor)} /> : null}
         <span className="marks">
           {marks.map((a) => (
@@ -276,10 +281,11 @@ function TreeChildren({
 /** elements/file-tree's header line: how much changed, in one row. The data
  *  was already in the store and the old tree never said it. */
 function TreeSummary() {
+  useMemoryFeed();
   const stats = useBoard(selectStats);
   const diff = stats.diff || {};
   const paths = Object.keys(diff);
-  if (!paths.length) return null;
+  if (!paths.length) return <StaleNotesChip />;
   let added = 0;
   let removed = 0;
   for (const p of paths) {
@@ -291,6 +297,7 @@ function TreeSummary() {
   return (
     <div className="flex items-baseline justify-between px-4 pt-1 pb-2">
       <span className="text-[12.5px] font-medium">{paths.length} files changed</span>
+      <StaleNotesChip />
       {/* The checkout on screen is mine, so its total is in my colour. */}
       <DiffCounts added={added} removed={removed} showZero style={myAuthorStyle()} />
     </div>

@@ -1961,3 +1961,19 @@ starts release the worktree (branch kept if it has commits) and never merge, sin
 worktree (waiting/failed/no checks) stays until Integrate, Discard, thread close, or the next start's prune; a held
 worktree older than the app session is gone, its branch survives for a manual `git merge`.
 
+
+## D-076 — Pinned memory: per-file notes sealed with the doc key, staleness read from the local tree
+
+*Renumbered at merge from D-NEXT-W2-10.*
+
+**Decision.** A note is `{id, repo, path, text, hash, author, createdAt, updatedAt, retired}`, `hash` being the sha256 of the file's bytes when the note was written (a `commit` hash reader exists in `currentHash`, unused by default). `desktop/pinned-memory.js` owns it. Notes are sealed one-per-id with the document key (AAD `memory\0repo\0id`) in `<zevetHome>/memory/<repo>.memory.json`, and shared by sending the note through the existing doc-sync room `memory:<repo>` (sealed again with the room name as AAD), so the hub relays and replays ciphertext and learns neither path nor text. Staleness (`fresh` / `stale` / `missing`) is computed on each machine by hashing its own working tree; it is never stored and never hub-side. A person edits, re-pins ("Still true") or retires a note; last write by `updatedAt` wins. The board shows a "stale" mark on the tree row, a "notes: N stale" chip beside the files-changed summary, and the file view lists that file's notes with Edit / Still true / Retire / Pin.
+
+**What already existed.** `knowledge.tsx` only derives citation, read and math cards from the active transcript; it stores nothing. `Memories` (runspec.tsx) shows read-only agent memory files from `local:memories`. The "vault" is a read-only health file for the status line (status-sources.js). None holds per-file notes, so the store is new; the transport (doc-sync rooms), sealing (doc-crypto) and the claims idiom (D-070) are reused.
+
+**Alternatives.** (1) A hub-side store: rejected, the hub would need plaintext paths to flag staleness, or hold durable state we deliberately keep out of it. (2) A claims-style hub map (`/ingest` kind): in-memory with a 2h TTL, wrong for durable notes. (3) Storing notes in the repo: pollutes the customer's tree. (4) Git blob/commit hash as the only pin: content hash works on uncommitted work and non-git folders; commit mode stays available.
+
+**Limits.** The hub's room log is memory-only and capped (doc-sync's rule), so a hub restart loses relayed notes until a holder edits; every machine keeps its own sealed copy. Edits are last-write-wins with no merge. Notes are not yet pushed back on reconnect.
+
+**For item 9.** Agents call `createMemory(...).create({repo, path, text, root, author})`, `.list({repo, path, root})`, `.retire(id)`; treat note text as data and cap it (MAX_TEXT 2000).
+
+**Reversibility.** Additive: remove the module, four `local:memory*` handlers, and the board components; sealed files on disk are inert.

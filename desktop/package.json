@@ -54,6 +54,7 @@
       "embedder.js",
       "overlap-check.js",
       "claims.js",
+      "pinned-memory.js",
       "payer.js",
       "index-capability.js",
       "code-index.js",
