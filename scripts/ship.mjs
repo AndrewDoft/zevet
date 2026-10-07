@@ -15,7 +15,7 @@
 //   build.yml   wait for the tag's run (foreground)
 //   installers  signature check, upload the installers                 (every release: new downloads)
 //   installer feed  signed zevet-latest.json, uploaded LAST            (shell release only)
-//   stable links    Caddy: Zevet-Setup.exe / Zevet.dmg -> this version, in place
+//   stable links    Caddy: Zevet-Setup.exe / Zevet-Setup-arm64.exe / Zevet.dmg / Zevet.AppImage -> this version, in place
 //   payload     the payload to the stable channel, then read back over HTTPS
 //   hub         tarball over /srv/zevet, restart, /healthz + /version  (board/hub/client changed)
 //   verify      the served installers hash to the built ones; Authenticode; the feed
@@ -49,6 +49,43 @@ export const LOCK = path.join(tmpdir(), "zevet-ship.lock");
 export const workDir = (version) => path.join(tmpdir(), "zevet-ship", version);
 export const exeName = (v) => `zevet-${v}-windows-x64-setup.exe`;
 export const dmgName = (v) => `zevet-${v}-macos-arm64.dmg`;
+export const arm64ExeName = (v) => `zevet-${v}-windows-arm64-setup.exe`;
+export const appImageName = (v) => `zevet-${v}-linux-x64.AppImage`;
+/** Every installer a release publishes: [stable link, versioned file, fact key, build.yml artifact]. */
+export const INSTALLERS = [
+  ["Zevet-Setup.exe", exeName, "exe"],
+  ["Zevet.dmg", dmgName, "dmg"],
+  ["Zevet-Setup-arm64.exe", arm64ExeName, "arm64"],
+  ["Zevet.AppImage", appImageName, "appimage"],
+];
+const installerFiles = (v) => INSTALLERS.map(([, name]) => name(v));
+
+/** The Caddyfile edit, as the python the stable-links step runs on the box. In place (never sed -i, RELEASING.md §4a).
+ *  A stable link that has no handle block yet gets one cloned from Zevet-Setup.exe's, so the first ship that
+ *  carries a new platform creates its link; every versioned name is then rewritten to `v`. */
+export function caddyPython(v, file = "/srv/masora/Caddyfile") {
+  return `import re
+p = "${file}"
+with open(p, "r+") as f:
+    text = f.read()
+    # The block ends at the brace on the handle's OWN indentation: the live block nests a header { }
+    # whose closing brace the first "}" line would otherwise match (a truncated clone in prod's Caddyfile).
+    src = re.search(r"^([ \\t]*)handle /download/Zevet-Setup\\.exe \\{\\n.*?\\n\\1\\}\\n", text, re.S | re.M)
+    if not src:
+        raise SystemExit("no handle block for Zevet-Setup.exe")
+    for link, old in (("Zevet-Setup-arm64.exe", "windows-arm64-setup.exe"), ("Zevet.AppImage", "linux-x64.AppImage")):
+        if "/download/" + link not in text:
+            block = src.group(0).replace("Zevet-Setup.exe", link).replace("windows-x64-setup.exe", old)
+            text = text.replace(src.group(0), src.group(0) + block, 1)
+    text = re.sub(r"zevet-[0-9.]+-macos-arm64\\.dmg", "zevet-${v}-macos-arm64.dmg", text)
+    text = re.sub(r"zevet-[0-9.]+-windows-x64-setup\\.exe", "zevet-${v}-windows-x64-setup.exe", text)
+    text = re.sub(r"zevet-[0-9.]+-windows-arm64-setup\\.exe", "zevet-${v}-windows-arm64-setup.exe", text)
+    text = re.sub(r"zevet-[0-9.]+-linux-x64\\.AppImage", "zevet-${v}-linux-x64.AppImage", text)
+    f.seek(0)
+    f.write(text)
+    f.truncate()
+`;
+}
 
 // ── the real io ─────────────────────────────────────────────────────────────────────────────────────
 // Everything that leaves the process goes through one of these, so test/ship.test.mjs can fake all of it.
@@ -236,7 +273,7 @@ const PERMS = `find ${DL}/p -type d -exec chmod 755 {} +; find ${DL}/p -type f -
 export function buildSteps(ctx) {
   const { io, d, version: v, tag } = ctx;
   const shell = d.kind === "shell";
-  const exeUrl = `${BASE}/${exeName(v)}`, dmgUrl = `${BASE}/${dmgName(v)}`;
+  const installerUrls = installerFiles(v).map((f) => `${BASE}/${f}`);
   /* desktop/ modules are loaded from ship's own worktree, which has had `npm ci`:
      the watcher's runner checkout never installs desktop deps, and the first
      auto-ship died there on "Cannot find module '@masora/desktop-kit'". */
@@ -253,17 +290,17 @@ export function buildSteps(ctx) {
   const okHead = async (url) => (await io.https(url, { method: "HEAD" })).status === 200;
   const subjects = () => io.git(["log", "--format=%s", `v${d.base}..${tag}`, "--", ".", ":!DECISIONS.md"]).split(/\r?\n/).filter((s) => s && !s.startsWith("release:"));
 
-  /** Both installers from the tag's build.yml run, in one empty directory (RELEASING.md §2). */
+  /** All four installers from the tag's build.yml run, in one empty directory (RELEASING.md §2). */
   const artifacts = () => {
     const dir = path.join(ctx.work, "release");
-    if (existsSync(path.join(dir, exeName(v))) && existsSync(path.join(dir, dmgName(v)))) return dir;
+    if (installerFiles(v).every((f) => existsSync(path.join(dir, f)))) return dir;
     rmSync(dir, { recursive: true, force: true });
     mkdirSync(dir, { recursive: true });
     const run = io.buildRun(tag);
     if (!run) throw new Error(`no build.yml run for ${tag}`);
-    for (const name of ["zevet-windows", "zevet-macos"]) io.gh(["run", "download", String(run.databaseId), "-n", name, "-D", dir]);
-    for (const f of readdirSync(dir)) if (!/\.(exe|dmg)$/.test(f)) rmSync(path.join(dir, f), { force: true });
-    for (const f of [exeName(v), dmgName(v)]) if (!existsSync(path.join(dir, f))) throw new Error(`build artifacts lack ${f}: ${readdirSync(dir)}`);
+    for (const name of ["zevet-windows", "zevet-macos", "zevet-linux"]) io.gh(["run", "download", String(run.databaseId), "-n", name, "-D", dir]);
+    for (const f of readdirSync(dir)) if (!/\.(exe|dmg|AppImage)$/.test(f)) rmSync(path.join(dir, f), { force: true });
+    for (const f of installerFiles(v)) if (!existsSync(path.join(dir, f))) throw new Error(`build artifacts lack ${f}: ${readdirSync(dir)}`);
     return dir;
   };
   const authenticode = (file) => {
@@ -324,12 +361,13 @@ export function buildSteps(ctx) {
     },
     {
       name: "installers",
-      plan: () => `download artifacts, Authenticode-check the exe, upload ${exeName(v)} and ${dmgName(v)}`,
-      done: async () => (await okHead(exeUrl)) && (await okHead(dmgUrl)),
+      plan: () => `download artifacts, Authenticode-check both exes, upload ${installerFiles(v).join(", ")}`,
+      done: async () => { for (const u of installerUrls) if (!(await okHead(u))) return false; return true; },
       run() {
         const dir = artifacts();
         ctx.facts.authenticode = authenticode(path.join(dir, exeName(v)));
-        io.scp([path.join(dir, exeName(v)), path.join(dir, dmgName(v))]);
+        authenticode(path.join(dir, arm64ExeName(v)));
+        io.scp(installerFiles(v).map((f) => path.join(dir, f)));
         // Installers first, feed last; in a root shell, so the glob is expanded by root (RELEASING.md §4).
         io.ssh(`set -e\nmv /tmp/zevet-${v}-* ${DL}/\nchmod 644 ${DL}/zevet-${v}-*\nls -la ${DL}/zevet-${v}-*\n`);
       },
@@ -351,7 +389,7 @@ export function buildSteps(ctx) {
     }] : []),
     {
       name: "stable links",
-      plan: () => `Caddy: Zevet-Setup.exe / Zevet.dmg -> ${v}, edited in place, container checked, reloaded`,
+      plan: () => `Caddy: Zevet-Setup.exe / Zevet-Setup-arm64.exe / Zevet.dmg / Zevet.AppImage -> ${v}, edited in place, container checked, reloaded`,
       // Done = the marker the run writes AFTER the reload. "The host file has the
       // new names" is not it: a run that died between the edit and the reload
       // would otherwise be skipped for ever.
@@ -361,20 +399,11 @@ export function buildSteps(ctx) {
         const out = io.ssh(`set -e
 cp /srv/masora/Caddyfile /srv/masora/Caddyfile.bak-$(date +%Y%m%d-%H%M%S)
 python3 - <<'PYEOF'
-import re
-p = "/srv/masora/Caddyfile"
-with open(p, "r+") as f:
-    text = f.read()
-    text = re.sub(r"zevet-[0-9.]+-macos-arm64\\.dmg", "zevet-${v}-macos-arm64.dmg", text)
-    text = re.sub(r"zevet-[0-9.]+-windows-x64-setup\\.exe", "zevet-${v}-windows-x64-setup.exe", text)
-    f.seek(0)
-    f.write(text)
-    f.truncate()
-PYEOF
+${caddyPython(v)}PYEOF
 C=$(docker ps -qf name=caddy)
 # Inside the container the bind-mounted file is /etc/caddy/Caddyfile.
 n=$(docker exec $C grep -c "zevet-${v}-" /etc/caddy/Caddyfile || true)
-[ "$n" -ge 2 ] || { echo "the running container sees $n lines for ${v}, not 2"; exit 1; }
+[ "$n" -ge 4 ] || { echo "the running container sees $n lines for ${v}, not 4"; exit 1; }
 docker exec $C caddy reload --config /etc/caddy/Caddyfile
 touch /srv/masora/.zevet-links-${v}
 echo reloaded
@@ -450,7 +479,8 @@ docker restart masora-zevet-hub-1
         const dir = artifacts();
         const scratch = path.join(ctx.work, "served");
         mkdirSync(scratch, { recursive: true });
-        for (const [link, file, key] of [["Zevet-Setup.exe", exeName(v), "exe"], ["Zevet.dmg", dmgName(v), "dmg"]]) {
+        for (const [link, name, key] of INSTALLERS) {
+          const file = name(v);
           const built = await fileDigest(path.join(dir, file));
           const served = await io.download(`${BASE}/${link}`, path.join(scratch, link));
           if (served.sha256 !== built.sha256) throw new Error(`${BASE}/${link} serves ${served.sha256.slice(0, 12)}…, ${file} is ${built.sha256.slice(0, 12)}…`);
@@ -458,6 +488,7 @@ docker restart masora-zevet-hub-1
           ctx.facts[`${key}Bytes`] = built.bytes;
         }
         ctx.facts.authenticode = authenticode(path.join(scratch, "Zevet-Setup.exe"));
+        authenticode(path.join(scratch, "Zevet-Setup-arm64.exe"));
         ctx.facts.stable = await verifyPayload(io, "stable", { expectBuild: v, verify: verifyPulse });
         const feed = JSON.parse((await io.https(`${BASE}/zevet-latest.json`)).body.toString("utf8"));
         if (shell) {
@@ -485,7 +516,7 @@ docker restart masora-zevet-hub-1
         const notes = (ctx.notes || notesFrom(subjects(), v)).replace(/\.$/, "");
         const rec = renderRecord(nextDNumber(text), {
           version: v, base: d.base, kind: d.kind, hub: d.hub, shell: d.shell, notes, commits: d.commits ?? "?",
-          date: new Date().toISOString().slice(0, 10), authenticode: f.authenticode, exeSha: f.exeSha, exeBytes: f.exeBytes, dmgSha: f.dmgSha, dmgBytes: f.dmgBytes,
+          date: new Date().toISOString().slice(0, 10), authenticode: f.authenticode, exeSha: f.exeSha, exeBytes: f.exeBytes, dmgSha: f.dmgSha, dmgBytes: f.dmgBytes, arm64Sha: f.arm64Sha, arm64Bytes: f.arm64Bytes, appimageSha: f.appimageSha, appimageBytes: f.appimageBytes,
           seq: win?.seq, manifestWin: win?.manifest, manifestMac: mac?.manifest, blobs: win?.blobs, newBlobs: f.newBlobs,
           hubBefore: f.hubBefore, hubAfter: f.hubAfter,
         });
