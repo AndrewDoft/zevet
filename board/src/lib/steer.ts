@@ -186,9 +186,12 @@ async function track(kind: "steer" | "spawn", to: string, text: string, payer: s
 /** Send `text` to the current target. The composer clears either way; the
  *  outcome is the row this adds. */
 export async function sendSteer(text: string): Promise<void> {
-  const t = state.target;
+  if (state.target) await sendSteerTo(state.target, text);
+}
+
+/** Send `text` to `t` without retargeting the composer (comment → agent). */
+export async function sendSteerTo(t: SteerTarget, text: string): Promise<void> {
   const local = bridge.local;
-  if (!t) return;
   await track("steer", t.actor, text, payerOfSession(usePayers.getState().payers, t.actor, t.session), async () =>
     local?.steerSend ? local.steerSend(t.actor, t.session, t.repo, text) : { ok: false, error: "this app cannot steer — update Zevet" },
   );

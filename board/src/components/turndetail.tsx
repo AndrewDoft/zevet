@@ -30,6 +30,8 @@ import { RunSpec } from "./runspec";
 import { AskAgain, Branches, EditAndAsk } from "./rewind";
 import { McpServerPanel } from "./assistant-ui/elements/mcp-server-panel";
 import { selectActiveConsole, useBoard } from "../lib/board";
+import { AnchorButton } from "./comments";
+import { turnRef } from "../lib/comment-anchor.mjs";
 
 /** The MCP servers claude announced at startup, if it announced any. Which
  *  tools an agent can actually reach is worth seeing before you believe what
@@ -82,6 +84,7 @@ export function TurnDetail() {
 
       {open ? (
         <div className="turn-detail-body">
+          <AnchorButton label="Comment on this turn" refOf={() => turnRef({ session: active.sessionId || "", agent: active.agent, turn: Math.max(0, active.transcript.messages.length - 1), quote: lastText(active.transcript.messages) })} />
           {/* Ordered the way you would ask: what was the plan, what stopped
               it, what is next, how long did each step take, then the detail —
               what it ran, what it read, what it looked up, who it handed to,
@@ -121,4 +124,10 @@ export function TurnDetail() {
       ) : null}
     </div>
   );
+}
+
+/** The text of the latest message, for the quote a turn comment carries. */
+function lastText(messages: ReadonlyArray<{ content?: unknown }>): string {
+  const m = messages[messages.length - 1];
+  return Array.isArray(m?.content) ? (m.content as Array<{ type?: string; text?: string }>).filter((p) => p.type === "text").map((p) => p.text || "").join("\n") : "";
 }
