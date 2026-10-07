@@ -72,8 +72,11 @@ function PendingRow({
   acceptedAt,
   lastSeen,
   presence,
+  role,
 }: {
   login: string;
+  /** viewer | commenter | editor | owner. */
+  role: string;
   /** The person's stable login — what `/auth/revoke` takes. `login` is their
    *  display name, which they may have changed. */
   revokeKey?: string;
@@ -139,6 +142,21 @@ function PendingRow({
       );
   }
 
+  function setRole(next: string) {
+    setState({ phase: "busy" });
+    fetch("/auth/role", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ login: revokeKey || login, role: next }),
+    })
+      .then((r) => r.json().then((b) => ({ ok: r.ok, error: (b as { error?: string }).error })))
+      .then(
+        (r) => (r.ok ? (setState({ phase: "idle" }), onRemoved()) : setState({ phase: "failed", message: r.error || "Could not change role." })),
+        () => setState({ phase: "failed", message: "Could not connect." }),
+      );
+  }
+
   function remove() {
     setState({ phase: "busy" });
     fetch("/auth/revoke", {
@@ -157,7 +175,7 @@ function PendingRow({
   return (
     <div className="srow" key={login}>
       <span className="k" title={isOwnerRow ? undefined : inviteTooltip({ invitedAt, emailSentAt, emailError, acceptedAt, lastSeen, presence })}>
-        {handle(login) + (isOwnerRow ? "  · owner" : "  · " + lifecycle) + reporting(presence, pending)}
+        {handle(login) + (isOwnerRow ? "  · owner" : "  · " + lifecycle + (canManage ? "" : "  · " + role)) + reporting(presence, pending)}
       </span>
       <span className="v">
         {state.phase === "sent" ? <span className="hint">Sent</span> : null}
@@ -190,6 +208,22 @@ function PendingRow({
               Send
             </button>
           </form>
+        ) : null}
+        {canManage ? (
+          <>
+            {(["viewer", "commenter", "editor"] as const).map((r) => (
+              <button
+                key={r}
+                className={MAKE_BTN}
+                type="button"
+                aria-pressed={role === r}
+                disabled={busy || role === r}
+                onClick={() => setRole(r)}
+              >
+                {r[0].toUpperCase() + r.slice(1)}
+              </button>
+            ))}
+          </>
         ) : null}
         {canManage && pending && (state.phase === "idle" || state.phase === "busy") ? (
           <button className={MAKE_BTN} type="button" disabled={busy} onClick={() => invite(login)}>
@@ -336,6 +370,7 @@ export function TeamInvite() {
         login: string;
         key?: string;
         owner?: boolean;
+        role?: string;
         pending?: boolean;
         state?: string;
         invitedAt?: string | null;
@@ -357,6 +392,7 @@ export function TeamInvite() {
               login={p.login}
               revokeKey={p.key}
               isOwnerRow={Boolean(p.owner)}
+              role={p.role || "editor"}
               pending={Boolean(p.pending)}
               canManage={owner && !p.owner}
               onRemoved={() => refreshWhoami()}
