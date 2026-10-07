@@ -9,6 +9,7 @@ import { hueOf, selectActiveConsole, useBoard } from "../lib/board";
 import { addAtCursor, addWithRef, attachStep, commentToAgent, reply, resolve, reveal, setPendingAnchor, useComments, usePendingAnchor } from "../lib/presence-session";
 import { stepState, type CommentRef } from "../lib/comment-anchor.mjs";
 import { useSteer } from "../lib/steer";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import type { Comment } from "../lib/presence-comments.mjs";
 
 const box: CSSProperties = { borderTop: "1px solid var(--line)", background: "var(--paper)", color: "var(--ink)", fontSize: 12, flex: "none", maxHeight: "40%", overflow: "auto" };
@@ -41,13 +42,18 @@ function Thread({ c, focused }: { c: Comment; focused: boolean }) {
         {c.step ? <span data-comment-step title={`Plan step: ${c.step.text}`} style={{ color: "var(--subtle)" }}>step {c.step.index + 1}{state ? ` · ${state.replace("_", " ")}` : " · gone"}</span> : null}
         <span style={{ flex: 1 }} />
         {plan.length ? (
-          <select style={btn} aria-label="Attach to plan step" value={c.step && state ? String(c.step.index) : ""} onChange={(e) => {
-            const i = e.target.value === "" ? -1 : Number(e.target.value);
+          <Select value={c.step && state ? String(c.step.index) : "none"} onValueChange={(v: string | null) => {
+            const i = v == null || v === "none" ? -1 : Number(v);
             attachStep(c.id, i < 0 ? null : { session: "", index: i, text: plan[i].text });
           }}>
-            <option value="">no step</option>
-            {plan.map((st, i) => <option key={i} value={i}>{i + 1}. {st.text.slice(0, 40)}</option>)}
-          </select>
+            <SelectTrigger size="sm" className="h-5 border-transparent px-1 text-[11px]" aria-label="Attach to plan step">
+              <SelectValue>{() => (c.step && state ? `step ${c.step.index + 1}` : "no step")}</SelectValue>
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="none">no step</SelectItem>
+              {plan.map((st, i) => <SelectItem key={i} value={String(i)}>{i + 1}. {st.text.slice(0, 40)}</SelectItem>)}
+            </SelectContent>
+          </Select>
         ) : null}
         <button style={btn} disabled={!target} onClick={() => target && void commentToAgent(c, target)} title={target ? "Steer their agent with this comment and its lines" : "Pick an agent to steer first"}>to agent</button>
         <button style={btn} onClick={() => resolve(c.id, !c.resolvedAt)}>{c.resolvedAt ? "reopen" : "resolve"}</button>
