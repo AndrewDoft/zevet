@@ -168,7 +168,7 @@ export function reveal(c: Comment): void {
   } catch { /* mid-update */ }
 }
 
-/* ---- turn / hunk anchors, plan steps, comment → agent (D-NEXT-W2-4) ---- */
+/* ---- turn / hunk anchors, plan steps, comment → agent (D-078) ---- */
 
 let pending: CommentRef | null = null;
 const pendingSubs = new Set<() => void>();

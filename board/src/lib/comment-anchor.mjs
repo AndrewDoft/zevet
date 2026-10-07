@@ -1,5 +1,5 @@
 /**
- * What a comment can be pinned to besides a code position (D-NEXT-W2-4):
+ * What a comment can be pinned to besides a code position (D-078):
  * a transcript TURN, a diff HUNK, and a plan STEP. These ride on the same Y.Map
  * as the comment (presence-comments.mjs), so they are sealed with the doc key
  * like the text; the hub only ever sees ciphertext.

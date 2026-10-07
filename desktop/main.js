@@ -2671,7 +2671,7 @@ bridge.handle("local:releaseClaims", async (_e, arg) => {
   if (session) myClaims.release({ session, path: typeof (arg && arg.path) === "string" ? arg.path : undefined });
   return { ok: true };
 });
-/* Pinned memory (D-NEXT-W2-10): per-file notes sealed with the document key,
+/* Pinned memory (D-077): per-file notes sealed with the document key,
  * on disk and on the hub's room. desktop/pinned-memory.js owns the rules;
  * staleness is read off the working tree here, never by the hub. */
 const pinnedMemory = require("./pinned-memory.js");

@@ -1,4 +1,4 @@
-// Pinned notes for the folder on screen (D-NEXT-W2-10). The desktop seals,
+// Pinned notes for the folder on screen (D-077). The desktop seals,
 // opens and flags them against the working tree; this only holds what it sends.
 import { create } from "zustand";
 import { bridge } from "./bridge";

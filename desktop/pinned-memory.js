@@ -1,5 +1,5 @@
 "use strict";
-// Pinned memory (D-NEXT-W2-10): a note about one file, written against the
+// Pinned memory (D-077): a note about one file, written against the
 // hash the file had at the time. When the file's hash moves the note is STALE,
 // and the board says so; a person can edit or retire it. Item 9's agent tool
 // "record memory" calls create() here and nothing else.

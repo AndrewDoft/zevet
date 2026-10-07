@@ -1,4 +1,4 @@
-// Comments pinned to a turn, a diff hunk and a plan step; comment -> agent framing (D-NEXT-W2-4).
+// Comments pinned to a turn, a diff hunk and a plan step; comment -> agent framing (D-078).
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";

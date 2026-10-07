@@ -1,4 +1,4 @@
-// Pinned memory on the board (D-NEXT-W2-10). The desktop seals, opens and
+// Pinned memory on the board (D-077). The desktop seals, opens and
 // flags (desktop/pinned-memory.js); these are the pure readings of what it sends.
 
 /** Notes that need a person: the code moved or is gone. */

@@ -1,4 +1,4 @@
-// Pinned memory (D-NEXT-W2-10): a note is tied to a path and the hash the file
+// Pinned memory (D-077): a note is tied to a path and the hash the file
 // had; it flips to stale when the hash moves, a person can edit or retire it,
 // and the hub only ever holds ciphertext. The hub test runs a REAL hub and two
 // DocSync "machines", the same arrangement doc-sync.test.mjs uses.

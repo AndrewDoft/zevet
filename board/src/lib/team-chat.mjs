@@ -1,4 +1,4 @@
-// Team chat (D-NEXT-W2-15B): the pure model. No DOM, no socket, no clock of its own.
+// Team chat (D-095): the pure model. No DOM, no socket, no clock of its own.
 //
 // An append-only set of messages. State and delta share one shape, so "merge" is
 // the only operation and it is commutative, associative and idempotent: a replayed
@@ -8,7 +8,7 @@
 //
 // A message is never edited or removed; the first one seen for an id wins. A
 // receiver keeps a message only if its author's role, as the hub reports it,
-// allows posting. The author name is not signed (see D-NEXT-W2-15).
+// allows posting. The author name is not signed (see D-089).
 
 export const LIMITS = Object.freeze({ messages: 500, text: 4000, id: 64 });
 

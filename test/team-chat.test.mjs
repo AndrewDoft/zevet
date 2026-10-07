@@ -1,4 +1,4 @@
-// Team chat (D-NEXT-W2-15B). Model under each role, the cap, card links, unread
+// Team chat (D-095). Model under each role, the cap, card links, unread
 // counts, and, against a REAL hub, ciphertext-only relay, re-send on reconnect and
 // the hub's role gate on a chat: room. Each test is one the change must make pass.
 import { test, describe, after } from "node:test";

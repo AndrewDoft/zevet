@@ -1,5 +1,5 @@
 /**
- * Team chat (D-NEXT-W2-15B): a pill next to Tasks opens the team's sealed chat
+ * Team chat (D-095): a pill next to Tasks opens the team's sealed chat
  * room. Viewer reads; Commenter and above post (the composer is not drawn for a
  * Viewer, and the sync layer and hub refuse anyway). Message text is rendered as
  * React text nodes, never HTML. A message may name a task card.
