@@ -2306,3 +2306,14 @@ make-feed TARGETS entries turns them red. Dropping the chmod does NOT (mode asse
 **Mechanism.** `scripts/drive/drive.mjs` (cmdLaunch) spawns the real Electron app for ~25 test files (setup-window, setup-sso-e2e, hub-unreachable, identity-ui, ...). On a fresh profile `desktop/main.js` `app.whenReady` calls `openSetup(null)` (the "Set up zevet" sign-in window); with a config it calls `openBoard`. Both used `new BrowserWindow({...})` with no `show:false`, so every agent running `npm test` in a zevet worktree put a visible sign-in/setup window on the screen. The hook/CLI path (`client/hook.mjs`, `doctor.mjs`) never launches the app, so it is not a cause.
 
 **Decided.** Under `ZEVET_TEST_HOOKS=1` (every harness launch) or `ZEVET_TEST_HEADLESS=1`, windows are created `show:false, skipTaskbar`, and `show/showInactive/focus/restore/moveTop` are blocked. `ZEVET_TEST_VISIBLE=1` is the only opt-in to a visible window. Each window is logged to `$ZEVET_HOME/windows.jsonl` (test hooks only); `test/no-visible-windows.test.mjs` fails if any window was created visible, became visible, or none exists (vacuous). A real user launch is unchanged.
+
+## D-093 — Shipped: 0.2.128, Rebuild board bundle after w2-17 merge (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 8 commit(s) past v0.2.127.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.128 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.128`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `ce59aa49…` (153161312 B), dmg `e48c401c…` (205313022 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2128 on both platforms. Manifests win `c73095dc…`, mac `6b6f733f…`. Delta: 1 new blob(s) uploaded. 95 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `3b0988dac86b` -> `05452a9a0a03`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
