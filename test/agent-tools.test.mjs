@@ -1,4 +1,4 @@
-// Agent-callable coordination tools (D-NEXT-W2-9): get_team_context, claim_step,
+// Agent-callable coordination tools (D-087): get_team_context, claim_step,
 // message_agent, record_memory on Zevet's own MCP server. The trust boundary is
 // the point: teammate-authored text returns to an agent as capped, defanged DATA,
 // a message to another agent rides the steer channel and its policy, and a note

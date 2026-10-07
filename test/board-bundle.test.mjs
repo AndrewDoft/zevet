@@ -38,6 +38,8 @@ function hashSources() {
       }
     }
   })(SRC);
+  h.update("data-frame.mjs");
+  h.update(readFileSync(path.join(ROOT, "desktop", "data-frame.mjs")));
   return h.digest("hex");
 }
 

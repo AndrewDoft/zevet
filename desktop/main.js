@@ -2700,7 +2700,7 @@ bridge.handle("local:memoryRetire", async (_e, arg) => {
   if (note) toBoard("local:memoryEvent", { repo: g.repo });
   return note ? { ok: true } : { ok: false, error: "no such note" };
 });
-/* Agent coordination tools (D-NEXT-W2-9, desktop/agent-tools.js). Reached from
+/* Agent coordination tools (D-087, desktop/agent-tools.js). Reached from
  * zevet-mcp.js over the ask-server's /tool route; every dependency is this
  * app's own signed-in team, so no argument can name another team. */
 const agentToolsLib = require("./agent-tools.js");
@@ -3839,7 +3839,7 @@ async function mcpConfigFor(dir, mode) {
      claude asks the person instead of silently denying what would prompt. Every
      posture but "skip permissions" needs it (nothing prompts under that one). */
   const gate = mode !== "dangerous";
-  /* Coordination tools (D-NEXT-W2-9) need a team to coordinate with. */
+  /* Coordination tools (D-087) need a team to coordinate with. */
   const team = steerAuth(readConfig()).session;
   if ((computerUse || gate || team) && fs.existsSync(MCP_SERVER)) {
     const { url, token } = await ensureAskServer();

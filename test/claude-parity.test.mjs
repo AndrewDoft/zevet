@@ -158,7 +158,7 @@ describe("2. tool approval", () => {
   test("main.js wires it: every posture but skip-permissions gets the gate, answers carry `always`", () => {
     const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
     assert.match(main, /const gate = mode !== "dangerous";/);
-    // A team run also gets the server (coordination tools, D-NEXT-W2-9), but skip-permissions must still NOT get the permission tool.
+    // A team run also gets the server (coordination tools, D-087), but skip-permissions must still NOT get the permission tool.
     assert.match(main, /if \(\(computerUse \|\| gate \|\| team\) && fs\.existsSync\(MCP_SERVER\)\)/);
     assert.match(main, /permissions: Boolean\(servers\.zevet\) && \(computerUse \|\| gate\)/);
     assert.match(main, /permissionTool: "mcp__zevet__permission_prompt"/);

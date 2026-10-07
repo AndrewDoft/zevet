@@ -1,5 +1,5 @@
 "use strict";
-// Plan-step ownership (D-NEXT-W2-9). One owner per (session, step text); the
+// Plan-step ownership (D-087). One owner per (session, step text); the
 // FIRST claim wins. Pure like claims.js: main.js supplies the clock and the
 // doc-sync room sender (the room seals it, the hub relays ciphertext).
 //

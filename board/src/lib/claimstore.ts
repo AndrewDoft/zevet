@@ -7,7 +7,7 @@ import type { Payer } from "./payer.mjs";
 
 export const useClaims = create<{ claims: Claim[] }>(() => ({ claims: [] }));
 /** Teammates' payers (D-073), opened by the desktop from sealed frames. */
-/** Plan-step owners (D-NEXT-W2-9): who claimed which step of which session's plan. */
+/** Plan-step owners (D-087): who claimed which step of which session's plan. */
 export type StepOwner = { session: string; step: string; actor: string };
 export const useStepOwners = create<{ steps: StepOwner[] }>(() => ({ steps: [] }));
 const normStep = (t: string) => String(t || "").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 200);

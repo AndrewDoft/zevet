@@ -142,7 +142,7 @@ const COMPUTER_TOOLS = [
 ];
 
 /**
- * Coordination tools (D-NEXT-W2-9). Offered only when the desktop is signed in
+ * Coordination tools (D-087). Offered only when the desktop is signed in
  * to a team (ZEVET_MCP_TEAM=1). Each one is a thin client: the work happens in
  * the desktop (agent-tools.js), reached over the loopback ask-server.
  *

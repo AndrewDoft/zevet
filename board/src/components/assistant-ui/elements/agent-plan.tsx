@@ -15,7 +15,7 @@ export function AgentPlan({
 }: Omit<ComponentProps<"div">, "children" | "steps" | "activeIndex"> & {
   steps: readonly string[];
   activeIndex: number;
-  /** Who claimed each step (D-NEXT-W2-9), by index; "" for none. */
+  /** Who claimed each step (D-087), by index; "" for none. */
   owners?: readonly string[];
 }) {
   const total = steps.length;

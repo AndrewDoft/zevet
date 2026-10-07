@@ -43,6 +43,9 @@ try {
     }
   }
   hashDir(SRC);
+  // desktop/data-frame.mjs is bundled too (comment -> agent framing shares it with the desktop).
+  srcHash.update("data-frame.mjs");
+  srcHash.update(readFileSync(path.join(HERE, "..", "desktop", "data-frame.mjs")));
   writeFileSync(STAMP, srcHash.digest("hex") + "\n", "utf8");
 
   const out = path.join(HERE, "..", "hub", "public");
