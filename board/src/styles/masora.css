@@ -1625,7 +1625,7 @@
   .tasks-toggle:hover { background: var(--raise-soft); }
   .tasks-body { margin-bottom: 6px; padding: 8px; width: min(420px, 90vw); max-height: 60vh; overflow: auto; background: var(--raise); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 6px; }
   .tasks-body h4 { margin: 6px 0 2px; color: var(--subtle); font-weight: 500; }
-  .tasks-body input, .tasks-body select { font: inherit; background: transparent; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; min-width: 0; }
+  .tasks-body input { font: inherit; background: transparent; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; min-width: 0; }
   .tasks-card { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; gap: 4px; }
   .tasks-card[data-status="done"] .tasks-title { opacity: 0.55; text-decoration: line-through; }
   .tasks-title { color: var(--ink); }

@@ -5,6 +5,7 @@
  * anyway. "Start agent" hands a card to an agent through the ordinary paths.
  */
 import { useEffect, useState } from "react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { useBoard } from "../lib/board";
 import { sendSpawn, setSpawnTarget, canSpawn } from "../lib/steer";
 import { closeTasks, doTask, ensureTasks, myRole, newId, useTasks } from "../lib/tasks-room";
@@ -34,9 +35,10 @@ function CardView({ card, role, me }: { card: Card; role: ReturnType<typeof myRo
       <div className="tasks-title">{card.title}</div>
       <div className="tasks-meta">
         {edit ? (
-          <select aria-label="Status" value={card.status} onChange={(e) => setNote(doTask({ op: "move", id: card.id, status: e.target.value as Status }))}>
-            {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <Select value={card.status} onValueChange={(v) => setNote(doTask({ op: "move", id: card.id, status: v as Status }))}>
+            <SelectTrigger aria-label="Status" className="h-7 w-24 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>{STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+          </Select>
         ) : <span>{card.status}</span>}
         {edit ? (
           <input aria-label="Owner" placeholder="owner" defaultValue={card.owner} onBlur={(e) => e.target.value !== card.owner && setNote(doTask({ op: "assign", id: card.id, owner: e.target.value }))} />
