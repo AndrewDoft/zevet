@@ -2373,3 +2373,14 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 **Tests.** `test/team-chat.test.mjs` (15): post/read under each role; receiver drops Viewer and unknown authors; append-only and merge order; the cap (sender, receiver, window); markup is data; card linking; unread; ready/snapshot resend; and against a real hub: ciphertext-only relay (keyless spy, wrong-room AAD fails), late-joiner and offline-post convergence, Viewer session-socket frames dropped / Commenter relayed / demotion immediate. Mutation-checked, each turned a named test red and was restored: `may()` always true (post gates, received-drop, refused-sends-nothing); receiver ignores author role (received-drop: "viewer"); no local cap (refused locally); no receive cap (truncated on receipt); cardId dropped (card linking: deep-equal counts); unread counts own (unread: "bo's two, not ann's own"); unread ignores marker (unread: "marker at m2"); overwrite allowed (append-only); no 500 window (window test); `ready` not re-sending (resend test); `do()` not sending (sent test plus all three hub tests time out); hub gate off for `chat:` (Viewer socket test: "a viewer's frame reached the room").
 
 **Not verified.** No browser walk of the panel; no two-machine run; the unread badge and card count were not looked at on screen; the shared-token path is ungated by design.
+
+## D-096 — Shipped: 0.2.129, Team chat ships as D-095; stale D-NEXT placeholders in code comments point at their merged (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** ? commit(s) past v0.2.128.
+
+- **Shell release.** desktop/package-lock.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.129) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.129`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `81630e4b…` (153161056 B), dmg `93933e31…` (205313731 B), win-arm64 exe `fcc8e52a…` (160429480 B), AppImage `faaf17ec…` (387388218 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2129 on both platforms. Manifests win `a4862acd…`, mac `3f11e4c0…`. Delta: 2 new blob(s) uploaded. 95 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `05452a9a0a03` -> `98e1d340a224`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
