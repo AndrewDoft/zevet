@@ -412,6 +412,8 @@ jobs:
   # installed exe must exist and be an ARM64 PE (machine 0xAA64). It does not launch the app.
   windows-arm64-smoke:
     needs: build
+    # The matrix has a leg this job does not depend on (macOS); do not skip because of it.
+    if: ${{ !cancelled() }}
     runs-on: windows-11-arm
     steps:
       - uses: actions/download-artifact@v4
