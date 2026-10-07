@@ -23,7 +23,7 @@ import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
 import { checkJoin, createInviteStore, MODES, INVITE_ID_RE, INVITE_SEALED_MAX } from "./session-share.mjs";
 import { initSentry } from "./sentry.mjs";
 import { agentsOf } from "../board/src/lib/agents.mjs";
-import { verifyAssertion, replayGuard, parseTeamMap } from "./masora-auth.mjs";
+import { verifyAssertion, replayGuard, parseTeamMap, masoraAssertKey, mintMasoraAssertion } from "./masora-auth.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1041,6 +1041,9 @@ function createTeam(name) {
 const MASORA_SECRET = process.env.ZEVET_MASORA_SECRET || "";
 const MASORA_TEAMS = parseTeamMap(process.env.ZEVET_MASORA_TEAMS);
 const masoraJti = replayGuard();
+/** Signs hub -> Masora assertions (POST /auth/masora/assertion). A separate Ed25519 key, never ZEVET_MASORA_SECRET. */
+const MASORA_ASSERT_KEY = masoraAssertKey(process.env.ZEVET_MASORA_ASSERT_KEY);
+if (process.env.ZEVET_MASORA_ASSERT_KEY && !MASORA_ASSERT_KEY) console.error("zevet: ZEVET_MASORA_ASSERT_KEY is not a base64 32-byte Ed25519 seed; sign-in to Masora is off");
 
 /** ZEVET_IDENTITY_LINKS="who=email[=Display Name],...": the operator's word that a member holds an address, so Masora's
  *  sign-in of the same human binds to them instead of opening a second row (see Accounts.linkEmail). Applied to every
@@ -1715,7 +1718,9 @@ async function handleRequest(req, res) {
     if (!who.ok) return json(res, 502, { error: who.error });
     // The evidence that lets the hub recognise this login as somebody it
     // already knows by email. Best effort: no scope, no evidence, sign-in goes on.
-    who.emails = (await githubVerifiedEmails({ accessToken: polled.accessToken, fetchImpl: TEST_IDP_FETCH })).emails;
+    const ghEmails = await githubVerifiedEmails({ accessToken: polled.accessToken, fetchImpl: TEST_IDP_FETCH });
+    who.emails = ghEmails.emails;
+    who.primaryEmail = ghEmails.primary || "";
 
     if (linking) {
       const r = acc.link(linking.auth.session, { provider: "github", login: who.login, id: who.id, display: who.login }, who.emails);
@@ -2362,6 +2367,23 @@ async function handleRequest(req, res) {
    *
    * ⚠️ THIS RESPONSE ALSO CARRIES THE MASTER SECRET, exactly as /team/join does. Do not add it elsewhere.
    */
+  /**
+   * Sign in to Masora FROM the hub: a 60-second, single-use Ed25519 assertion of the emails the provider verified at
+   * the sign-in behind THIS session (Accounts#masoraClaims), for Masora's POST /api/auth/zevet-hub. Header token
+   * only (never the board's cookie), personal session only. 403 when the session carries no verified email: a
+   * Masora assertion, an invite key, an unverified Microsoft address and a non-primary GitHub address prove nothing.
+   */
+  if (url.pathname === "/auth/masora/assertion" && req.method === "POST") {
+    if (!MASORA_ASSERT_KEY) return json(res, 503, { error: "sign-in to Masora is not configured" });
+    if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
+    const auth = typeof req.headers["x-zevet-token"] === "string" ? teamFromSession(req, url) : null;
+    if (!auth) return refuse(req, res, url);
+    const c = auth.accounts.masoraClaims(auth.session);
+    if (!c) return json(res, 403, { error: "this sign-in has no verified email for Masora; sign in to the hub again with Google, GitHub or Microsoft" });
+    console.log(`zevet: Masora sign-in assertion issued (${c.provider}, team ${auth.team})`);
+    return json(res, 200, { ok: true, assertion: mintMasoraAssertion(MASORA_ASSERT_KEY, c) });
+  }
+
   if (url.pathname === "/auth/masora" && req.method === "POST") {
     if (!MASORA_SECRET) return json(res, 503, { error: "Masora sign-in is not configured" });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });

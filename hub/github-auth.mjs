@@ -258,13 +258,15 @@ export async function githubVerifiedEmails({ accessToken, fetchImpl } = {}) {
     fetchImpl,
   );
   if (!r.ok || r.status !== 200 || !Array.isArray(r.body)) return { ok: false, emails: [] };
-  const emails = r.body
+  const rows = r.body
     .filter((e) => e && e.verified === true && typeof e.email === "string" && e.email.includes("@"))
-    .map((e) => e.email.toLowerCase())
+    .map((e) => ({ email: e.email.toLowerCase(), primary: e.primary === true }))
     // GitHub's privacy placeholder (id+login@users.noreply.github.com) is
     // verified but is not an address anyone else could have typed for them.
-    .filter((e) => !e.endsWith("@users.noreply.github.com"));
-  return { ok: true, emails: [...new Set(emails)] };
+    .filter((e) => !e.email.endsWith("@users.noreply.github.com"));
+  // `primary`: the verified PRIMARY address, the only one a sign-in to Masora may carry ("" when there is none).
+  const primary = (rows.find((e) => e.primary) || { email: "" }).email;
+  return { ok: true, emails: [...new Set(rows.map((e) => e.email))], primary };
 }
 
 /**

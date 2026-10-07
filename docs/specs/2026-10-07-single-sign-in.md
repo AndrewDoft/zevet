@@ -3,7 +3,9 @@
 Andrew: "if you log into one it logs you into the other two."
 
 Status: Zevet <-> Voice implemented (`desktop/sso.js`, zevet-voice `masora_dictation/sso.py` + `hub.sync`).
-Masora is specified below, not implemented.
+Hub -> Masora sign-in implemented (zevet `feat/sso-reverse`, masora2 `feat/ctx-sso-reverse`, D-1000; section
+"Hub -> Masora sign-in" at the end). Masora -> Voice and Masora sign-out propagation (follow-ups 2, 3) are
+specified, not implemented.
 
 ## Source of truth
 
@@ -189,8 +191,8 @@ the reverse direction and needs a decision from Andrew first.
 3. **Masora sign-out -> the others.** `apps/desktop/shell/family-cloud.js` `clear()` (the shell's sign-out):
    also `kit.sso.publish(dir, "signed_out", hubUrl)`. Masora does not hold a hub token, so it does not call
    `/auth/logout`; the apps that hold it do, on adoption.
-4. **Zevet/Voice signed in -> Masora signed in (the reverse direction).** Needs a new assertion in the other
-   direction, with its own secret (not reused) so an assertion can never be reflected back:
+4. **Zevet/Voice signed in -> Masora signed in (the reverse direction).** IMPLEMENTED as "Hub -> Masora sign-in"
+   below. The original sketch, kept for the record (it said HS256 and 5 min; the build uses Ed25519 and 60 s):
    - hub `hub/server.mjs`: `POST /auth/masora/assertion`, session-gated, returns an HS256 JWT `typ`
      `masora_hub_assertion`, `aud` `masora`, 5 min, `jti`, carrying only `verifiedEmails` of the caller
      (`accounts.mjs`). New env `ZEVET_TO_MASORA_SECRET`.
@@ -202,4 +204,81 @@ the reverse direction and needs a decision from Andrew first.
      assertion (with the envelope's token, to the envelope's hub only) and redeem it.
    - Andrew decides whether a hub sign-in may sign someone into Masora at all; it raises the hub's sign-in to
      the level of a Masora login (including clinics' data in Masora).
-5. Confirm or tighten the MSA email branch in `apps/api/api/auth/microsoft.py` before (4) ships.
+5. Confirm or tighten the MSA email branch in `apps/api/api/auth/microsoft.py` before (4) ships. Still open. It
+   matters to (4) on the Masora side: the hub asserts a Microsoft email only with `xms_edov`, but what (4) matches
+   against is `people.email`, and a weakly sourced one is the weak link. The per-workspace switch is off by default
+   for this reason.
+
+## Hub -> Masora sign-in (D-1000)
+
+Andrew, 2026-10-07: sign-in must work both ways. A hub sign-in (Google, Microsoft or GitHub) signs the person into
+Masora, where clinic and business data lives, so it is built to the bar of a Masora login.
+
+**Flow.** Masora Context desktop, signed out, sees a newer `signed_in` envelope in `sso.json` (Zevet or Voice wrote it):
+
+1. the shell (masora2 `apps/desktop/shell/hub-signin.js`) sends the envelope's token to the envelope's own hub only
+   (https, or http on loopback): `POST {hub}/auth/masora/assertion`, header `x-zevet-token`;
+2. the hub returns `{assertion}`, or 403 when the session carries no verified email;
+3. the shell posts it to `POST {site}/api/auth/zevet-hub`, which answers `{session, member_email}` (the desktop poll
+   shape) or one generic 401; the shell sets the cookie and opens the workspace.
+
+Each envelope is tried once (`<userData>/hub-signin.json` `seen`) and the shell's own Sign out marks the current one
+seen, so signing out of Masora is not undone by the same hub sign-in. A Masora session that came from the hub ends
+when a newer `signed_out` envelope appears. No web path: a browser never holds a hub session, and the API sets no
+cookie (no login CSRF).
+
+**The assertion** (`hub/masora-auth.mjs` `mintMasoraAssertion`): JWS `alg` EdDSA (Ed25519); claims `iss`
+`zevet-hub`, `aud` `masora`, `typ` `masora_hub_assertion`, `iat`, `exp = iat + 60`, `jti` (128 random bits), `sub`
+`<provider>:<id>`, `provider`, `emails`. Signed with `ZEVET_MASORA_ASSERT_KEY` (hub only); Masora holds only the
+public key `ZEVET_HUB_ASSERT_PUBLIC_KEY`. Separate from `ZEVET_MASORA_SECRET`/`ZEVET_HUB_SECRET`, with a different
+alg, typ and aud, so neither direction's token can be reflected into the other.
+
+**`emails` is what the provider verified at the sign-in behind this session, never the person's merged set**
+(`accounts.mjs` `proofEmails`, kept on the session as `proof`): Google `email_verified`; GitHub the verified PRIMARY
+only (`/user/emails` `primary && verified`, never noreply, never the public-profile email); Microsoft only with
+`xms_edov` (a personal account or tenant without it gets no email, so no Masora login). Nothing for an invite key
+(`key-`, a typed address) or for a sign-in FROM Masora (`masora:`; it would reflect Masora's own claim back and let
+a weakly sourced Masora email launder into a strong one). Also refused: a proof older than 24 h, an identity since
+unlinked, a session from before this change (no `proof`), the shared team token, the board cookie (header only).
+
+**Masora** (`apps/api/api/auth/zevet_hub.py`): EdDSA only (header checked before verifying, PyJWT pinned to
+`["EdDSA"]`); iss, aud, typ; `0 < exp - iat <= 60`; 10 s leeway for expiry and for an `iat` in the future; `jti`
+single use in `zevet_hub_assertion_jtis` (primary key: concurrent workers cannot both redeem). Then
+`auth_members_for_hub_emails` (SECURITY DEFINER, migration 0210): signed-in members (`people.is_user`) whose own
+`people.email` equals an asserted address, case-insensitive; never an alias, shadow person or invite. None: refused.
+More than one (two workspaces): refused, never chosen. Switch `allow_zevet_hub_signin` off: refused. Re-read under
+RLS before minting. The session is ordinary, at the member's live role, `mfa=false` (a require-MFA workspace still
+asks for the code); nothing is created, changed, linked or elevated. Every failure is the same `401
+hub_signin_refused`. Audit: each success, and each refusal where a workspace is known (switch off, ambiguous,
+changed), is an `events` row `kind='audit'`, `action='zevet_hub_signin'` (outcome, reason, provider, hub subject,
+asserted emails; never the token). Refusals before a workspace is known (signature, replay, expiry, no member) go to
+the API log with the reason only: there is no workspace whose audit log they belong to.
+
+**The switch**: Settings > Account > "Sign-in from Zevet" (admins only), `GET/PUT /api/auth/zevet-hub/policy`,
+`workspaces.settings.allow_zevet_hub_signin`, default off, each change audited (`zevet_hub_signin_policy`).
+
+**Operator.** Generate the pair once on a trusted machine (prints the private key; do not paste it anywhere else):
+
+```
+node -e "const c=require('crypto');const k=c.generateKeyPairSync('ed25519');console.log('ZEVET_MASORA_ASSERT_KEY='+k.privateKey.export({format:'der',type:'pkcs8'}).subarray(16).toString('base64'));console.log('ZEVET_HUB_ASSERT_PUBLIC_KEY='+k.publicKey.export({format:'der',type:'spki'}).subarray(12).toString('base64'))"
+```
+
+Hub `/srv/zevet/.env`: `ZEVET_MASORA_ASSERT_KEY`, then `docker compose up -d --force-recreate zevet-hub`. Masora API
+env: `ZEVET_HUB_ASSERT_PUBLIC_KEY`, apply migration 0210, redeploy. Then an admin turns the switch on per workspace.
+Either key unset: hub 503, Masora refuses everything. Rotate both together.
+
+### Threat model (hub -> Masora)
+
+| Threat | Outcome |
+|---|---|
+| Stolen hub session token | Mints assertions for that session's proven email until 24 h after the sign-in that proved it: a Masora login as that member, in a workspace that switched it on. Bounded by the proof age, hub logout (deletes the session) and the switch. On disk the token exists only sealed in `sso.json` or in Zevet's `config.json` (OS-user boundary, as above). |
+| Forged assertion | Needs the hub's private key, which Masora never holds. Bad signature, other key, tampered payload, `none`, HS256 keyed with the public key: refused (tests). |
+| Replay / interception | 60 s, single-use `jti` in the database; TLS on both legs; the hub token never goes to Masora, the assertion only to Masora. |
+| Email change at the provider | The proof is what the provider said at that sign-in, capped at 24 h. A reassigned mailbox carries the old address for at most that long, and only onto the member whose Masora email it is. GitHub primary only; Microsoft `xms_edov` only. |
+| Weak Masora email | The match is `people.email`. If that came from an unproven source, a hub user who verifies the address signs in as that member. Unclaimed invites are `is_user=false` and excluded; the MSA branch is follow-up 5. Hence default off. |
+| Account enumeration | One 401 for every failure, and moot: a caller can only ask about addresses its own provider verified. |
+| Hub operator / hub compromise | **Trust assumption: whoever holds the hub's private key can mint an assertion for any email, so a hub compromise (or its operator) is a Masora login as any member of any workspace that switched this on.** The switch is each workspace's decision to extend that trust; a clinic should leave it off unless it trusts the hub operator with its data. |
+| Masora compromise | Gains nothing toward the hub from this: Masora has only the public key. |
+| Sign-out propagation | Hub sign-out in any app writes `signed_out`; a Masora session that came from the hub signs out within one shell tick (15 s). Masora sign-out marks the envelope seen but does not yet sign the hub out (follow-up 3). A copied Masora cookie stays valid to its own expiry (stateless sessions, INSUF-667). |
+| Two members, one email | Refused, never chosen between. |
+| Elevation | Live role, `mfa=false`, nothing created or changed. |

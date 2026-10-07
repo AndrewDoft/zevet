@@ -1,9 +1,37 @@
 // Sign-in from Masora: a signed assertion that this person belongs to this Masora workspace.
 // Contract: masora2 docs/contracts/cross_app_context.md, "Hub sign-in". HS256 over the secret Masora's
 // API and this hub share (ZEVET_MASORA_SECRET here, ZEVET_HUB_SECRET there); node:crypto only.
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual, createPrivateKey, randomBytes, sign } from "node:crypto";
 
 const b64 = (s) => Buffer.from(s, "base64url");
+const enc = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+
+/* ── The reverse direction: the hub vouches for a person to Masora (docs/specs/2026-10-07-single-sign-in.md,
+ * "Hub -> Masora sign-in"). Ed25519 (JWS alg EdDSA), NOT the shared HMAC secret above: Masora holds only the public
+ * key, so nothing Masora stores can mint one, and an assertion can never be reflected into /auth/masora (different
+ * key, alg, typ and aud). */
+export const MASORA_ASSERT_TTL_S = 60;
+const PKCS8_ED25519 = Buffer.from("302e020100300506032b657004220420", "hex");
+
+/** ZEVET_MASORA_ASSERT_KEY (base64 or base64url of the 32-byte Ed25519 seed) -> a KeyObject; null when unset or not
+ *  exactly 32 bytes, so a typo turns the route off rather than signing with something else. */
+export function masoraAssertKey(raw) {
+  const s = String(raw || "").trim();
+  if (!/^[A-Za-z0-9+/_-]+=*$/.test(s)) return null;
+  const seed = Buffer.from(s, "base64");
+  if (seed.length !== 32) return null;
+  return createPrivateKey({ key: Buffer.concat([PKCS8_ED25519, seed]), format: "der", type: "pkcs8" });
+}
+
+/** A single-use (jti), 60-second, audience-bound assertion carrying only the emails the provider verified at the
+ *  sign-in behind this session (`Accounts#masoraClaims`). Never logged. */
+export function mintMasoraAssertion(key, { sub, provider, emails }, now = Date.now()) {
+  const iat = Math.floor(now / 1000);
+  const claims = { iss: "zevet-hub", aud: "masora", typ: "masora_hub_assertion", iat, exp: iat + MASORA_ASSERT_TTL_S,
+    jti: randomBytes(16).toString("hex"), sub, provider, emails };
+  const input = `${enc({ alg: "EdDSA", typ: "JWT" })}.${enc(claims)}`;
+  return `${input}.${sign(null, Buffer.from(input), key).toString("base64url")}`;
+}
 
 /** `{claims}` for a valid assertion, `{error}` otherwise. Pins alg (no "none", no RS/HS confusion), the typ and aud
  *  Masora mints, expiry, and the fields the hub needs; says nothing about replay (see `replayGuard`). */

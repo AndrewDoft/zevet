@@ -250,6 +250,27 @@ function verifiedEmails(user) {
   return uniqStrings(list.map((e) => String(e || "").trim().toLowerCase()).filter((e) => e.includes("@")));
 }
 
+/**
+ * What a sign-in may tell Masora (POST /auth/masora/assertion): the addresses THIS provider verified at THIS sign-in,
+ * never the person's merged set. Google: `email_verified` (google-auth.mjs). Microsoft: only with `xms_edov`
+ * (microsoft-auth.mjs leaves `emails` empty otherwise). GitHub: the verified PRIMARY address only. Nothing for an
+ * invite key (`key-`), whose address was typed, or for a sign-in FROM Masora (`masora:`), which would only reflect
+ * Masora's own claim back to it.
+ */
+function proofEmails(user, rec) {
+  if (/^(key-|masora:)/.test(rec.id)) return [];
+  const verified = verifiedEmails(user);
+  if (rec.provider === "github") {
+    const primary = String(user.primaryEmail || "").trim().toLowerCase();
+    return primary && verified.includes(primary) ? [primary] : [];
+  }
+  return rec.provider === "google" || rec.provider === "microsoft" ? verified : [];
+}
+
+/** A sign-in's proof of email is good for Masora for this long; after it, sign in to the hub again. Bounds what a
+ *  provider-side address change (a Workspace admin reassigning a mailbox) can carry over. */
+const MASORA_PROOF_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 export class Accounts {
   /**
    * `file`   — where to persist. Defaults to `<hub>/../var/accounts.json`.
@@ -337,6 +358,17 @@ export class Accounts {
     if (!this.state.owner && !admin) return { ok: false, error: "a workspace admin has to open this team first" };
     const r = this.signIn(user);
     return { ok: true, token: r.token, owner: r.owner, login };
+  }
+
+  /** `{sub, provider, emails}` for a Masora assertion, or null: the session (as `session()` returned it) must carry
+   *  a proof under a day old, and the identity that proved it must still be this person's (unlinked = no claim). */
+  masoraClaims(sess) {
+    const pr = sess && sess.proof;
+    if (!pr || !Array.isArray(pr.emails) || !pr.emails.length || !pr.id) return null;
+    if (!(this.now() - pr.at <= MASORA_PROOF_MAX_AGE_MS)) return null;
+    const person = this.#personOf(sess);
+    if (!person || person !== this.#personOf({ provider: pr.provider, id: pr.id })) return null;
+    return { sub: `${pr.provider}:${pr.id}`, provider: pr.provider, emails: pr.emails.slice() };
   }
 
   /** This team's policies, defaults filled in. */
@@ -703,7 +735,8 @@ export class Accounts {
 
     const p = { provider: person.provider, login: person.login, id: person.id };
     const token = randomBytes(SESSION_BYTES).toString("hex");
-    this.state.sessions[token] = { ...p, at: this.now() };
+    const proof = proofEmails(user, rec);
+    this.state.sessions[token] = { ...p, at: this.now(), ...(proof.length ? { proof: { provider: rec.provider, id: rec.id, emails: proof, at: this.now() } } : {}) };
     this.#sweep();
     this.#save();
     return { token, login: rec.display, owner: person === this.state.owner };
