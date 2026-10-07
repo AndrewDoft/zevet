@@ -745,7 +745,7 @@ function openBoard(cfg) {
   }
   // Background, after onboarding: never awaited, so it cannot gate the window.
   masoraLink.start();
-  boardWindow = trackWindow("board", new BrowserWindow(windowOptions("board", {
+  boardWindow = new BrowserWindow(windowOptions("board", {
     width: 1240,
     height: 820,
     minWidth: 720,
@@ -782,7 +782,8 @@ function openBoard(cfg) {
       contextIsolation: true,
       sandbox: false,
     },
-  })));
+  }));
+  trackWindow("board", boardWindow);
 
   // Restore the remembered zoom. It has to be set per load, not once: a reload
   // or a navigation resets zoomLevel to 0, and a board that silently springs
@@ -978,7 +979,7 @@ function openSetup(existing) {
     setupWindow.focus();
     return;
   }
-  setupWindow = trackWindow("setup", new BrowserWindow(windowOptions("setup", {
+  setupWindow = new BrowserWindow(windowOptions("setup", {
     width: 620,
     height: 820,
     resizable: false,
@@ -1003,7 +1004,8 @@ function openSetup(existing) {
       // button on this page is dead (same as the board window above).
       sandbox: false,
     },
-  })));
+  }));
+  trackWindow("setup", setupWindow);
   setupWindow.loadFile(path.join(__dirname, "setup.html"), {
     query: {
       ...(existing ? { actor: existing.actor || "" } : {}),
