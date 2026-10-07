@@ -141,6 +141,21 @@ describe("through a real hub", () => {
     return { hub, tok, call, invitation, online };
   }
 
+  test("creating: the Editor gate bites on its own, even for the session's own person (Viewer, Commenter)", async () => {
+    // Without this, removing roleRefusal(auth, "share") leaves the ownership check
+    // to return 403 for a stranger, so the test above stays green. Here the
+    // session IS the caller's, so only the role gate can refuse.
+    const { hub, tok, call } = await setup();
+    for (const [who, session] of [["vic", "sess-vic-1"], ["cam", "sess-cam-1"]]) {
+      await post(hub.base, { actor: who, kind: "prompt", detail: "x", agent: "codex", repo: "zevet", session, machine: who + "pc" });
+      const r = await call(tok[who], "/api/session-invite", { id: "22222222-" + who, session, mode: "watch", sealed: "AAAA" });
+      assert.equal(r.status, 403, who);
+      assert.doesNotMatch(String(r.error), /Only .* or the owner can invite/, "refused by the role gate, not the ownership check");
+    }
+    const bob = await call(tok.bob, "/api/session-invite", { id: "33333333-bob", session: "sess-bob-1", mode: "watch", sealed: "AAAA" });
+    assert.equal(bob.status, 200, "an Editor on their own session still works");
+  });
+
   test("creating: needs Editor, a live session, and being its person or the owner", async () => {
     const { tok, call } = await setup();
     const body = { id: "11111111-aaaa", session: "sess-bob-1", mode: "watch", sealed: "AAAA" };
