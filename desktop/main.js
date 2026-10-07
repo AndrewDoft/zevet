@@ -77,6 +77,7 @@ const agentCatalogs = require("./agent-catalogs.js");
 const { createConsoleLog } = require("./console-log.js");
 const consolePersistence = require("./console-persistence.js");
 const { createAgentWorktrees } = require("./agent-worktree.js");
+const { integrateAgent, runAgentChecks } = require("./agent-integration.js");
 const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const { MasoraLink } = require("./masora-link.js");
@@ -3318,6 +3319,12 @@ async function releasePlacement(p) {
   if ([...placements].some((q) => q.worktree === p.worktree)) return;
   // Not from under a process that may still have files open in it.
   await Promise.race([p.gone, new Promise((r) => setTimeout(r, 5000))]);
+  if (p.worktree && p.integration !== "integrated") {
+    const result = await integrateAgent({ worktree: p.worktree, runId: p.id, git: (args) => new Promise((resolve, reject) => execFile("git", args, { windowsHide: true }, (err, out) => err ? reject(err) : resolve(String(out)))), checks: runAgentChecks });
+    p.integration = result.status;
+    consoleLog.updateMeta(p.id, { integration: result });
+    toBoard("local:agentIntegration", { id: p.id, ...result });
+  }
   await worktrees.release(p.worktree, p.title);
 }
 

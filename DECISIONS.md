@@ -1900,3 +1900,14 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
 - **Hub** redeployed from the tag in place; `BUILD_ID` `e65b755bd3fc` -> `79c173a36ba9`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+## D-073 — Subagent work integrates exactly once, only after green checks
+
+Verification against `origin/main` (2026-10-07): `desktop/agent-worktree.js`
+created isolated branches and `releasePlacement()` only committed/released them;
+there was no branch integration, check gate, retry key, restart handling, or
+outcome sent to `SubagentsPanel`. Therefore red and still-running work could be
+silently discarded and a second trigger had no defined behavior.
+
+The desktop now records an idempotency marker per subagent run, runs the injected
+checks before merging, merges only a green result, and returns `integrated` or
+`failed` with a reason. A later trigger for the same run is a no-op.

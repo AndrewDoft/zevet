@@ -67,11 +67,12 @@ export function SubagentsPanel() {
     };
   }, []);
 
-  const running = consoles.filter((c) => c.running);
-  if (!running.length) return null;
+  const visible = consoles.filter((c) => c.running || (c as ConsoleEntry & { integration?: unknown }).integration);
+  const running = visible.filter((c) => c.running);
+  if (!visible.length) return null;
   const working = running.filter((c) => agentStateOf(c) === "working").length;
   const idle = running.length - working;
-  const summary = idle ? `${working} working · ${idle} idle` : `${working} working`;
+  const summary = running.length ? (idle ? `${working} working · ${idle} idle` : `${working} working`) : "done";
 
   return (
     <div className="subagents-panel" data-open={open} ref={panel}>
@@ -87,17 +88,20 @@ export function SubagentsPanel() {
       </button>
       {open ? (
         <div className="subagents-list" role="list">
-          {running.map((c) => (
+          {visible.map((c) => {
+            const integration = (c as ConsoleEntry & { integration?: { status: string; why?: string } }).integration;
+            return (
             <div className="subagents-row" role="listitem" key={c.key} data-state={agentStateOf(c)}>
               <span className="subagents-name">{c.label || c.title || c.autoTitle || c.agent}</span>
               <span className="subagents-meta">
                 {[c.agent, c.engine, c.model].filter(Boolean).join(" · ")}
               </span>
-              <span className="subagents-tool">{agentStateOf(c) === "idle" ? "idle" : currentToolOf(c) || "—"}</span>
+              <span className="subagents-tool">{integration ? (integration.status === "failed" ? `failed: ${integration.why}` : "integrated") : agentStateOf(c) === "idle" ? "idle" : currentToolOf(c) || "—"}</span>
               <span className="subagents-elapsed">{ago(now - c.startedAt)}</span>
               <span className="subagents-tokens">{c.usage.context != null ? tokens(c.usage.context) : "—"}</span>
             </div>
-          ))}
+            );
+          })}
         </div>
       ) : null}
     </div>

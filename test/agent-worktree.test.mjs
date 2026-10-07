@@ -10,6 +10,7 @@ import { tempDir, ROOT } from "./helpers.mjs";
 
 const require = createRequire(import.meta.url);
 const { createAgentWorktrees } = require(path.join(ROOT, "desktop", "agent-worktree.js"));
+const { integrateAgent } = require(path.join(ROOT, "desktop", "agent-integration.js"));
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
 const ID = ["-c", "user.email=t@t", "-c", "user.name=t"];
@@ -129,5 +130,30 @@ describe("agent worktrees", () => {
       plain.cleanup();
       empty.cleanup();
     }
+  });
+});
+
+describe("agent integration", () => {
+  test("integrates once only, and refuses a red run", async () => {
+    const calls = [];
+    const wt = { dir: path.join(tempDir("zevet-int-").dir, "child"), repo: "repo", branch: "zevet/x" };
+    const git = async (args) => { calls.push(args); return "main\n"; };
+    const red = await integrateAgent({ worktree: wt, runId: "r1", git, checks: async () => ({ green: false, why: "2 failed" }) });
+    assert.deepEqual(red, { status: "failed", why: "2 failed" });
+    assert.equal(calls.length, 0);
+  });
+
+  test("a green run merges exactly once and a retry is a no-op", async () => {
+    const dir = tempDir("zevet-int-");
+    const wt = { dir: path.join(dir.dir, "child"), repo: "repo", branch: "zevet/x" };
+    const calls = [];
+    const git = async (args) => { calls.push(args); return "main\n"; };
+    const checks = async () => ({ green: true });
+    const one = await integrateAgent({ worktree: wt, runId: "r2", git, checks });
+    const two = await integrateAgent({ worktree: wt, runId: "r2", git, checks: async () => { throw new Error("must not rerun"); } });
+    assert.equal(one.status, "integrated");
+    assert.deepEqual(two, one);
+    assert.equal(calls.filter((a) => a[2] === "merge").length, 1);
+    dir.cleanup();
   });
 });
