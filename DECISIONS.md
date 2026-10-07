@@ -1919,7 +1919,18 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
 
 **Tests.** `test/payer.test.mjs`: per-engine extraction from fixture files (and that no token or email other than the named one leaks), the sealed frame (session AAD, key), through a real hub (relay, late joiner, release, never in clear, not an agent turn, bad payloads refused), the board wording, and the steer/spawn/agent-card wiring.
 
-## D-074 — Subagent work integrates exactly once, only when it is safe (renumbered at merge from D-073)
+## D-074 — Shipped: 0.2.124, Amoeba site read, feature matrix and ranked build order (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 3 commit(s) past v0.2.123.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.124 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.124`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `61482c26…` (153119792 B), dmg `09ac1b62…` (205235681 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2124 on both platforms. Manifests win `63ed8ec7…`, mac `612d4271…`. Delta: 4 new blob(s) uploaded. 85 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `79c173a36ba9` -> `713e53eabdb1`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-075 — Subagent work integrates exactly once, only when it is safe (renumbered at merge from D-073, then D-074, which the 0.2.124 ship record took)
 
 Verified against `origin/main` (2026-10-07): `desktop/agent-worktree.js` made an isolated `zevet/<slug>` branch
 and `releasePlacement()` only committed and released it. There was no merge back, no check gate, no per-run key,
@@ -1949,6 +1960,4 @@ Trigger scope: only the end of a scheduled run integrates automatically. Closing
 starts release the worktree (branch kept if it has commits) and never merge, since no row could show it. A held
 worktree (waiting/failed/no checks) stays until Integrate, Discard, thread close, or the next start's prune; a held
 worktree older than the app session is gone, its branch survives for a manual `git merge`.
-
-||||||| e485af2
 
