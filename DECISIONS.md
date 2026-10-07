@@ -1989,6 +1989,8 @@ worktree older than the app session is gone, its branch survives for a manual `g
 
 **Reversibility.** Additive: remove the module, four `local:memory*` handlers, and the board components; sealed files on disk are inert.
 
+**Not verified.** Only the headless browser walk with a stubbed desktop bridge: no real app launch, no second machine seeing the notes, staleness against a live working tree edited by a real agent.
+
 ## D-078 — Comments pinned to turns, hunks and plan steps; comment to agent
 
 *Renumbered at merge from D-NEXT-W2-4.*
@@ -2005,6 +2007,9 @@ worktree older than the app session is gone, its branch survives for a manual `g
 
 **Tests.** `test/comment-anchor.test.mjs`; each guard mutation-checked (defang, cap, data header, ref storage, step link, ref validation).
 
+**Turn button (fixed at merge).** The headless walk found "Comment on this turn" could never render: it needs an open file's comment room but lived in TurnDetail, which renders only while no file is selected. It now renders from the conversation card (`TurnCommentButton`, conversation.tsx), next to the thread, like the hunk button. `test/turn-comment-button.test.mjs` fails without the mount. Starting an agent from the composer (`showConversation()`) clears `selectedPath` by design and leaves the editor session, and so the room, alive; that is the "Pick a file" pane the walk saw, not agent events resetting selection (local agent events never reach `followEvent`).
+
+**Not verified.** Only the headless walk with a stubbed desktop bridge: no real shared-editor room with two people, no comment reaching a real running agent.
 
 ## D-079 — Per-team retention, and secret redaction on the client before anything leaves
 
@@ -2024,6 +2029,8 @@ worktree older than the app session is gone, its branch survives for a manual `g
 
 **Tests.** `test/redact.test.mjs` (one case per rule, each proved reachable through that rule alone via `matchedRules`; false-positive cases; the hook end to end against a real hub; plugin parity) and `test/retention.test.mjs` (default keeps; owner 1d blanks board and log immediately; 7d keeps; member refused; bad value refused).
 
+**Not verified.** No run against a real team hub with live clients: redaction was exercised on fixtures, and ship.mjs re-signs `client-manifest.signed.json` (with `client/redact.mjs`) at release, so the signed payload has not been checked end to end.
+
 ## D-080 — Agent notifications and editable shortcuts
 
 *Renumbered at merge from D-NEXT-W2-14.*
@@ -2041,6 +2048,8 @@ worktree older than the app session is gone, its branch survives for a manual `g
 **Limits.** Permit and ask requests carry no console id, so their click raises the window but does not pick a card (the request card is already global). "Idle waiting for input" is not distinguished from finished: a turn ending is both. Not verified: real OS toast rendering, macOS.
 
 **Tests.** `test/notify-keys.test.mjs`: mapping, toggles, coalescing, conflicts, persistence, reset; each mutation-checked.
+
+**Not verified.** Real OS toast rendering (Windows toast, macOS Notification Center) and click-through to the right console were never seen; macOS in particular was not run. Only the IPC wiring and key handling are tested.
 
 ## D-081 — Roles: Viewer / Commenter / Editor / Owner, enforced at the hub
 
@@ -2091,3 +2100,8 @@ worktree older than the app session is gone, its branch survives for a manual `g
 **Known limits.** "Safe checkpoint" is `stop()` on the owner's console, which ends the process mid-step; there is no gentler interrupt in the console layer today. The diff is a summary: uncommitted work lives on the owner's machine and is not transferred, so the taker works from their own checkout and the summary says what changed. The transcript is the console log's bounded head and tail; engines it cannot parse contribute nothing rather than noise. A hook-only agent (no Zevet console) cannot be taken over (`declined`: not running in their Zevet app).
 
 **Tests.** `test/takeover.test.mjs` (30): sealing and AAD, per-engine transcript, owner and taker inboxes, a real hub for policy, one-winner, release, final, relay scope, ordering and refusals, and an end-to-end run with two desktops. **Mutation checks** (each broken, run, seen red, restored): one-winner check removed (race, decline-release and final tests red); policy-off gate removed (red); owner approval gate removed (3 red); owner keeps turn when taker offline removed (red); baton-picks-engine check removed (red); baton AAD label equal to request label (red); taker-status ordering removed (red). A "decline releases the lock" mutation survived because the release was redundant (the hold stops counting once the record is declined); the dead release was deleted rather than left untested.
+
+**Role gate (wired at merge).** `POST /api/takeover` calls W2-7's `roleRefusal(auth, "takeover")`, so Editor or above; a Commenter gets 403 (`test/takeover.test.mjs`, mutation-proven). The old `mayTakeOver` hook is gone.
+
+**Not verified.** Never run on two real machines. The safe checkpoint is `stop()` mid-step, so the stopped step is cut off; uncommitted work is not transferred, only the diff summary. Nothing here ran against a real second engine or account.
+

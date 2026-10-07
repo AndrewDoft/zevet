@@ -84,7 +84,6 @@ export function TurnDetail() {
 
       {open ? (
         <div className="turn-detail-body">
-          <AnchorButton label="Comment on this turn" refOf={() => turnRef({ session: active.sessionId || "", agent: active.agent, turn: Math.max(0, active.transcript.messages.length - 1), quote: lastText(active.transcript.messages) })} />
           {/* Ordered the way you would ask: what was the plan, what stopped
               it, what is next, how long did each step take, then the detail —
               what it ran, what it read, what it looked up, who it handed to,
@@ -124,6 +123,14 @@ export function TurnDetail() {
       ) : null}
     </div>
   );
+}
+
+/** "Comment on this turn", shown with the conversation (conversation.tsx), not
+ *  inside TurnDetail: that only renders while no file is selected, and a turn
+ *  comment needs the open file's room, so there it could never appear. */
+export function TurnCommentButton({ active }: { active?: { sessionId?: string | null; agent: string; transcript: { messages: ReadonlyArray<{ content?: unknown }> } } }) {
+  if (!active || !active.transcript.messages.length) return null;
+  return <AnchorButton label="Comment on this turn" refOf={() => turnRef({ session: active.sessionId || "", agent: active.agent, turn: Math.max(0, active.transcript.messages.length - 1), quote: lastText(active.transcript.messages) })} />;
 }
 
 /** The text of the latest message, for the quote a turn comment carries. */

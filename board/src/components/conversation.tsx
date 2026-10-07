@@ -31,6 +31,7 @@ import { AskPrompt, AskQueue } from "./asks";
 import { DraftRestore } from "./findviews";
 import { DraftPublisher } from "./promptboxes";
 import { ThreadMap } from "./mapviews";
+import { TurnCommentButton } from "./turndetail";
 
 const TURN_COMPONENTS = { ToolGroup: TurnToolGroup };
 
@@ -226,6 +227,7 @@ export function Conversation() {
           comment for what it draws and why it is gone after the first
           message. */}
       <StartupActivity reading={reading} />
+      {reading ? null : <TurnCommentButton active={active} />}
       <div className="chat-thread-body">
         <Thread autoFocus={false} components={TURN_COMPONENTS} />
         {/* A tick per message down the right edge. It is the one thing that

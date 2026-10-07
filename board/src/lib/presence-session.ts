@@ -54,6 +54,7 @@ export function useComments(): CommentsState {
       return () => listeners.delete(l);
     },
     () => state,
+    () => state,
   );
 }
 
