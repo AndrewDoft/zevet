@@ -152,22 +152,30 @@ because `path.join` treats `../evil.mjs` as an instruction rather than a file.
 
 ### The master secret, and the cutover
 
-There are now **two values, not one**, and which is which decides whether the
-hub can read your source.
+There are two values, not one. Whether the hub can read your source depends on
+which team you are on.
 
 - The **master secret** is what the team shares. It lives in each teammate's
-  `~/.zevet/config.json` as `secret`, and it never leaves their machine.
-- The **derived token** is what the hub holds in `ZEVET_TOKEN` and what every
-  client puts in its `x-zevet-token` header. It is
-  `SHA-256("zevet-auth\0" || secret)`.
+  `~/.zevet/config.json` as `secret`.
+- The **derived token** is what a client puts in its `x-zevet-token` header. It
+  is `SHA-256("zevet-auth\0" || secret)`.
 
-The hub is **given the derived token and never the secret**, and that is the
-whole point rather than a nicety. Collaborative editing means file contents now
-cross the hub; the document key is `HKDF-SHA-256(secret, info "zevet-doc")`, so
-a hub that only ever sees the derived token cannot compute it and relays
-ciphertext it cannot read. `client/secret.mjs` is the specification, including
-what this does **not** protect against — a hub that has been taken over serves
-the board's own JavaScript and does not need your key.
+**Teams that sign in (GitHub, Google, Microsoft, an invite key; D-007, D-021):
+the hub holds the master secret.** It hands it to whoever signs in, and keeps
+it on disk (`hub/accounts.mjs`). So the hub's operator, anyone who reads its
+disk or memory, and anyone who ends up with a backup of `/srv/zevet/var/` can
+decrypt document traffic. The hub *process* still only relays ciphertext; it
+never opens a document or a steer. That is a statement about what it does, not
+about what it could.
+
+**Shared-token teams (a self-hosted hub with no sign-in): the hub is given the
+derived token and never the secret.** The document key is
+`HKDF-SHA-256(secret, info "zevet-doc")`, so a hub that only ever sees the
+derived token cannot compute it, and relays ciphertext it cannot read.
+`client/secret.mjs` is the specification, including what this does **not**
+protect against — a hub that has been taken over serves the board's own
+JavaScript and does not need your key. The rest of this section is about this
+mode.
 
 Generate a secret, and derive the token from it:
 
@@ -196,8 +204,9 @@ out every machine that has not yet done step 3:
 deliberately no dual-accept window: the hub holds exactly one `ZEVET_TOKEN` and
 compares against it, and teaching it to accept both would mean the raw token
 stayed a valid credential for as long as anyone forgot to finish the migration —
-which, given the derived scheme exists to stop the hub ever holding key
-material, is the one state worth making impossible rather than comfortable. The
+which, given the derived scheme exists to stop a shared-token hub ever holding
+key material, is the one state worth making impossible rather than
+comfortable. The
 fallback in `client/secret.mjs` buys an ordering, not a coexistence: an install
 that has updated its client but not re-run setup keeps working until step 1, and
 then stops. `node client/doctor.mjs` names that state in so many words —
@@ -322,22 +331,32 @@ anyone using its multiplayer: *"Sharing a project gives collaborators access to
 your local file system within that project. Only collaborate with people you
 trust."* The same caution applies here.
 
-### The hub relays what it cannot read
+### What the hub relays, and what it can read
 
-File contents now cross the hub, and the hub is not trusted with them.
+File contents cross the hub as ciphertext, and the hub process never opens them.
 
-Teammates share one master secret `S`. The hub is given
-`SHA-256("zevet-auth" || S)`; the key that encrypts document traffic is
-`HKDF(S)`, which the hub therefore cannot derive. Each update is AES-256-GCM
-with the room name — `<repo>:<path>` — as additional data, so a relay cannot
-take an update for one file and replay it into another file's room.
+Teammates share one master secret `S`; the key that encrypts document traffic is
+`HKDF(S)`. Each update is AES-256-GCM with the room name — `<repo>:<path>` — as
+additional data, so a relay cannot take an update for one file and replay it
+into another file's room.
 
-**What this does not defend against, said plainly.** The board loads its page
+**Whether the hub could decrypt depends on the team (D-005, D-007).**
+
+- *Sign-in teams* (the default): the hub holds `S`. An operator, anyone who
+  reads the box's disk or memory, and anyone with a backup can decrypt document
+  traffic. The encryption protects the wire and the relay's behaviour, not the
+  documents from a watched hub. This was traded for joining without pasting
+  anything.
+- *Shared-token teams* (self-hosted, no sign-in): the hub is given only
+  `SHA-256("zevet-auth" || S)` and cannot derive `HKDF(S)`. The encryption
+  defends against a hub that is honest but curious, against whoever can read its
+  memory or its disk, and against anyone who ends up with its logs.
+
+**What neither defends against, said plainly.** The board loads its page
 *from* the hub. A hub that has been taken over does not need the key; it serves
-JavaScript into the window that already has one. This protects against a hub
-that is honest but curious, against whoever can read its memory or its disk, and
-against anyone who ends up with its logs. Serving the editor from the desktop
-app's own files is the real fix and **has not been done**.
+JavaScript into the window that already has one. Serving the editor from the
+desktop app's own files is the real fix and **has not been done**. Nor is
+peer-to-peer, where the code would never reach the hub (D-005).
 
 The hub also still sees who is editing which file in which repo, and roughly how
 much. That is the board's whole job.
@@ -374,7 +393,7 @@ hardest to get right, and the reason the tool this replaces was unusable.
 **This list used to include "no cross-machine approval routing", and that is no
 longer true (D-058).** You can steer a teammate's agent: the Steer button on
 their agent row aims your composer at it, and what you send is sealed on your
-machine with the document key, relayed by the hub (which cannot open it), and
+machine with the document key, relayed by the hub (whose process does not open it), and
 queued on their agent as a turn starting `[from <you>]`. Whether that is
 allowed (and whether a teammate may start an agent on your machine, below) is one team-wide setting only the team owner can change, enforced by
 the hub: **Ask first** (the default — their app shows an approval card and
@@ -384,9 +403,8 @@ why), refused by policy, offline, or unknown agent. A steer is text only — it
 cannot change a mode, grant a tool permission or answer a permit — and only
 agents running in their Zevet app can be steered, not ones in a plain
 terminal. It is still remote prompt injection into a machine holding
-credentials, which is why the default asks. The hub holds the team secret on
-disk (see `hub/accounts.mjs`), so "cannot open it" means the hub process never
-does, not that it could not.
+credentials, which is why the default asks. On a sign-in team the hub holds the team secret on disk (see `hub/accounts.mjs`),
+so "does not open it" means the hub process never does, not that it could not.
 
 **You can also start an agent on a teammate's machine (D-060).** "Run as" in
 the new-agent flow, or "+ agent on <name>'s machine" on their row, aims your
