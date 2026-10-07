@@ -196,8 +196,8 @@ export function renderRecord(n, f) {
     "",
     f.kind === "shell"
       ? `- **Shell release.** ${f.shell.slice(0, 6).join(", ")}${f.shell.length > 6 ? ", …" : ""} changed: installers + signed installer feed (\`zevet-latest.json\` -> ${f.version}) + payload.`
-      : `- **Payload-only, not a shell release.** No shell file changed; \`zevet-latest.json\` untouched. Installers for ${f.version} were built and published, and the stable \`Zevet-Setup.exe\` / \`Zevet.dmg\` links repointed, for new downloads.`,
-    `- **Verified.** Gate \`node scripts/run-tests.mjs\` green on the release tree; tag \`v${f.version}\`; \`build.yml\` both legs green; exe Authenticode \`${f.authenticode || "?"}\`. sha256: exe \`${short(f.exeSha)}\` (${f.exeBytes ?? "?"} B), dmg \`${short(f.dmgSha)}\` (${f.dmgBytes ?? "?"} B); the stable links serve those bytes.`,
+      : `- **Payload-only, not a shell release.** No shell file changed; \`zevet-latest.json\` untouched. Installers for ${f.version} were built and published, and the stable \`Zevet-Setup.exe\` / \`Zevet-Setup-arm64.exe\` / \`Zevet.dmg\` / \`Zevet.AppImage\` links repointed, for new downloads.`,
+    `- **Verified.** Gate \`node scripts/run-tests.mjs\` green on the release tree; tag \`v${f.version}\`; \`build.yml\` both legs green; exe Authenticode \`${f.authenticode || "?"}\`. sha256: exe \`${short(f.exeSha)}\` (${f.exeBytes ?? "?"} B), dmg \`${short(f.dmgSha)}\` (${f.dmgBytes ?? "?"} B), win-arm64 exe \`${short(f.arm64Sha)}\` (${f.arm64Bytes ?? "?"} B), AppImage \`${short(f.appimageSha)}\` (${f.appimageBytes ?? "?"} B); the stable links serve those bytes.`,
     `- **Payload:** stable, verified over HTTPS; seq ${f.seq ?? "?"} on both platforms. Manifests win \`${short(f.manifestWin)}\`, mac \`${short(f.manifestMac)}\`. Delta: ${f.newBlobs ?? "?"} new blob(s) uploaded. ${f.blobs ?? "?"} blobs per platform brotli-decode to their manifest hashes; pulses verify under \`zevet-2026-09\`.`,
   ];
   if (f.hub) lines.push(`- **Hub** redeployed from the tag in place; \`BUILD_ID\` \`${f.hubBefore || "?"}\` -> \`${f.hubAfter || "?"}\`; \`/healthz\` ok.`);

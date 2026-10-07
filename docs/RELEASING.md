@@ -86,9 +86,11 @@ zevet-0.2.0-linux-x64.AppImage          (artifact zevet-linux)
 ```
 
 The feed keys are `win32-x64`, `win32-arm64`, `darwin-arm64`, `linux-x64` (`${process.platform}-${process.arch}`).
-A platform with no artifact in the directory simply gets no entry. **Not yet wired:** `scripts/ship.mjs` still
-uploads only the exe and dmg and repoints only `Zevet-Setup.exe` / `Zevet.dmg`; the two new installers (and the
-`usemasora.com/zevet` page, which lives in masora-landing) are published by hand until it is extended. No
+A platform with no artifact in the directory simply gets no entry. `scripts/ship.mjs` publishes all four
+installers (from the `zevet-windows`, `zevet-macos` and `zevet-linux` artifacts; both exes Authenticode-checked), repoints
+four stable links (`Zevet-Setup.exe`, `Zevet-Setup-arm64.exe`, `Zevet.dmg`, `Zevet.AppImage`; the two new Caddy handle
+blocks are cloned from `Zevet-Setup.exe`'s the first time a ship finds them missing), and the feed carries all four
+keys. The `usemasora.com/zevet` page (masora-landing) shows a link per feed key. No
 payload (`p/`) is published for the new platforms, so they update by installer only.
 
 **Linux updates.** Only when the app runs from an AppImage ($APPIMAGE set by the AppImage runtime) with a writable

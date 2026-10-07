@@ -1989,3 +1989,30 @@ no Linux code-signing. Windows ARM64 is signed by the same Azure steps as x64.
 **Tests.** test/app-update.test.mjs (key/name selection per platform, AppImage check/install/installOnQuit/no-APPIMAGE),
 test/make-feed.test.mjs (four-platform feed). Mutation-checked: dropping the linux suffix, the exts option, or the
 make-feed TARGETS entries turns them red. Dropping the chmod does NOT (mode assertion is skipped on Windows; runs on Linux CI).
+
+## D-NEXT-SHIP-PLATFORMS — `npm run ship` publishes the AppImage and the Windows ARM64 installer
+
+**Decision.** `scripts/ship.mjs` handles four installers, not two, through one table (`INSTALLERS`): stable link, versioned
+name, fact key. Same mechanism and destination as before: scp to `/tmp`, `mv` into `/srv/masora/downloads` (no GitHub
+release assets, as today).
+- `artifacts()` downloads `zevet-windows` (x64 + arm64 exe), `zevet-macos`, `zevet-linux` and requires all four files.
+- `installers` Authenticode-checks both exes, uploads all four; done only when all four answer HEAD.
+- `installer feed` is unchanged: make-feed already reads the four keys with sha256 off the same directory.
+- `stable links`: `Zevet-Setup-arm64.exe` and `Zevet.AppImage` join the two existing links. Their Caddy handle blocks do not
+  exist yet, so the in-place python (`caddyPython`) clones `Zevet-Setup.exe`'s block when one is missing, then rewrites all
+  four versioned names; the container check now demands 4 lines for the version, not 2.
+- `verify` hashes all four served links against the built files and Authenticode-checks both served exes; the D-record
+  carries the arm64 and AppImage hashes. The payload channel is untouched (still win-x64 / mac-arm64 only).
+
+**Alternatives.** A fixed second Caddy edit by hand (rejected: the first ship after this would silently lack the links);
+making the two new files optional (rejected: a missing artifact would then ship a release the page cannot fully link).
+
+**Verified.** test/ship.test.mjs against fakes (installers done/run, missing AppImage, links table vs make-feed TARGETS,
+the python run for real against a fixture Caddyfile, idempotent on a second run). Mutation-checked: 4->2 installers,
+dropping the linux artifact, dropping the block clone, dropping the AppImage row, dropping the arm64 Authenticode each
+turn a test red; the `-ge 4` container check got its own assertion after surviving.
+
+**Not verified.** No release, no VM, no Caddy reload. The real Caddyfile's Zevet-Setup.exe block (headers, content type) was
+not read: the clone assumes the exe's block is right for an AppImage too. The `verify` step's loop over the table is not
+exercised by a test (it needs a full release scratch). Whether the Azure signing step signs the arm64 exe is unconfirmed;
+if it does not, `installers` fails on Authenticode before anything is uploaded.

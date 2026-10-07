@@ -14,7 +14,7 @@ import {
   acquireLock, ciVerdict, classify, cmpVersion, decide, lockHeld, nextDNumber, nextVersion, notesFrom, recordHeader, renderRecord, runSteps,
   shellRequires, shellContractErrors,
 } from "../scripts/ship-lib.mjs";
-import { BASE, PLATFORMS, buildSteps, bumpVersion, ensureWorktree, exeName, dmgName, pulseState, samePath, verifyPayload } from "../scripts/ship.mjs";
+import { BASE, PLATFORMS, buildSteps, bumpVersion, ensureWorktree, exeName, dmgName, arm64ExeName, appImageName, INSTALLERS, caddyPython, pulseState, samePath, verifyPayload } from "../scripts/ship.mjs";
 import { tick } from "../scripts/ship-watch.mjs";
 
 const require = createRequire(import.meta.url);
@@ -359,10 +359,70 @@ describe("step checks decide 'already done'", () => {
     assert.equal(await world(t, { build: { conclusion: "failure" } }).check("build.yml"), false);
     assert.equal(await world(t, { build: null }).check("build.yml"), false);
   });
-  test("installers: both files must be on the host", async (t) => {
-    const both = new Set([exeName("0.2.94"), dmgName("0.2.94")]);
-    assert.equal(await world(t, { files: both }).check("installers"), true);
-    assert.equal(await world(t, { files: new Set([exeName("0.2.94")]) }).check("installers"), false);
+  test("installers: all four files must be on the host", async (t) => {
+    const all = [exeName, dmgName, arm64ExeName, appImageName].map((n) => n("0.2.94"));
+    assert.equal(await world(t, { files: new Set(all) }).check("installers"), true);
+    for (const missing of all) assert.equal(await world(t, { files: new Set(all.filter((f) => f !== missing)) }).check("installers"), false, missing);
+  });
+  test("installers run: downloads all three artifacts, uploads all four files, Authenticode-checks both exes", async (t) => {
+    const w = world(t);
+    const { writeFileSync: wf } = await import("node:fs");
+    const downloaded = [], scp = [], signed = [];
+    const byArtifact = { "zevet-windows": [exeName, arm64ExeName], "zevet-macos": [dmgName], "zevet-linux": [appImageName] };
+    w.ctx.io.gh = (args) => {
+      const name = args[args.indexOf("-n") + 1], dir = args[args.indexOf("-D") + 1];
+      downloaded.push(name);
+      for (const n of byArtifact[name]) wf(path.join(dir, n("0.2.94")), name);
+      wf(path.join(dir, "latest.yml"), "noise"); // electron-builder side files must not be uploaded
+      return "";
+    };
+    w.ctx.io.run = (cmd, args) => { signed.push(path.basename(/'([^']+)'/.exec(args.at(-1))[1])); return { stdout: "Valid|CN=Andrew Doft" }; };
+    w.ctx.io.scp = (files) => { scp.push(...files.map((f) => path.basename(f))); };
+    w.steps.find((s) => s.name === "installers").run();
+    assert.deepEqual(downloaded.sort(), ["zevet-linux", "zevet-macos", "zevet-windows"]);
+    assert.deepEqual([...scp].sort(), ["zevet-0.2.94-linux-x64.AppImage", "zevet-0.2.94-macos-arm64.dmg", "zevet-0.2.94-windows-arm64-setup.exe", "zevet-0.2.94-windows-x64-setup.exe"]);
+    assert.deepEqual([...signed].sort(), [arm64ExeName("0.2.94"), exeName("0.2.94")]);
+    assert.match(w.sshCalls.at(-1), /mv \/tmp\/zevet-0\.2\.94-\*/);
+  });
+  test("installers run: a build that lacks the AppImage fails before anything is uploaded", async (t) => {
+    const w = world(t);
+    const { writeFileSync: wf } = await import("node:fs");
+    const scp = [];
+    w.ctx.io.gh = (args) => { const dir = args[args.indexOf("-D") + 1], n = args[args.indexOf("-n") + 1]; if (n !== "zevet-linux") for (const f of { "zevet-windows": [exeName, arm64ExeName], "zevet-macos": [dmgName] }[n]) wf(path.join(dir, f("0.2.94")), n); return ""; };
+    w.ctx.io.scp = (f) => scp.push(...f);
+    await assert.rejects(async () => w.steps.find((s) => s.name === "installers").run(), /lack zevet-0\.2\.94-linux-x64\.AppImage/);
+    assert.deepEqual(scp, []);
+  });
+  test("the stable links are one per installer, and the versioned names are the ones make-feed reads", () => {
+    assert.deepEqual(INSTALLERS.map(([l]) => l), ["Zevet-Setup.exe", "Zevet.dmg", "Zevet-Setup-arm64.exe", "Zevet.AppImage"]);
+    const src = readFileSync(new URL("../scripts/make-feed.mjs", import.meta.url), "utf8");
+    const res = [...src.matchAll(/re: (\/\^zevet-.*?\$\/)/g)].map((m) => eval(m[1]));
+    assert.equal(res.length, 4);
+    for (const [, name] of INSTALLERS) assert.equal(res.filter((r) => r.test(name("0.2.94"))).length, 1, name("0.2.94"));
+  });
+  test("stable links: the Caddy edit creates the two new blocks once and repoints all four to the version", (t) => {
+    const py = spawnSync("py", ["-3", "-c", "pass"]).status === 0 ? ["py", "-3"] : spawnSync("python3", ["-c", "pass"]).status === 0 ? ["python3"] : null;
+    if (!py) return t.skip("no python on this machine");
+    const d = tempDir("zevet-caddy-"); t.after(() => d.cleanup());
+    const file = path.join(d.dir, "Caddyfile").replaceAll(path.sep, "/");
+    const blk = (link, f) => `	handle /download/${link} {
+		root * /srv/downloads
+		rewrite * /${f}
+		header Content-Disposition "attachment; filename=${link}"
+	}
+`;
+    writeFileSync(file, `usemasora.com {
+${blk("Zevet.dmg", "zevet-0.2.93-macos-arm64.dmg")}${blk("Zevet-Setup.exe", "zevet-0.2.93-windows-x64-setup.exe")}	handle {
+		respond 404
+	}
+}
+`);
+    const edit = () => { const r = spawnSync(py[0], [...py.slice(1), "-"], { input: caddyPython("0.2.94", file), encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return readFileSync(file, "utf8"); };
+    const once = edit();
+    for (const f of ["zevet-0.2.94-macos-arm64.dmg", "zevet-0.2.94-windows-x64-setup.exe", "zevet-0.2.94-windows-arm64-setup.exe", "zevet-0.2.94-linux-x64.AppImage"]) assert.equal(once.split(`rewrite * /${f}`).length - 1, 1, f);
+    assert.ok(!once.includes("0.2.93"));
+    assert.ok(once.includes("filename=Zevet.AppImage") && once.includes("filename=Zevet-Setup-arm64.exe"));
+    assert.equal(edit(), once, "a second run changes nothing and adds no duplicate block");
   });
   test("stable links always runs: a host file already edited is not a reloaded Caddy", async (t) => {
     // The first real ship edited the host file, then died on the container check;
@@ -372,6 +432,7 @@ describe("step checks decide 'already done'", () => {
     assert.equal(await world(t, { ssh: () => "yes\n" }).check("stable links"), true);
     const src = readFileSync(new URL("../scripts/ship.mjs", import.meta.url), "utf8");
     assert.ok(src.includes('docker exec $C grep -c "zevet-${v}-" /etc/caddy/Caddyfile'), "the container sees the file at /etc/caddy/Caddyfile");
+    assert.ok(src.includes('[ "$n" -ge 4 ]'), "the container must show all four versioned names, not just the old two");
   });
   test("hub: the marker the deploy writes must name the version", async (t) => {
     assert.equal(await world(t, { ssh: () => "0.2.94\n" }).check("hub"), true);
