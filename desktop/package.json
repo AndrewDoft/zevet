@@ -1,6 +1,6 @@
 {
   "name": "zevet-desktop",
-  "version": "0.2.123",
+  "version": "0.2.125",
   "private": true,
   "description": "zevet — watch your team's coding agents",
   "main": "bootstrap.js",
@@ -40,6 +40,7 @@
       "board-ask.js",
       "console-persistence.js",
       "agent-worktree.js",
+      "agent-integration.js",
       "auto-title.js",
       "doc-sync.js",
       "repo-stats.js",

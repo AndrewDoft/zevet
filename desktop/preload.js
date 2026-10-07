@@ -504,6 +504,10 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    */
   consoles: () => ipcRenderer.invoke("local:consoles"),
   forgetAgent: (id) => ipcRenderer.invoke("local:forgetAgent", id),
+  /** Bring a subagent's worktree branch back into the checkout it was cut from. */
+  integrateAgent: (id) => ipcRenderer.invoke("local:integrateAgent", id),
+  /** Throw a subagent's worktree and branch away. */
+  discardAgent: (id) => ipcRenderer.invoke("local:discardAgent", id),
   /**
    * Zevet Chat (desktop/chat.js): repo-independent conversations.
    *
@@ -564,6 +568,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   onChatEvent: (fn) => subscribe("chat:event", fn),
   /** Stream of console events; returns an unsubscribe function. */
   onAgentEvent: (fn) => subscribe("local:agentEvent", fn),
+  /** A subagent run's integration outcome changed. */
+  onAgentIntegration: (fn) => subscribe("local:agentIntegration", fn),
   /**
    * A console the board did not start itself (the loopback agent API, a schedule)
    * just opened. Without it such an agent only reached the board on a page reload.

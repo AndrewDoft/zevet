@@ -15,6 +15,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { selectMyConsoles, serverNow, useBoard } from "../lib/board";
+import { bridge } from "../lib/bridge";
 import { ago, tokens } from "../lib/fmt";
 import { turnInFlight } from "../lib/transcript.mjs";
 import type { ConsoleEntry } from "../lib/types";
@@ -44,6 +45,7 @@ export function SubagentsPanel() {
   const consoles = useBoard(selectMyConsoles);
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => serverNow());
+  const [sure, setSure] = useState<string | null>(null);
 
   const panel = useRef<HTMLDivElement>(null);
 
@@ -67,11 +69,12 @@ export function SubagentsPanel() {
     };
   }, []);
 
-  const running = consoles.filter((c) => c.running);
-  if (!running.length) return null;
+  const visible = consoles.filter((c) => c.running || c.integration);
+  const running = visible.filter((c) => c.running);
+  if (!visible.length) return null;
   const working = running.filter((c) => agentStateOf(c) === "working").length;
   const idle = running.length - working;
-  const summary = idle ? `${working} working · ${idle} idle` : `${working} working`;
+  const summary = running.length ? (idle ? `${working} working · ${idle} idle` : `${working} working`) : "done";
 
   return (
     <div className="subagents-panel" data-open={open} ref={panel}>
@@ -87,17 +90,41 @@ export function SubagentsPanel() {
       </button>
       {open ? (
         <div className="subagents-list" role="list">
-          {running.map((c) => (
-            <div className="subagents-row" role="listitem" key={c.key} data-state={agentStateOf(c)}>
-              <span className="subagents-name">{c.label || c.title || c.autoTitle || c.agent}</span>
-              <span className="subagents-meta">
-                {[c.agent, c.engine, c.model].filter(Boolean).join(" · ")}
-              </span>
-              <span className="subagents-tool">{agentStateOf(c) === "idle" ? "idle" : currentToolOf(c) || "—"}</span>
-              <span className="subagents-elapsed">{ago(now - c.startedAt)}</span>
-              <span className="subagents-tokens">{c.usage.context != null ? tokens(c.usage.context) : "—"}</span>
-            </div>
-          ))}
+          {visible.map((c) => {
+            const integration = c.integration;
+            const id = c.id;
+            const held = integration && integration.status !== "integrated" && integration.status !== "discarded" && id && !c.running;
+            const outcome = !integration ? null : integration.status === "waiting" || integration.status === "failed" ? `${integration.status}: ${integration.why}` : integration.status;
+            return (
+              <div className="subagents-row" role="listitem" key={c.key} data-state={agentStateOf(c)}>
+                <span className="subagents-name">{c.label || c.title || c.autoTitle || c.agent}</span>
+                <span className="subagents-meta">
+                  {[c.agent, c.engine, c.model].filter(Boolean).join(" · ")}
+                </span>
+                <span className="subagents-tool" title={integration?.files?.join("\n")}>
+                  {outcome ?? (agentStateOf(c) === "idle" ? "idle" : currentToolOf(c) || "—")}
+                  {held ? (
+                    <>
+                      {" "}
+                      <button type="button" onClick={() => void bridge.local?.integrateAgent?.(id)}>Integrate</button>{" "}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (sure !== id) return setSure(id);
+                          setSure(null);
+                          void bridge.local?.discardAgent?.(id);
+                        }}
+                      >
+                        {sure === id ? "Discard?" : "Discard"}
+                      </button>
+                    </>
+                  ) : null}
+                </span>
+                <span className="subagents-elapsed">{ago(now - c.startedAt)}</span>
+                <span className="subagents-tokens">{c.usage.context != null ? tokens(c.usage.context) : "—"}</span>
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </div>

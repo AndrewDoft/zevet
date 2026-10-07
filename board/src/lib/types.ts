@@ -67,6 +67,8 @@ export interface ConsoleLine {
 }
 
 export interface ConsoleEntry {
+  /** Set once a subagent run's work was integrated, held, or thrown away. */
+  integration?: import("./bridge").AgentIntegration;
   key: number;
   id: string | null;
   agent: string;

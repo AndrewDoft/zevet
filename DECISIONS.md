@@ -1918,3 +1918,56 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
 **Known limits.** A steer's owner card knows the console's agent but not its model, so an opencode steer card shows no payer. The second Max account (engine2) and team/auto-ladder credentials are unknown, so claude agents launched on them show nothing. A teammate on an older build shares nothing.
 
 **Tests.** `test/payer.test.mjs`: per-engine extraction from fixture files (and that no token or email other than the named one leaks), the sealed frame (session AAD, key), through a real hub (relay, late joiner, release, never in clear, not an agent turn, bad payloads refused), the board wording, and the steer/spawn/agent-card wiring.
+
+## D-074 — Shipped: 0.2.124, Amoeba site read, feature matrix and ranked build order (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 3 commit(s) past v0.2.123.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.124 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.124`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `61482c26…` (153119792 B), dmg `09ac1b62…` (205235681 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2124 on both platforms. Manifests win `63ed8ec7…`, mac `612d4271…`. Delta: 4 new blob(s) uploaded. 85 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `79c173a36ba9` -> `713e53eabdb1`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-075 — Subagent work integrates exactly once, only when it is safe (renumbered at merge from D-073, then D-074, which the 0.2.124 ship record took)
+
+Verified against `origin/main` (2026-10-07): `desktop/agent-worktree.js` made an isolated `zevet/<slug>` branch
+and `releasePlacement()` only committed and released it. There was no merge back, no check gate, no per-run key,
+and nothing on the subagent row.
+
+First attempt (65f4724) was rejected: it ran `npm test` + `npm run typecheck` in any repo on every release and
+`git merge --no-ff` straight into the user's own checkout. Decided rules, all in `desktop/agent-integration.js`:
+
+1. **Parent checkout is never touched while dirty** (tracked or untracked changes) **or mid-merge/rebase/cherry-pick/revert**:
+   outcome `waiting` with the reason. Checked before the checks and again right before the merge (checks take minutes).
+2. **A failed merge never leaves the repo half-merged.** Conflict files are listed, `git merge --abort` runs, and
+   status is verified clean; outcome `failed: conflicts in <n> files` (files in `files`).
+3. **Checks come from the repo**, read from the parent checkout (an agent cannot rewrite its own gate): `checks` in
+   `.zevet/config` or `zevet.checks` in package.json, else `scripts.test` (+ `typecheck` only if that script exists;
+   `npm init`'s placeholder test is not a check). None declared: the automatic trigger stops at `no checks` and never merges.
+4. **Exactly once**: a per-run marker (`<zevet home>/integrations/<run>.json`) plus an in-flight map. The automatic
+   trigger never retries a recorded outcome; `integrated` is final. The parent must still be the branch the worktree
+   was cut from (`parentBranch` in the worktree record), else `waiting: parent moved to <branch>`.
+5. **Checks run with a 15 min timeout** and are killed as a process tree (`taskkill /T` / process group) on timeout
+   and on app quit.
+6. **Visible**: the outcome is console meta plus `local:agentIntegration`, shown on the subagent row as
+   integrated / waiting: why / failed: why / no checks, with Integrate and Discard (confirm on second click) once the
+   agent is no longer running. Integrate (manual) retries a recorded outcome and, with no declared checks, merges
+   after rules 1, 2 and 4. It still needs green checks when the repo declares them.
+
+Trigger scope: only the end of a scheduled run integrates automatically. Closing a thread, quitting and failed
+starts release the worktree (branch kept if it has commits) and never merge, since no row could show it. A held
+worktree (waiting/failed/no checks) stays until Integrate, Discard, thread close, or the next start's prune; a held
+worktree older than the app session is gone, its branch survives for a manual `git merge`.
+
+## D-076 — Shipped: 0.2.125, Merge remote-tracking branch 'origin/main' into fix/subagent-integrate-once (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 5 commit(s) past v0.2.124.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.125 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.125`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `84b50af6…` (153123984 B), dmg `209b8ecc…` (205237586 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2125 on both platforms. Manifests win `a0e5ef9b…`, mac `f7621746…`. Delta: 5 new blob(s) uploaded. 86 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `713e53eabdb1` -> `9b6196041fef`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).

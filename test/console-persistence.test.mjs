@@ -26,7 +26,7 @@ describe("console persistence", () => {
 
   test("main.js restores before pruning, in place, and releases nothing mid-swap", () => {
     const main = fs.readFileSync(new URL("../desktop/main.js", import.meta.url), "utf8");
-    assert.match(main, /async function releasePlacement\(p\) \{\s*if \(relaunching\) return;/);
+    assert.match(main, /async function releasePlacement\(p, \{ integrate = false \} = \{\}\) \{\s*if \(relaunching\) return;/);
     assert.match(main, /relaunching = true;\s*for \(const c of consoles\.values\(\)\)/);
     assert.match(main, /restoreResumableConsoles\(\)\.finally\(\(\) =>\s*worktrees\.prune\(new Set/);
     assert.match(main, /restorePlace: \{ root: s\.root, worktree: s\.worktreeRecord \|\| null \}/);
