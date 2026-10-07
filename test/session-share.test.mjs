@@ -4,7 +4,7 @@
 import { test, describe, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { startHub, post } from "./helpers.mjs";
@@ -102,6 +102,12 @@ test("invites expire", () => {
   assert.equal(store.get("t", "abcdefgh"), null);
 });
 
+test("your own console rows carry Invite, keyed by the console's session id", () => {
+  const src = readFileSync(new URL("../board/src/components/people.tsx", import.meta.url), "utf8");
+  const own = src.slice(src.indexOf("function AgentRow("), src.indexOf("function TeamAgentRow("));
+  assert.ok(own.includes("<InviteIntoSession session={c.sessionId || undefined} />"));
+});
+
 describe("through a real hub", () => {
   const hubs = [];
   const aborts = [];
@@ -123,6 +129,7 @@ describe("through a real hub", () => {
     const hub = await startHub({ ZEVET_ACCOUNTS: file });
     hubs.push(hub);
     await post(hub.base, { actor: "bob", kind: "prompt", detail: "fix retry", agent: "codex", repo: "zevet", session: "sess-bob-1", machine: "bobpc" });
+    await post(hub.base, { actor: "cam", kind: "prompt", detail: "read docs", agent: "claude-code", repo: "zevet", session: "sess-cam-1", machine: "campc" });
     const call = (token, route, body) =>
       fetch(`${hub.base}${route}`, { method: "POST", headers: { "content-type": "application/json", "x-zevet-token": token }, body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, ...(await r.json()) }));
     const invitation = async (mode = "edit") => {
@@ -153,6 +160,12 @@ describe("through a real hub", () => {
     assert.equal((await call(tok.bob, "/api/session-invite", body)).status, 200);
     assert.equal((await call(tok.andrew, "/api/session-invite", { ...body, id: "22222222-bbbb" })).status, 200);
     assert.equal((await call(tok.bob, "/api/session-invite", { ...body, id: "33333333-cccc", mode: "root" })).status, 400);
+  });
+
+  test("creating: the share gate is the role, not just ownership (a Commenter on their OWN session is refused)", async () => {
+    const { tok, call } = await setup();
+    const r = await call(tok.cam, "/api/session-invite", { id: "44444444-dddd", session: "sess-cam-1", mode: "watch", sealed: "AAAA" });
+    assert.deepEqual([r.status, r.error], [403, "editor role required"]);
   });
 
   test("a Viewer joins read-only, and is refused editing with one error", async () => {

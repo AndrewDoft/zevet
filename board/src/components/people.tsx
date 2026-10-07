@@ -304,6 +304,9 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
         {/* A sibling, not inside `agent-row-pick`: a <button> cannot nest in a
             <button>. Only a console row has one — a disk session already
             finished writing and cannot be stopped. */}
+        {/* A console's sessionId is the CLI's own session_id; the hook posts the
+            same id to the hub, so it names this session there (D-NEXT-W2-17). */}
+        {c ? <InviteIntoSession session={c.sessionId || undefined} /> : null}
         {c ? (
           <button
             type="button"
