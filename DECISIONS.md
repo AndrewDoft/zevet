@@ -1918,3 +1918,19 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
 **Known limits.** A steer's owner card knows the console's agent but not its model, so an opencode steer card shows no payer. The second Max account (engine2) and team/auto-ladder credentials are unknown, so claude agents launched on them show nothing. A teammate on an older build shares nothing.
 
 **Tests.** `test/payer.test.mjs`: per-engine extraction from fixture files (and that no token or email other than the named one leaks), the sealed frame (session AAD, key), through a real hub (relay, late joiner, release, never in clear, not an agent turn, bad payloads refused), the board wording, and the steer/spawn/agent-card wiring.
+
+## D-NEXT-W2-14 — Agent notifications and editable shortcuts
+
+**2026-10-07**
+
+**Decision.** (a) Native OS notifications (Electron `Notification`, same code on Windows and macOS) for two kinds: **attention** (permission prompt, question, error result, non-zero exit; default on) and **finished** (clean result, exit 0; default off). Each has its own toggle in Settings > Agents > Notifications, stored in `zevet.notify.v1`. A click raises the window and focuses that agent's card (`local:notify` out, `local:notifyClick` back, keyed by console key). (b) Shortcuts live in one table (`board/src/lib/keybindings.mjs`); the palette and tree handlers call `matches()`. Settings > Appearance > Shortcuts rebinds, detects conflicts, resets per key or all; overrides in `zevet.keys.v1`.
+
+**Where the logic lives.** The board decides (`board/src/lib/notify.mjs`, pure, clock/timer/OS call injected); main only shows. Chosen because the board already folds console events and owns the prefs mirror, so toggles apply per event with no IPC round trip.
+
+**Coalescing.** Per 2 s window the first 2 notifications show; the rest are held and sent as one "N more agents". A clean agent already on screen with the app focused is not notified.
+
+**Accelerators.** Electron spelling, `CommandOrControl+Shift+K`; it matches Ctrl or Cmd, as the old handlers did. A binding needs CommandOrControl or Alt. The menu zoom keys and copy/paste/cut/undo/select-all are reserved. Only the two board shortcuts are rebindable; menu zoom stays fixed (Electron menu accelerators are built once at startup).
+
+**Limits.** Permit and ask requests carry no console id, so their click raises the window but does not pick a card (the request card is already global). "Idle waiting for input" is not distinguished from finished: a turn ending is both. Not verified: real OS toast rendering, macOS.
+
+**Tests.** `test/notify-keys.test.mjs`: mapping, toggles, coalescing, conflicts, persistence, reset; each mutation-checked.

@@ -1,0 +1,14 @@
+export const KEYS_KEY: string;
+export const BINDINGS: { id: string; label: string; def: string }[];
+export const RESERVED: string[];
+type Store = { getItem(k: string): string | null; setItem(k: string, v: string): void };
+type Key = { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; shiftKey?: boolean };
+export function eventToAccel(ev: Key): string | null;
+export function readOverrides(storage: Store): Record<string, string>;
+export function resolveBindings(storage: Store): Record<string, string>;
+export function matches(ev: Key, id: string, storage: Store): boolean;
+export function findConflict(bindings: Record<string, string>, id: string, accel: string): string | null;
+export function setBinding(storage: Store, id: string, accel: string): { ok: boolean; error?: string; conflict?: string };
+export function resetBinding(storage: Store, id: string): void;
+export function resetAll(storage: Store): void;
+export function showAccel(accel: string, mac: boolean): string;

@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { create } from "zustand";
 import { bridge, zStorage, type AgentEvent, type AgentSchedule, type AgentSettings, type AskRequest, type HeldConsole, type MemoryNote, type PermitRequest, type RepoCommit, type StatusResult } from "./bridge";
 import { shortInput } from "./fmt";
+import { classifyAgentEvent, classifyRequest, createNotifier, readNotifyPrefs } from "./notify.mjs";
 import { authorStyle as authorStyleOf } from "./authorcolor.mjs";
 import {
   appendAgentPayload,
@@ -1845,7 +1846,33 @@ function reattachConsoles(held: HeldConsole[]): void {
 }
 
 /** Fold one decoded stream-json agent event into the store. */
+/* Native notifications. Prefs are read per event so a Settings toggle applies
+   at once; `viewing` keeps it quiet for the agent already in front of you. */
+const agentNotifier = createNotifier({
+  prefs: () => readNotifyPrefs(zStorage),
+  now: () => Date.now(),
+  schedule: (fn, ms) => setTimeout(fn, ms),
+  viewing: (key) => document.hasFocus() && String(useBoard.getState().activeConsole) === key,
+  show: ({ title, body, key }) => {
+    const l = bridge.local;
+    if (l && typeof l.notify === "function") void l.notify(title, body, key).catch(() => {});
+  },
+});
+
+function notifyConsole(evt: AgentEvent): void {
+  const c = classifyAgentEvent(evt);
+  if (!c) return;
+  const ct = consoleById(evt.id);
+  if (!ct) return;
+  agentNotifier.notify({ ...c, label: ct.label || ct.title || ct.autoTitle || ct.agent, key: String(ct.key) });
+}
+
+function notifyRequest(type: "permit" | "ask", label: string): void {
+  agentNotifier.notify({ ...classifyRequest(type), label, key: "" });
+}
+
 function ingressAgentEvent(evt: AgentEvent): void {
+  notifyConsole(evt);
   if (evt.type === "title") {
     const ct = consoleById(evt.id);
     if (ct && evt.title) {
@@ -3104,6 +3131,14 @@ export function boot(): void {
     bridge.local.onPermitRequest((req) => {
       if (!req || typeof req.id !== "string") return;
       useBoard.setState((g) => ({ permits: [...g.permits, req] }));
+      notifyRequest("permit", req.tool || "Agent");
+    });
+  }
+  if (bridge.local && typeof bridge.local.onNotifyClick === "function") {
+    // Main has already raised the window; this puts the agent's card in front.
+    bridge.local.onNotifyClick((key) => {
+      const n = Number(key);
+      if (key !== "" && Number.isFinite(n) && useBoard.getState().myConsoles.some((c) => c.key === n)) useBoard.getState().setActiveConsole(n);
     });
   }
   if (bridge.local && typeof bridge.local.onAskRequest === "function") {
@@ -3114,6 +3149,7 @@ export function boot(): void {
     bridge.local.onAskRequest((req) => {
       if (!req || typeof req.id !== "string") return;
       useBoard.setState((g) => ({ asks: [...g.asks, req] }));
+      notifyRequest("ask", req.header || "Agent");
     });
   }
   if (bridge.local && typeof bridge.local.onAgentEvent === "function") {

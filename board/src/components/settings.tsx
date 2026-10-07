@@ -14,6 +14,7 @@ import { GithubMark, GoogleMark, MicrosoftMark } from "./logos";
 import { IdentityRows } from "./identity";
 import { handle } from "./invite";
 import { InPage, PageSection } from "./settings/parts";
+import { KeysSection, NotifySection } from "./settings/prefs";
 import { ReposPanel } from "./settings/repos";
 import { TeamPanel } from "./settings/team";
 import { SteerPolicyControl } from "./steerpolicy";
@@ -1294,6 +1295,7 @@ export function SettingsPage() {
             {tab === "agents" ? (
               <>
                 <PermissionSection />
+                <NotifySection />
                 <AgentSettings />
                 <CredentialsSection />
               </>
@@ -1305,7 +1307,12 @@ export function SettingsPage() {
                 <ConnectionsSection />
               </>
             ) : null}
-            {tab === "appearance" ? <AppearancePanel /> : null}
+            {tab === "appearance" ? (
+              <>
+                <AppearancePanel />
+                <KeysSection />
+              </>
+            ) : null}
           </div>
         </div>
       </div>
