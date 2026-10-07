@@ -293,7 +293,7 @@ describe("the hub: policy, one winner, and what it relays", () => {
     await Promise.all(hubs.map((h) => h.stop()));
   });
 
-  async function team(env = {}) {
+  async function team(env = {}, roles = {}) {
     const dir = mkdtempSync(path.join(tmpdir(), "zevet-takeover-"));
     const file = path.join(dir, "accounts.json");
     const seed = new Accounts({ file });
@@ -304,6 +304,7 @@ describe("the hub: policy, one winner, and what it relays", () => {
     const carol = seed.signIn({ login: "carol", id: "3003" }).token;
     seed.allow("dave");
     const dave = seed.signIn({ login: "dave", id: "4004" }).token;
+    for (const [login, role] of Object.entries(roles)) seed.setRole(login, role, "AndrewDoft");
     const hub = await startHub({ ZEVET_ACCOUNTS: file, ZEVET_TAKEOVER_RATE_MAX: "100", ...env });
     hubs.push(hub);
     await post(hub.base, { actor: "bob", kind: "prompt", detail: "x", agent: "claude-code", repo: "zevet", session: "s1" });
@@ -362,6 +363,15 @@ describe("the hub: policy, one winner, and what it relays", () => {
     const id = randomUUID();
     const r2 = await take(hub.base, dave, { id, session: "s2", sealed: sealJson(docCrypto, KEY, requestAad({ id, to: "bob", session: "s2" }), { agent: "claude" }) });
     assert.equal((await r2.json()).approval, false);
+  });
+
+  test("roles (W2-7): a Commenter gets 403 on /api/takeover, an Editor does not", async () => {
+    const { hub, bob, carol, dave } = await team({}, { carol: "commenter" });
+    await channel(hub.base, bob);
+    const denied = await take(hub.base, carol);
+    assert.equal(denied.status, 403);
+    assert.match((await denied.json()).error, /editor role required/);
+    assert.notEqual((await take(hub.base, dave)).status, 403);
   });
 
   test("ONE WINNER: concurrent takers of one session, exactly one is queued and the rest are lost", async () => {

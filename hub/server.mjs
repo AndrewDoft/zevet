@@ -1437,12 +1437,6 @@ const TAKEOVER_PENDING_MS = 15 * 60 * 1000;
 const TAKEOVER_RATE_MAX = Number(process.env.ZEVET_TAKEOVER_RATE_MAX || 5);
 const TAKEOVER_OWNER_STATUSES = new Set(["delivered", "declined"]);
 const TAKEOVER_TAKER_STATUSES = new Set(["started", "start-failed"]);
-/** ROLE HOOK (build-order item 7): who may take over. Editor or above once
- *  roles exist; today every signed-in team member (teamFromSession already
- *  refused anyone else), exactly what steering and spawning allow. */
-function mayTakeOver(acc, sess) {
-  return Boolean(acc && sess);
-}
 const steerTeams = new Map(); // team -> { listeners:Set<res>, byId:Map<id,rec>, rate:Map<person,ts[]> }
 
 function steerTeam(team) {
@@ -2608,7 +2602,8 @@ async function handleRequest(req, res) {
       return json(res, big ? 413 : 400, { error: big ? "take-over too large" : "expected JSON" });
     }
     if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
-    if (!mayTakeOver(acc, sess)) return json(res, 403, { error: "your role cannot take over an agent" });
+    const denied = roleRefusal(auth, "takeover"); // Editor or above (W2-7)
+    if (denied) return json(res, 403, denied);
     const fromKey = personKey(acc, sess) || sess.login;
     if (steerRateLimited(auth.team, `takeover\u0000${fromKey}`, Date.now(), TAKEOVER_RATE_MAX)) return json(res, 429, { error: "too many take-overs — wait a minute" });
     const smuggled = SPAWN_FORBIDDEN.find((k) => Object.hasOwn(body, k));
