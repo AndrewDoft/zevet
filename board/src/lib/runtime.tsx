@@ -36,7 +36,7 @@ import { MULTI_TURN } from "./constants";
 import { groupTurnTools } from "./turngroup.mjs";
 import { overlayDraft } from "./chat-stream.mjs";
 import { parseLocal } from "./slash.mjs";
-import { sendSteer, useSteer } from "./steer";
+import { sendSpawn, sendSteer, useSteer } from "./steer";
 import { ToolUIs } from "../components/tools";
 import type { ConsoleEntry } from "./types";
 
@@ -147,7 +147,11 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
   /* Steering (D-058): while a teammate's agent is the target, Send goes to
      THEM — no queue, no local agent started, nothing disabled for want of a
      console of my own. */
-  const steering = useSteer((s) => s.target) !== null && !reading;
+  /* …and (D-060) while a teammate is picked under "Run as", Send starts a new
+     agent on THEIR machine with it as the first prompt. Same bypasses. */
+  const steerTarget = useSteer((s) => s.target);
+  const spawnTarget = useSteer((s) => s.spawn);
+  const steering = (steerTarget !== null || spawnTarget !== null) && !reading;
 
   /* Streamed text of the block in flight is laid over the open message; the
      complete block replaces it (chat-stream.mjs). Memoised because the runtime
@@ -311,7 +315,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
       if (steering) {
         // Never a slash command here: the text goes to someone else's agent,
         // prefixed with my name, and zevet's own commands mean nothing there.
-        void sendSteer(text);
+        void (spawnTarget ? sendSpawn(text) : sendSteer(text));
         return;
       }
       /* Slash commands zevet answers itself (lib/slash.mjs). Everything else

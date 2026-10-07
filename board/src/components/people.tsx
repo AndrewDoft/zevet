@@ -75,6 +75,7 @@ import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
 import { SteerButton } from "./steer";
+import { RunOnTheirs } from "./spawn";
 import { PromptGhost } from "./promptboxes";
 
 function expandedStored(): string[] {
@@ -327,7 +328,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
 /** A teammate's agent, as the hub reports it: what it was asked, what it is doing
  *  now, and where. Read-only — their session lives on their machine — except for
  *  Steer (components/steer.tsx), which asks THEM, through the hub (D-058). */
-function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; session?: string; agent: string; repo: string; branch: string; mission: string; current: string; lastTs: number; state?: string }; hue: number; now: number }) {
+function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; session?: string; startedBy?: string; agent: string; repo: string; branch: string; mission: string; current: string; lastTs: number; state?: string }; hue: number; now: number }) {
   const where = a.repo ? a.repo + (a.branch ? " · " + a.branch : "") : "";
   return (
     <div className="agent-row-wrap" data-teammate-agent={a.key}>
@@ -335,7 +336,11 @@ function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; sessio
         <div className="agent-row-pick" title={[where, a.current].filter(Boolean).join(" — ")}>
           <span className="agent-row-gap" aria-hidden="true" />
           <AgentLogo agent={a.agent === "claude-code" ? "claude" : a.agent} hue={hue} className="agent-row-mark size-3" />
-          <span className="agent-row-name">{a.mission || where || "working"}</span>
+          <span className="agent-row-name">
+            {/* D-060: an agent a teammate started on this person's machine. First, so it survives the ellipsis. */}
+            {a.startedBy ? <span data-started-by={a.startedBy} title={`Started on ${a.actor}'s machine by ${a.startedBy}`} style={{ opacity: 0.6 }}>by {a.startedBy}: </span> : null}
+            {a.mission || where || "working"}
+          </span>
           {a.state === "working" ? (
             <span className="agent-row-live" role="img" aria-label="Running" />
           ) : (
@@ -675,6 +680,7 @@ export function PeoplePane({
             {me ? myRepos(r.hue) : withState(teamAgents.filter((a) => a.actor === r.actor), now, idleAfterMs).slice(0, 12).map((a) => (
               <TeamAgentRow key={a.key} a={a} hue={r.hue} now={now} />
             ))}
+            {me ? null : <RunOnTheirs actor={r.actor} />}
           </div>
         );
       })}

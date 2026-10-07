@@ -22,11 +22,12 @@ import {
   dismissSent,
   steerAgent,
   steerSettled,
-  STEER_STATUS,
+  statusText,
   useSteer,
   type SteerTarget,
 } from "../lib/steer";
 import { usePolicy } from "../lib/policy";
+import { SpawnApproval, SpawnTargetLine } from "./spawn";
 
 const btn =
   "text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96] disabled:opacity-40";
@@ -86,24 +87,27 @@ function TargetLine({ t }: { t: SteerTarget }) {
 
 export function SteerBanner() {
   const target = useSteer((s) => s.target);
+  const spawn = useSteer((s) => s.spawn);
   const sent = useSteer((s) => s.sent);
-  if (!target && !sent.length) return null;
+  if (!target && !spawn && !sent.length) return null;
   return (
     <div data-slot="steer-banner" className="flex w-full flex-col gap-1.5 px-4 pt-2">
       {target ? <TargetLine t={target} /> : null}
+      {spawn ? <SpawnTargetLine t={spawn} /> : null}
       {sent.map((s) => (
         <div
           key={s.id}
           data-steer-status={s.status}
+          data-steer-kind={s.kind}
           className={cn(field, "text-foreground/70 flex w-full items-center gap-2 rounded-full px-3 py-1 text-xs")}
         >
-          <span className="shrink-0 font-medium">to {s.to || "teammate"}</span>
+          <span className="shrink-0 font-medium">{s.kind === "spawn" ? `new agent for ${s.to || "teammate"}` : `to ${s.to || "teammate"}`}</span>
           {s.text ? <span className={cn(mono, "min-w-0 flex-1 truncate")}>{s.text}</span> : <span className="flex-1" />}
-          <span className={cn("shrink-0", s.status === "accepted" ? "text-foreground/80" : steerSettled(s.status) ? "text-foreground/90" : "text-foreground/45")}>
-            {STEER_STATUS[s.status] || s.status}
+          <span className={cn("shrink-0", s.status === "accepted" || s.status === "started" ? "text-foreground/80" : steerSettled(s.status, s.kind) ? "text-foreground/90" : "text-foreground/45")}>
+            {statusText(s)}
             {s.reason ? ` (${s.reason})` : ""}
           </span>
-          {steerSettled(s.status) ? (
+          {steerSettled(s.status, s.kind) ? (
             <button type="button" className="text-foreground/40 hover:text-foreground/80 shrink-0" aria-label="Dismiss" onClick={() => dismissSent(s.id)}>
               ×
             </button>
@@ -118,6 +122,7 @@ export function SteerApprovals() {
   const asks = useSteer((s) => s.asks);
   if (!asks.length) return null;
   const a = asks[0];
+  if (a.kind === "spawn") return <SpawnApproval a={a} more={asks.length - 1} />;
   return (
     <div data-slot="steer-approval" className={cn(paper, "mx-4 mt-2 flex max-w-md flex-col gap-3 rounded-[20px] p-4")}>
       <div className="flex flex-col">

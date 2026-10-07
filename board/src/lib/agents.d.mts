@@ -14,6 +14,8 @@ export type AgentRow = {
   current: string;
   ended: boolean;
   state?: "working" | "idle" | "finished";
+  /** Who started it on its owner's machine, for a remote-started agent (D-060). */
+  startedBy?: string;
 };
 export function agentKey(e: EventLike & { session?: string; agent?: string; machine?: string; branch?: string }): string;
 export function foldAgent(map: Map<string, AgentRow>, e: unknown): AgentRow | null;

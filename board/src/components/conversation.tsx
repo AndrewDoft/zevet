@@ -24,6 +24,8 @@ import { QuoteToComposer } from "./guards";
 import { VoiceHint } from "./voicedialog";
 import { PermitPrompt, PermitQueue } from "./permits";
 import { SteerApprovals, SteerBanner } from "./steer";
+import { useSteer } from "../lib/steer";
+import { RunAsPicker } from "./spawn";
 import { AskPrompt, AskQueue } from "./asks";
 import { DraftRestore } from "./findviews";
 import { DraftPublisher } from "./promptboxes";
@@ -113,7 +115,10 @@ function StartupActivity({ reading }: { reading: boolean }) {
   const active = useBoard(selectActiveConsole);
   const events = useBoard(selectEvents);
   const started = Boolean(active && active.transcript.messages.length > 0);
-  if (reading || started) return null;
+  /* Out of the way of steering and "Run as" (D-058/D-060): this card is
+     centred over the column and sat on top of their approval buttons. */
+  const steerUi = useSteer((s) => s.asks.length > 0 || s.target !== null || s.spawn !== null || s.sent.length > 0);
+  if (reading || started || steerUi) return null;
   const points = dailyActivity(events, 14);
   const total = points.reduce((n, p) => n + p.count, 0);
   return (
@@ -213,6 +218,8 @@ export function Conversation() {
           to each steer I sent. Above the transcript like the permits. */}
       <SteerApprovals />
       <SteerBanner />
+      {/* "Run as" (D-060): only while starting a new agent. */}
+      {reading || active ? null : <RunAsPicker />}
       {/* Above the chat box, in both views - see StartupActivity's own
           comment for what it draws and why it is gone after the first
           message. */}
