@@ -1388,7 +1388,7 @@ const steerTeams = new Map(); // team -> { listeners:Set<res>, byId:Map<id,rec>,
 
 function steerTeam(team) {
   let t = steerTeams.get(team);
-  if (!t) steerTeams.set(team, (t = { listeners: new Set(), byId: new Map(), rate: new Map(), claims: new Map() }));
+  if (!t) steerTeams.set(team, (t = { listeners: new Set(), byId: new Map(), rate: new Map(), claims: new Map(), payers: new Map() }));
   return t;
 }
 
@@ -1403,30 +1403,35 @@ const CLAIM_TTL_MS = 2 * 60 * 60 * 1000; // the client caps a claim at 1 h
 
 function claimsPrune(t) {
   const cut = Date.now() - CLAIM_TTL_MS;
-  for (const [k, c] of t.claims) if (c.ts < cut) t.claims.delete(k);
-  while (t.claims.size > CLAIM_KEEP) t.claims.delete(t.claims.keys().next().value);
+  for (const m of [t.claims, t.payers]) {
+    for (const [k, c] of m) if (c.ts < cut) m.delete(k);
+    while (m.size > CLAIM_KEEP) m.delete(m.keys().next().value);
+  }
 }
 
-/** Store and forward one claim frame. `error` is a 400 message, else ok. */
+/** Store and forward one claim frame, or (D-073) one `payer` frame: the same
+ *  sealed per-session blob, held in its own map. `error` is a 400 message, else ok. */
 function relayClaim(team, actor, p) {
+  const kind = p.kind === "payer" ? "payer" : "claim";
   const session = String(p.session || "").slice(0, 64);
-  if (!session) return { error: "a claim needs a session" };
+  if (!session) return { error: `a ${kind} needs a session` };
   const t = steerTeam(team);
+  const held = kind === "payer" ? t.payers : t.claims;
   const key = `${actor}\u0000${session}`;
   let name;
   let data;
   if (p.release === true) {
-    t.claims.delete(key);
-    name = "claim-release";
+    held.delete(key);
+    name = `${kind}-release`;
     data = { actor, session };
   } else {
-    const claim = typeof p.claim === "string" ? p.claim : "";
-    if (!claim || claim.length > CLAIM_SEALED_MAX || !/^[A-Za-z0-9+/]+={0,2}$/.test(claim)) return { error: "a claim needs a sealed base64 payload" };
-    t.claims.delete(key);
-    t.claims.set(key, { ts: Date.now(), frame: { actor, session, claim } });
+    const sealed = typeof p[kind] === "string" ? p[kind] : "";
+    if (!sealed || sealed.length > (kind === "payer" ? 2048 : CLAIM_SEALED_MAX) || !/^[A-Za-z0-9+/]+={0,2}$/.test(sealed)) return { error: `a ${kind} needs a sealed base64 payload` };
+    held.delete(key);
+    held.set(key, { ts: Date.now(), frame: { actor, session, [kind]: sealed } });
     claimsPrune(t);
-    name = "claim";
-    data = { actor, session, claim };
+    name = kind;
+    data = { actor, session, [kind]: sealed };
   }
   for (const res of t.listeners) steerFrame(res, name, data);
   return {};
@@ -2302,7 +2307,7 @@ async function handleRequest(req, res) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return json(res, 400, { error: "expected a JSON object" });
     }
-    if (parsed.kind === "claim") {
+    if (parsed.kind === "claim" || parsed.kind === "payer") {
       const actor = teamAccounts.get(auth.team).actorResolver()(String(parsed.actor || "unknown").slice(0, 40));
       const r = relayClaim(auth.team, actor, parsed);
       return r.error ? json(res, 400, { error: r.error }) : json(res, 200, { ok: true });
@@ -2545,6 +2550,7 @@ async function handleRequest(req, res) {
       const t = steerTeam(auth.team);
       claimsPrune(t);
       for (const c of t.claims.values()) steerFrame(res, "claim", c.frame);
+      for (const c of t.payers.values()) steerFrame(res, "payer", c.frame);
       t.listeners.add(res);
       const ping = setInterval(() => {
         try {

@@ -297,7 +297,7 @@ C1's per-repo opt-in, keyed by resolved folder path; default none.` },
     overlapCheck: { channel: "local:overlapCheck", params: ["input"], pack: "object", type: `(input: { task: string; branch: string; repo: string; session: string; openPaths: string[]; plannedPaths: string[]; active: unknown[] }) => Promise<{ ok: boolean; hits: Array<{ actor: string; session: string; label: "overlapping" | "adjacent"; claimed?: boolean }> }>`, optional: true, doc: `The pre-prompt overlap check (D-070): the task against every agent the board knows and every claim, locally.` },
     claim: { channel: "local:claim", params: ["input"], pack: "object", type: `(input: { root: string; paths: string[]; session: string; actor?: string; auto?: boolean }) => Promise<{ ok: boolean; claim?: unknown; shared?: boolean; error?: string }>`, optional: true, doc: `Advisory claim of paths for one agent session; sealed and shared with the team. Never blocks a write.` },
     releaseClaims: { channel: "local:releaseClaims", params: ["session","path"], pack: "object", type: `(session: string, path?: string) => Promise<{ ok: boolean }>`, optional: true, doc: `Release one path, or every path of a session when none is given.` },
-    claims: { channel: "local:claims", params: [], type: `() => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }> }>`, optional: true, doc: `Live claims, mine and the team's.` },
+    claims: { channel: "local:claims", params: [], type: `() => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }> }>`, optional: true, doc: `Live claims, mine and the team's.` },
     read: { channel: "local:read", params: ["root","relPath"], pack: "object", type: `(root: string, relPath: string) => Promise<ReadResult>`, doc: `One text file, by path relative to its root.` },
     write: { channel: "local:write", params: ["root","relPath","text","opts"], pack: "object", type: `(root: string, relPath: string, text: string, opts: { bom?: boolean; eol?: string }) => Promise<{ ok: boolean; error?: string }>`, doc: `One text file back, by path relative to its root.
 
@@ -474,6 +474,8 @@ Optional: an older desktop build cannot steer.` },
     spawnSend: { channel: "local:spawnSend", params: ["to","repo","agent","model","text"], pack: "object", type: `(to: string, repo: string, agent: string, model: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>`, optional: true, doc: `Start an agent on a teammate's machine (D-060): main seals the prompt and
 sends it through the hub, which enforces the team policy. Their app picks the
 mode and resolves the repo by name. Optional: an older desktop build cannot.` },
+    payerFor: { channel: "local:payerFor", params: ["agent","model","engine"], pack: "object", type: `(agent: string, model?: string, engine?: string) => Promise<{ engine: string; account: string; label: string }>`, optional: true, doc: `Who pays for an agent's turns on this machine: engine and account, from the engine's own login (never a token). Empty label = unknown.` },
+    sharePayer: { channel: "local:sharePayer", params: ["session","agent","model","engine"], pack: "object", type: `(session: string, agent: string, model?: string, engine?: string) => Promise<{ ok: boolean; label?: string }>`, optional: true, doc: `Seal this session's payer with the document key and share it with the team (a release when unknown).` },
     steerAnswer: { channel: "local:steerAnswer", params: ["id","approve"], pack: "object", type: `(id: string, approve: boolean) => Promise<{ ok: boolean; error?: string }>`, optional: true },
   },
   events: {
@@ -509,7 +511,7 @@ as the permit channel above, different event names.
 
 A question from an agent, and the answer back. Optional like the permit
 pair beside them: an older main process simply never sends one.` },
-    onClaimsEvent: { channel: "local:claimsEvent", payload: "unknown", type: `(cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }> }) => void) => () => void`, optional: true, doc: `The live claims changed (a claim, a release, an expiry, a teammate's frame).` },
+    onClaimsEvent: { channel: "local:claimsEvent", payload: "unknown", type: `(cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }> }) => void) => () => void`, optional: true, doc: `The live claims changed (a claim, a release, an expiry, a teammate's frame).` },
     onSteerEvent: { channel: "local:steerEvent", payload: "unknown", type: `(cb: (e: { kind: string; id: string; [k: string]: unknown }) => void) => () => void`, optional: true, doc: `Steering (D-058): \`ask\` an approval card for a teammate's steer, \`done\`
 when one was injected or declined, \`status\` for a steer this person sent.` },
   },

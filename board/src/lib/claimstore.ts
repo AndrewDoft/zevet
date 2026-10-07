@@ -3,17 +3,26 @@
 import { create } from "zustand";
 import { bridge } from "./bridge";
 import type { Claim, OverlapHit } from "./claims.mjs";
+import type { Payer } from "./payer.mjs";
 
 export const useClaims = create<{ claims: Claim[] }>(() => ({ claims: [] }));
+/** Teammates' payers (D-073), opened by the desktop from sealed frames. */
+export const usePayers = create<{ payers: Payer[] }>(() => ({ payers: [] }));
 
 let wired = false;
 function wire() {
   const l = bridge.local;
   if (wired || !l || typeof l.onClaimsEvent !== "function") return;
   wired = true;
-  l.onClaimsEvent((e) => useClaims.setState({ claims: e.claims || [] }));
+  l.onClaimsEvent((e) => {
+    useClaims.setState({ claims: e.claims || [] });
+    usePayers.setState({ payers: e.payers || [] });
+  });
   void l.claims?.().then((r) => {
-    if (r && r.ok) useClaims.setState({ claims: r.claims });
+    if (r && r.ok) {
+      useClaims.setState({ claims: r.claims });
+      usePayers.setState({ payers: r.payers || [] });
+    }
   });
 }
 wire();

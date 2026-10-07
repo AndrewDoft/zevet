@@ -1,6 +1,6 @@
 {
   "name": "zevet-desktop",
-  "version": "0.2.123",
+  "version": "0.2.124",
   "private": true,
   "description": "zevet — watch your team's coding agents",
   "main": "bootstrap.js",
@@ -54,6 +54,7 @@
       "embedder.js",
       "overlap-check.js",
       "claims.js",
+      "payer.js",
       "index-capability.js",
       "code-index.js",
       "zevet-voice.js",

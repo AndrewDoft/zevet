@@ -541,6 +541,10 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * mode and resolves the repo by name. Optional: an older desktop build cannot.
    */
   spawnSend: (to, repo, agent, model, text) => ipcRenderer.invoke("local:spawnSend", { to, repo, agent, model, text }),
+  /** Who pays for an agent's turns on this machine: engine and account, from the engine's own login (never a token). Empty label = unknown. */
+  payerFor: (agent, model, engine) => ipcRenderer.invoke("local:payerFor", { agent, model, engine }),
+  /** Seal this session's payer with the document key and share it with the team (a release when unknown). */
+  sharePayer: (session, agent, model, engine) => ipcRenderer.invoke("local:sharePayer", { session, agent, model, engine }),
   steerAnswer: (id, approve) => ipcRenderer.invoke("local:steerAnswer", { id, approve }),
   onUpdate: (fn) => subscribe("app:update", fn),
   onIndexEvent: (fn) => subscribe("local:indexEvent", fn),

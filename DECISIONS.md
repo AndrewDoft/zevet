@@ -1900,6 +1900,25 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
 - **Hub** redeployed from the tag in place; `BUILD_ID` `e65b755bd3fc` -> `79c173a36ba9`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-073 — Every dispatch and agent card shows who pays: engine + account
+
+**2026-10-07**
+
+**Decision (Andrew; filed as "D-072" in the brief — that number was taken by the 0.2.123 ship record, so this is D-073).** On every dispatch (composer, steer, spawn on a teammate's machine) and every agent card, a small muted label names which credential the turn bills: `Claude · andrew@… (Max)`, `Codex · ChatGPT Plus`, `OpenCode · free model`, `Zevet model`. Unknown shows nothing; nothing is guessed.
+
+**Where identity comes from** (`desktop/payer.js`, identity only, never a token): claude — `oauthAccount.emailAddress` in `~/.claude.json` and `subscriptionType` in `.credentials.json` (a saved personal credential that overrides the login is named by its label; a team/auto pick and the second Max account are unknown); codex — `chatgpt_plan_type` in the claims of `auth.json`'s id_token (the JWT payload is read, the token is not kept), or "API key"; opencode — the model (`:free` = free model, else its provider); zevet — "Zevet model".
+
+**Own cards and composer.** The board asks the desktop (`local:payerFor`) for each running console; the label is `c.payer` (and `c.account`, which the card's detail line already rendered), and the composer shows it above the box.
+
+**Teammate cards.** The desktop seals `{label, account}` per session with the document key (AAD `payer\0session`, the same scheme as D-070 claims) and POSTs it as `kind: "payer"` to `/ingest`. The hub relays it as ciphertext on the steer channel (own map beside claims, 2 KiB cap, replayed to late joiners, released on session end, not an agent turn, never in the log or board snapshot). It cannot read it. Hook-only sessions (no Zevet console) have no payer and show nothing.
+
+**Steer and spawn.** The label is the EXECUTING machine's, never the sender's: the owner's approval card (steer: under the title; spawn: a "Bills" row replacing "your account") carries `payer` computed on their machine; the sender's target line and the sent-status row read the teammate's sealed frame (steer: that session; spawn: that person's last label for the chosen engine, then the started session's own once it exists). No frame yet: nothing shown.
+
+**Known limits.** A steer's owner card knows the console's agent but not its model, so an opencode steer card shows no payer. The second Max account (engine2) and team/auto-ladder credentials are unknown, so claude agents launched on them show nothing. A teammate on an older build shares nothing.
+
+**Tests.** `test/payer.test.mjs`: per-engine extraction from fixture files (and that no token or email other than the named one leaks), the sealed frame (session AAD, key), through a real hub (relay, late joiner, release, never in clear, not an agent turn, bad payloads refused), the board wording, and the steer/spawn/agent-card wiring.
+
 ## D-074 — Subagent work integrates exactly once, only when it is safe (renumbered at merge from D-073)
 
 Verified against `origin/main` (2026-10-07): `desktop/agent-worktree.js` made an isolated `zevet/<slug>` branch
@@ -1930,4 +1949,6 @@ Trigger scope: only the end of a scheduled run integrates automatically. Closing
 starts release the worktree (branch kept if it has commits) and never merge, since no row could show it. A held
 worktree (waiting/failed/no checks) stays until Integrate, Discard, thread close, or the next start's prune; a held
 worktree older than the app session is gone, its branch survives for a manual `git merge`.
+
+||||||| e485af2
 

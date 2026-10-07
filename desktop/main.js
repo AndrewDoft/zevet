@@ -2504,13 +2504,49 @@ const myClaims = new claimsLib.ClaimStore({
   },
 });
 const teamClaims = new claimsLib.ClaimStore();
+/* Who pays (D-073, desktop/payer.js). `teamPayers` are the teammates' sealed
+ * frames, opened here with the document key; `myPayers` is what I shared, so my
+ * own frames coming back round are dropped. Identity only, never a token. */
+const payerLib = require("./payer.js");
+const teamPayers = new Map();
+const myPayers = new Map();
+function payerOf(agent, { model = "", engine = "" } = {}) {
+  const def = readConfig()?.defaultCredential;
+  let credential = "";
+  if (def && (agent === "claude" || agent === "claude-code")) {
+    // A saved credential overrides the login. Only a personal one is named; a team or auto-ladder pick is not knowable here.
+    const found = def.scope === "personal" && def.id ? credentials.listCredentials().find((c) => c.id === def.id) : null;
+    if (!found || !found.label) return { engine: "Claude", account: "", label: "" };
+    credential = found.label;
+  }
+  return payerLib.payerFor(agent, { model, engine, credential });
+}
+function allPayers() {
+  return [...teamPayers.values()];
+}
+const sharePayer = async (actor, session, p) => {
+  try {
+    const a = steerAuth(readConfig());
+    const docCrypto = agentSteer.loadDocCrypto();
+    if (!a.hub || !a.token || !a.key || !docCrypto) return;
+    await fetch(`${a.hub}/ingest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zevet-token": a.token },
+      body: JSON.stringify(payerLib.payerBody(docCrypto, a.key, actor, session, p)),
+      redirect: "error",
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    // The label stays local; teammates see it at the next share.
+  }
+};
 function allClaims() {
   const mine = myClaims.claims().map((e) => ({ ...e, mine: true }));
   const own = new Set(mine.map((e) => e.session));
   return [...mine, ...teamClaims.claims().filter((e) => !own.has(e.session)).map((e) => ({ ...e, mine: false }))];
 }
 function pushClaims() {
-  toBoard("local:claimsEvent", { claims: allClaims() });
+  toBoard("local:claimsEvent", { claims: allClaims(), payers: allPayers() });
 }
 setInterval(() => {
   if (myClaims.expire() | teamClaims.expire()) pushClaims();
@@ -2557,7 +2593,22 @@ bridge.handle("local:releaseClaims", async (_e, arg) => {
   if (session) myClaims.release({ session, path: typeof (arg && arg.path) === "string" ? arg.path : undefined });
   return { ok: true };
 });
-bridge.handle("local:claims", async () => ({ ok: true, claims: allClaims() }));
+bridge.handle("local:claims", async () => ({ ok: true, claims: allClaims(), payers: allPayers() }));
+bridge.handle("local:payerFor", async (_e, arg) => {
+  const { engine, account, label } = payerOf(String((arg && arg.agent) || ""), { model: String((arg && arg.model) || ""), engine: String((arg && arg.engine) || "") });
+  return { engine, account, label };
+});
+/** Seal this session's payer for the team (or release it when unknown). */
+bridge.handle("local:sharePayer", async (_e, arg) => {
+  const session = String((arg && arg.session) || "");
+  if (!session) return { ok: false };
+  const p = payerOf(String((arg && arg.agent) || ""), { model: String((arg && arg.model) || ""), engine: String((arg && arg.engine) || "") });
+  const actor = String((arg && arg.actor) || readConfig()?.actor || "");
+  if (p.label) myPayers.set(session, p.label);
+  else myPayers.delete(session);
+  await sharePayer(actor, session, p);
+  return { ok: true, label: p.label };
+});
 
 bridge.handle("local:status", async (_e, arg) => {
   const root = arg && typeof arg.root === "string" ? arg.root : null;
@@ -3807,7 +3858,10 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
       // The session is over: what it claimed goes, for teammates too.
       if (evt && evt.type === "exit") {
         const c = consoleLog.snapshot().consoles.find((x) => x.id === handle.id);
-        if (c && c.sessionId) myClaims.endSession(c.sessionId);
+        if (c && c.sessionId) {
+          myClaims.endSession(c.sessionId);
+          if (myPayers.delete(c.sessionId)) void sharePayer(readConfig()?.actor || "", c.sessionId, null);
+        }
       }
     },
   };
@@ -4646,7 +4700,7 @@ const steerInbox = agentSteer.createSteerInbox({
     new Promise((resolve) => {
       if (!boardWindow || boardWindow.isDestroyed()) return resolve(null);
       pendingSteers.set(req.id, resolve);
-      toBoard("local:steerEvent", { kind: "ask", id: req.id, from: req.from, text: req.text, agent: req.agent, repo: req.repo, consoleId: req.consoleId });
+      toBoard("local:steerEvent", { kind: "ask", id: req.id, from: req.from, text: req.text, agent: req.agent, repo: req.repo, consoleId: req.consoleId, payer: payerOf(String(req.agent || "")).label });
     }),
   inject: injectSteer,
   report: reportSteerStatus,
@@ -4703,7 +4757,7 @@ const spawnInbox = agentSpawn.createSpawnInbox({
     new Promise((resolve) => {
       if (!boardWindow || boardWindow.isDestroyed()) return resolve(null);
       pendingSteers.set(req.id, resolve);
-      toBoard("local:steerEvent", { kind: "spawn-ask", id: req.id, from: req.from, agent: req.agent, repo: req.repo, dir: req.dir, model: req.model, text: req.prompt });
+      toBoard("local:steerEvent", { kind: "spawn-ask", id: req.id, from: req.from, agent: req.agent, repo: req.repo, dir: req.dir, model: req.model, text: req.prompt, payer: payerOf(String(req.agent || ""), { model: String(req.model || "") }).label });
     }),
   start: (req) => startRemoteSpawn(req),
   sessionOf: (id) => {
@@ -4739,7 +4793,12 @@ function startSteerChannel(cfg) {
           pendingSteers.delete(id);
           if (status !== "replay" && status !== "ignored") toBoard("local:steerEvent", { kind: "done", id, from: String((data && data.from) || ""), status });
         });
-      } else if (name === "hello" || name === "claim" || name === "claim-release") {
+      } else if (name === "hello" || name === "payer" || name === "payer-release") {
+        if (payerLib.applyPayerFrame(teamPayers, name, data, { docCrypto: agentSteer.loadDocCrypto(), key: steerAuth(readConfig()).key, isMine: (session) => myPayers.has(session) })) pushClaims();
+        if (name !== "hello") return;
+        // hello also resets claims, below.
+      }
+      if (name === "hello" || name === "claim" || name === "claim-release") {
         const mine = new Set(myClaims.claims().map((e) => e.session));
         const changed = claimsLib.applyFrame(teamClaims, name, data, {
           docCrypto: agentSteer.loadDocCrypto(),
