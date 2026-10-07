@@ -74,6 +74,7 @@
       "family.js",
       "reporting-health.js",
       "family-index.js",
+      "sso.js",
       "idle-install.js",
       "masora-connect.js",
       "masora-push.js",
