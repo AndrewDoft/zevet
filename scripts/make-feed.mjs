@@ -86,6 +86,8 @@ function signer() {
 const TARGETS = [
   { key: "win32-x64", re: /^zevet-(\d+(?:\.\d+)*)-windows-x64-setup\.exe$/ },
   { key: "darwin-arm64", re: /^zevet-(\d+(?:\.\d+)*)-macos-arm64\.dmg$/ },
+  { key: "win32-arm64", re: /^zevet-(\d+(?:\.\d+)*)-windows-arm64-setup\.exe$/ },
+  { key: "linux-x64", re: /^zevet-(\d+(?:\.\d+)*)-linux-x64\.AppImage$/ },
 ];
 
 /**

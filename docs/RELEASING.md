@@ -70,7 +70,9 @@ git push && git push --tags
 ```
 
 The tag starts `.github/workflows/build.yml`, which builds on a Windows runner
-and a macOS runner and, on the Mac, actually launches the app before uploading.
+(x64 and a cross-built ARM64 installer), a macOS runner and an Ubuntu runner (AppImage), and, on the Mac,
+actually launches the app before uploading. A `windows-arm64-smoke` job then installs the ARM64 installer on a
+`windows-11-arm` runner and checks `zevet.exe` is an ARM64 PE. The Linux leg skips `npm test` (no display).
 
 ## 2. Collect the artifacts
 
@@ -78,8 +80,22 @@ From the Actions run, download both artifacts into one empty directory:
 
 ```
 zevet-0.2.0-windows-x64-setup.exe
+zevet-0.2.0-windows-arm64-setup.exe     (artifact zevet-windows)
 zevet-0.2.0-macos-arm64.dmg
+zevet-0.2.0-linux-x64.AppImage          (artifact zevet-linux)
 ```
+
+The feed keys are `win32-x64`, `win32-arm64`, `darwin-arm64`, `linux-x64` (`${process.platform}-${process.arch}`).
+A platform with no artifact in the directory simply gets no entry. **Not yet wired:** `scripts/ship.mjs` still
+uploads only the exe and dmg and repoints only `Zevet-Setup.exe` / `Zevet.dmg`; the two new installers (and the
+`usemasora.com/zevet` page, which lives in masora-landing) are published by hand until it is extended. No
+payload (`p/`) is published for the new platforms, so they update by installer only.
+
+**Linux updates.** Only when the app runs from an AppImage ($APPIMAGE set by the AppImage runtime) with a writable
+directory: the verified download is copied beside it, made executable and renamed over it, then the app relaunches.
+Otherwise the update is refused with a message. Built unsigned; first run on a real Linux desktop is unverified.
+
+**ARM64 local build:** `npm run dist:win-arm64` in `desktop/`; AppImage: `npm run dist:linux` (Linux host only).
 
 ⚠️ **An empty directory.** `desktop/out/` is not cleaned between builds, and two
 versions in one folder is how a feed ends up advertising one build and serving
