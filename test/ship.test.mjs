@@ -424,6 +424,33 @@ ${blk("Zevet.dmg", "zevet-0.2.93-macos-arm64.dmg")}${blk("Zevet-Setup.exe", "zev
     assert.ok(once.includes("filename=Zevet.AppImage") && once.includes("filename=Zevet-Setup-arm64.exe"));
     assert.equal(edit(), once, "a second run changes nothing and adds no duplicate block");
   });
+  test("the cloned stable-link block is whole when the source block nests header { } (the live Caddyfile's shape)", (t) => {
+    const py = ["python3", "python", "py"].map((c) => [c]).find(([c]) => spawnSync(c, ["--version"]).status === 0);
+    if (!py) return t.skip("no python on this machine");
+    const d = tempDir("zevet-caddy-nested-"); t.after(() => d.cleanup());
+    const file = path.join(d.dir, "Caddyfile").replaceAll(path.sep, "/");
+    const blk = (link, f) => [
+      `\thandle /download/${link} {`,
+      `\t\troot * /srv/downloads`,
+      `\t\trewrite * /${f}`,
+      `\t\theader {`,
+      `\t\t\tContent-Type application/octet-stream`,
+      `\t\t\tContent-Disposition "attachment; filename=\\"${link}\\""`,
+      `\t\t\tCache-Control "no-cache"`,
+      `\t\t}`,
+      `\t\tfile_server`,
+      `\t}`,
+      ``,
+    ].join("\n");
+    writeFileSync(file, `usemasora.com {\n${blk("Zevet.dmg", "zevet-0.2.93-macos-arm64.dmg")}${blk("Zevet-Setup.exe", "zevet-0.2.93-windows-x64-setup.exe")}\thandle {\n\t\trespond 404\n\t}\n}\n`);
+    const r = spawnSync(py[0], ["-"], { input: caddyPython("0.2.94", file), encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const out = readFileSync(file, "utf8").replace(/\r\n/g, "\n"); // python text mode writes CRLF on Windows
+    assert.equal((out.match(/\{/g) || []).length, (out.match(/\}/g) || []).length, "braces balance");
+    for (const [link, f] of [["Zevet-Setup-arm64.exe", "zevet-0.2.94-windows-arm64-setup.exe"], ["Zevet.AppImage", "zevet-0.2.94-linux-x64.AppImage"]]) {
+      assert.ok(out.includes(blk(link, f)), `${link}: a whole clone (header block, file_server, closing brace)`);
+    }
+  });
   test("stable links always runs: a host file already edited is not a reloaded Caddy", async (t) => {
     // The first real ship edited the host file, then died on the container check;
     // a done-check reading the host file would have skipped the reload for ever.

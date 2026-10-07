@@ -68,7 +68,9 @@ export function caddyPython(v, file = "/srv/masora/Caddyfile") {
 p = "${file}"
 with open(p, "r+") as f:
     text = f.read()
-    src = re.search(r"[ \\t]*handle /download/Zevet-Setup\\.exe \\{.*?\\n[ \\t]*\\}\\n", text, re.S)
+    # The block ends at the brace on the handle's OWN indentation: the live block nests a header { }
+    # whose closing brace the first "}" line would otherwise match (a truncated clone in prod's Caddyfile).
+    src = re.search(r"^([ \\t]*)handle /download/Zevet-Setup\\.exe \\{\\n.*?\\n\\1\\}\\n", text, re.S | re.M)
     if not src:
         raise SystemExit("no handle block for Zevet-Setup.exe")
     for link, old in (("Zevet-Setup-arm64.exe", "windows-arm64-setup.exe"), ("Zevet.AppImage", "linux-x64.AppImage")):
