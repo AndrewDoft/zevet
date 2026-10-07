@@ -19,11 +19,14 @@
 
 import { cn } from "@/lib/utils";
 import { paper, field, mono } from "./assistant-ui/elements/surfaces";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { useBoard } from "../lib/board";
 import { usePolicy } from "../lib/policy";
 import { agentLabel, answerSteer, canSpawn, reposOf, setSpawnTarget, useSteer, validRepoName, type SpawnTarget, type SteerAsk } from "../lib/steer";
 
 const AGENTS = ["claude", "codex", "opencode"] as const;
+/** The Select's value for "me" (a real name never looks like this). */
+const ME = "__run_as_me__";
 
 const btn =
   "text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96] disabled:opacity-40";
@@ -76,26 +79,34 @@ export function RunAsPicker() {
   if (!canSpawn() || !teammates.length) return null;
   const off = policy.steer === "off";
   return (
-    <label data-slot="run-as" className="text-foreground/60 flex items-center gap-2 px-4 pt-2 text-xs">
+    <div data-slot="run-as" className="text-foreground/60 flex items-center gap-2 px-4 pt-2 text-xs">
       <span>Run as</span>
-      <select
-        className={cn(field, "rounded-full px-2 py-1 text-xs")}
-        value={spawn ? spawn.actor : ""}
+      <Select
+        value={spawn ? spawn.actor : ME}
         disabled={off}
-        title={off ? "Starting agents for teammates is turned off for this team" : "Run the new agent on a teammate's machine, under their account"}
-        onChange={(ev) => {
-          const actor = ev.target.value;
-          setSpawnTarget(actor ? pick(actor, reposOf(actor, events, agents)) : null);
+        onValueChange={(v: string | null) => {
+          if (!v) return;
+          setSpawnTarget(v === ME ? null : pick(v, reposOf(v, events, agents)));
         }}
       >
-        <option value="">me (this machine)</option>
-        {teammates.map((t) => (
-          <option key={t} value={t}>
-            {t} (their machine)
-          </option>
-        ))}
-      </select>
-    </label>
+        <SelectTrigger
+          size="sm"
+          className="h-7 shrink-0 rounded-full border-transparent bg-foreground/[0.04] px-2 text-xs"
+          aria-label="Run as"
+          title={off ? "Starting agents for teammates is turned off for this team" : "Run the new agent on a teammate's machine, under their account"}
+        >
+          <SelectValue>{() => (spawn ? `${spawn.actor} (their machine)` : "me (this machine)")}</SelectValue>
+        </SelectTrigger>
+        <SelectContent align="start">
+          <SelectItem value={ME}>me (this machine)</SelectItem>
+          {teammates.map((t) => (
+            <SelectItem key={t} value={t}>
+              {t} (their machine)
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 
