@@ -53,6 +53,7 @@ describe("createIdleInstaller", () => {
         chatBusy: () => false,
         lastInputAt: () => NOW - INPUT_QUIET_MS - 1,
         windows: () => 1,
+        working: () => 0,
         ...over.gate,
       },
       systemIdleSeconds: () => 900,
@@ -100,6 +101,17 @@ describe("createIdleInstaller", () => {
     const r = rig({ gate: { working: () => 1, activity: () => ({ running: 1, resumable: true, nonResumable: 0, lastAt: NOW }) } });
     assert.equal(await r.tick(), false);
     assert.deepEqual(r.events, []);
+  });
+
+  test("a deferred install says why, and clears it once the install is allowed (retried by the next tick)", async () => {
+    let working = 1;
+    const seen = [];
+    const r = rig({ gate: { working: () => working, activity: () => ({ running: 1, resumable: true, nonResumable: 0, lastAt: NOW }) }, deps: { onWaiting: (w) => seen.push(w) } });
+    assert.equal(await r.tick(), false);
+    assert.match(seen.at(-1), /mid-turn/);
+    working = 0;
+    assert.equal(await r.tick(), true);
+    assert.equal(seen.at(-1), null);
   });
 
   test("idle (not working) resumable consoles of any agent are saved and do not block", async () => {

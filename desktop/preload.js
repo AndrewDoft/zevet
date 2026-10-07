@@ -312,6 +312,14 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   claim: (input) => ipcRenderer.invoke("local:claim", { input }),
   /** Release one path, or every path of a session when none is given. */
   releaseClaims: (session, path) => ipcRenderer.invoke("local:releaseClaims", { session, path }),
+  /** Pinned notes for a folder (or one file), each flagged stale when the file's hash moved. Computed locally. */
+  memoryList: (input) => ipcRenderer.invoke("local:memoryList", { input }),
+  /** Pin a note to a file at its current hash; sealed with the document key. */
+  memoryCreate: (input) => ipcRenderer.invoke("local:memoryCreate", { input }),
+  /** Edit a note; rehash re-pins it to the file as it is now. */
+  memoryEdit: (input) => ipcRenderer.invoke("local:memoryEdit", { input }),
+  /** Retire a note. */
+  memoryRetire: (input) => ipcRenderer.invoke("local:memoryRetire", { input }),
   /** Live claims, mine and the team's. */
   claims: () => ipcRenderer.invoke("local:claims"),
   /** One text file, by path relative to its root. */
@@ -493,6 +501,11 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   /** Start an agent in a folder. Returns { ok, id }. */
   startAgent: (agent, cwd, opts) => ipcRenderer.invoke("local:startAgent", { agent, cwd, opts }),
   sendToAgent: (id, text) => ipcRenderer.invoke("local:sendToAgent", { id, text }),
+  /**
+   * An OS notification for an agent that finished or needs a person. The board
+   * decides whether one is wanted (lib/notify.mjs); this only shows it.
+   */
+  notify: (title, body, key) => ipcRenderer.invoke("local:notify", { title, body, key }),
   boardReply: (reqId, result) => ipcRenderer.invoke("local:boardReply", { reqId, result }),
   stopAgent: (id) => ipcRenderer.invoke("local:stopAgent", id),
   /**
@@ -529,6 +542,10 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * UI must not be able to, which is why the card is removed optimistically.
    */
   askAnswer: (id, picked) => ipcRenderer.invoke("local:askAnswer", { id, picked }),
+  /** Invite a teammate into one session (D-090): main seals the session reference with the document key and registers it with the hub. Returns the invite id to share. */
+  sessionInvite: (session, mode, repo) => ipcRenderer.invoke("local:sessionInvite", { session, mode, repo }),
+  /** Join a session by invite id. The hub runs the checks (member, role, seat, push, agent) and answers the first failure as one error; main probes push access to the repo for an edit join. */
+  sessionJoin: (id, mode) => ipcRenderer.invoke("local:sessionJoin", { id, mode }),
   /**
    * Steer a teammate's agent (D-058): main seals the text with the document
    * key and sends it through the hub, which enforces the team's steer policy.
@@ -541,11 +558,20 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * mode and resolves the repo by name. Optional: an older desktop build cannot.
    */
   spawnSend: (to, repo, agent, model, text) => ipcRenderer.invoke("local:spawnSend", { to, repo, agent, model, text }),
+  /**
+   * Take over a teammate's running turn: main seals the request with the document
+   * key; the hub allows one winner per session and enforces the team's steer
+   * policy. The new turn runs on THIS machine's account, on the engine named.
+   * Optional: an older desktop build cannot.
+   */
+  takeoverSend: (to, session, repo, agent) => ipcRenderer.invoke("local:takeoverSend", { to, session, repo, agent }),
   /** Who pays for an agent's turns on this machine: engine and account, from the engine's own login (never a token). Empty label = unknown. */
   payerFor: (agent, model, engine) => ipcRenderer.invoke("local:payerFor", { agent, model, engine }),
   /** Seal this session's payer with the document key and share it with the team (a release when unknown). */
   sharePayer: (session, agent, model, engine) => ipcRenderer.invoke("local:sharePayer", { session, agent, model, engine }),
   steerAnswer: (id, approve) => ipcRenderer.invoke("local:steerAnswer", { id, approve }),
+  /** Answer a teammate agent's permission prompt (D-086). Main seals the answer with the exact action it was shown; the hub only arbitrates the first answer, and the teammate's app checks it before acting. Editor and above; refused while the team policy is off. */
+  approvalAnswer: (id, allow) => ipcRenderer.invoke("local:approvalAnswer", { id, allow }),
   onUpdate: (fn) => subscribe("app:update", fn),
   onIndexEvent: (fn) => subscribe("local:indexEvent", fn),
   /**
@@ -560,6 +586,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * clobber this exists to prevent. See `fire()` in desktop/file-watch.js.
    */
   onFileChanged: (fn) => subscribe("local:fileChanged", fn),
+  /** A notification from notify() was clicked; key is the one it was sent with. */
+  onNotifyClick: (fn) => subscribe("local:notifyClick", fn),
   /**
    * A due schedule just ran (or was skipped); the board's own list is
    * otherwise only refreshed after a save/toggle/remove round-trip.
@@ -598,6 +626,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * pair beside them: an older main process simply never sends one.
    */
   onAskRequest: (fn) => subscribe("local:askRequest", fn),
+  /** Pinned notes changed (a teammate's note arrived or one was edited). */
+  onMemoryEvent: (fn) => subscribe("local:memoryEvent", fn),
   /** The live claims changed (a claim, a release, an expiry, a teammate's frame). */
   onClaimsEvent: (fn) => subscribe("local:claimsEvent", fn),
   /**

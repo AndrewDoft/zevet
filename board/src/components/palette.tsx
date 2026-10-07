@@ -3,6 +3,8 @@
  * data" to keep in sync, so a new console or workspace shows up for free.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { zStorage } from "../lib/bridge";
+import { matches } from "../lib/keybindings.mjs";
 import {
   CommandPalette,
   type PaletteCommand,
@@ -33,7 +35,7 @@ export function Palette() {
   // on Escape rides the same listener rather than a second effect.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      if (matches(event, "palette", zStorage)) {
         event.preventDefault();
         setOpen((o) => !o);
       } else if (event.key === "Escape") {

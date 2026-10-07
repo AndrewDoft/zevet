@@ -113,10 +113,48 @@ const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorks
 /** Team-wide policies an admin (the owner) sets, and every value each may take.
  *  `steer`: may a teammate steer somebody else's agent — `on` always, `ask`
  *  the owner of the agent approves each one (the default), `off` never. The
- *  hub enforces it (server.mjs § steering); the desktop only obeys. */
-export const POLICY_VALUES = Object.freeze({ steer: Object.freeze(["on", "ask", "off"]) });
-export const DEFAULT_POLICY = Object.freeze({ steer: "ask" });
+ *  hub enforces it (server.mjs § steering); the desktop only obeys.
+ *  `approve` (D-086): may a teammate answer somebody else's agent's
+ *  permission prompt — `on` the answer is applied, `ask` it is shown to the
+ *  agent's owner who still clicks, `off` never (the default: it lets a remote
+ *  person authorise a tool call on another machine). */
+export const POLICY_VALUES = Object.freeze({
+  steer: Object.freeze(["on", "ask", "off"]),
+  approve: Object.freeze(["on", "ask", "off"]),
+  retention: Object.freeze(["forever", "90d", "30d", "7d", "1d"]),
+});
+export const DEFAULT_POLICY = Object.freeze({ steer: "ask", approve: "off", retention: "forever" });
+/** `retention`: how long the hub keeps prompt and command text (`detail`) on
+ *  the board and in the event log. Who/tool/file/repo is never trimmed. */
+export const RETENTION_MS = Object.freeze({ forever: 0, "90d": 90 * 864e5, "30d": 30 * 864e5, "7d": 7 * 864e5, "1d": 864e5 });
 const AUDIT_MAX = 200;
+
+/** Per-person roles, lowest to highest. `owner` is not stored: it is whoever
+ *  holds `state.owner`, and cannot be granted or taken away here. Everyone
+ *  else carries `role`; a record without a valid one is an Editor, which is
+ *  the whole migration — before roles every member could do all of it. */
+export const ROLES = Object.freeze(["viewer", "commenter", "editor", "owner"]);
+export const ASSIGNABLE_ROLES = Object.freeze(["viewer", "commenter", "editor"]);
+const DEFAULT_ROLE = "editor";
+const roleRank = (r) => ROLES.indexOf(r);
+const validRole = (r) => (ASSIGNABLE_ROLES.includes(r) ? r : DEFAULT_ROLE);
+
+/** The least role each gated action needs. The hub reads this at the route,
+ *  never the desktop: a demoted person's next request is refused. */
+export const ACTION_ROLE = Object.freeze({
+  comment: "commenter",
+  claim: "commenter",
+  report: "editor",
+  steer: "editor",
+  approve: "editor",
+  spawn: "editor",
+  takeover: "editor",
+  share: "editor",
+  credential: "editor",
+  // Writing to a `tasks:` document room. The hub cannot tell a comment from an edit
+  // (sealed), so it holds the floor at Commenter; clients enforce the rest.
+  tasks: "commenter",
+});
 
 /** A stored credential record, minus its `key` — what everything except
  *  /team/credentials/:id/secret itself is allowed to see. */
@@ -318,6 +356,37 @@ export class Accounts {
     return { ok: true, policy: this.policy, changed: was !== value };
   }
 
+  /** The role of the person behind `ref` (a session or {provider, login, id}),
+   *  or null if they are nobody on this team. Read live on every call, so a
+   *  demotion bites on the very next request. */
+  roleOf(ref) {
+    const r = ref ? this.#personOf(ref) : null;
+    if (!r) return null;
+    return r === this.state.owner ? "owner" : validRole(r.role);
+  }
+
+  /** May `ref` do `action` (a key of ACTION_ROLE)? Unknown actions are refused. */
+  can(ref, action) {
+    const need = ACTION_ROLE[action];
+    const have = this.roleOf(ref);
+    return Boolean(need && have && roleRank(have) >= roleRank(need));
+  }
+
+  /** Give somebody a role. The route decides WHO may (owner only). The owner
+   *  cannot be re-roled and nobody is made owner here. Audited either way. */
+  setRole(login, role, by) {
+    const l = String(login || "").trim().replace(/^@/, "").toLowerCase();
+    if (!ASSIGNABLE_ROLES.includes(role)) return { ok: false, error: `role must be one of ${ASSIGNABLE_ROLES.join(", ")}` };
+    const rec = this.#people().find((r) => idents(r).some((i) => i.login === l));
+    if (!rec) return { ok: false, error: "no such person on this team" };
+    if (rec === this.state.owner) return { ok: false, error: "the owner's role cannot be changed" };
+    const was = validRole(rec.role);
+    rec.role = role;
+    this.state.audit = [...(this.state.audit || []), { at: this.now(), by: String(by || ""), what: `role.${rec.login}`, from: was, to: role }].slice(-AUDIT_MAX);
+    this.#save();
+    return { ok: true, role, changed: was !== role };
+  }
+
   /** Who changed what, oldest first (bounded). */
   get audit() {
     return (this.state.audit || []).slice();
@@ -435,8 +504,8 @@ export class Accounts {
   /** Everyone permitted, owner first. `provider` is normalised on the way out
    *  so no caller has to know about the pre-Google default. */
   list() {
-    const out = this.state.owner ? [{ ...this.state.owner, provider: provider(this.state.owner), owner: true }] : [];
-    for (const a of this.state.allowed) out.push({ ...a, provider: provider(a), owner: false });
+    const out = this.state.owner ? [{ ...this.state.owner, provider: provider(this.state.owner), owner: true, role: "owner" }] : [];
+    for (const a of this.state.allowed) out.push({ ...a, provider: provider(a), owner: false, role: validRole(a.role) });
     return out;
   }
 
@@ -722,6 +791,9 @@ export class Accounts {
       keep.named = true;
     }
     if (gone.hd && !keep.hd) keep.hd = gone.hd;
+    // Two rows, one human: the LOWER role wins, so linking cannot be used to
+    // climb out of a demotion. (The owner's record has none to change.)
+    if (keep !== this.state.owner) keep.role = roleRank(validRole(gone.role)) < roleRank(validRole(keep.role)) ? validRole(gone.role) : validRole(keep.role);
     if (gone.added && (!keep.added || gone.added < keep.added)) keep.added = gone.added;
     // Only a person still waiting on their invite has a key worth keeping.
     if (keepWaiting && !keep.id && !keep.inviteKeyHash && gone.inviteKeyHash) {
@@ -1274,7 +1346,8 @@ export class Accounts {
         domain: typeof raw.domain === "string" ? raw.domain : "",
         masoraWorkspace: typeof raw.masoraWorkspace === "string" ? raw.masoraWorkspace : "",
         owner: raw.owner && raw.owner.login ? tag(raw.owner) : null,
-        allowed: Array.isArray(raw.allowed) ? raw.allowed.filter((a) => a && a.login).map(tag) : [],
+        // Pre-roles members have no `role`: they load as Editor (the owner needs none).
+        allowed: Array.isArray(raw.allowed) ? raw.allowed.filter((a) => a && a.login).map((a) => ({ ...tag(a), role: validRole(a.role) })) : [],
         // A block with no id blocks nobody — `samePerson` needs one — so a
         // malformed entry is dropped rather than kept as a row that silently
         // never matches.

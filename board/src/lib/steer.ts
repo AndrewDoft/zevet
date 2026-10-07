@@ -1,6 +1,7 @@
 /**
- * Steering a teammate's agent from this composer (D-058), and starting a new
- * agent on a teammate's machine (D-060) — the same machinery.
+ * Steering a teammate's agent from this composer (D-058), starting a new
+ * agent on a teammate's machine (D-060), and taking over a teammate's running
+ * turn (D-NEXT-W2-2) — the same machinery.
  *
  * `target` retargets the composer: while it is set, Send goes to that
  * person's agent through the desktop (which seals the text) and the hub
@@ -34,7 +35,7 @@ export interface SpawnTarget {
 
 export interface SentSteer {
   id: string;
-  kind: "steer" | "spawn";
+  kind: "steer" | "spawn" | "takeover";
   to: string;
   text: string;
   status: string;
@@ -48,7 +49,7 @@ export interface SentSteer {
 
 export interface SteerAsk {
   id: string;
-  kind: "steer" | "spawn";
+  kind: "steer" | "spawn" | "takeover";
   from: string;
   text: string;
   agent: string;
@@ -60,14 +61,34 @@ export interface SteerAsk {
   payer: string;
 }
 
+/** A teammate's agent waiting on a permission answer, or how it ended (D-086). */
+export interface ApprovalCard {
+  id: string;
+  status: string;
+  from: string;
+  repo: string;
+  agent: string;
+  tool: string;
+  args: string;
+  by: string;
+  decision: string;
+  reason: string;
+  /** Policy `ask`: a teammate said this, but only the owner's click applies it. */
+  advice: string;
+  /** My own agent: I answer it in my prompt, not here. */
+  mine: boolean;
+  at: number;
+}
+
 export interface SteerState {
+  approvals: ApprovalCard[];
   target: SteerTarget | null;
   spawn: SpawnTarget | null;
   sent: SentSteer[];
   asks: SteerAsk[];
 }
 
-let state: SteerState = { target: null, spawn: null, sent: [], asks: [] };
+let state: SteerState = { approvals: [], target: null, spawn: null, sent: [], asks: [] };
 const subs = new Set<() => void>();
 
 function update(fn: (s: SteerState) => SteerState) {
@@ -90,6 +111,7 @@ export const STEER_STATUS: Record<string, string> = {
   started: "started on their machine",
   "no-such-repo": "not started — no such repo on their machine",
   "start-failed": "started, but it failed",
+  lost: "lost",
   failed: "not sent",
 };
 
@@ -97,13 +119,18 @@ export const STEER_STATUS: Record<string, string> = {
 export function statusText(s: Pick<SentSteer, "kind" | "status"> & Partial<Pick<SentSteer, "to" | "reason">>): string {
   if (s.status === "start-failed") return `started, but it failed: ${s.reason || "it stopped"} on ${s.to || "their"}${s.to ? "’s" : ""} machine`;
   if (s.kind === "spawn" && s.status === "accepted") return "approved — starting…";
+  if (s.kind === "takeover") {
+    if (s.status === "accepted") return "handed over — starting…";
+    if (s.status === "started") return "started here";
+    if (s.status === "start-failed") return `failed${s.reason ? `: ${s.reason}` : ""}`;
+  }
   return STEER_STATUS[s.status] || s.status;
 }
 
 /** Final: nothing more will happen to it. A spawn ends at `started`. */
-export function steerSettled(status: string, kind: "steer" | "spawn" = "steer"): boolean {
+export function steerSettled(status: string, kind: "steer" | "spawn" | "takeover" = "steer"): boolean {
   if (status === "sending" || status === "queued" || status === "delivered") return false;
-  return !(kind === "spawn" && status === "accepted");
+  return !((kind === "spawn" || kind === "takeover") && status === "accepted");
 }
 
 export function agentLabel(agent: string): string {
@@ -122,6 +149,11 @@ export function canSteer(): boolean {
 /** The desktop can start an agent on a teammate's machine. */
 export function canSpawn(): boolean {
   return typeof bridge.local?.spawnSend === "function";
+}
+
+/** The desktop can take over a teammate's running turn. */
+export function canTakeOver(): boolean {
+  return typeof bridge.local?.takeoverSend === "function";
 }
 
 /** The same folder-name rule the hub and their app apply. */
@@ -164,7 +196,7 @@ function patchSent(id: string, patch: Partial<SentSteer>) {
 }
 
 /** Put a row up, run the send, and settle the row with what came back. */
-async function track(kind: "steer" | "spawn", to: string, text: string, payer: string, send: () => Promise<{ ok: boolean; id?: string; status?: string; error?: string }>) {
+async function track(kind: "steer" | "spawn" | "takeover", to: string, text: string, payer: string, send: () => Promise<{ ok: boolean; id?: string; status?: string; error?: string }>) {
   const temp = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   update((s) => ({ ...s, sent: [{ id: temp, kind, to, text, status: "sending", reason: "", session: "", payer, at: Date.now() }, ...s.sent].slice(0, SENT_KEEP) }));
   try {
@@ -186,9 +218,12 @@ async function track(kind: "steer" | "spawn", to: string, text: string, payer: s
 /** Send `text` to the current target. The composer clears either way; the
  *  outcome is the row this adds. */
 export async function sendSteer(text: string): Promise<void> {
-  const t = state.target;
+  if (state.target) await sendSteerTo(state.target, text);
+}
+
+/** Send `text` to `t` without retargeting the composer (comment → agent). */
+export async function sendSteerTo(t: SteerTarget, text: string): Promise<void> {
   const local = bridge.local;
-  if (!t) return;
   await track("steer", t.actor, text, payerOfSession(usePayers.getState().payers, t.actor, t.session), async () =>
     local?.steerSend ? local.steerSend(t.actor, t.session, t.repo, text) : { ok: false, error: "this app cannot steer — update Zevet" },
   );
@@ -206,6 +241,53 @@ export async function sendSpawn(text: string): Promise<void> {
   });
 }
 
+/** Take over `t`'s running turn on `agent` (an engine id), on MY account. The
+ *  row it adds carries MY payer: the turn runs, and bills, here. */
+export async function takeOver(t: SteerTarget, agent: string): Promise<void> {
+  const local = bridge.local;
+  const mine = await local?.payerFor?.(agent).catch(() => null);
+  await track("takeover", t.actor, "", mine?.label || "", async () =>
+    local?.takeoverSend ? local.takeoverSend(t.actor, t.session, t.repo, agent) : { ok: false, error: "this app cannot take over — update Zevet" },
+  );
+}
+
+const APPROVAL_KEEP = 12;
+
+/** Words for each stage, zevet style: say what happened and who did it. */
+export function approvalText(a: Pick<ApprovalCard, "status" | "by" | "from" | "decision" | "advice">): string {
+  switch (a.status) {
+    case "open":
+      return "waiting";
+    case "answered":
+      return `${a.by || "someone"} answered`;
+    case "held":
+      return `${a.by || "someone"} said ${a.decision === "allow" ? "allow" : "deny"}; ${a.from} decides`;
+    case "approved":
+      return `approved by ${a.by || a.from}`;
+    case "denied":
+      return `denied by ${a.by || a.from}`;
+    case "expired":
+      return "expired";
+    case "unknown":
+      return "outcome unknown";
+    default:
+      return a.status;
+  }
+}
+
+export const approvalLive = (status: string) => status === "open" || status === "answered" || status === "held";
+
+/** An Editor answers a teammate's agent. The first valid answer wins; a later one says who won. */
+export async function answerApproval(id: string, allow: boolean): Promise<{ ok: boolean; error?: string }> {
+  const r = await (bridge.local?.approvalAnswer?.(id, allow) ?? Promise.resolve({ ok: false, error: "this app cannot answer — update Zevet" }));
+  if (!r.ok) patchApproval(id, { reason: r.error || "not accepted" });
+  return r;
+}
+
+function patchApproval(id: string, patch: Partial<ApprovalCard>) {
+  update((s) => ({ ...s, approvals: s.approvals.map((a) => (a.id === id ? { ...a, ...patch } : a)) }));
+}
+
 export async function answerSteer(id: string, approve: boolean): Promise<void> {
   // Removed first: answering twice must not be possible from the UI.
   update((s) => ({ ...s, asks: s.asks.filter((a) => a.id !== id) }));
@@ -216,10 +298,30 @@ export async function answerSteer(id: string, approve: boolean): Promise<void> {
 function onEvent(e: { kind: string; id: string; [k: string]: unknown }) {
   const str = (v: unknown) => (typeof v === "string" ? v : "");
   if (!e || typeof e.id !== "string") return;
-  if (e.kind === "ask" || e.kind === "spawn-ask") {
+  if (e.kind === "approval") {
+    const prior = state.approvals.find((a) => a.id === e.id);
+    const card: ApprovalCard = {
+      id: e.id,
+      status: str(e.status),
+      from: str(e.from),
+      repo: str(e.repo),
+      agent: str(e.agent) || prior?.agent || "",
+      tool: str(e.tool) || prior?.tool || "",
+      args: str(e.args) || prior?.args || "",
+      by: str(e.by),
+      decision: str(e.decision),
+      reason: str(e.reason),
+      advice: prior?.advice || "",
+      mine: e.mine === true || Boolean(prior?.mine),
+      at: prior?.at || Date.now(),
+    };
+    update((s) => ({ ...s, approvals: prior ? s.approvals.map((a) => (a.id === card.id ? card : a)) : [card, ...s.approvals].slice(0, APPROVAL_KEEP) }));
+  } else if (e.kind === "approval-advice") {
+    patchApproval(e.id, { advice: `${str(e.by)} said ${str(e.decision) === "allow" ? "allow" : "deny"}` });
+  } else if (e.kind === "ask" || e.kind === "spawn-ask" || e.kind === "takeover-ask") {
     const ask: SteerAsk = {
       id: e.id,
-      kind: e.kind === "spawn-ask" ? "spawn" : "steer",
+      kind: e.kind === "spawn-ask" ? "spawn" : e.kind === "takeover-ask" ? "takeover" : "steer",
       from: str(e.from),
       text: str(e.text),
       agent: str(e.agent),
@@ -240,7 +342,7 @@ function onEvent(e: { kind: string; id: string; [k: string]: unknown }) {
     else
       update((s) => ({
         ...s,
-        sent: [{ id: e.id, kind: e.of === "spawn" ? ("spawn" as const) : ("steer" as const), to: str(e.to), text: "", session: "", payer: "", at: Date.now(), ...patch }, ...s.sent].slice(0, SENT_KEEP),
+        sent: [{ id: e.id, kind: e.of === "spawn" ? ("spawn" as const) : e.of === "takeover" ? ("takeover" as const) : ("steer" as const), to: str(e.to), text: "", session: "", payer: "", at: Date.now(), ...patch }, ...s.sent].slice(0, SENT_KEEP),
       }));
   }
 }

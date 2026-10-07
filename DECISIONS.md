@@ -1961,8 +1961,256 @@ starts release the worktree (branch kept if it has commits) and never merge, sin
 worktree (waiting/failed/no checks) stays until Integrate, Discard, thread close, or the next start's prune; a held
 worktree older than the app session is gone, its branch survives for a manual `git merge`.
 
+## D-076 — Shipped: 0.2.125, Merge remote-tracking branch 'origin/main' into fix/subagent-integrate-once (payload-only, hub deploy)
 
-## D-NEXT-W2-12 — Linux AppImage and Windows ARM64 in CI, feed and updater
+**Decided (automatic, `npm run ship`, 2026-10-07).** 5 commit(s) past v0.2.124.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.125 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.125`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `84b50af6…` (153123984 B), dmg `209b8ecc…` (205237586 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2125 on both platforms. Manifests win `a0e5ef9b…`, mac `f7621746…`. Delta: 5 new blob(s) uploaded. 86 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `713e53eabdb1` -> `9b6196041fef`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+
+## D-077 — Pinned memory: per-file notes sealed with the doc key, staleness read from the local tree
+
+*Renumbered at merge from D-NEXT-W2-10.*
+
+**Decision.** A note is `{id, repo, path, text, hash, author, createdAt, updatedAt, retired}`, `hash` being the sha256 of the file's bytes when the note was written (a `commit` hash reader exists in `currentHash`, unused by default). `desktop/pinned-memory.js` owns it. Notes are sealed one-per-id with the document key (AAD `memory\0repo\0id`) in `<zevetHome>/memory/<repo>.memory.json`, and shared by sending the note through the existing doc-sync room `memory:<repo>` (sealed again with the room name as AAD), so the hub relays and replays ciphertext and learns neither path nor text. Staleness (`fresh` / `stale` / `missing`) is computed on each machine by hashing its own working tree; it is never stored and never hub-side. A person edits, re-pins ("Still true") or retires a note; last write by `updatedAt` wins. The board shows a "stale" mark on the tree row, a "notes: N stale" chip beside the files-changed summary, and the file view lists that file's notes with Edit / Still true / Retire / Pin.
+
+**What already existed.** `knowledge.tsx` only derives citation, read and math cards from the active transcript; it stores nothing. `Memories` (runspec.tsx) shows read-only agent memory files from `local:memories`. The "vault" is a read-only health file for the status line (status-sources.js). None holds per-file notes, so the store is new; the transport (doc-sync rooms), sealing (doc-crypto) and the claims idiom (D-070) are reused.
+
+**Alternatives.** (1) A hub-side store: rejected, the hub would need plaintext paths to flag staleness, or hold durable state we deliberately keep out of it. (2) A claims-style hub map (`/ingest` kind): in-memory with a 2h TTL, wrong for durable notes. (3) Storing notes in the repo: pollutes the customer's tree. (4) Git blob/commit hash as the only pin: content hash works on uncommitted work and non-git folders; commit mode stays available.
+
+**Limits.** The hub's room log is memory-only and capped (doc-sync's rule), so a hub restart loses relayed notes until a holder edits; every machine keeps its own sealed copy. Edits are last-write-wins with no merge. Notes are not yet pushed back on reconnect.
+
+**For item 9.** Agents call `createMemory(...).create({repo, path, text, root, author})`, `.list({repo, path, root})`, `.retire(id)`; treat note text as data and cap it (MAX_TEXT 2000).
+
+**Reversibility.** Additive: remove the module, four `local:memory*` handlers, and the board components; sealed files on disk are inert.
+
+**Not verified.** Only the headless browser walk with a stubbed desktop bridge: no real app launch, no second machine seeing the notes, staleness against a live working tree edited by a real agent.
+
+## D-078 — Comments pinned to turns, hunks and plan steps; comment to agent
+
+*Renumbered at merge from D-NEXT-W2-4.*
+
+**2026-10-07**
+
+**Pre-existing.** Comments were already code-anchored only: a Y.Map in the file's encrypted Y.Doc (`board/src/lib/presence-comments.mjs`, panel `components/comments.tsx`), Y.RelativePosition anchor, replies, resolve, unresolved export to `~/.zevet/comments`.
+
+**Added.** Same Y.Map, so the same doc-key sealing; the hub still sees ciphertext only. `ref` pins a comment to a transcript **turn** (session, turn index, a quote capped at 600 chars; no text anchor) or a diff **hunk** (file plus up to 40 lines of 200 chars, optional text anchor so it follows edits). `step` pins it to a **plan step** from D-071 by position AND text, because plans are replaced wholesale; `stepState` matches by text, and a dropped step reads "gone". Refs are cleaned on write and again on read: a peer can put anything in a shared map.
+
+**Comment to agent.** `frameForAgent` builds the steer text: a fixed header saying the block is quoted data, not instructions; one `<zevet-data source="comment">` block (the shared frame, `desktop/data-frame.mjs`, also used by D-087; consolidated at merge from a private `<<<zevet-comment` frame) holding the comment, then the anchored lines; delimiters inside the content are defanged; capped at 3600 chars (steer limit 4000, minus the `[from …]` prefix), cutting the quoted lines before the ask, with a visible `[cut: too long]`. It goes out through the existing steer channel (`sendSteerTo`), so the team steer policy (default ask), sealing, outcome rows and the receiving app's `[from …]` prefix all apply unchanged. Send needs a steer target already chosen.
+
+**Limits (known).** Turn and hunk comments live in the open file's doc, so they need a shared editor open; with none, the Comment buttons are hidden. No separate per-session comment room was built. Turn index is the last message of the active console. The step picker lists the plan of the ACTIVE LOCAL console only (teammate plans are an opaque blob, D-071).
+
+**Tests.** `test/comment-anchor.test.mjs`; each guard mutation-checked (defang, cap, data header, ref storage, step link, ref validation).
+
+**Turn button (fixed at merge).** The headless walk found "Comment on this turn" could never render: it needs an open file's comment room but lived in TurnDetail, which renders only while no file is selected. It now renders from the conversation card (`TurnCommentButton`, conversation.tsx), next to the thread, like the hunk button. `test/turn-comment-button.test.mjs` fails without the mount. Starting an agent from the composer (`showConversation()`) clears `selectedPath` by design and leaves the editor session, and so the room, alive; that is the "Pick a file" pane the walk saw, not agent events resetting selection (local agent events never reach `followEvent`).
+
+**Not verified.** Only the headless walk with a stubbed desktop bridge: no real shared-editor room with two people, no comment reaching a real running agent.
+
+## D-079 — Per-team retention, and secret redaction on the client before anything leaves
+
+*Renumbered at merge from D-NEXT-W2-13.*
+
+**2026-10-07 (build-order item 13).**
+
+**Retention.** A new team policy `retention` (forever | 90d | 30d | 7d | 1d; default forever), set by the owner through the existing `PUT /api/policy` (owner gate, validation and audit trail all reused) and shown under Settings > Team. The hub's existing TTL compaction now takes its window from `detailTtl(accounts)`: the shorter non-zero of the operator's `ZEVET_DETAIL_TTL_MS` (kept, as the floor) and the team's own setting. Compaction was boot-only; it is now `board.compact()`, run at boot and again the moment retention changes, and it blanks the in-memory events as well as the log file. Only `detail` is blanked; who/tool/file/repo is the board's long memory and is never trimmed. Alternative not taken: a free-form number of days. Five fixed windows are enough, are validated by the same table as `steer`, and cannot be set to a value that silently deletes everything.
+
+**Redaction.** `client/redact.mjs` is the one net: 14 named rules (PEM private keys, sk-ant-, sk-or-, sk-, stripe, xai-, ghp_/gho_/ghu_/ghs_/ghr_/github_pat_, AKIA/ASIA, AIza, xox*, JWT, Bearer, NAME=secret .env lines, and the old keyword=value rule), each replacing with `[redacted:<kind>]`. It replaces the two divergent copies in `hook.mjs` and `opencode-plugin.mjs`. It runs in the hook before the event body is built (prompt, command and plan-step text), so what reaches the hub, its log and every board is already clean. It is client-side because the hub cannot read sealed traffic and a hub-side scrub would only cover the plaintext half. The opencode plugin is one self-contained file and cannot import; it carries a byte-identical copy of the rules block, and a test fails on drift.
+
+**Behaviour change, deliberate.** The old net replaced any 40+ character hex run as a "long hex blob". That redacted every git sha and sha-256 on the board and caught almost no real secret (real keys carry a prefix and now have a rule). It is removed; a test pins that a 40-hex sha survives. Markers changed from `[redacted]` to typed ones.
+
+**Where it is NOT applied.** Steer and spawn text typed into Zevet's own composer, and sealed claims, are not run through the net: the user typed those to an agent on purpose and a silently altered instruction is worse than a visible secret. No transcript is relayed to the hub today (the board shows hook activity and sealed steers only), so there is no transcript path to redact.
+
+**Release note.** `client/redact.mjs` is new and listed in `CLIENT_FILES`; `hub/client-manifest.signed.json` is stale until re-signed with `scripts/sign-client-manifest.mjs` at release (release-check will say so).
+
+**Tests.** `test/redact.test.mjs` (one case per rule, each proved reachable through that rule alone via `matchedRules`; false-positive cases; the hook end to end against a real hub; plugin parity) and `test/retention.test.mjs` (default keeps; owner 1d blanks board and log immediately; 7d keeps; member refused; bad value refused).
+
+**Not verified.** No run against a real team hub with live clients: redaction was exercised on fixtures, and ship.mjs re-signs `client-manifest.signed.json` (with `client/redact.mjs`) at release, so the signed payload has not been checked end to end.
+
+## D-080 — Agent notifications and editable shortcuts
+
+*Renumbered at merge from D-NEXT-W2-14.*
+
+**2026-10-07**
+
+**Decision.** (a) Native OS notifications (Electron `Notification`, same code on Windows and macOS) for two kinds: **attention** (permission prompt, question, error result, non-zero exit; default on) and **finished** (clean result, exit 0; default off). Each has its own toggle in Settings > Agents > Notifications, stored in `zevet.notify.v1`. A click raises the window and focuses that agent's card (`local:notify` out, `local:notifyClick` back, keyed by console key). (b) Shortcuts live in one table (`board/src/lib/keybindings.mjs`); the palette and tree handlers call `matches()`. Settings > Appearance > Shortcuts rebinds, detects conflicts, resets per key or all; overrides in `zevet.keys.v1`.
+
+**Where the logic lives.** The board decides (`board/src/lib/notify.mjs`, pure, clock/timer/OS call injected); main only shows. Chosen because the board already folds console events and owns the prefs mirror, so toggles apply per event with no IPC round trip.
+
+**Coalescing.** Per 2 s window the first 2 notifications show; the rest are held and sent as one "N more agents". A clean agent already on screen with the app focused is not notified.
+
+**Accelerators.** Electron spelling, `CommandOrControl+Shift+K`; it matches Ctrl or Cmd, as the old handlers did. A binding needs CommandOrControl or Alt. The menu zoom keys and copy/paste/cut/undo/select-all are reserved. Only the two board shortcuts are rebindable; menu zoom stays fixed (Electron menu accelerators are built once at startup).
+
+**Limits.** Permit and ask requests carry no console id, so their click raises the window but does not pick a card (the request card is already global). "Idle waiting for input" is not distinguished from finished: a turn ending is both. Not verified: real OS toast rendering, macOS.
+
+**Tests.** `test/notify-keys.test.mjs`: mapping, toggles, coalescing, conflicts, persistence, reset; each mutation-checked.
+
+**Not verified.** Real OS toast rendering (Windows toast, macOS Notification Center) and click-through to the right console were never seen; macOS in particular was not run. Only the IPC wiring and key handling are tested.
+
+## D-081 — Roles: Viewer / Commenter / Editor / Owner, enforced at the hub
+
+*Renumbered at merge from D-NEXT-W2-7.*
+
+**2026-10-07.** Item 7 of the Amoeba build order.
+
+**Decision.** Each person on a team has a role: `viewer` < `commenter` < `editor` < `owner`. `owner` is not stored; it is `state.owner` and cannot be granted, removed or re-roled. Everyone else carries `role` on their person record. `accounts.roleOf(ref)` reads it live on every call and `accounts.can(ref, action)` checks it against `ACTION_ROLE`, so a demotion refuses that person's very next request (nothing is cached in a session).
+
+- **Gated at the hub (403 `<role> role required`):** `/api/steer`, `/api/spawn` (Editor), `/team/credentials` add and secret fetch (Editor: the secret goes to a machine), and, for a person's own desktop (a session token), `/ingest` events (Editor) and claim/payer frames (Commenter). `take-over` is in `ACTION_ROLE` (Editor) for item 2 to call; there is no route yet.
+- **Not gated:** `/ingest` carrying only the bare team secret (a hook-only machine has no person), board reads, `/ws` document sync (ciphertext; its token is usually the shared secret, so the hub cannot tell who is writing).
+- **Change a role:** `POST /auth/role {login, role}`, owner only; `viewer|commenter|editor`. Audit entry `{what: "role.<login>", from, to, by}` in the same trail as policy. whoami, `/api/policy` and the people list report `role`. Board: a role select per member row in team settings, role label for non-owners; no explanatory text.
+- **Migration:** a record with no valid `role` loads as Editor; the owner is Owner. Nobody loses what they could do. New invitees are Editors.
+- **Merge:** two rows merged into one human keep the LOWER role, so linking an account cannot undo a demotion.
+
+**Alternatives.** (a) Role on the session: stale after demotion, rejected. (b) Per-workspace roles: no workspace object exists yet; per team now. (c) Gate `/ws` by session role: blocked by the shared-secret token and by the hub being blind to which frames are comments vs edits. (d) Ownership transfer: out of scope.
+
+**Why.** The ship rule: a demoted user must be stopped by the server, not by a desktop that obeys.
+
+**Reversibility.** Additive. `role` is an extra field older hubs ignore; removing the gates restores today's behaviour (everyone Editor). No data to unwind.
+
+**Tests.** `test/roles.test.mjs` (accounts unit + real hub). Mutation-checked: removing the steer gate, the spawn gate, the ingest gate, the owner check on `/auth/role`, the audit write, the rank comparison in `can`, and changing the migration default to viewer each turned the suite red; all restored.
+
+**Not verified.** No UI walk of the role select, no two-machine run, `/ws` not role-gated.
+
+## D-082 — Take over a teammate's running turn: sealed baton over the steer channel, one winner decided at the hub
+
+*Renumbered at merge from D-NEXT-W2-2.*
+
+**2026-10-07**
+
+**Decision.** A Take over button on a teammate's agent row (next to Steer) asks for the baton. The taker picks the engine (Claude, Codex, OpenCode, Zevet model); a NEW turn starts in the taker's own app, on the taker's own login and credentials, in the taker's copy of the repo (resolved by folder name against their open workspaces, like D-060), carrying the owner's transcript tail (24 KB, newest kept) and a diff summary (branch, `git status --short`, `git diff --stat HEAD`), and opening with "[taken over from X]" plus the line the agent must lead with: where it resumes. It runs in the taker's safe mode (plan or ask), never auto. The transcript is framed as data, not instructions (D-058's injection rule).
+
+**Flow and seams.** (1) Taker: `POST /api/takeover`, body sealed `{agent, payer}` with the document key (AAD `takeover, id, owner, session`). (2) Hub: policy `steer` gates it exactly as steer and spawn do (`off` refused before anything is relayed; `ask` relayed with `approval: true`; `on` straight through; a missing flag asks on the desktop), then the one-winner decision. (3) Owner's app: opens it, approves when asked (the card names the taker's engine and the payer their machine reported), captures, seals the baton (AAD `baton, id, owner, session`, so a request can never be replayed as one) and `POST /api/takeover/baton`. (4) Hub relays the baton to the taker's own channel only, as ciphertext it never opens; the owner's turn is stopped only AFTER the hub has relayed it, so a taker who went offline (`offline`, hold released) costs the owner nothing. (5) Taker's app: opens the baton, checks it names the engine THIS person asked for (an owner cannot pick it), starts the turn, and `POST /api/takeover/status` with `started` and the new session, or `start-failed` with why. Statuses reach the taker's board as steer-status frames (`of: "takeover"`).
+
+**One winner.** The first request for an (owner, session) holds it in the hub, decided in a synchronous section with no await between the read and the set, so concurrent requests cannot both win. Every other taker gets HTTP 409 `status: "lost"` naming the winner. The hold counts while the request is queued, delivered or accepted (15 min cap on a pending one) and is final once `started`; a decline, an unanswered ask, an offline taker or `start-failed` free it, so the next request can try.
+
+**Payer chip (D-073).** The label is the EXECUTING machine's, the taker's: the sent row on the taker's board shows `Bills you: <taker's login>`, the owner's approval card shows `Bills <taker>: ...` from the label the taker's machine sealed into the request, and the new console's own chip comes from the existing per-console payer path. Nothing is guessed; unknown shows nothing.
+
+**Role hook (item 7, built in parallel).** `mayTakeOver(acc, sess)` in hub/server.mjs is the single hook point. It defaults to the current member check (any signed-in team member, which `teamFromSession` already enforces) and is where Editor-or-above goes.
+
+**Alternatives.** (a) The taker pulls the transcript from the hub: rejected, the hub holds no transcripts and must not. (b) Owner stops first, then hands over: rejected, a failed handoff would kill work for nothing; baton first, stop after. (c) Optimistic claim in the taker's app: rejected, only the hub sees every taker. (d) Carry the full patch instead of a summary: not done; the spec says summary, and the taker's repo is expected to have the branch (see Not verified). (e) A new channel: rejected, the steer channel and its policy are the point.
+
+**Why.** Amoeba's best story ("hit limit, teammate continues with full context, announces where it resumes"), but sealed, policy-gated, across all four engines, and never explicit-intent-free: default `ask`.
+
+**Reversible.** Fully: one hub route group, one desktop module, one button; no stored state (holds are in memory, like steer records). An older desktop answers nothing to a `takeover` frame, so the taker sees the request stay queued; the board hides the button on a build without `takeoverSend`.
+
+**Known limits.** "Safe checkpoint" is `stop()` on the owner's console, which ends the process mid-step; there is no gentler interrupt in the console layer today. The diff is a summary: uncommitted work lives on the owner's machine and is not transferred, so the taker works from their own checkout and the summary says what changed. The transcript is the console log's bounded head and tail; engines it cannot parse contribute nothing rather than noise. A hook-only agent (no Zevet console) cannot be taken over (`declined`: not running in their Zevet app).
+
+**Tests.** `test/takeover.test.mjs` (30): sealing and AAD, per-engine transcript, owner and taker inboxes, a real hub for policy, one-winner, release, final, relay scope, ordering and refusals, and an end-to-end run with two desktops. **Mutation checks** (each broken, run, seen red, restored): one-winner check removed (race, decline-release and final tests red); policy-off gate removed (red); owner approval gate removed (3 red); owner keeps turn when taker offline removed (red); baton-picks-engine check removed (red); baton AAD label equal to request label (red); taker-status ordering removed (red). A "decline releases the lock" mutation survived because the release was redundant (the hold stops counting once the record is declined); the dead release was deleted rather than left untested.
+
+**Role gate (wired at merge).** `POST /api/takeover` calls W2-7's `roleRefusal(auth, "takeover")`, so Editor or above; a Commenter gets 403 (`test/takeover.test.mjs`, mutation-proven). The old `mayTakeOver` hook is gone.
+
+**Not verified.** Never run on two real machines. The safe checkpoint is `stop()` mid-step, so the stopped step is cut off; uncommitted work is not transferred, only the diff summary. Nothing here ran against a real second engine or account.
+
+
+
+## D-083 — Read-only model catalogue in Settings > Agents (renumbered at merge from D-NEXT-W2-16)
+
+**2026-10-07**
+
+**Decision.** Settings > Agents gets a "Models" section under Model credentials: one row per model the
+engines can run (claude and codex from their own catalogues, opencode's free list), showing readiness, who
+pays, list price per MTok in/out, and the median cost of this board's recent runs on it. Read-only, no
+resale (build order §4); nothing is metered or sold.
+
+**Why there.** The credentials, the Auto ladder and the engine settings already live in that tab, and the
+section reads exactly those (D-018 credentials and ladder rung, `local:agents` detection). No new IPC, no
+desktop module: everything the rows need is already in the board store.
+
+**Prices.** `board/src/lib/model-prices.mjs` is the only price source; each entry has `source` and `as_of`.
+No entry means "—". Read 2026-10-07: Anthropic and OpenAI list prices from their pricing pages; free rows
+from OpenRouter's models API and opencode Zen docs. List API prices only; a subscription login pays no
+per-token price.
+
+**Not done.** Per-turn cost: the board keeps one cumulative cost per console, so the figure is per run
+(INSUFFICIENCIES INSUF-011). Teammate payer (D-073) is per session and is not a row.
+
+## D-084 — A restart for an update never lands under a working agent, and a continued agent keeps its id and label (renumbered at merge from D-NEXT-UPD-BUSY)
+
+**Observed (0.2.125, 2026-10-07 19:30:20Z).** Two hosted agents were mid-turn when every Zevet process restarted. k11-kai-rebase (ea3598ff) kept its id; zv-int126 (b3645999) went to exited, its `zagent wait` exited 1 with no result, and the work continued as bc29d564 labelled "w2-walk" in the same worktree.
+
+**Mechanism (evidence).**
+- The payload swapper's gate (`desktop/payload-swap.js` `busyReason`) only blocked on a running agent when it was NOT resumable (`a.running > 0 && !a.resumable`), and `main.js` `useGate.activity` marks every claude/codex/opencode console with a session id resumable. So a resumable agent mid-turn did not block `app.relaunch(); app.exit(0)`. The idle INSTALLER already refused mid-turn consoles (`idle-install.js` `midTurn`, from `gate.working`); the payload swapper never got `working`. 0.2.125 was payload-only, so only the swapper applied. The swap also releases consoles whose turn dies with the process (`releaseForRelaunch` -> `c.stop()`).
+- Restore keeps id and label (`restoreResumableConsoles`: `forcedId: s.id`, `label: s.label`; persistence round trip is tested). The only path that mints a new id and drops the label for a continued thread is `local:resumeAgent` (`main.js`): `instrumentedStartConsole` was called without an id (agent-console.js `options.id || randomUUID()`) and `consoleMeta` got no label. The board calls it with `continues: c.id` for any console that is not running with a session id (board.ts follow-up path), and the API's `send --via board` goes through the same path. A console that `releaseForRelaunch` had just stopped is exactly that. This matches "new id, label gone (falls back to the generated title), same worktree". Not reproduced against the live app; see Not verified.
+- A waiter had no recovery: the API port and token change on relaunch, `zevet-agent wait` made one request, and `/wait` returned "exited" when the relaunch's own `stop()` fired.
+
+**Decided.**
+- `busyReason` takes `working()` and refuses with "an agent is mid-turn" before the resumable exemption, for every console, API-spawned and hosted included. Idle resumable consoles are still restored (unchanged). Both gates (swapper, idle installer) surface the deferral through `onWaiting`; `main.js` adds it to the `app:update` state as `waiting`, pushed to the board and setup window, and clears it when the next poll (30 s swapper, 60 s installer) lets the update through. Manual "Restart now" is a person's explicit click and is unchanged.
+- A continued console keeps its id and label (`consolePersistence.resumedIdentity`, id reused only when the old process has exited). Chosen over an alias table: no second id to resolve, nothing for a waiter to follow.
+- `/wait` does not report exited while `relaunching`; `zevet-agent wait` retries a dead connection or "no such console" for 120 s, re-reading `agent-api.json`, so a waiter survives a restart that restores the agent under the same id.
+
+**Tests, each mutation-checked (break the code, red, restore).** payload-swap: busyReason mid-turn, swapper defers/surfaces/retries (gate line disabled: 2 fail). idle-install: deferral surfaced (onWaiting disabled: 1 fail). console-persistence: resumedIdentity + resumeAgent wiring (keep disabled: 1 fail). zevet-agent: wait rides out a restart (retry disabled: 2 fail). agent-api: /wait during relaunch (condition disabled: 1 fail).
+
+**Not verified.** No live app was launched. The `resumeAgent` trigger for zv-int126 is inferred from code; the incident logs were not available. Full `npm test` was not run locally (it opens sign-in windows until fix/no-signin-popup-in-tests lands); CI runs it on the branch.
+
+## D-085 — Shipped: 0.2.126, Merge remote-tracking branch 'origin/main' into int/w2-10-4 (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 37 commit(s) past v0.2.125.
+
+- **Shell release.** desktop/zevet-agent.mjs changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.126) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.126`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `98886b5e…` (153144064 B), dmg `8a808601…` (205296251 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2126 on both platforms. Manifests win `1517c541…`, mac `64ce6473…`. Delta: 14 new blob(s) uploaded. 90 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `9b6196041fef` -> `f5ebdfe979d7`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-086 — Cross-machine approval cards: an Editor answers a teammate agent's permission prompt
+
+*Renumbered at merge from D-NEXT-W2-8.*
+
+**2026-10-07.** Item 8 of the Amoeba build order.
+
+**Decision.** When an agent on machine A asks permission, A (the executing side) may publish a card sealed with the document key (`desktop/agent-approval.js`, `POST /api/approval/open`). Any Editor on the team may answer it (`POST /api/approval/answer`, gated by `roleRefusal(auth, "approve")`; `approve: "editor"` in `ACTION_ROLE`). The hub relays the sealed answer to A's own channel as `approval-answer`.
+
+- **Policy `approve` ∈ {off, ask, on}, default OFF**, owner-set through the existing `PUT /api/policy`, enforced at the hub on open AND on answer (turning it off bites an already-open card). `on`: the answer is applied. `ask`: the answer is only shown to the owner, whose own click decides. A frame missing the flag is read as `ask`.
+- **The hub never decides.** It checks policy and role and arbitrates one thing: the first answer from an Editor wins (synchronous, so atomic); later ones get 409 with the winner. It sees ids, names, the allow/deny bit and times, never the tool or arguments.
+- **Exact action, once, enforced on the executing machine.** The card seals a secret nonce and sha256 of the canonical `[tool, arguments]`. The answer seals the nonce, the hash and the decision, with AAD `id+session+hash`. A recomputes the hash from its OWN pending request and rejects any answer whose nonce, hash or decision (also sent in the clear for arbitration) differs. A rejected answer is reported `invalid` and the hub re-opens the card (3 tries). A settled id is remembered, so a replay settles nothing, and an old answer cannot authorise a later identical prompt (new id, new nonce). A remote answer never carries `always`.
+- **Local wins.** A remote answer is held 1.5 s before it is applied; the person's own click inside that window (or at any time under `ask`) cancels it, and a local report overrides a relayed remote answer at the hub.
+- **Outcomes shown to everyone:** open, answered, held, approved by X, denied by X, expired, unknown ("outcome unknown"). Unknown = an answer was relayed or an approval released less than 30 s ago and the executing app closed or its channel dropped (reported by the app on interrupt, and by the hub when the owner's last channel closes). An interruption before anyone answered is `expired`: the action never ran.
+- **Board:** `ApprovalCards` (zevet-style one-liners, text children only), a policy control in Settings, the owner's own permit card is removed when a teammate's answer is applied (`permit-gone`). Own cards offer no buttons.
+
+**Alternatives.** (a) Hub decides validity: it cannot, it is blind to the action. (b) Reuse the steer policy: steer is prompt injection, this is tool authorisation; they need separate switches. (c) Timestamp-only local-wins: a hold window is the only way a click can beat an already-relayed frame.
+
+**Reversibility.** Additive. With `approve: off` (default) nothing is published and no route accepts an answer.
+
+**Limits.** "Unknown" is best-effort: there is no tool-completion signal from the CLI, so a 30 s window stands in for "may still be running". Hub state is in memory (a hub restart loses open cards; the prompt then times out locally).
+
+**Tests.** `test/approvals.test.mjs` (20). Mutation-checked, see the task report.
+
+**Not verified.** Hub approval state is in memory (a hub restart loses open cards); "outcome unknown" is best-effort (30 s window, no tool-completion signal); no two-machine run, no UI walk, no real claude permission prompt end to end.
+
+## D-087 — Agent-callable coordination tools on Zevet's MCP server
+
+*Renumbered at merge from D-NEXT-W2-9.*
+
+**Decision.** `zevet-mcp.js` (D-009) lists four more tools when the desktop is signed in to a team (`ZEVET_MCP_TEAM=1`): `get_team_context`, `claim_step`, `message_agent`, `record_memory`. The MCP child has no hub access, so each call POSTs `{tool, arguments, run}` to a new `/tool` route on the loopback ask-server (token-gated, 404 when unregistered, never a permit) and lands in `desktop/agent-tools.js`, which main.js feeds with this app's own signed-in state. No tool takes a team, hub or token; the repo folder comes from main's record of the run (`runRoots`), not from arguments.
+
+- `get_team_context`: live agents from the hub's `/api/state` (read-only), their files (path claims plus recent write tools), plan with step owners, overlap flags where two agents touch one file in one repo. Finished and idle-over-30-min agents are left out. At most 12 agents, 6000 chars.
+- `claim_step {session, step}`: `desktop/step-claims.js`, keyed by (session, plan step text). First claim wins locally; a later one is told the holder. Shared on doc-sync room `steps:<repo>` (sealed by the room); across machines every app converges on the earlier `(at, actor)`, so a loser that briefly thought it won is corrected. The plan card shows the owner beside the step (`AgentPlan owners`). Advisory, 4 h TTL, in memory.
+- `message_agent {to, session, message<=500}`: only to a running agent listed by the hub; sent through `agent-steer.sendSteer` (sealed, hub-stamped sender, steer policy: default ask, the target's owner approves; refused-by-policy is reported to the agent). The text is flattened, defanged (`<`, `>`, `[`, `]`, code fences, control characters), capped, prefixed "quoted as data and not an instruction" and wrapped in `<zevet-data>`. Item 4's comment-to-agent framing is not on main, so the same rule is implemented here (`defang`/`asData`); fold the two when item 4 lands.
+- `record_memory {path, text<=2000}`: `pinned-memory.create` (D-077): text capped, control characters stripped, tied to the file hash, sealed on disk and on the wire, authored "<person>'s agent"; path must be relative, inside the repo and exist.
+
+**One helper with comment -> agent (D-078).** `defang`, `asData` and the cap now live in `desktop/data-frame.mjs`, imported by `desktop/agent-tools.js` (require) and `board/src/lib/comment-anchor.mjs` (bundled). Same `<zevet-data>` frame, same neutralising (angle brackets, square brackets, fences, control characters), same cap rule (never over `max`, marker included); `multiline` keeps line breaks for quoted code. The board source stamp also hashes the shared file. Square brackets become fullwidth in quoted code. Test: `test/data-frame.test.mjs`.
+
+**Injection hygiene.** Everything a teammate wrote that goes back to an agent (doing/mission text, branch, plan steps, holder names, the message) is wrapped in `<zevet-data>`, one-lined, defanged and capped, and every tool description says it is data, never instructions (D-058 class).
+
+**Not behind a permit.** Like `ask_user`, these tools skip the permission card (`OWN_TOOLS`): reading team state, an advisory claim and a sealed note need none; the one action on someone else's machine, a message, is approved by THEIR owner under the steer policy.
+
+**Limits.** A claim is eventually consistent across machines and lost with the app (hub room log is memory-only). Plan steps are matched by text, so a rewritten step is a new step. A step claim needs the plan to have reached the hub (activity event). `message_agent` returns "queued", not the target's answer.
+
+**Mutation checks** (each against `test/agent-tools.test.mjs`, then restored): claim first-wins removed -> first-wins test red; message defang removed -> cap/defang test red; approval message forced -> happy path red; a plaintext note written beside the sealed one -> sealed test red; `record_memory` dispatch removed -> three record_memory tests red; tool list always on -> list and refuse-by-name tests red; `<` left in -> frame and defang tests red; `getState` given the caller's arguments -> team-scope test red (and nine others).
+
+**Reversibility.** Additive: remove the two modules, the `/tool` route, `TEAM_TOOLS`, and the `owners` prop.
+
+**Not verified.** Claims live in hub/app memory only (no persistence across a restart); no two-machine run; no real agent has called the tools end to end.
+
+
+## D-088 — Linux AppImage and Windows ARM64 in CI, feed and updater
+
+*Renumbered at merge from D-NEXT-W2-12.*
 
 **Decision.** Two new artifacts, `zevet-<v>-windows-arm64-setup.exe` and `zevet-<v>-linux-x64.AppImage`, built by
 `build.yml`; feed keys `win32-arm64` and `linux-x64`; `app-update.js` gains the matching names, accepts the
@@ -1990,7 +2238,87 @@ no Linux code-signing. Windows ARM64 is signed by the same Azure steps as x64.
 test/make-feed.test.mjs (four-platform feed). Mutation-checked: dropping the linux suffix, the exts option, or the
 make-feed TARGETS entries turns them red. Dropping the chmod does NOT (mode assertion is skipped on Windows; runs on Linux CI).
 
-## D-NEXT-SHIP-PLATFORMS — `npm run ship` publishes the AppImage and the Windows ARM64 installer
+**Not verified.** The installers are not uploaded by `ship.mjs` yet and there are no download links; the AppImage swap has never run on a Linux desktop; the ARM64 installer is only install-checked, never launched. The branch's two `workflow_dispatch` builds (cef01ab, dbc4417) failed the macOS smoke at "payload 0.2.125 activated; relaunching" (app exited 0 inside the 12 s window); main's own tag builds 0.2.120-0.2.126 all passed that smoke. Not root-caused: the branch diff does not touch the macOS or payload-swap path.
+
+## D-089 — Team task board: sealed cards in a `tasks:<team>` doc-sync room
+
+*Renumbered at merge from D-NEXT-W2-15.*
+
+**2026-10-07.** Item 15 of the Amoeba build order.
+
+**What existed.** No team chat. Zevet Chat (`desktop/chat*.js`) is one person's local conversation with a model; there is no human-to-human channel, so cards link to no chat message. Team chat is logged as a follow-up, not half-built.
+
+**Decision.** A card is `{title, owner, status todo|doing|done, link {path|agent, ref}, comments[]}`. Cards live in the doc-sync room `tasks:<team>` (`board/src/lib/tasks.mjs`, `tasks-sync.mjs`). Each frame is JSON sealed in the main process with the document key and the room name as AAD (the existing `doc:*` bridge; no new IPC), so the hub relays and replays ciphertext only. State and delta share one shape and merge is last-writer-wins per field plus append-only comments: commutative and idempotent, so log replay, snapshots and live deltas cannot disagree. Every reconnect answers `ready` with the client's whole state; the hub's log replays to a late joiner. Bounded: 500 cards, 200 comments a card, field lengths capped; junk is dropped on receipt. Removal is a tombstone field.
+
+**Roles.** Viewer reads; Commenter comments; Editor (and Owner) creates, moves, assigns, edits, removes, starts an agent. Three layers:
+- *Sender:* `apply` refuses an op the role does not allow (nothing is sent). Controls a role cannot use are not drawn.
+- *Receiver:* `merge` keeps an entry only if its author's role (from whoami `people[].role`) allows it. Read at receipt, so a later demotion also hides that person's earlier edits on a fresh merge.
+- *Hub (the only layer the sender cannot bypass):* `ACTION_ROLE.tasks = commenter`. On a socket opened with a person's SESSION token, binary frames and snapshot requests into a `tasks:` room are dropped when the role is below Commenter, with a `{"type":"refused"}` text frame back. The role is read per frame, so a demotion bites at once. Reads (replay, relay to the Viewer) are unaffected.
+
+**What the hub cannot enforce, said plainly.** (1) A comment and an edit are the same sealed bytes, so the hub's floor is Commenter; Commenter-vs-Editor is client-side. (2) `/ws` is usually opened with the shared team token (D-081): no person is behind it, so the hub gates nothing there. (3) The author name in an entry is not signed; anyone holding the document key can forge one. The receiver check stops a modified client from a Viewer only if the forger does not claim another login. These are the same limits roles already carry for `/ws`.
+
+**Start agent on this.** `handoff(card, role)` gates at Editor on the client, then uses the existing paths: a card owned by a teammate goes through `setSpawnTarget` + `sendSpawn` (hub `/api/spawn`, Editor-gated at the hub); otherwise `startAgent` on this machine, which has no hub route to gate.
+
+**Alternatives.** (a) Yjs: the dependency lives in `editor/` only and a plain LWW map is enough for flat cards. (b) A hub-owned `/api/tasks`: readable content on the server, against the blind-hub rule. (c) Local persistence of cards: plaintext on disk for a feature whose copy is the room; skipped.
+
+**Not done / follow-ups.** Team chat and card-to-message links. Cards are not persisted if every client leaves and the hub restarts (rooms are memory-only, D-hub). No drag-and-drop, no link picker UI (links are set by `edit` ops; the panel does not yet draw a field for them).
+
+**Reversibility.** Additive: a board, a room name, one `ACTION_ROLE` key. Removing the panel leaves sealed frames nobody reads.
+
+**Tests.** `test/tasks.test.mjs` (11): create/move/assign/comment under each role, receiver drops Viewer/unknown authors, merge order-independence, handoff gate, ready/snapshot resend, and against a real hub: ciphertext-only relay (a keyless spy; wrong-room AAD fails), late-joiner and offline-edit convergence, Viewer session-socket frames dropped / Commenter relayed / demotion immediate. Mutation-checked, each turned the suite red and was restored: `may()` always true; receiver ignoring author role; handoff gate removed; `ready` not resending; `do()` not sending; hub gate off; hub role cached at join; doc-sync sending plaintext.
+
+**Not verified.** Rooms are in hub memory only; at the hub a Commenter and an Editor are indistinguishable (the same sealed bytes), so that split is client-side; a card link has no UI; no browser walk of the panel; no two-machine run; the Start-agent buttons were not exercised; the shared-token path is ungated by design.
+
+## D-090 — Invite into one session, with a five-check join
+
+*Renumbered at merge from D-NEXT-W2-17.*
+
+**Decision.** An Editor (or the owner) invites a teammate into a single session from its agent row ("Invite"): their desktop seals the session reference `{session, repo, mode}` with the team document key (AAD `session-invite <id> <session>`, same scheme as steers and claims) and registers it at `POST /api/session-invite`; the hub holds ciphertext, in memory, 24 h. Only the session's person or the owner may invite (else "Only X or the owner can invite into this session"); a session not on the board is "Session ended". The invite id is the thing shared; the joiner pastes it ("Join a session"). `mode` is the most the invite grants: watch, comment or edit.
+
+`POST /api/session-invite/join` runs `checkJoin` (hub/session-share.mjs), first failure wins, ONE `{check, error}`: (1) team member, "Join the team first"; (2) role: watch needs any member, comment needs Commenter, edit needs Editor via `can` ("Ask the owner for Editor"); a mode above the invite is "This invite is X only"; (3) seat; (4) push access, edit only; (5) the agent is on the board ("Session ended") and, to edit, its person's desktop channel is open ("X is offline"). A Viewer joins `watch` and gets `readOnly: true`; asking to edit is refused by the role check. A joiner defaults to the invite's mode, so a Viewer must ask for watch.
+
+- **Seat: skipped.** No seat limit exists anywhere (no plan, metering or cap in hub, accounts or desktop; the only "seat" in the tree is a comment). The check is recorded as `skipped: ["seat"]` in a successful join, not invented. It slots between role and push when a limit exists.
+- **Push access.** The hub has no GitHub token and makes no GitHub call. Push is a fact about the joiner's machine, so the joiner's desktop answers it: `git push --dry-run origin HEAD` in the open workspace folder of that name (the spawn resolver). Flow: the hub says `check: "push"` with the repo, the desktop probes, retries with `push: true|false`. The answer is client-reported, so it is a UX gate; git itself is the enforcement on a real push. Not a role.
+- **Sealed.** There is no separate per-session key in Zevet; the sealed payload is the session reference under the team doc key, opened on the joiner's desktop (a different team secret gets "The invite did not open here"). It carries no new secret.
+- New ACTION_ROLE `share: editor`. IPC `sessionInvite`, `sessionJoin`; `desktop/session-share.js` added to the payload list.
+
+**Alternatives.** (a) Hub probes GitHub: needs a stored token, rejected. (b) Per-person invites: the invite id is unguessable and team-scoped; per-person binding left out. (c) Persist invites: a restart means re-invite, same as steers.
+
+**Reversibility.** Additive: two routes, one action, two IPC calls. Nothing stored on disk.
+
+**Tests.** `test/session-share.test.mjs` (incl. a role-gate-only test added at merge: removing `roleRefusal(auth, "share")` from invite creation was NOT caught before, the ownership check masked it; now it is): each check's pass and fail, order (first failing wins), single-error shape, Viewer read-only, expiry, and a real hub with the real desktop module (sealing, push probe only when asked, wrong secret). Mutation-checked: dropping the push check, `readOnly`, the role check, the member check, moving the agent check first, and dropping the offline check each turned the suite red; all restored.
+
+**Not verified.** Own-session Invite is missing (only team agent rows have the button); the push check is UX-only (the hub cannot see GitHub, the joiner's own git decides what a push really does); no UI walk of the Invite button or Join field; `git push --dry-run` was not run against a real remote; no two-machine run; own-session rows (AgentRow) have no Invite button, only team agent rows.
+
+## D-091 — Shipped: 0.2.127, Rebuild board bundle after W2-8/9/12/15/17 integration (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 17 commit(s) past v0.2.126.
+
+- **Shell release.** desktop/app-update.js, desktop/data-frame.d.mts, desktop/package.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.127) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.127`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `8b4875d1…` (153160488 B), dmg `c3659174…` (205306843 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2127 on both platforms. Manifests win `c4e45f6f…`, mac `23fcd612…`. Delta: 10 new blob(s) uploaded. 95 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `f5ebdfe979d7` -> `3b0988dac86b`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-092 — Automated runs never show a window (renumbered at merge from D-NEXT-NOPOPUP)
+
+**Mechanism.** `scripts/drive/drive.mjs` (cmdLaunch) spawns the real Electron app for ~25 test files (setup-window, setup-sso-e2e, hub-unreachable, identity-ui, ...). On a fresh profile `desktop/main.js` `app.whenReady` calls `openSetup(null)` (the "Set up zevet" sign-in window); with a config it calls `openBoard`. Both used `new BrowserWindow({...})` with no `show:false`, so every agent running `npm test` in a zevet worktree put a visible sign-in/setup window on the screen. The hook/CLI path (`client/hook.mjs`, `doctor.mjs`) never launches the app, so it is not a cause.
+
+**Decided.** Under `ZEVET_TEST_HOOKS=1` (every harness launch) or `ZEVET_TEST_HEADLESS=1`, windows are created `show:false, skipTaskbar`, and `show/showInactive/focus/restore/moveTop` are blocked. `ZEVET_TEST_VISIBLE=1` is the only opt-in to a visible window. Each window is logged to `$ZEVET_HOME/windows.jsonl` (test hooks only); `test/no-visible-windows.test.mjs` fails if any window was created visible, became visible, or none exists (vacuous). A real user launch is unchanged.
+
+## D-093 — Shipped: 0.2.128, Rebuild board bundle after w2-17 merge (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 8 commit(s) past v0.2.127.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.128 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.128`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `ce59aa49…` (153161312 B), dmg `e48c401c…` (205313022 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2128 on both platforms. Manifests win `c73095dc…`, mac `6b6f733f…`. Delta: 1 new blob(s) uploaded. 95 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `3b0988dac86b` -> `05452a9a0a03`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-094 — `npm run ship` publishes the AppImage and the Windows ARM64 installer (renumbered at merge from D-NEXT-SHIP-PLATFORMS)
 
 **Decision.** `scripts/ship.mjs` handles four installers, not two, through one table (`INSTALLERS`): stable link, versioned
 name, fact key. Same mechanism and destination as before: scp to `/tmp`, `mv` into `/srv/masora/downloads` (no GitHub
@@ -2016,3 +2344,4 @@ turn a test red; the `-ge 4` container check got its own assertion after survivi
 not read: the clone assumes the exe's block is right for an AppImage too. The `verify` step's loop over the table is not
 exercised by a test (it needs a full release scratch). Whether the Azure signing step signs the arm64 exe is unconfirmed;
 if it does not, `installers` fails on Authenticode before anything is uploaded.
+- Merge fix (2026-10-07): the clone regex ended at the first `}` line, which in the live Caddyfile is the nested `header { }` brace; it now ends at the brace on the handle's own indentation (test: the live block shape).

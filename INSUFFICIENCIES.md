@@ -362,3 +362,12 @@ docs; only pointer *movement* and keyboard were seen. (5) A real update from use
 
 **Blast radius.** A wrong idle gate relaunches under a reader, never under a running agent. A boot the proof
 would have caught costs the three-strike revert, then the seed, so an install is never left without a runnable tree.
+
+## INSUF-011 — Model catalogue: cost is per run, not per turn (renumbered at merge from INSUF-W2-16)
+
+**Missing.** Median cost per task. The board stores one cost per console (claude's `total_cost_usd`), not per
+turn, and codex and opencode report none. The catalogue shows the median over this board's open consoles on a
+model ("run"), "—" when there is none.
+**Unblocks.** Persist per-turn usage (model, tokens, cost) in console-log and read it back.
+**Also.** The OpenAI pricing page returned 403 to the first URL; prices came via developers.openai.com. GLM 5.2
+free is absent from OpenRouter's models API today, so it is not in the catalogue. Teammate payer is not shown.

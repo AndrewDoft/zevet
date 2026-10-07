@@ -42,16 +42,18 @@ function decideIdleInstall({ phase, systemIdleSeconds, windowsAway, rendererIdle
  * minutes are already in busyReason. A non-resumable console never installs (busyReason: nonResumable > 0),
  * since the relaunch would end it. `tick({ resumed: true })` is the resume-from-sleep trigger.
  */
-function createIdleInstaller({ updater, gate, canSilent = () => true, systemIdleSeconds, windowsAway, persist, log = () => {}, now = Date.now }) {
+function createIdleInstaller({ updater, gate, canSilent = () => true, systemIdleSeconds, windowsAway, persist, onWaiting = () => {}, log = () => {}, now = Date.now }) {
   let tried = { version: null, n: 0, at: 0 };
   let awaySince = null;
   return async function tick({ resumed = false } = {}) {
     const s = updater.state;
     const t = now();
     if (windowsAway()) { if (awaySince === null) awaySince = t; } else awaySince = null;
-    if (s.phase !== "ready" || !s.canInstall || !canSilent()) return false;
+    if (s.phase !== "ready" || !s.canInstall || !canSilent()) { onWaiting(null); return false; }
     const why = busyReason({ now: t, ...gate });
     const midTurn = typeof gate.working === "function" && gate.working() > 0;
+    // Shown in the update UI: a deferral is an outcome, never silent.
+    onWaiting(why || (midTurn ? "an agent is mid-turn" : null));
     const spent = tried.version === s.version && (tried.n >= MAX_ATTEMPTS || t - tried.at < RETRY_GAP_MS);
     const d = decideIdleInstall({
       phase: s.phase,

@@ -227,26 +227,43 @@ function repoRelative(file, root, cwd = root) {
 }
 
 /**
- * Never put a credential on the wire or on three screens. Copy of the net in
- * client/hook.mjs — obvious shapes replaced, not a guarantee.
+ * Never put a credential on the wire or on three screens. This block is a copy
+ * of client/redact.mjs (this file cannot import); test/redact.test.mjs fails if
+ * the two differ.
  */
-const SECRET_PATTERNS = [
-  /\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{16,}/g,
-  /\bsk-ant-[A-Za-z0-9_-]{16,}/g,
-  /\bsk-or-[A-Za-z0-9_-]{16,}/g,
-  /\bgh[pousr]_[A-Za-z0-9]{16,}/g,
-  /\bAKIA[0-9A-Z]{16}\b/g,
-  /\bxox[abposr]-[A-Za-z0-9-]{10,}/g,
-  /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-  /\b(?:bearer|token|api[-_]?key|secret|password|passwd|pwd)\b[\s"':=]+\S+/gi,
-  /\b[A-Fa-f0-9]{40,}\b/g,
+// <redact-rules>
+const RULES = [
+  ["pem-private-key", /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g],
+  ["anthropic-key", /\bsk-ant-[A-Za-z0-9_-]{16,}/g],
+  ["openrouter-key", /\bsk-or-[A-Za-z0-9_-]{16,}/g],
+  ["openai-key", /\bsk-(?!ant-|or-)[A-Za-z0-9_-]{16,}/g],
+  ["stripe-key", /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g],
+  ["xai-key", /\bxai-[A-Za-z0-9]{16,}/g],
+  ["github-token", /\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})/g],
+  ["aws-access-key", /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g],
+  ["google-api-key", /\bAIza[0-9A-Za-z_-]{35}/g],
+  ["slack-token", /\bxox[abposr]-[A-Za-z0-9-]{10,}/g],
+  ["jwt", /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
+  ["bearer-token", /\bBearer\s+[A-Za-z0-9._~+\/=-]{8,}/gi],
+  // NAME=value, whole line, when the NAME says it holds a secret. The value is
+  // anything: .env files are where unshaped secrets live.
+  ["env-secret", /^([ \t]*(?:export[ \t]+)?[A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD|CREDENTIALS?)[A-Z0-9_]*[ \t]*=)[ \t]*\S.*$/gm],
+  ["credential-assignment", /\b(?:token|api[-_]?key|secret|password|passwd|pwd)\b[\s"':=]+\S+/gi],
 ];
 
-function scrub(text) {
+/** Replace every secret-shaped run in `text` with `[redacted:<kind>]`. */
+function redact(text) {
   if (typeof text !== "string" || !text) return text;
   let out = text;
-  for (const re of SECRET_PATTERNS) out = out.replace(re, "[redacted]");
+  for (const [name, re] of RULES) {
+    out = out.replace(re, (m, keep) => (name === "env-secret" ? `${keep}[redacted:${name}]` : name === "bearer-token" ? `Bearer [redacted:${name}]` : `[redacted:${name}]`));
+  }
   return out;
+}
+// </redact-rules>
+
+function scrub(text) {
+  return redact(text);
 }
 
 /** The one file or command this tool call is about. */

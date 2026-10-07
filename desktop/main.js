@@ -82,6 +82,7 @@ const autoTitle = require("./auto-title.js");
 const masora = require("./masora.js");
 const { MasoraLink } = require("./masora-link.js");
 const { Family, familyDir, frameable, FRAME_URLS } = require("./family.js");
+const { Sso } = require("./sso.js");
 const reportingHealth = require("./reporting-health.js");
 const credentials = require("./credentials.js");
 const credentialLadder = require("./credential-ladder.js");
@@ -116,6 +117,39 @@ const runtimeReady = runtime.preparePath();
 const HOME = zevetHome();
 const CONFIG = path.join(HOME, "config.json");
 const AGENT_API_FILE = path.join(HOME, "agent-api.json");
+
+/**
+ * D-NEXT-NOPOPUP: automated runs never put a window on a person's screen.
+ * Every harness launch sets ZEVET_TEST_HOOKS=1 (scripts/drive); those windows are created hidden and
+ * show/focus are no-ops, unless ZEVET_TEST_VISIBLE=1 asks for a visible one. ZEVET_TEST_HEADLESS=1 forces
+ * hidden on its own. Each window is logged to HOME/windows.jsonl (test hooks only) so a test can prove it.
+ */
+const HIDE_WINDOWS =
+  process.env.ZEVET_TEST_HEADLESS === "1" ||
+  (process.env.ZEVET_TEST_HOOKS === "1" && process.env.ZEVET_TEST_VISIBLE !== "1");
+function windowOptions(kind, opts) {
+  // A hidden page is throttled by Chromium (timers, rAF); the harness waits on those, so keep it running.
+  return HIDE_WINDOWS
+    ? { ...opts, show: false, skipTaskbar: true, paintWhenInitiallyHidden: true, webPreferences: { ...opts.webPreferences, backgroundThrottling: false } }
+    : opts;
+}
+function trackWindow(kind, win) {
+  if (process.env.ZEVET_TEST_HOOKS !== "1") return win;
+  const log = (event) => {
+    try {
+      fs.mkdirSync(HOME, { recursive: true });
+      fs.appendFileSync(path.join(HOME, "windows.jsonl"), `${JSON.stringify({ kind, event, visible: win.isDestroyed() ? false : win.isVisible(), hidden: HIDE_WINDOWS, at: Date.now() })}
+`);
+    } catch { /* a harness that cannot read this notices from its assertion */ }
+  };
+  if (HIDE_WINDOWS) {
+    for (const m of ["show", "showInactive", "focus", "restore", "moveTop"]) win[m] = () => log(`blocked-${m}`);
+    win.on("show", () => log("shown"));
+  }
+  log("created");
+  win.webContents.on("did-finish-load", () => log("loaded"));
+  return win;
+}
 
 /**
  * Error reporting, wired before anything else -- including the two windows --
@@ -712,7 +746,7 @@ function openBoard(cfg) {
   }
   // Background, after onboarding: never awaited, so it cannot gate the window.
   masoraLink.start();
-  boardWindow = new BrowserWindow({
+  boardWindow = new BrowserWindow(windowOptions("board", {
     width: 1240,
     height: 820,
     minWidth: 720,
@@ -749,7 +783,8 @@ function openBoard(cfg) {
       contextIsolation: true,
       sandbox: false,
     },
-  });
+  }));
+  trackWindow("board", boardWindow);
 
   // Restore the remembered zoom. It has to be set per load, not once: a reload
   // or a navigation resets zoomLevel to 0, and a board that silently springs
@@ -945,7 +980,7 @@ function openSetup(existing) {
     setupWindow.focus();
     return;
   }
-  setupWindow = new BrowserWindow({
+  setupWindow = new BrowserWindow(windowOptions("setup", {
     width: 620,
     height: 820,
     resizable: false,
@@ -970,7 +1005,8 @@ function openSetup(existing) {
       // button on this page is dead (same as the board window above).
       sandbox: false,
     },
-  });
+  }));
+  trackWindow("setup", setupWindow);
   setupWindow.loadFile(path.join(__dirname, "setup.html"), {
     query: {
       ...(existing ? { actor: existing.actor || "" } : {}),
@@ -1475,7 +1511,9 @@ async function awaitSignIn(what) {
       // repeats the domain on every line and hides the part that identifies.
       actor: existing.actor || String(r.login || "").split("@")[0],
       login: r.login,
+      provider: what.toLowerCase(),
     });
+    sso.publish("signed_in");
     return { ok: true, login: r.login, owner: r.owner, teamName: await fetchTeamName(hub, r.token) };
   } catch (err) {
     return { ok: false, error: err.message, cancelled: err.message === "cancelled" };
@@ -1593,6 +1631,7 @@ async function teamJoin(team, key) {
       actor: existing.actor || String(body.login || "").split("@")[0],
       login: body.login,
     });
+    sso.publish("signed_in");
     return { ok: true, login: body.login, owner: Boolean(body.owner), teamName: await fetchTeamName(base, body.token) };
   } catch {
     return { ok: false, error: "Offline" };
@@ -1627,6 +1666,7 @@ async function hubSignInFromMasora(hubUrl, assertion) {
       actor: existing.actor || String(body.login || "").split("@")[0],
       login: body.login,
     });
+    sso.publish("signed_in"); // Masora -> Zevet -> Voice: the same session reaches Voice through sso.json
     return { ok: true, login: body.login, owner: Boolean(body.owner) };
   } catch {
     return { ok: false, error: "Offline" };
@@ -1645,9 +1685,15 @@ async function hubSignInFromMasora(hubUrl, assertion) {
  * in reverse.
  */
 const signOut = async () => {
+  const r = await endSession();
+  if (r.hadSession) sso.publish("signed_out"); // and every other app in the family (sso.js)
+  return { ok: r.ok, loggedOut: r.loggedOut };
+};
+/** signOut without telling the family: also what a sign-out adopted FROM the family runs. */
+async function endSession() {
   const cfg = readConfig() || {};
   const session = typeof cfg.session === "string" ? cfg.session : "";
-  if (!session) return { ok: true, loggedOut: false };
+  if (!session) return { ok: true, loggedOut: false, hadSession: false };
   const hub = String(cfg.hub || "").replace(/\/+$/, "");
   let loggedOut = false;
   if (hub) {
@@ -1668,8 +1714,8 @@ const signOut = async () => {
   const rest = { ...cfg };
   delete rest.session;
   writeConfig(rest);
-  return { ok: true, loggedOut };
-};
+  return { ok: true, loggedOut, hadSession: true };
+}
 // Signing out ends a SESSION, and a session does not remember which provider
 // minted it — so this is one function, under the name each button expects.
 bridge.handle("zevet:githubLogout", signOut);
@@ -1718,6 +1764,7 @@ const signOutTeam = async () => {
   delete rest.secret;
   delete rest.hub;
   writeConfig(rest);
+  if (session) sso.publish("signed_out");
   if (boardWindow && !boardWindow.isDestroyed()) boardWindow.close();
   openSetup(null);
   return { ok: true };
@@ -1775,6 +1822,37 @@ const masoraLink = new MasoraLink({
 /* ── The family: Masora, Zevet and Voice find each other (desktop/family.js) ──
  * Pairs with a Masora on this machine with no click; the device-code flow above
  * stays the fallback for one on another machine. */
+/* Single sign-in (sso.js, docs/specs/2026-10-07-single-sign-in.md): a hub sign-in or sign-out here is published,
+ * encrypted, to the family dir; one Zevet Voice published is adopted here on the next poll, no click. The adopted
+ * session lands exactly where awaitSignIn puts one, so nothing downstream can tell the two apart. */
+const sso = new Sso({
+  dir: familyDir(),
+  hub: () => targetHub(),
+  session: () => {
+    const cfg = readConfig();
+    if (!cfg || typeof cfg.session !== "string" || !cfg.session) return null;
+    return { token: cfg.session, login: cfg.login, provider: cfg.provider, secret: cfg.secret };
+  },
+  adopt: (p, who) => {
+    const existing = readConfig() || {};
+    writeConfig({
+      ...existing,
+      hub: targetHub(),
+      // The envelope's secret belongs to the session's team; a key-only machine's own one is kept otherwise.
+      secret: (typeof p.secret === "string" && p.secret) || existing.secret || "",
+      session: p.token,
+      actor: existing.actor || String(who.login).split("@")[0],
+      login: who.login,
+      ...(typeof p.provider === "string" && p.provider ? { provider: p.provider } : {}),
+    });
+    teamNameCache = { at: 0, name: "" };
+  },
+  endSession: () => endSession(),
+  log: (m) => console.log(`[family] ${m}`),
+});
+const SSO_POLL_MS = 3000;
+let ssoTimer = null;
+
 const family = new Family({
   dir: familyDir(),
   readMasora: () => masora.readConfig(),
@@ -2546,7 +2624,7 @@ function allClaims() {
   return [...mine, ...teamClaims.claims().filter((e) => !own.has(e.session)).map((e) => ({ ...e, mine: false }))];
 }
 function pushClaims() {
-  toBoard("local:claimsEvent", { claims: allClaims(), payers: allPayers() });
+  toBoard("local:claimsEvent", { claims: allClaims(), payers: allPayers(), steps: stepClaims.all() });
 }
 setInterval(() => {
   if (myClaims.expire() | teamClaims.expire()) pushClaims();
@@ -2593,7 +2671,120 @@ bridge.handle("local:releaseClaims", async (_e, arg) => {
   if (session) myClaims.release({ session, path: typeof (arg && arg.path) === "string" ? arg.path : undefined });
   return { ok: true };
 });
-bridge.handle("local:claims", async () => ({ ok: true, claims: allClaims(), payers: allPayers() }));
+/* Pinned memory (D-NEXT-W2-10): per-file notes sealed with the document key,
+ * on disk and on the hub's room. desktop/pinned-memory.js owns the rules;
+ * staleness is read off the working tree here, never by the hub. */
+const pinnedMemory = require("./pinned-memory.js");
+function memoryFor() {
+  const docCrypto = agentSteer.loadDocCrypto();
+  const key = steerAuth(readConfig()).key;
+  if (!docCrypto || !key) return null;
+  return pinnedMemory.createMemory({
+    dir: path.join(zevetHome(), "memory"),
+    docCrypto,
+    key,
+    send: (room, bytes) => {
+      const got = ensureDocSync();
+      if (got.error) return; // offline or not set up: the note is saved locally and goes at the next edit
+      try {
+        got.sync.join(room);
+        got.sync.send(room, bytes);
+      } catch {
+        // Local note stands; teammates get it at its next change.
+      }
+    },
+  });
+}
+const memoryGate = (arg) => {
+  const input = arg && typeof arg.input === "object" && arg.input ? arg.input : {};
+  const root = typeof input.root === "string" ? knownRoot(input.root) : null;
+  const mem = root ? memoryFor() : null;
+  if (!root) return { error: "a known folder is required" };
+  if (!mem) return { error: "not set up: no document key" };
+  return { input, root, mem, repo: path.basename(root) };
+};
+bridge.handle("local:memoryList", async (_e, arg) => {
+  const g = memoryGate(arg);
+  if (g.error) return { ok: false, notes: [], error: g.error };
+  try {
+    ensureDocSync().sync?.join(g.mem.room(g.repo));
+  } catch {
+    // Listing is local; the room only brings teammates' notes.
+  }
+  return { ok: true, notes: g.mem.list({ repo: g.repo, path: typeof g.input.path === "string" ? g.input.path : "", root: g.root }) };
+});
+bridge.handle("local:memoryCreate", async (_e, arg) => {
+  const g = memoryGate(arg);
+  if (g.error) return { ok: false, error: g.error };
+  const cfg = readConfig();
+  const note = g.mem.create({ repo: g.repo, path: claimablePath(g.input.path), text: g.input.text, root: g.root, author: String((cfg && cfg.actor) || "") });
+  if (note) toBoard("local:memoryEvent", { repo: g.repo });
+  return note ? { ok: true, note } : { ok: false, error: "a note needs a file that exists and some text" };
+});
+bridge.handle("local:memoryEdit", async (_e, arg) => {
+  const g = memoryGate(arg);
+  if (g.error) return { ok: false, error: g.error };
+  const note = g.mem.edit(String(g.input.id || ""), { text: g.input.text, rehash: g.input.rehash === true, root: g.root });
+  if (note) toBoard("local:memoryEvent", { repo: g.repo });
+  return note ? { ok: true, note } : { ok: false, error: "no such note" };
+});
+bridge.handle("local:memoryRetire", async (_e, arg) => {
+  const g = memoryGate(arg);
+  if (g.error) return { ok: false, error: g.error };
+  const note = g.mem.retire(String(g.input.id || ""));
+  if (note) toBoard("local:memoryEvent", { repo: g.repo });
+  return note ? { ok: true } : { ok: false, error: "no such note" };
+});
+/* Agent coordination tools (D-087, desktop/agent-tools.js). Reached from
+ * zevet-mcp.js over the ask-server's /tool route; every dependency is this
+ * app's own signed-in team, so no argument can name another team. */
+const agentToolsLib = require("./agent-tools.js");
+const stepClaimsLib = require("./step-claims.js");
+const stepClaims = stepClaimsLib.createStepClaims({
+  send: (room, bytes) => {
+    const got = ensureDocSync();
+    if (got.error) return; // saved locally; teammates see it when sync is back
+    try {
+      got.sync.join(room);
+      got.sync.send(room, bytes);
+    } catch {
+      // Local claim stands.
+    }
+  },
+  onChange: () => pushClaims(),
+});
+let myTeamNames = [];
+async function fetchTeamState() {
+  const a = steerAuth(readConfig());
+  if (!a.session || !a.hub) return null;
+  const r = await fetch(`${a.hub}/api/state`, { headers: { "x-zevet-token": a.token }, redirect: "error", signal: AbortSignal.timeout(10000) });
+  return r.ok ? r.json() : null;
+}
+let agentToolsInstance = null;
+function agentTools() {
+  if (!agentToolsInstance) {
+    agentToolsInstance = agentToolsLib.createAgentTools({
+      getState: async () => {
+        const st = await fetchTeamState().catch(() => null);
+        if (st) for (const ag of Array.isArray(st.agents) ? st.agents : []) if (ag.repo) try { ensureDocSync().sync?.join(stepClaims.room(ag.repo)); } catch { /* local only */ }
+        return st;
+      },
+      me: () => [readConfig()?.actor, ...myTeamNames],
+      actor: () => String(readConfig()?.actor || ""),
+      claims: () => allClaims(),
+      stepOwner: (session, step) => stepClaims.ownerOf(session, step),
+      stepClaim: (c) => stepClaims.claim(c),
+      steer: (m) => {
+        const a = steerAuth(readConfig());
+        return agentSteer.sendSteer({ hub: a.hub, token: a.token, key: a.key, to: m.to, session: m.session, repo: m.repo, text: m.text });
+      },
+      memory: () => memoryFor(),
+      memoryChanged: (repo) => toBoard("local:memoryEvent", { repo }),
+    });
+  }
+  return agentToolsInstance;
+}
+bridge.handle("local:claims", async () => ({ ok: true, claims: allClaims(), payers: allPayers(), steps: stepClaims.all() }));
 bridge.handle("local:payerFor", async (_e, arg) => {
   const { engine, account, label } = payerOf(String((arg && arg.agent) || ""), { model: String((arg && arg.model) || ""), engine: String((arg && arg.engine) || "") });
   return { engine, account, label };
@@ -3184,7 +3375,18 @@ function ensureDocSync() {
       // The secret goes IN and never comes back out. DocSync derives the auth
       // token and the document key from it inside this process.
       secret: cfg.secret,
-      onEvent: (room, payload) => toBoard("doc:message", docMessage(room, payload)),
+      onEvent: (room, payload) => {
+        // Pinned memory rides the same sealed rooms but is main's, not the editor's.
+        if (room.startsWith("steps:")) {
+          if (payload.kind === "update" && payload.bytes) stepClaims.applyRemote(payload.bytes);
+          return;
+        }
+        if (room.startsWith("memory:")) {
+          if (payload.kind === "update" && payload.bytes && memoryFor() && memoryFor().applyRemote(room.slice(7), payload.bytes)) toBoard("local:memoryEvent", { repo: room.slice(7) });
+          return;
+        }
+        toBoard("doc:message", docMessage(room, payload));
+      },
       onStatus: (room, state, detail) => toBoard("doc:status", { room, state, detail }),
     });
     return { sync: docSync };
@@ -3564,6 +3766,8 @@ const permitGrantsModule = require("./permit-grants.js");
 const permitGrants = { ...permitGrantsModule.createGrants(), ruleKey: permitGrantsModule.ruleKey };
 let permitSeq = 0;
 let askServerPromise = null;
+/** MCP run id -> the folder that run was started in (agent-tools.js record_memory). */
+const runRoots = new Map();
 
 function ensureAskServer() {
   if (!askServerPromise) {
@@ -3577,7 +3781,25 @@ function ensureAskServer() {
             return;
           }
           const id = `p${++permitSeq}`;
+          // A teammate may answer this too (D-086) when the team allows it.
+          // The card id is separate from the local id, and unique across restarts.
+          const cardId = approvalCanShare() ? crypto.randomUUID() : "";
+          if (cardId) {
+            approvalHost().begin({
+              id: cardId,
+              tool: request && request.tool,
+              arguments: request && request.arguments,
+              session: run || "run",
+              agent: String((request && request.via) || ""),
+              resolve: (answer) => {
+                pendingPermits.delete(id);
+                toBoard("local:steerEvent", { kind: "permit-gone", id: cardId, permitId: id });
+                resolve(answer);
+              },
+            });
+          }
           pendingPermits.set(id, (answer) => {
+            if (cardId) approvalHost().local(cardId, answer.ok === true);
             if (answer.ok && answer.always && request && request.via === "claude") {
               permitGrants.grant(run, request.tool, request.arguments);
             }
@@ -3599,6 +3821,11 @@ function ensureAskServer() {
           pendingAsks.set(id, resolve);
           toBoard("local:askRequest", { id, ...(request || {}) });
         }),
+      onTool: (request) => {
+        const r = request && typeof request === "object" ? request : {};
+        // The folder comes from OUR record of this run, never from the agent's arguments.
+        return agentTools().call(String(r.tool || ""), r.arguments, { root: runRoots.get(String(r.run || "")) || null });
+      },
     });
   }
   return askServerPromise;
@@ -3647,8 +3874,12 @@ async function mcpConfigFor(dir, mode) {
      claude asks the person instead of silently denying what would prompt. Every
      posture but "skip permissions" needs it (nothing prompts under that one). */
   const gate = mode !== "dangerous";
-  if ((computerUse || gate) && fs.existsSync(MCP_SERVER)) {
+  /* Coordination tools (D-087) need a team to coordinate with. */
+  const team = steerAuth(readConfig()).session;
+  if ((computerUse || gate || team) && fs.existsSync(MCP_SERVER)) {
     const { url, token } = await ensureAskServer();
+    const run = `r${process.pid}-${++permitSeq}`;
+    runRoots.set(run, dir);
     servers.zevet = {
       command: process.execPath,
       args: [MCP_SERVER],
@@ -3656,7 +3887,8 @@ async function mcpConfigFor(dir, mode) {
         ELECTRON_RUN_AS_NODE: "1",
         ZEVET_MCP_URL: url,
         ZEVET_MCP_TOKEN: token,
-        ZEVET_MCP_RUN: `r${process.pid}-${++permitSeq}`,
+        ZEVET_MCP_RUN: run,
+        ZEVET_MCP_TEAM: team ? "1" : "0",
         // Without this the four computer tools are never listed, whatever the setting says.
         ZEVET_MCP_COMPUTER: computerUse ? "1" : "0",
       },
@@ -3670,7 +3902,7 @@ async function mcpConfigFor(dir, mode) {
   // `permissions` says whether the `zevet` tool server (and so its permission
   // tool) is actually in this file -- a masora-only config must not claim a
   // permission tool that config does not register.
-  return { file, computerUse, permissions: Boolean(servers.zevet) };
+  return { file, computerUse, permissions: Boolean(servers.zevet) && (computerUse || gate) };
 }
 
 /**
@@ -3992,7 +4224,10 @@ bridge.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) 
   const resolved = await agentEnvFor(engineReq);
   if (!resolved.ok) return { ok: false, error: resolved.error };
   const env = resolved.env;
+  // The thread keeps its id and label across the new process, so `zagent --attach <id>` and any waiter still find it.
+  const kept = consolePersistence.resumedIdentity(continues ? consoleLog.get(continues) : null, continues, opts);
   const started = instrumentedStartConsole({
+    ...(kept.id ? { id: kept.id } : {}),
     agent: String(agent || ""),
     cwd: place.cwd,
     repoRoot: place.root,
@@ -4021,8 +4256,8 @@ bridge.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) 
   consoles.set(started.id, started);
   // The same thread, a new process: its history moves over rather than
   // coming back after a reload as a second thread, and the old handle goes.
-  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place, resolved.engine), continues);
-  const prev = consoles.get(continues);
+  const prev = kept.id ? null : consoles.get(continues); // same id: consoles.set above already replaced the dead handle
+  consoleLog.open(started.id, consoleMeta(agent, dir, { ...opts, ...(kept.label ? { label: kept.label } : {}) }, place, resolved.engine), continues);
   if (prev) {
     try {
       prev.stop();
@@ -4139,7 +4374,9 @@ app.on("before-quit", () => {
   fs.rmSync(AGENT_API_FILE, { force: true });
   if (agentApiHandle) void agentApiHandle.close();
 });
+app.on("before-quit", () => { if (approvalHostInst) approvalHostInst.interrupt("their app closed"); });
 app.on("before-quit", () => family.stop());
+app.on("before-quit", () => clearInterval(ssoTimer));
 
 /* ==========================================================================
  * PAYLOAD SWAP (bootstrap.js loaded this file from the current payload build)
@@ -4218,6 +4455,7 @@ if (bootShell.payload) {
     ...useGate,
     inputQuietMs: process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS ? Number(process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS) : undefined, // the packaged proof only
     release: releaseForRelaunch,
+    onWaiting: (why) => { payloadWaiting = why; pushUpdateStatus(); },
     log: bootShell.log,
   });
   swapper.start();
@@ -4500,7 +4738,22 @@ function withRunningBuild(s) {
   } catch (err) {
     bootShell.log(`payload staged() unreadable: ${err && err.message}`);
   }
-  return { ...s, running: APP_VERSION, ...(staged && staged.build !== APP_VERSION ? { next: { build: staged.build, when: "on restart" } } : {}) };
+  const waiting = payloadWaiting || installWaiting;
+  return {
+    ...s,
+    running: APP_VERSION,
+    ...(staged && staged.build !== APP_VERSION ? { next: { build: staged.build, when: "on restart" } } : {}),
+    // Why a ready update has not applied yet (an agent mid-turn, a recent keystroke); absent when nothing holds it.
+    ...(waiting ? { waiting } : {}),
+  };
+}
+/** What is holding a staged payload / a downloaded installer back; the next gate poll retries and clears it. */
+let payloadWaiting = null;
+let installWaiting = null;
+function pushUpdateStatus() {
+  const s = withRunningBuild(appUpdater.state);
+  toBoard("app:update", s);
+  if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send("app:update", s);
 }
 const appUpdater = new AppUpdater({
   rollback,
@@ -4588,6 +4841,7 @@ function startIdleInstall() {
       return all.length > 0 && all.every((w) => w.isMinimized() || !w.isVisible() || !w.isFocused());
     },
     persist: persistResumableConsoles, // before the installer spawns; a non-resumable console never gets here (busyReason)
+    onWaiting: (why) => { if (why !== installWaiting) { installWaiting = why; pushUpdateStatus(); } },
     log: (m) => bootShell.log(m),
   });
   const run = (o) => void tick(o).catch((err) => bootShell.log(`idle install: ${err && err.message}`));
@@ -4650,6 +4904,21 @@ const boardAsk = createBoardAsk({
     return true;
   },
 });
+// Agent notifications. The board decides whether one is wanted and passes the
+// text; a click raises the window and hands the key back so it can focus the card.
+bridge.handle("local:notify", (_e, { title, body, key }) => {
+  if (!Notification.isSupported()) return { ok: false };
+  const n = new Notification({ title: String(title || "Zevet").slice(0, 120), body: String(body || "").slice(0, 240), silent: false });
+  n.on("click", () => {
+    if (!boardWindow || boardWindow.isDestroyed()) return;
+    if (boardWindow.isMinimized()) boardWindow.restore();
+    boardWindow.show();
+    boardWindow.focus();
+    toBoard("local:notifyClick", String(key || ""));
+  });
+  n.show();
+  return { ok: true };
+});
 bridge.handle("local:boardReply", (_e, { reqId, result }) => boardAsk.reply(reqId, result));
 
 /* ── Steering a teammate's agent, and shared team context (D-058) ──────────
@@ -4666,6 +4935,73 @@ let steerAbort = null;
 let activityTimer = null;
 /** Approval cards waiting on the person, by steer id. */
 const pendingSteers = new Map();
+
+/* ── Teammates answering MY agents' permission prompts (D-086) ───────
+ * desktop/agent-approval.js holds the rules (exact action, once, local wins).
+ * This is the wiring: the hub arbitrates and relays sealed frames, and only
+ * what this host accepts ever resolves a permit. Needs a signed-in session
+ * and a team secret; the hub refuses to open a card when the team policy
+ * `approve` is off (the default), and then the prompt is local-only. */
+const agentApproval = require("./agent-approval.js");
+let approvalHostInst = null;
+
+function approvalCanShare() {
+  const a = steerAuth(readConfig());
+  return Boolean(a.hub && a.token && a.session && a.key && agentApproval.loadDocCrypto());
+}
+
+async function approvalCall(route, body) {
+  const a = steerAuth(readConfig());
+  if (!a.hub || !a.token) return { ok: false };
+  const res = await fetch(`${a.hub}/api/approval/${route}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-zevet-token": a.token },
+    body: JSON.stringify(body),
+    redirect: "error",
+    signal: AbortSignal.timeout(10000),
+  });
+  const out = await res.json().catch(() => ({}));
+  return { ...out, ok: res.ok && out.ok !== false };
+}
+
+function approvalHost() {
+  if (!approvalHostInst) {
+    const dc = () => agentApproval.loadDocCrypto();
+    const key = () => steerAuth(readConfig()).key;
+    approvalHostInst = agentApproval.createApprovalHost({
+      sealCard: (meta, card) => agentApproval.sealCard(dc(), key(), meta, card),
+      openAnswer: (frame, hash, session) => agentApproval.openAnswer(dc(), key(), { id: frame.id, session, hash }, frame.sealed),
+      publish: (card) => approvalCall("open", card),
+      report: (id, status, via, reason) => approvalCall("status", { id, status, via, reason }),
+      advise: (a) => toBoard("local:steerEvent", { kind: "approval-advice", id: a.id, by: a.by, decision: a.decision }),
+    });
+  }
+  return approvalHostInst;
+}
+
+/** What the board needs to render a card a teammate's agent is waiting on. */
+function approvalCardForBoard(data) {
+  const out = { kind: "approval", id: String(data.id || ""), status: String(data.status || ""), from: String(data.from || ""), repo: String(data.repo || ""), session: String(data.session || ""), by: String(data.by || ""), via: String(data.via || ""), decision: String(data.decision || ""), reason: String(data.reason || ""), expiresAt: Number(data.expiresAt) || 0, mine: Boolean(approvalHostInst && approvalHostInst.has(String(data.id || ""))) || approvalMine.has(String(data.id || "")) };
+  if (out.mine) approvalMine.add(out.id);
+  if (data.status === "open" && typeof data.sealed === "string") {
+    try {
+      const card = agentApproval.openCard(agentApproval.loadDocCrypto(), steerAuth(readConfig()).key, { id: out.id, session: out.session }, data.sealed);
+      out.tool = String(card.tool || "").slice(0, 200);
+      out.args = String(card.arguments || "").slice(0, 3000);
+      out.agent = String(card.agent || "").slice(0, 40);
+      // Held here, never sent to the board page: the nonce and hash ride in the
+      // answer the main process seals itself.
+      approvalCards.set(out.id, { hash: String(card.hash || ""), nonce: String(card.nonce || ""), session: out.session });
+      while (approvalCards.size > 200) approvalCards.delete(approvalCards.keys().next().value);
+    } catch {
+      out.status = "unreadable";
+    }
+  }
+  return out;
+}
+const approvalCards = new Map();
+/** Cards for my own agents: answered in my own prompt, not through the hub. */
+const approvalMine = new Set();
 
 function steerAuth(cfg) {
   const c = cfg || {};
@@ -4768,6 +5104,86 @@ const spawnInbox = agentSpawn.createSpawnInbox({
   report: reportSteerStatus,
 });
 
+/* ── Taking over a teammate's running turn (desktop/agent-takeover.js) ──────
+ * OWNER side: approve (policy ask), capture transcript + git diff summary,
+ * seal the baton, hand it to the hub, then stop this turn. TAKER side: the
+ * baton opens here, the repo resolves against THIS app's workspaces by folder
+ * name, and a new turn starts on the engine this person asked for, under their
+ * own login and their own safe mode (plan or ask), never the owner's. */
+const agentTakeover = require("./agent-takeover.js");
+/** Take-overs I asked for, id -> the engine I chose: the baton cannot pick one. */
+const takeoversAsked = new Map();
+
+function takeoverPost(route, payload) {
+  const a = steerAuth(readConfig());
+  if (!a.hub || !a.token) return Promise.resolve({ ok: false, error: "not signed in" });
+  return fetch(`${a.hub}/api/takeover${route}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-zevet-token": a.token },
+    body: JSON.stringify(payload),
+    redirect: "error",
+    signal: AbortSignal.timeout(15000),
+  }).then(async (res) => {
+    let out = {};
+    try {
+      out = await res.json();
+    } catch {
+      out = {};
+    }
+    return res.ok ? { ok: true, ...out } : { ok: false, ...out, error: out.error || `the team server answered ${res.status}` };
+  });
+}
+
+const takeoverInbox = agentTakeover.createTakeoverInbox({
+  open: (msg) => agentTakeover._internals.openJson(agentSteer.loadDocCrypto(), steerAuth(readConfig()).key, agentTakeover._internals.requestAad(msg), msg.sealed),
+  findConsole: (session) => {
+    const c = findSteerConsole(session);
+    const full = c ? consoleLog.get(c.id) : null;
+    return c && full ? { ...c, repo: path.basename(String(full.root || "")) } : null;
+  },
+  askOwner: (req) =>
+    new Promise((resolve) => {
+      if (!boardWindow || boardWindow.isDestroyed()) return resolve(null);
+      pendingSteers.set(req.id, resolve);
+      toBoard("local:steerEvent", { kind: "takeover-ask", id: req.id, from: req.from, agent: req.agent, repo: req.repo, consoleId: req.consoleId, payer: req.payer });
+    }),
+  capture: async (consoleId) => {
+    const c = consoleLog.get(consoleId);
+    if (!c) throw new Error("the session is gone");
+    const place = placementOf(consoleId);
+    const where = diffWhere(c, place);
+    return { events: c.events, turns: c.turns, ...(await agentTakeover.diffSummary(where)) };
+  },
+  sealBaton: (msg, baton) => agentTakeover._internals.sealJson(agentSteer.loadDocCrypto(), steerAuth(readConfig()).key, agentTakeover._internals.batonAad(msg), baton),
+  sendBaton: (id, sealed) => takeoverPost("/baton", { id, sealed }),
+  halt: (consoleId) => stopAgentCore(consoleId),
+  report: reportSteerStatus,
+});
+
+function diffWhere(c, place) {
+  return (place && place.cwd) || c.worktree || c.root || "";
+}
+
+const batonInbox = agentTakeover.createBatonInbox({
+  open: (msg) => agentTakeover._internals.openJson(agentSteer.loadDocCrypto(), steerAuth(readConfig()).key, agentTakeover._internals.batonAad(msg), msg.sealed),
+  requested: (id) => takeoversAsked.get(id) || "",
+  resolveRepo: (name) => agentTakeover.resolveRepo(name, readWorkspaces()),
+  start: async ({ agent, dir, from, prompt }) => {
+    const who = String(from || "a teammate").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 40);
+    const r = await startAgentCore({ agent, cwd: dir, opts: { mode: agentTakeover.safeMode(storedMode()), label: `taken over from ${who}` } });
+    if (!r.ok) return r;
+    const sent = sendToAgentCore(r.id, prompt);
+    announceConsole(r.id);
+    if (!sent || sent.ok === false) return { ok: false, error: (sent && sent.error) || "the prompt could not be sent" };
+    return { ok: true, id: r.id };
+  },
+  sessionOf: (id) => {
+    const c = consoleLog.get(id);
+    return (c && c.sessionId) || "";
+  },
+  report: (id, status, reason, extra) => takeoverPost("/status", { id, status, reason, ...(extra && typeof extra.session === "string" ? { session: extra.session } : {}) }),
+});
+
 function startSteerChannel(cfg) {
   stopSteerChannel();
   const a = steerAuth(cfg);
@@ -4781,7 +5197,11 @@ function startSteerChannel(cfg) {
     token: a.token,
     signal: ctl.signal,
     onFrame: (name, data) => {
-      if (name === "steer") {
+      if (name === "approval" && data && typeof data.id === "string") {
+        toBoard("local:steerEvent", approvalCardForBoard(data));
+      } else if (name === "approval-answer" && data && typeof data.id === "string") {
+        approvalHost().remote(data);
+      } else if (name === "steer") {
         void steerInbox.handle(data).then((status) => {
           const id = data && typeof data.id === "string" ? data.id : "";
           pendingSteers.delete(id);
@@ -4792,6 +5212,16 @@ function startSteerChannel(cfg) {
           const id = data && typeof data.id === "string" ? data.id : "";
           pendingSteers.delete(id);
           if (status !== "replay" && status !== "ignored") toBoard("local:steerEvent", { kind: "done", id, from: String((data && data.from) || ""), status });
+        });
+      } else if (name === "takeover") {
+        void takeoverInbox.handle(data).then((status) => {
+          const id = data && typeof data.id === "string" ? data.id : "";
+          pendingSteers.delete(id);
+          if (status !== "replay" && status !== "ignored") toBoard("local:steerEvent", { kind: "done", id, from: String((data && data.from) || ""), status });
+        });
+      } else if (name === "baton") {
+        void batonInbox.handle(data).then((status) => {
+          if (status === "started" || status === "start-failed") takeoversAsked.delete(String((data && data.id) || ""));
         });
       } else if (name === "hello" || name === "payer" || name === "payer-release") {
         if (payerLib.applyPayerFrame(teamPayers, name, data, { docCrypto: agentSteer.loadDocCrypto(), key: steerAuth(readConfig()).key, isMine: (session) => myPayers.has(session) })) pushClaims();
@@ -4807,7 +5237,7 @@ function startSteerChannel(cfg) {
         });
         if (changed) pushClaims();
       } else if (name === "steer-status" && data && typeof data.id === "string") {
-        toBoard("local:steerEvent", { kind: "status", id: data.id, of: data.kind === "spawn" ? "spawn" : "steer", to: String(data.to || ""), status: String(data.status || ""), reason: String(data.reason || ""), session: String(data.session || "") });
+        toBoard("local:steerEvent", { kind: "status", id: data.id, of: data.kind === "spawn" ? "spawn" : data.kind === "takeover" ? "takeover" : "steer", to: String(data.to || ""), status: String(data.status || ""), reason: String(data.reason || ""), session: String(data.session || "") });
       }
     },
   });
@@ -4816,6 +5246,7 @@ function startSteerChannel(cfg) {
 }
 
 function stopSteerChannel() {
+  if (approvalHostInst) approvalHostInst.interrupt("their app lost its connection");
   if (steerAbort) steerAbort.abort();
   steerAbort = null;
   if (activityTimer) clearInterval(activityTimer);
@@ -4825,6 +5256,30 @@ function stopSteerChannel() {
   teamClaims.clear();
   pushClaims();
 }
+
+const sessionShare = require("./session-share.js");
+
+bridge.handle("local:sessionInvite", async (_e, arg) => {
+  const a = steerAuth(readConfig());
+  if (!a.session) return { ok: false, error: "Sign in to your team to invite someone." };
+  return sessionShare.sendInvite({ hub: a.hub, token: a.token, key: a.key, session: String((arg && arg.session) || ""), mode: String((arg && arg.mode) || "watch"), repo: String((arg && arg.repo) || "") });
+});
+
+bridge.handle("local:sessionJoin", async (_e, arg) => {
+  const a = steerAuth(readConfig());
+  if (!a.session) return { ok: false, error: "Sign in to your team to join a session." };
+  return sessionShare.joinInvite({
+    hub: a.hub,
+    token: a.token,
+    key: a.key,
+    id: String((arg && arg.id) || "").trim(),
+    mode: arg && arg.mode ? String(arg.mode) : "",
+    resolveRepo: (name) => {
+      const w = agentSpawn.resolveRepo(name, readWorkspaces());
+      return w && w.dir ? w.dir : null;
+    },
+  });
+});
 
 bridge.handle("local:steerSend", async (_e, arg) => {
   const a = steerAuth(readConfig());
@@ -4855,6 +5310,52 @@ bridge.handle("local:spawnSend", async (_e, arg) => {
     model: String((arg && arg.model) || ""),
     text: String((arg && arg.text) || ""),
   });
+});
+
+bridge.handle("local:takeoverSend", async (_e, arg) => {
+  const a = steerAuth(readConfig());
+  if (!a.session) return { ok: false, error: "Sign in to your team to take over a teammate's agent." };
+  const agent = String((arg && arg.agent) || "");
+  const payer = payerOf(agent).label;
+  const r = await agentTakeover.sendTakeover({
+    hub: a.hub,
+    token: a.token,
+    key: a.key,
+    to: String((arg && arg.to) || ""),
+    session: String((arg && arg.session) || ""),
+    repo: String((arg && arg.repo) || ""),
+    agent,
+    payer,
+  });
+  if (r.ok && r.id) {
+    takeoversAsked.set(r.id, agent);
+    while (takeoversAsked.size > 50) takeoversAsked.delete(takeoversAsked.keys().next().value);
+  }
+  return { ...r, payer };
+});
+
+/** An Editor answering a teammate's agent's permission prompt. The answer is
+ *  sealed here with the nonce and hash the card carried; the hub only
+ *  arbitrates, and the teammate's app checks them before acting. */
+bridge.handle("local:approvalAnswer", async (_e, arg) => {
+  const id = arg && typeof arg.id === "string" ? arg.id : "";
+  const card = approvalCards.get(id);
+  if (!card) return { ok: false, error: "that prompt is no longer here" };
+  const a = steerAuth(readConfig());
+  if (!a.session || !a.key) return { ok: false, error: "Sign in to your team to answer a teammate's prompt." };
+  const decision = arg && arg.allow === true ? "allow" : "deny";
+  let sealed;
+  try {
+    sealed = agentApproval.sealAnswer(agentApproval.loadDocCrypto(), a.key, { id, session: card.session, hash: card.hash }, { nonce: card.nonce, hash: card.hash, decision });
+  } catch (err) {
+    return { ok: false, error: `Could not seal the answer: ${err.message}` };
+  }
+  try {
+    const r = await approvalCall("answer", { id, decision, sealed });
+    return r.ok ? { ok: true, status: String(r.status || "") } : { ok: false, status: String(r.status || ""), by: String(r.by || ""), error: String(r.error || "not accepted") };
+  } catch (err) {
+    return { ok: false, error: `Could not reach your team: ${err.message}` };
+  }
 });
 
 /** The person's answer to one steer (or spawn) approval card. */
@@ -4898,6 +5399,9 @@ async function refreshActivity(cfg) {
     );
     if (!state) return;
     const me = who && who.me ? [who.me.name, who.me.login, ...(who.me.aliases || []), ...(who.me.identities || []).map((i) => i.login)] : [];
+    myTeamNames = [who && who.login, ...me].filter(Boolean);
+    // Step claims ride a room per repo; join the ones teammates are working in so their owners show.
+    for (const ag of Array.isArray(state.agents) ? state.agents : []) if (ag && ag.repo) try { ensureDocSync().sync?.join(stepClaims.room(ag.repo)); } catch { /* local only */ }
     activityText = act.activityBlock(state, { me: [cfg && cfg.actor, who && who.login, ...me].filter(Boolean), comments: act.readComments(HOME) });
     act.writeActivityFile(HOME, activityText);
   } catch (err) {
@@ -4951,6 +5455,7 @@ async function startAgentApi() {
     setOnce: (id) => consoleLog.setOnce(id),
     getConsole: (id) => consoleLog.get(id),
     listConsoles: () => consoleLog.snapshot().consoles,
+    isRelaunching: () => relaunching,
   });
   // HOME is otherwise created by whichever writer runs first; on a fresh profile that is not this one.
   fs.mkdirSync(HOME, { recursive: true });
@@ -4972,6 +5477,9 @@ app.whenReady().then(async () => {
   // board would be a worse app for a feature nobody asked to wait on.
   appUpdater.start();
   family.start();
+  void sso.sync();
+  ssoTimer = setInterval(() => void sso.sync(), SSO_POLL_MS);
+  if (typeof ssoTimer.unref === "function") ssoTimer.unref();
   watchShellInstall();
   startIdleInstall();
   // Only reliable after 'ready'; see the module's own docs.

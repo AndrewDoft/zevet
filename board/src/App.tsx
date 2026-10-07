@@ -13,6 +13,7 @@ import { DetailPane } from "./components/detail";
 import { SettingsPage } from "./components/settings";
 import { VoiceDialog } from "./components/voicedialog";
 import { SubagentsPanel } from "./components/subagents-panel";
+import { TasksPanel } from "./components/tasks";
 import {
   applyPanes,
   applyTheme,
@@ -25,7 +26,8 @@ import {
   selectViewMode,
   useBoard,
 } from "./lib/board";
-import { bridge } from "./lib/bridge";
+import { bridge, zStorage } from "./lib/bridge";
+import { matches } from "./lib/keybindings.mjs";
 import { ChatMain, ChatRail, ModeSwitch } from "./components/chatmode";
 import { useChat, wireChat } from "./lib/chat";
 import { CHECK_MS, createStaleReload } from "./lib/stale-build.mjs";
@@ -130,7 +132,7 @@ function App() {
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
-      if ((ev.metaKey || ev.ctrlKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "b" && useChat.getState().mode === "code") {
+      if (matches(ev, "tree", zStorage) && useChat.getState().mode === "code") {
         ev.preventDefault();
         useBoard.getState().toggleTree();
       }
@@ -289,6 +291,7 @@ function App() {
       <Palette />
       <VoiceDialog />
       <SubagentsPanel />
+      <TasksPanel />
     </ConsoleRuntimeProvider>
   );
 }

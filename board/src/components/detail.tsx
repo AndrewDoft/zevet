@@ -13,6 +13,7 @@ import { bridge } from "../lib/bridge";
 import { Checkpoints, Schedules } from "./repoviews";
 import { SessionsPane } from "./sessions";
 import { CommentsPanel } from "./comments";
+import { PinnedNotes } from "./pinnednotes";
 import { CommitActivity, RepoTimeline } from "./historyviews";
 import { Memories } from "./runspec";
 import { IndexSearch } from "./search";
@@ -224,6 +225,7 @@ export function DetailPane({ blanked }: { blanked?: boolean }) {
       body = (
         <>
           <ViewPane selectedPath={selectedPath} />
+          <PinnedNotes path={selectedPath} />
           {summary}
           {list}
         </>

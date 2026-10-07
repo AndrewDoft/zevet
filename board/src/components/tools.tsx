@@ -31,6 +31,8 @@ import { TodoList, type TodoItem, type TodoStatus } from "./assistant-ui/element
 import { ToolCall } from "./assistant-ui/elements/tool-call";
 import { ToolError } from "./assistant-ui/elements/tool-error";
 import { WebSearch, type WebSearchResult } from "./assistant-ui/elements/web-search";
+import { AnchorButton } from "./comments";
+import { hunkRef } from "../lib/comment-anchor.mjs";
 
 /* ---------------------------------------------------------------------------
  * Readers. Every one answers "what is this, if it is anything".
@@ -189,6 +191,7 @@ function EditUI(p: ToolProps) {
 
   return (
     <Shell name="Edit" target={file} tool={p}>
+      <AnchorButton label="Comment on this edit" refOf={() => hunkRef({ file: shortPath(file), lines: body })} />
       <CodeDiff
         className="max-w-none"
         style={myAuthorStyle()}

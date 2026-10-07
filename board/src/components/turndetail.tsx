@@ -30,6 +30,8 @@ import { RunSpec } from "./runspec";
 import { AskAgain, Branches, EditAndAsk } from "./rewind";
 import { McpServerPanel } from "./assistant-ui/elements/mcp-server-panel";
 import { selectActiveConsole, useBoard } from "../lib/board";
+import { AnchorButton } from "./comments";
+import { turnRef } from "../lib/comment-anchor.mjs";
 
 /** The MCP servers claude announced at startup, if it announced any. Which
  *  tools an agent can actually reach is worth seeing before you believe what
@@ -121,4 +123,18 @@ export function TurnDetail() {
       ) : null}
     </div>
   );
+}
+
+/** "Comment on this turn", shown with the conversation (conversation.tsx), not
+ *  inside TurnDetail: that only renders while no file is selected, and a turn
+ *  comment needs the open file's room, so there it could never appear. */
+export function TurnCommentButton({ active }: { active?: { sessionId?: string | null; agent: string; transcript: { messages: ReadonlyArray<{ content?: unknown }> } } }) {
+  if (!active || !active.transcript.messages.length) return null;
+  return <AnchorButton label="Comment on this turn" refOf={() => turnRef({ session: active.sessionId || "", agent: active.agent, turn: Math.max(0, active.transcript.messages.length - 1), quote: lastText(active.transcript.messages) })} />;
+}
+
+/** The text of the latest message, for the quote a turn comment carries. */
+function lastText(messages: ReadonlyArray<{ content?: unknown }>): string {
+  const m = messages[messages.length - 1];
+  return Array.isArray(m?.content) ? (m.content as Array<{ type?: string; text?: string }>).filter((p) => p.type === "text").map((p) => p.text || "").join("\n") : "";
 }

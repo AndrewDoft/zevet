@@ -106,7 +106,7 @@ function normalizeAskResult(result) {
  * or a plain boolean. It races against `timeoutMs` and loses to a deny if it
  * takes too long; a permit handler that throws also denies.
  */
-function start({ onPermit, onAsk, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+function start({ onPermit, onAsk, onTool, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   if (typeof onPermit !== "function") {
     throw new Error("ask-server: start() requires an onPermit(request) function");
   }
@@ -114,6 +114,8 @@ function start({ onPermit, onAsk, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
      process paired with a newer MCP server must refuse the route, not throw
      inside a request handler on the same port the permit gate depends on. */
   const asker = typeof onAsk === "function" ? onAsk : null;
+  /* Coordination tools (agent-tools.js): the same absent-means-404 rule. */
+  const toolRunner = typeof onTool === "function" ? onTool : null;
   const token = randomBytes(24).toString("hex");
 
   const server = http.createServer((req, res) => {
@@ -132,7 +134,7 @@ function start({ onPermit, onAsk, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
         }
 
         const route = req.method === "POST" ? req.url : "";
-        if (route !== "/permit" && !(route === "/ask" && asker)) {
+        if (route !== "/permit" && !(route === "/ask" && asker) && !(route === "/tool" && toolRunner)) {
           json(res, 404, { ok: false, reason: "not found" });
           return;
         }
@@ -150,6 +152,19 @@ function start({ onPermit, onAsk, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
           payload = body ? JSON.parse(body) : {};
         } catch {
           json(res, 400, { ok: false, reason: "invalid JSON body" });
+          return;
+        }
+
+        if (route === "/tool") {
+          /* ⚠️ NOT A PERMIT: these tools only read team state or write a note/claim/steer that has its
+             own policy (steer asks the OTHER owner). A throw is an error result, never an allow. */
+          let out;
+          try {
+            out = await Promise.race([Promise.resolve(toolRunner(payload)), new Promise((r) => setTimeout(() => r({ text: "timed out", isError: true }), timeoutMs).unref())]);
+          } catch (err) {
+            out = { text: `tool handler failed: ${err.message}`, isError: true };
+          }
+          json(res, 200, { ok: true, text: String((out && out.text) || "").slice(0, 8000), isError: Boolean(out && out.isError) });
           return;
         }
 

@@ -9,11 +9,14 @@ import { pct, progressOf } from "../utils/range";
 export function AgentPlan({
   steps,
   activeIndex,
+  owners,
   className,
   ...props
 }: Omit<ComponentProps<"div">, "children" | "steps" | "activeIndex"> & {
   steps: readonly string[];
   activeIndex: number;
+  /** Who claimed each step (D-087), by index; "" for none. */
+  owners?: readonly string[];
 }) {
   const total = steps.length;
   const completed = progressOf(activeIndex, total);
@@ -68,6 +71,11 @@ export function AgentPlan({
               >
                 {step}
               </span>
+              {owners?.[i] ? (
+                <span data-step-owner={owners[i]} className={cn(mono, "ml-auto shrink-0 text-foreground/45")}>
+                  {owners[i]}
+                </span>
+              ) : null}
             </li>
           );
         })}

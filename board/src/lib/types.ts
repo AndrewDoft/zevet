@@ -246,6 +246,8 @@ export interface UpdateState {
   running?: string;
   /** A verified payload build waiting to apply. */
   next?: { build: string; when: string };
+  /** Why a ready update has not applied yet (an agent mid-turn, recent input); absent when nothing holds it. */
+  waiting?: string;
   percent?: number;
   canInstall?: boolean;
   manual?: boolean;

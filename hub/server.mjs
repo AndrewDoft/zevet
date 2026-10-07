@@ -15,11 +15,12 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSyn
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Accounts, POLICY_VALUES, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
+import { ACTION_ROLE, Accounts, POLICY_VALUES, RETENTION_MS, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
 import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedEmails } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 import * as ms from "./microsoft-auth.mjs";
 import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
+import { checkJoin, createInviteStore, MODES, INVITE_ID_RE, INVITE_SEALED_MAX } from "./session-share.mjs";
 import { initSentry } from "./sentry.mjs";
 import { agentsOf } from "../board/src/lib/agents.mjs";
 import { verifyAssertion, replayGuard, parseTeamMap } from "./masora-auth.mjs";
@@ -166,8 +167,18 @@ const MAX_EVENTS = Number(process.env.ZEVET_MAX_EVENTS || 2000);
 // Prompt bodies and shell commands older than this are served blank and
 // compacted out of the log at boot (see snapshot() and the replay below). 0
 // keeps everything — the default, because history is the feature and
-// retention is the operator's call, not ours to make silently.
+// retention is the operator's call, not ours to make silently. This env var is
+// the operator's floor; each team's owner may set a shorter one (policy
+// `retention`, D-NEXT-W2-13), and the shorter of the two applies.
 const DETAIL_TTL_MS = Number(process.env.ZEVET_DETAIL_TTL_MS || 0);
+
+/** The TTL in force for one team: the shorter non-zero of the operator's env
+ *  floor and the team's own `retention` policy. 0 keeps everything. */
+function detailTtl(acc) {
+  const team = RETENTION_MS[acc.policy.retention] || 0;
+  const ttl = [DETAIL_TTL_MS, team].filter((n) => n > 0).reduce((a, b) => Math.min(a, b), Infinity);
+  return Number.isFinite(ttl) ? ttl : 0;
+}
 // Two agents touching one file inside this window is worth a warning. Ten
 // minutes is a guess we can move; it is deliberately longer than a turn.
 const COLLISION_WINDOW_MS = Number(process.env.ZEVET_COLLISION_WINDOW_MS || 10 * 60 * 1000);
@@ -248,6 +259,9 @@ const SIGNED_CLIENT_MANIFEST = process.env.ZEVET_SIGNED_CLIENT_MANIFEST || path.
 /** Exactly what the update channel will serve. An allowlist, not a directory listing. */
 const CLIENT_FILES = [
   "hook.mjs",
+  // redact.mjs is imported BY hook.mjs: the secret net that runs before an event
+  // is built (D-NEXT-W2-13). The signed manifest must be re-signed at release.
+  "redact.mjs",
   "install.mjs",
   "updater.mjs",
   "detect.mjs",
@@ -378,7 +392,7 @@ async function buildManifest() {
  */
 const EVENTS_FILE = process.env.ZEVET_EVENTS || path.join(HERE, "..", "var", "events.jsonl");
 
-function makeBoard(file) {
+function makeBoard(file, ttlMs = () => DETAIL_TTL_MS) {
   /** @type {Array<object>} newest last */
   const events = [];
   /** @type {Set<import("node:http").ServerResponse>} */
@@ -396,28 +410,6 @@ function makeBoard(file) {
           // One corrupt line is not a corrupt log. Skip it and keep the rest.
         }
       }
-      // Retention compaction: details older than the TTL are blanked in place,
-      // so the archive keeps the structure (who/tool/file/repo) and forgets the
-      // words. Best effort; a failure here costs nothing at runtime.
-      if (DETAIL_TTL_MS > 0) {
-        try {
-          const now = Date.now();
-          const compacted = lines.map((line) => {
-            try {
-              const evt = JSON.parse(line);
-              if (evt && typeof evt === "object" && now - evt.ts > DETAIL_TTL_MS) {
-                return JSON.stringify({ ...evt, detail: "" });
-              }
-            } catch {
-              // Keep the line as-is; the replay above already skipped it.
-            }
-            return line;
-          });
-          writeFileSync(file, `${compacted.join("\n")}\n`);
-        } catch {
-          // The uncompacted log still replays fine above.
-        }
-      }
     }
   } catch (err) {
     // A hub that cannot read its log still serves the board; it just starts
@@ -427,7 +419,42 @@ function makeBoard(file) {
 
   // session -> who started it on this person's machine (D-060, remote
   // spawn). Bounded; folded onto `agents` in the snapshot below.
-  const board = { events, listeners, file, warned: false, startedBy: new Map() };
+  const board = { events, listeners, file, warned: false, startedBy: new Map(), ttlMs };
+
+  /** Retention compaction: details older than the TTL are blanked in place, so
+   *  the archive keeps the structure (who/tool/file/repo) and forgets the
+   *  words. Runs at boot and whenever the owner changes the team's retention.
+   *  Best effort; a failure here costs nothing at runtime. Returns the number
+   *  of lines blanked. */
+  board.compact = function compact() {
+    const ttl = ttlMs();
+    if (ttl <= 0 || !existsSync(file)) return 0;
+    let blanked = 0;
+    try {
+      const now = Date.now();
+      const lines = readFileSync(file, "utf8").split("\n").filter((l) => l.trim());
+      const compacted = lines.map((line) => {
+        try {
+          const evt = JSON.parse(line);
+          if (evt && typeof evt === "object" && evt.detail && now - evt.ts > ttl) {
+            blanked += 1;
+            return JSON.stringify({ ...evt, detail: "" });
+          }
+        } catch {
+          // Keep the line as-is; replay already skipped it.
+        }
+        return line;
+      });
+      if (blanked) writeFileSync(file, `${compacted.join("\n")}\n`);
+      for (let i = 0; i < events.length; i++) {
+        if (events[i].detail && now - events[i].ts > ttl) events[i] = { ...events[i], detail: "" };
+      }
+    } catch {
+      // The uncompacted log still replays fine.
+    }
+    return blanked;
+  };
+  board.compact();
 
   /** Every SSE push on this board's listeners goes through here — `record`
    *  below for the activity log, and `notifyPeopleChanged` (module scope)
@@ -485,8 +512,8 @@ function makeBoard(file) {
     // never trimmed; `detail` is the sensitive half and the only thing with a
     // TTL. The log file is compacted the same way at boot (see above), so this
     // is retention, not a view filter.
-    const show = (e) =>
-      DETAIL_TTL_MS > 0 && now - e.ts > DETAIL_TTL_MS ? { ...e, detail: "" } : e;
+    const ttl = ttlMs();
+    const show = (e) => (ttl > 0 && now - e.ts > ttl ? { ...e, detail: "" } : e);
     const actors = new Map();
     for (const e of named) {
       const a = actors.get(e.actor) || { actor: e.actor, hue: null, lastTs: 0, lastEvent: null, turns: 0, tools: 0 };
@@ -777,7 +804,7 @@ function sessionCookie(req, token) {
 }
 
 /** One board per team — see `makeBoard` above. */
-const boards = new Map([[DEFAULT_TEAM, makeBoard(EVENTS_FILE)]]);
+const boards = new Map([[DEFAULT_TEAM, makeBoard(EVENTS_FILE, () => detailTtl(accounts))]]);
 
 /** Reactive rosters (P3, "the member/invite list updates live"): pushed on
  *  the SAME SSE connection board.ts already opens for the activity feed —
@@ -877,8 +904,9 @@ function loadTeams() {
     const m = /^accounts-([a-z0-9-]+)\.json$/.exec(f); // named slugs, and the random ones from before names
     if (!m || m[1] === DEFAULT_TEAM || teamAccounts.has(m[1])) continue;
     try {
-      teamAccounts.set(m[1], new Accounts({ file: path.join(TEAMS_DIR, f) }));
-      boards.set(m[1], makeBoard(path.join(TEAMS_DIR, `events-${m[1]}.jsonl`)));
+      const acc = new Accounts({ file: path.join(TEAMS_DIR, f) });
+      teamAccounts.set(m[1], acc);
+      boards.set(m[1], makeBoard(path.join(TEAMS_DIR, `events-${m[1]}.jsonl`), () => detailTtl(acc)));
     } catch (err) {
       teamAccounts.delete(m[1]);
       console.error(`zevet: could not load team ${m[1]} (${f}): ${err.message}`);
@@ -1005,7 +1033,7 @@ function createTeam(name) {
   const acc = new Accounts({ file: path.join(TEAMS_DIR, `accounts-${slug}.json`) });
   if (name) acc.setName(name);
   teamAccounts.set(slug, acc);
-  boards.set(slug, makeBoard(path.join(TEAMS_DIR, `events-${slug}.jsonl`)));
+  boards.set(slug, makeBoard(path.join(TEAMS_DIR, `events-${slug}.jsonl`), () => detailTtl(acc)));
   return { ok: true, team: slug };
 }
 
@@ -1073,6 +1101,15 @@ function teamFrom(req, url) {
  * shared-token caller still needs to learn "sign in with GitHub/Google" —
  * it answers, but strips the people list before it does.
  */
+/** Role gate: a 403 body when this session may not `action`, else null. The
+ *  role is read live from the account on every call (accounts.can), so a
+ *  demotion refuses the person's very next request. */
+function roleRefusal(auth, action) {
+  if (auth.accounts.can(auth.session, action)) return null;
+  const need = ACTION_ROLE[action];
+  return { error: `${need} role required`, role: auth.accounts.roleOf(auth.session) };
+}
+
 function teamFromSession(req, url) {
   const auth = teamFrom(req, url);
   return auth && auth.session ? auth : null;
@@ -1306,6 +1343,7 @@ function person(a, acc, asOwner = false) {
     key: a.login,
     provider: a.provider,
     owner: a.owner,
+    role: a.owner ? "owner" : a.role || "editor",
     pending,
     state,
     invitedAt: a.added || null,
@@ -1384,11 +1422,28 @@ const SPAWN_RATE_MAX = Number(process.env.ZEVET_SPAWN_RATE_MAX || 5);
 /** Spawns waiting on one person's answer at once — a flood of cards is a DoS. */
 const SPAWN_PENDING_MAX = 3;
 const SPAWN_OWNER_STATUSES = new Set(["delivered", "accepted", "started", "start-failed", "declined", "no-such-repo"]);
+/* ── Taking over a teammate's running turn (D-NEXT-W2-2) ────────────────────
+ * Same seal, same channel, same policy (`steer`: off refuses, ask asks the
+ * owner, on goes straight through). The taker's request is sealed {agent,
+ * payer}; the owner's desktop answers with a sealed baton (transcript tail +
+ * diff summary) that this relays to the taker and never reads. ONE WINNER: the
+ * first request for a session holds it (`takeovers`, keyed owner+session,
+ * decided synchronously, so concurrent requests cannot both win); every other
+ * taker is answered `lost`, naming the winner. A decline, an offline taker or a
+ * failed start releases the hold so the next request can try (a decline or
+ * an expired ask needs no release: the hold only counts while the request is
+ * still queued, delivered or accepted). */
+const TAKEOVER_SEALED_MAX = 96 * 1024;
+const TAKEOVER_PENDING_MS = 15 * 60 * 1000;
+const TAKEOVER_RATE_MAX = Number(process.env.ZEVET_TAKEOVER_RATE_MAX || 5);
+const TAKEOVER_OWNER_STATUSES = new Set(["delivered", "declined"]);
+const TAKEOVER_TAKER_STATUSES = new Set(["started", "start-failed"]);
 const steerTeams = new Map(); // team -> { listeners:Set<res>, byId:Map<id,rec>, rate:Map<person,ts[]> }
+const sessionInvites = createInviteStore();
 
 function steerTeam(team) {
   let t = steerTeams.get(team);
-  if (!t) steerTeams.set(team, (t = { listeners: new Set(), byId: new Map(), rate: new Map(), claims: new Map(), payers: new Map() }));
+  if (!t) steerTeams.set(team, (t = { listeners: new Set(), byId: new Map(), rate: new Map(), claims: new Map(), payers: new Map(), takeovers: new Map() }));
   return t;
 }
 
@@ -1455,11 +1510,16 @@ function steerChannelsFor(team, acc, name) {
   return [...steerTeam(team).listeners].filter((res) => !res.destroyed && acc.namesOfSession(res.zevetSteer.session).includes(want));
 }
 
+/** Open steer channels of the person `fromKey` (their primary login). */
+function steerChannelsOfPerson(team, acc, fromKey) {
+  return [...steerTeam(team).listeners].filter((res) => !res.destroyed && personKey(acc, res.zevetSteer.session) === fromKey);
+}
+
 /** Tell the sender's own desktop(s) where their steer stands. */
 function steerTellSender(team, acc, rec) {
   for (const res of steerTeam(team).listeners) {
     if (personKey(acc, res.zevetSteer.session) === rec.fromKey) {
-      steerFrame(res, "steer-status", { id: rec.id, kind: rec.kind || "steer", to: rec.to, status: rec.status, reason: rec.reason || "", ...(rec.kind === "spawn" && rec.session ? { session: rec.session } : {}) });
+      steerFrame(res, "steer-status", { id: rec.id, kind: rec.kind || "steer", to: rec.to, status: rec.status, reason: rec.reason || "", ...((rec.kind === "spawn" || rec.kind === "takeover") && rec.session ? { session: rec.session } : {}) });
     }
   }
 }
@@ -1481,6 +1541,84 @@ function steerRateLimited(team, key, now = Date.now(), max = STEER_RATE_MAX) {
   recent.push(now);
   t.rate.set(key, recent);
   return false;
+}
+
+/* ── Cross-machine approval cards (D-086) ──────────────────────────────
+ *
+ * An agent on one machine asks permission to run a tool. With the team policy
+ * `approve` ≠ off, that machine ("the executing side") publishes a card, sealed
+ * with the document key, and any Editor on the team may answer it.
+ *
+ *   • The hub NEVER decides. It relays sealed frames and arbitrates ONE thing:
+ *     the first answer from an Editor wins (this is synchronous, so atomic);
+ *     later ones get 409 and who won. It sees ids, names, the allow/deny bit
+ *     and timestamps — never the tool or its arguments.
+ *   • Whether an answer AUTHORISES anything is decided on the executing
+ *     machine, which checks the sealed answer against its own pending prompt
+ *     (nonce + hash of tool and arguments). An answer it rejects is reported
+ *     `invalid` and the card re-opens (REOPEN_MAX times), so a bad answer
+ *     cannot burn the slot.
+ *   • `approve` is policy-gated (default off) and role-gated (Editor).
+ *   • Statuses everyone sees: open, answered (relayed, not yet applied), held
+ *     (policy ask: waiting for the owner's own click), approved, denied,
+ *     expired, unknown ("outcome unknown": an answer was relayed or an approval
+ *     released and the executing machine went away before it could be
+ *     confirmed). In memory only.
+ */
+const APPROVAL_SEALED_MAX = 24 * 1024;
+const APPROVAL_TTL_MS = Number(process.env.ZEVET_APPROVAL_TTL_MS || 120 * 1000);
+const APPROVAL_INFLIGHT_MS = 30 * 1000;
+const APPROVAL_KEEP = 100;
+const APPROVAL_PENDING_MAX = 3;
+const APPROVAL_REOPEN_MAX = 3;
+const APPROVAL_RATE_MAX = 20;
+const APPROVAL_LIVE = new Set(["open", "answered", "held"]);
+const APPROVAL_REPORTS = new Set(["approved", "denied", "held", "invalid", "expired", "unknown"]);
+const SEALED_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+
+function approvalMap(team) {
+  const t = steerTeam(team);
+  if (!t.approvals) t.approvals = new Map();
+  return t.approvals;
+}
+
+function approvalPublic(rec) {
+  const live = rec.status === "open";
+  return { id: rec.id, status: rec.status, from: rec.from, session: rec.session, repo: rec.repo, at: rec.at, expiresAt: rec.expiresAt, decision: rec.decision || "", by: rec.by || "", via: rec.via || "", reason: rec.reason || "", ...(live ? { sealed: rec.sealed } : {}) };
+}
+
+function approvalBroadcast(team, rec) {
+  for (const res of steerTeam(team).listeners) steerFrame(res, "approval", approvalPublic(rec));
+}
+
+function approvalSet(team, rec, patch) {
+  Object.assign(rec, patch);
+  if (!APPROVAL_LIVE.has(rec.status)) rec.settledAt = Date.now();
+  approvalBroadcast(team, rec);
+}
+
+/** Time out what nobody answered. An answer that was relayed and never
+ *  confirmed is `unknown`, not `expired`: something may have run. */
+function approvalSweep(team, now = Date.now()) {
+  for (const rec of approvalMap(team).values()) {
+    if (!APPROVAL_LIVE.has(rec.status) || now < rec.expiresAt) continue;
+    approvalSet(team, rec, rec.status === "answered" ? { status: "unknown", reason: "the answer was sent and never confirmed" } : { status: "expired", reason: "nobody answered in time" });
+  }
+}
+
+setInterval(() => {
+  for (const team of steerTeams.keys()) approvalSweep(team);
+}, 15 * 1000).unref();
+
+/** The executing person's last desktop channel closed: what was in flight is unknown. */
+function approvalOwnerGone(team, acc, ownerKey) {
+  if (!ownerKey) return;
+  for (const res of steerTeam(team).listeners) if (!res.destroyed && personKey(acc, res.zevetSteer.session) === ownerKey) return;
+  const now = Date.now();
+  for (const rec of approvalMap(team).values()) {
+    if (rec.fromKey !== ownerKey) continue;
+    if (rec.status === "answered" || (rec.status === "approved" && now - rec.settledAt < APPROVAL_INFLIGHT_MS)) approvalSet(team, rec, { status: "unknown", reason: "their app went away before it could confirm" });
+  }
 }
 
 async function handleRequest(req, res) {
@@ -1846,6 +1984,7 @@ async function handleRequest(req, res) {
       login: sess ? sess.login : null,
       shared: !sess,
       owner: Boolean(sess && acc.owner === sess.login),
+      role: sess ? acc.roleOf(sess) : null,
       githubSignIn: Boolean(GITHUB_CLIENT_ID),
       // Kept alongside `githubSignIn` rather than replacing it with a single
       // `providers` list: a board cached before Google existed reads that exact
@@ -2062,6 +2201,29 @@ async function handleRequest(req, res) {
    * without an invite, which is exactly the kind of change a shared token
    * must not be able to make for itself. `acc.setDomain` is what actually
    * refuses anything but the owner's own `hd` — see its comment. */
+  /* Change somebody's role. OWNER ONLY, enforced here; takes effect on that
+   * person's very next request (accounts.roleOf is read per call). */
+  if (url.pathname === "/auth/role" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    if (acc.owner !== sess.login) {
+      return json(res, 403, { error: acc.owner ? `only @${acc.owner} can change roles` : "nobody has claimed this team yet" });
+    }
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const r = acc.setRole(body && body.login, body && body.role, sess.login);
+    if (!r.ok) return json(res, 400, { error: r.error });
+    if (r.changed) console.log(`zevet: role of ${String(body.login).slice(0, 40)} -> ${r.role} by @${sess.login}${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`);
+    notifyPeopleChanged(auth.team);
+    return json(res, 200, { ok: true, role: r.role, people: acc.list().map((a) => person(a, acc, true)) });
+  }
+
   if (url.pathname === "/auth/domain" && req.method === "POST") {
     const auth = teamFrom(req, url);
     if (!auth) return refuse(req, res, url);
@@ -2102,6 +2264,8 @@ async function handleRequest(req, res) {
     // `addedBy`, and "added by nobody" is not a record this hub can later
     // use to decide who may remove it.
     if (!sess) return json(res, 403, { error: "sign in to add a team credential" });
+    const denied = roleRefusal(auth, "credential");
+    if (denied) return json(res, 403, denied);
     let body = null;
     try {
       body = JSON.parse(await readBody(req));
@@ -2134,6 +2298,8 @@ async function handleRequest(req, res) {
   if (url.pathname.startsWith("/team/credentials/") && url.pathname.endsWith("/secret") && req.method === "GET") {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
+    const denied = roleRefusal(auth, "credential");
+    if (denied) return json(res, 403, denied);
     const id = safeDecode(url.pathname.slice("/team/credentials/".length, -"/secret".length));
     const key = id ? auth.accounts.credentialKey(id) : null;
     if (key === null) return json(res, 404, { error: "no such credential" });
@@ -2307,6 +2473,12 @@ async function handleRequest(req, res) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return json(res, 400, { error: "expected a JSON object" });
     }
+    // A person's own desktop (a session) is held to their role; a bare team
+    // secret (a hook-only machine) has no person, so it is not.
+    if (auth.session) {
+      const denied = roleRefusal(auth, parsed.kind === "claim" || parsed.kind === "payer" ? "claim" : "report");
+      if (denied) return json(res, 403, denied);
+    }
     if (parsed.kind === "claim" || parsed.kind === "payer") {
       const actor = teamAccounts.get(auth.team).actorResolver()(String(parsed.actor || "unknown").slice(0, 40));
       const r = relayClaim(auth.team, actor, parsed);
@@ -2346,7 +2518,7 @@ async function handleRequest(req, res) {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
     const acc = auth.accounts;
-    return json(res, 200, { ok: true, policy: acc.policy, admin: acc.owner === auth.session.login, owner: acc.owner });
+    return json(res, 200, { ok: true, policy: acc.policy, admin: acc.owner === auth.session.login, owner: acc.owner, role: acc.roleOf(auth.session) });
   }
 
   if (url.pathname === "/api/policy" && req.method === "PUT") {
@@ -2373,8 +2545,66 @@ async function handleRequest(req, res) {
     for (const [key, value] of Object.entries(body)) {
       const r = acc.setPolicy(key, value, sess.login);
       if (r.changed) console.log(`zevet: policy ${key} -> ${value} by @${sess.login}${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`);
+      // A shorter retention takes effect now, not at the next boot.
+      if (r.changed && key === "retention") boards.get(auth.team).compact();
     }
     return json(res, 200, { ok: true, policy: acc.policy });
+  }
+
+  /* Invite into ONE session (D-090). Create: an Editor (or the owner)
+   * who owns that session seals its key on their desktop; the hub keeps the
+   * ciphertext. Join: checkJoin's five checks, first failure wins, ONE error. */
+  if (url.pathname === "/api/session-invite" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const denied = roleRefusal(auth, "share");
+    if (denied) return json(res, 403, denied);
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, INVITE_SEALED_MAX + 2 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
+    const id = typeof body.id === "string" ? body.id : "";
+    const session = typeof body.session === "string" ? body.session.slice(0, 64) : "";
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    if (!INVITE_ID_RE.test(id) || !session || !sealed || !MODES.includes(body.mode)) return json(res, 400, { error: "an invite needs id, session, mode and sealed" });
+    if (sealed.length > INVITE_SEALED_MAX || !/^[A-Za-z0-9+/]+={0,2}$/.test(sealed)) return json(res, 400, { error: "sealed must be base64" });
+    const agent = boards.get(auth.team).snapshot(auth.accounts.actorResolver()).agents.find((a) => a.session === session);
+    if (!agent) return json(res, 404, { error: "Session ended" });
+    const mine = auth.accounts.namesOfSession(auth.session).includes(String(agent.actor).toLowerCase());
+    if (!mine && auth.accounts.roleOf(auth.session) !== "owner") return json(res, 403, { error: `Only ${agent.actor} or the owner can invite into this session` });
+    sessionInvites.add(auth.team, { id, session, mode: body.mode, sealed, repo: agent.repo || "", agent: agent.agent, actor: agent.actor, by: auth.session.login });
+    return json(res, 200, { ok: true, id });
+  }
+
+  if (url.pathname === "/api/session-invite/join" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const inv = body && typeof body.id === "string" ? sessionInvites.get(auth.team, body.id) : null;
+    if (!inv) return json(res, 404, { ok: false, check: "invite", error: "Invite not found or expired. Ask for a new one" });
+    const acc = auth.accounts;
+    const sess = auth.session;
+    const mode = typeof body.mode === "string" ? body.mode : inv.mode;
+    const agent = boards.get(auth.team).snapshot(acc.actorResolver()).agents.find((a) => a.session === inv.session);
+    const r = checkJoin({
+      invite: inv,
+      role: sess ? acc.roleOf(sess) : null,
+      can: (action) => acc.can(sess, action),
+      mode,
+      pushAccess: typeof body.push === "boolean" ? body.push : null,
+      agentOnBoard: Boolean(agent),
+      agentOnline: steerChannelsFor(auth.team, acc, inv.actor).length > 0,
+    });
+    if (!r.ok) return json(res, r.status, { ok: false, check: r.check, error: r.error, ...(r.check === "push" ? { repo: inv.repo } : {}) });
+    return json(res, 200, { ok: true, mode: r.mode, readOnly: r.readOnly, session: inv.session, repo: inv.repo, agent: inv.agent, actor: inv.actor, sealed: inv.sealed, id: inv.id });
   }
 
   /* Send a steer — see the block comment above `steerTeam`. */
@@ -2383,6 +2613,8 @@ async function handleRequest(req, res) {
     if (!auth) return refuse(req, res, url);
     const acc = auth.accounts;
     const sess = auth.session;
+    const denied = roleRefusal(auth, "steer");
+    if (denied) return json(res, 403, denied);
     let body = null;
     try {
       body = JSON.parse(await readBody(req, STEER_SEALED_MAX + 4 * 1024));
@@ -2438,6 +2670,8 @@ async function handleRequest(req, res) {
     if (!auth) return refuse(req, res, url);
     const acc = auth.accounts;
     const sess = auth.session;
+    const denied = roleRefusal(auth, "spawn");
+    if (denied) return json(res, 403, denied);
     let body = null;
     try {
       body = JSON.parse(await readBody(req, STEER_SEALED_MAX + 4 * 1024));
@@ -2490,6 +2724,147 @@ async function handleRequest(req, res) {
     return json(res, 200, { ok: true, id, status: "queued", approval });
   }
 
+  /* Ask to take over a teammate's running turn — see TAKEOVER_SEALED_MAX. */
+  if (url.pathname === "/api/takeover" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, STEER_SEALED_MAX + 4 * 1024));
+    } catch (err) {
+      const big = /too large/.test(String(err && err.message));
+      return json(res, big ? 413 : 400, { error: big ? "take-over too large" : "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
+    const denied = roleRefusal(auth, "takeover"); // Editor or above (W2-7)
+    if (denied) return json(res, 403, denied);
+    const fromKey = personKey(acc, sess) || sess.login;
+    if (steerRateLimited(auth.team, `takeover\u0000${fromKey}`, Date.now(), TAKEOVER_RATE_MAX)) return json(res, 429, { error: "too many take-overs — wait a minute" });
+    const smuggled = SPAWN_FORBIDDEN.find((k) => Object.hasOwn(body, k));
+    if (smuggled) return json(res, 400, { error: `a take-over cannot carry "${smuggled}"` });
+    const id = typeof body.id === "string" ? body.id : "";
+    const to = typeof body.to === "string" ? body.to.trim().slice(0, 40) : "";
+    const session = typeof body.session === "string" ? body.session.slice(0, 64) : "";
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    if (!STEER_ID_RE.test(id) || !to || !session || !sealed) return json(res, 400, { error: "a take-over needs id, to, session and sealed" });
+    if (sealed.length > STEER_SEALED_MAX) return json(res, 413, { error: "take-over too large" });
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(sealed)) return json(res, 400, { error: "sealed must be base64" });
+    const t = steerTeam(auth.team);
+    if (t.byId.has(id)) return json(res, 409, { error: "that id was already used" });
+    const from = (acc.profile(sess) || {}).name || sess.login;
+    const rec = { id, kind: "takeover", at: Date.now(), from, fromKey, to, session, repo: typeof body.repo === "string" ? body.repo.slice(0, 120) : "", status: "", reason: "" };
+    const tag = `${from} -> ${to}${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`;
+    const policy = acc.policy.steer;
+    if (policy === "off") {
+      steerRemember(auth.team, { ...rec, status: "refused-by-policy" });
+      console.log(`zevet: takeover ${id} ${tag} refused: policy is off`);
+      return json(res, 403, { ok: false, id, status: "refused-by-policy", error: "taking over agents is turned off for this team" });
+    }
+    const resolve = acc.actorResolver();
+    const want = resolve(to).toLowerCase();
+    if (acc.namesOfSession(sess).includes(want.replace(/^@/, ""))) return json(res, 400, { error: "that agent is already yours" });
+    const agent = boards.get(auth.team).snapshot(resolve).agents.find((a) => a.session === session && String(a.actor).toLowerCase() === want);
+    if (!agent) {
+      steerRemember(auth.team, { ...rec, status: "unknown-agent" });
+      return json(res, 404, { ok: false, id, status: "unknown-agent", error: `no agent of ${to}'s with that session is on the board` });
+    }
+    const channels = steerChannelsFor(auth.team, acc, to);
+    if (!channels.length) {
+      steerRemember(auth.team, { ...rec, status: "offline" });
+      console.log(`zevet: takeover ${id} ${tag}: offline`);
+      return json(res, 200, { ok: true, id, status: "offline" });
+    }
+    // The one-winner decision. No await between this read and the set below.
+    const lockKey = `${want}\u0000${session}`;
+    const held = t.takeovers.get(lockKey);
+    const heldRec = held ? t.byId.get(held.id) : null;
+    const live = held && heldRec && (held.taken || (Date.now() - held.at < TAKEOVER_PENDING_MS && ["queued", "delivered", "accepted"].includes(heldRec.status)));
+    if (live) {
+      steerRemember(auth.team, { ...rec, status: "lost", reason: `${held.from} has it` });
+      console.log(`zevet: takeover ${id} ${tag} lost to ${held.from}`);
+      return json(res, 409, { ok: false, id, status: "lost", winner: held.from, error: `${held.from} ${held.taken ? "took it over" : "is taking it over"}` });
+    }
+    t.takeovers.set(lockKey, { id, from, fromKey, at: rec.at, taken: false });
+    while (t.takeovers.size > STEER_KEEP) t.takeovers.delete(t.takeovers.keys().next().value);
+    const approval = policy === "ask";
+    const msg = { id, from, to, repo: rec.repo, session, agent: agent.agent, sealed, approval, at: rec.at };
+    for (const ch of channels) steerFrame(ch, "takeover", msg);
+    steerRemember(auth.team, { ...rec, status: "queued", lockKey });
+    console.log(`zevet: takeover ${id} ${tag} queued (${approval ? "needs approval" : "policy on"})`);
+    return json(res, 200, { ok: true, id, status: "queued", approval });
+  }
+
+  /* The owner handing the sealed baton for an approved take-over: relayed to the
+   * taker's own channel, ciphertext only. No taker channel open is `offline`
+   * (the hold is released and the owner's turn is NOT stopped). */
+  if (url.pathname === "/api/takeover/baton" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, TAKEOVER_SEALED_MAX + 4 * 1024));
+    } catch (err) {
+      const big = /too large/.test(String(err && err.message));
+      return json(res, big ? 413 : 400, { error: big ? "baton too large" : "expected JSON" });
+    }
+    const t = steerTeam(auth.team);
+    const rec = body && typeof body.id === "string" ? t.byId.get(body.id) : null;
+    if (!rec || rec.kind !== "takeover") return json(res, 404, { error: "no such take-over" });
+    if (!acc.namesOfSession(auth.session).includes(rec.to.toLowerCase().replace(/^@/, ""))) return json(res, 403, { error: "that take-over was not sent to you" });
+    if (!["queued", "delivered"].includes(rec.status)) return json(res, 409, { error: `already ${rec.status}` });
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    if (!sealed || sealed.length > TAKEOVER_SEALED_MAX || !/^[A-Za-z0-9+/]+={0,2}$/.test(sealed)) return json(res, 400, { error: "a baton needs a sealed base64 payload" });
+    const channels = steerChannelsOfPerson(auth.team, acc, rec.fromKey);
+    if (!channels.length) {
+      rec.status = "offline";
+      rec.reason = "";
+      t.takeovers.delete(rec.lockKey);
+      steerTellSender(auth.team, acc, rec);
+      console.log(`zevet: takeover ${rec.id} ${rec.from} -> ${rec.to}: taker offline`);
+      return json(res, 200, { ok: true, status: "offline" });
+    }
+    const owner = (acc.profile(auth.session) || {}).name || auth.session.login;
+    for (const ch of channels) steerFrame(ch, "baton", { id: rec.id, from: owner, to: rec.to, session: rec.session, repo: rec.repo, sealed });
+    rec.status = "accepted";
+    steerTellSender(auth.team, acc, rec);
+    console.log(`zevet: takeover ${rec.id} ${rec.from} -> ${rec.to} accepted`);
+    return json(res, 200, { ok: true, status: "accepted" });
+  }
+
+  /* The taker's desktop reporting how the new turn started. Only the taker,
+   * only after `accepted`; `started` makes the hold final. */
+  if (url.pathname === "/api/takeover/status" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const t = steerTeam(auth.team);
+    const rec = body && typeof body.id === "string" ? t.byId.get(body.id) : null;
+    if (!rec || rec.kind !== "takeover") return json(res, 404, { error: "no such take-over" });
+    if ((personKey(acc, auth.session) || auth.session.login) !== rec.fromKey) return json(res, 403, { error: "that take-over was not yours" });
+    const status = String(body.status || "");
+    if (!TAKEOVER_TAKER_STATUSES.has(status)) return json(res, 400, { error: "not a status the taker can report" });
+    if (rec.status !== "accepted") return json(res, 409, { error: `not handed over yet (${rec.status})` });
+    rec.status = status;
+    rec.reason = typeof body.reason === "string" ? body.reason.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 200) : "";
+    const lock = t.takeovers.get(rec.lockKey);
+    if (status === "started") {
+      rec.session = typeof body.session === "string" ? body.session.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 64) : "";
+      if (lock && lock.id === rec.id) lock.taken = true;
+    } else if (lock && lock.id === rec.id) t.takeovers.delete(rec.lockKey);
+    steerTellSender(auth.team, acc, rec);
+    console.log(`zevet: takeover ${rec.id} ${rec.from} -> ${rec.to} ${status}`);
+    return json(res, 200, { ok: true });
+  }
+
   /* The target's desktop reporting what happened to a steer or a spawn. Only
    * the person it was sent TO may, only that kind's owner-side statuses, and
    * never after it settled. A spawn is `started` only after `accepted`, and
@@ -2509,8 +2884,9 @@ async function handleRequest(req, res) {
     if (!rec) return json(res, 404, { error: "no such steer" });
     if (!acc.namesOfSession(auth.session).includes(rec.to.toLowerCase().replace(/^@/, ""))) return json(res, 403, { error: "that steer was not sent to you" });
     const spawn = rec.kind === "spawn";
+    const takeover = rec.kind === "takeover";
     const status = String(body.status || "");
-    if (!(spawn ? SPAWN_OWNER_STATUSES : STEER_OWNER_STATUSES).has(status)) return json(res, 400, { error: "not a status the owner can report" });
+    if (!(spawn ? SPAWN_OWNER_STATUSES : takeover ? TAKEOVER_OWNER_STATUSES : STEER_OWNER_STATUSES).has(status)) return json(res, 400, { error: "not a status the owner can report" });
     // `start-failed` is the one thing that may follow `started`: the agent came up and could not work. Once, and final.
     const open = status === "start-failed" ? ["started"] : spawn ? ["queued", "delivered", "accepted"] : ["queued", "delivered"];
     if (!open.includes(rec.status)) return json(res, 409, { error: status === "start-failed" ? `not started yet (${rec.status})` : `already ${rec.status}` });
@@ -2527,8 +2903,130 @@ async function handleRequest(req, res) {
       }
     }
     steerTellSender(auth.team, acc, rec);
-    if (status !== "delivered") console.log(`zevet: ${spawn ? "spawn" : "steer"} ${rec.id} ${rec.from} -> ${rec.to} ${status}`);
+    if (status !== "delivered") console.log(`zevet: ${spawn ? "spawn" : takeover ? "takeover" : "steer"} ${rec.id} ${rec.from} -> ${rec.to} ${status}`);
     return json(res, 200, { ok: true });
+  }
+
+  /* Approval cards (D-086) — see the block comment above `approvalMap`.
+   * open: the executing person's desktop publishes a sealed card.
+   * answer: an Editor answers it; the first valid answer wins.
+   * status: the executing desktop reports what it did with an answer. */
+  if (url.pathname === "/api/approval/open" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    if (acc.policy.approve === "off") return json(res, 403, { ok: false, status: "refused-by-policy", error: "answering teammates' approvals is turned off for this team" });
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, APPROVAL_SEALED_MAX + 4 * 1024));
+    } catch (err) {
+      const big = /too large/.test(String(err && err.message));
+      return json(res, big ? 413 : 400, { error: big ? "approval too large" : "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
+    const fromKey = personKey(acc, auth.session) || auth.session.login;
+    const id = typeof body.id === "string" ? body.id : "";
+    const session = typeof body.session === "string" ? body.session.slice(0, 64) : "";
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    if (!STEER_ID_RE.test(id) || !session || !sealed) return json(res, 400, { error: "an approval needs id, session and sealed" });
+    if (sealed.length > APPROVAL_SEALED_MAX) return json(res, 413, { error: "approval too large" });
+    if (!SEALED_RE.test(sealed)) return json(res, 400, { error: "sealed must be base64" });
+    if (steerRateLimited(auth.team, `approval\u0000${fromKey}`, Date.now(), APPROVAL_RATE_MAX)) return json(res, 429, { error: "too many approvals — wait a minute" });
+    approvalSweep(auth.team);
+    const all = approvalMap(auth.team);
+    if (all.has(id)) return json(res, 409, { error: "that approval id was already used" });
+    if ([...all.values()].filter((r) => r.fromKey === fromKey && APPROVAL_LIVE.has(r.status)).length >= APPROVAL_PENDING_MAX) return json(res, 429, { error: "too many approvals waiting" });
+    const now = Date.now();
+    const rec = { id, status: "open", at: now, expiresAt: now + APPROVAL_TTL_MS, from: (acc.profile(auth.session) || {}).name || auth.session.login, fromKey, session, repo: typeof body.repo === "string" ? body.repo.slice(0, 120) : "", sealed, attempts: 0 };
+    all.set(id, rec);
+    while (all.size > APPROVAL_KEEP) all.delete(all.keys().next().value);
+    approvalBroadcast(auth.team, rec);
+    return json(res, 200, { ok: true, id, status: "open", expiresAt: rec.expiresAt });
+  }
+
+  if (url.pathname === "/api/approval/answer" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const denied = roleRefusal(auth, "approve");
+    if (denied) return json(res, 403, denied);
+    if (acc.policy.approve === "off") return json(res, 403, { ok: false, status: "refused-by-policy", error: "answering teammates' approvals is turned off for this team" });
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, APPROVAL_SEALED_MAX + 4 * 1024));
+    } catch (err) {
+      const big = /too large/.test(String(err && err.message));
+      return json(res, big ? 413 : 400, { error: big ? "answer too large" : "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    const decision = body.decision === "allow" || body.decision === "deny" ? body.decision : "";
+    if (!decision || !sealed || sealed.length > APPROVAL_SEALED_MAX || !SEALED_RE.test(sealed)) return json(res, 400, { error: "an answer needs decision (allow|deny) and a sealed base64 answer" });
+    approvalSweep(auth.team);
+    const rec = typeof body.id === "string" ? approvalMap(auth.team).get(body.id) : null;
+    if (!rec) return json(res, 404, { error: "no such approval" });
+    const fromKey = personKey(acc, auth.session) || auth.session.login;
+    if (fromKey === rec.fromKey) return json(res, 400, { error: "that is your own agent — answer it in your app" });
+    if (rec.status !== "open") {
+      const who = rec.by ? ` by ${rec.by}` : "";
+      return json(res, 409, { ok: false, id: rec.id, status: rec.status, by: rec.by || "", decision: rec.decision || "", error: `already ${rec.status}${who}` });
+    }
+    const channels = [...steerTeam(auth.team).listeners].filter((ch) => !ch.destroyed && personKey(acc, ch.zevetSteer.session) === rec.fromKey);
+    if (!channels.length) return json(res, 409, { ok: false, id: rec.id, status: rec.status, error: "their app is offline" });
+    const by = (acc.profile(auth.session) || {}).name || auth.session.login;
+    approvalSet(auth.team, rec, { status: "answered", decision, by, via: "remote" });
+    const msg = { id: rec.id, decision, by, sealed, confirm: acc.policy.approve !== "on" };
+    for (const ch of channels) steerFrame(ch, "approval-answer", msg);
+    console.log(`zevet: approval ${rec.id} ${rec.from} <- ${by} ${decision}`);
+    return json(res, 200, { ok: true, id: rec.id, status: "answered", by });
+  }
+
+  if (url.pathname === "/api/approval/status" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const rec = body && typeof body.id === "string" ? approvalMap(auth.team).get(body.id) : null;
+    if (!rec) return json(res, 404, { error: "no such approval" });
+    if ((personKey(acc, auth.session) || auth.session.login) !== rec.fromKey) return json(res, 403, { error: "that approval is not yours to report on" });
+    const status = String(body.status || "");
+    if (!APPROVAL_REPORTS.has(status)) return json(res, 400, { error: "not a status the executing side can report" });
+    const local = body.via === "local";
+    const reason = typeof body.reason === "string" ? body.reason.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 200) : "";
+    const st = rec.status;
+    const conflict = () => json(res, 409, { error: `already ${st}`, status: st });
+    if (status === "unknown") {
+      if (!(APPROVAL_LIVE.has(st) || st === "approved")) return conflict();
+      approvalSet(auth.team, rec, { status, reason });
+    } else if (status === "expired") {
+      if (!APPROVAL_LIVE.has(st)) return conflict();
+      approvalSet(auth.team, rec, { status, reason });
+    } else if (status === "invalid") {
+      if (st !== "answered") return conflict();
+      rec.attempts += 1;
+      if (rec.attempts >= APPROVAL_REOPEN_MAX) approvalSet(auth.team, rec, { status: "expired", reason: "too many answers that did not match" });
+      else approvalSet(auth.team, rec, { status: "open", decision: "", by: "", via: "", reason: reason || "an answer did not match and was ignored" });
+    } else if (status === "held") {
+      if (st !== "answered") return conflict();
+      approvalSet(auth.team, rec, { status, reason });
+    } else {
+      // approved / denied. Remote: only what was answered, as answered. Local: the
+      // owner's own click always settles it, even over a relayed remote answer.
+      const want = status === "approved" ? "allow" : "deny";
+      if (local) {
+        if (!APPROVAL_LIVE.has(st)) return conflict();
+        approvalSet(auth.team, rec, { status, decision: want, by: rec.from, via: "local", reason });
+      } else {
+        if (st !== "answered" || rec.decision !== want) return conflict();
+        approvalSet(auth.team, rec, { status, reason });
+      }
+    }
+    return json(res, 200, { ok: true, status: rec.status });
   }
 
   if (url.pathname === "/api/state") {
@@ -2551,6 +3049,8 @@ async function handleRequest(req, res) {
       claimsPrune(t);
       for (const c of t.claims.values()) steerFrame(res, "claim", c.frame);
       for (const c of t.payers.values()) steerFrame(res, "payer", c.frame);
+      approvalSweep(auth.team);
+      for (const rec of approvalMap(auth.team).values()) steerFrame(res, "approval", approvalPublic(rec));
       t.listeners.add(res);
       const ping = setInterval(() => {
         try {
@@ -2562,6 +3062,7 @@ async function handleRequest(req, res) {
       req.on("close", () => {
         clearInterval(ping);
         t.listeners.delete(res);
+        approvalOwnerGone(auth.team, auth.accounts, personKey(auth.accounts, auth.session) || auth.session.login);
       });
       return;
     }
@@ -3164,6 +3665,7 @@ function handleControlMessage(conn, payload) {
       wsClose(conn, CLOSE_POLICY, "join needs a room name of 1..256 characters");
       return false;
     }
+    conn.roomName = room;
     return joinRoom(conn, roomKey(conn.team, room));
   }
 
@@ -3172,7 +3674,7 @@ function handleControlMessage(conn, payload) {
       wsClose(conn, CLOSE_POLICY, "join before sending a snapshot");
       return false;
     }
-    conn.pendingSnapshot = true;
+    if (!taskWriteRefused(conn)) conn.pendingSnapshot = true;
     return true;
   }
 
@@ -3180,11 +3682,24 @@ function handleControlMessage(conn, payload) {
   return false;
 }
 
+/** Task boards (`tasks:<team>` rooms) are written by people, so a socket opened
+ *  with a person's SESSION token needs Commenter or above to write one; a Viewer's
+ *  frames are dropped before the room sees them and the socket is told why. The
+ *  role is read live per frame, so a demotion bites at once. A socket opened with
+ *  the shared team token has no person behind it: the hub cannot gate that, and
+ *  says so in D-089. Returns true when the frame is refused. */
+function taskWriteRefused(conn) {
+  if (!conn.roomName.startsWith("tasks:") || !conn.auth || !conn.auth.session) return false;
+  if (conn.auth.accounts.can(conn.auth.session, "tasks")) return false;
+  wsSend(conn, OP_TEXT, Buffer.from(JSON.stringify({ type: "refused", error: "commenter role required", role: conn.auth.accounts.roleOf(conn.auth.session) })));
+  return true;
+}
+
 /** Everything after a successful handshake: one socket's whole life.
  *  `team` is fixed for the socket's lifetime — decided once, at the auth layer,
  *  from the token it upgraded with, never from anything the client sends after. */
-function attachWebSocket(socket, head, team) {
-  const conn = { socket, team, room: null, joined: false, pendingSnapshot: false, sawTraffic: true };
+function attachWebSocket(socket, head, team, auth) {
+  const conn = { socket, team, auth, roomName: "", room: null, joined: false, pendingSnapshot: false, sawTraffic: true };
   wsClients.add(conn);
   const assemble = createAssembler();
   let buffered = head && head.length ? Buffer.from(head) : EMPTY;
@@ -3258,6 +3773,7 @@ function attachWebSocket(socket, head, team) {
         wsClose(conn, CLOSE_POLICY, "join before sending data");
         return;
       }
+      if (taskWriteRefused(conn)) continue;
       relay(conn, out.payload);
     }
   });
@@ -3355,7 +3871,7 @@ server.on("upgrade", (req, socket, head) => {
   // `head` is whatever arrived glued to the handshake. A client that sends
   // frames before it has seen the 101 is within its rights, and those bytes are
   // already off the wire — dropping them loses a message for no reason.
-  attachWebSocket(socket, head, team);
+  attachWebSocket(socket, head, team, auth);
 });
 
 // Without this, restarting while the old hub still holds the port prints an

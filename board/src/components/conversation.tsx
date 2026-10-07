@@ -23,7 +23,7 @@ import { Launcher } from "./launcher";
 import { QuoteToComposer } from "./guards";
 import { VoiceHint } from "./voicedialog";
 import { PermitPrompt, PermitQueue } from "./permits";
-import { SteerApprovals, SteerBanner } from "./steer";
+import { ApprovalCards, SteerApprovals, SteerBanner } from "./steer";
 import { ComposerPayer } from "./payer";
 import { useSteer } from "../lib/steer";
 import { RunAsPicker } from "./spawn";
@@ -31,6 +31,7 @@ import { AskPrompt, AskQueue } from "./asks";
 import { DraftRestore } from "./findviews";
 import { DraftPublisher } from "./promptboxes";
 import { ThreadMap } from "./mapviews";
+import { TurnCommentButton } from "./turndetail";
 
 const TURN_COMPONENTS = { ToolGroup: TurnToolGroup };
 
@@ -218,6 +219,7 @@ export function Conversation() {
           agents, and whose agent my composer is aimed at with what happened
           to each steer I sent. Above the transcript like the permits. */}
       <SteerApprovals />
+      <ApprovalCards />
       <SteerBanner />
       <ComposerPayer />
       {/* "Run as" (D-060): only while starting a new agent. */}
@@ -226,6 +228,7 @@ export function Conversation() {
           comment for what it draws and why it is gone after the first
           message. */}
       <StartupActivity reading={reading} />
+      {reading ? null : <TurnCommentButton active={active} />}
       <div className="chat-thread-body">
         <Thread autoFocus={false} components={TURN_COMPONENTS} />
         {/* A tick per message down the right edge. It is the one thing that

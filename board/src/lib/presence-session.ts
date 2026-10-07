@@ -9,7 +9,11 @@
 import { useSyncExternalStore } from "react";
 import { AgentPresence } from "./presence-agents.mjs";
 import { agentRanges } from "./presence.mjs";
-import { addComment, exportUnresolved, listComments, replyTo, setResolved, COMMENTS_KEY } from "./presence-comments.mjs";
+import { addComment, exportUnresolved, linkStep, listComments, replyTo, setResolved, COMMENTS_KEY } from "./presence-comments.mjs";
+import { frameForAgent } from "./comment-anchor.mjs";
+import type { CommentRef, PlanStepRef } from "./comment-anchor.mjs";
+import { sendSteerTo } from "./steer";
+import type { SteerTarget } from "./steer";
 import type { Comment } from "./presence-comments.mjs";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -49,6 +53,7 @@ export function useComments(): CommentsState {
       listeners.add(l);
       return () => listeners.delete(l);
     },
+    () => state,
     () => state,
   );
 }
@@ -161,4 +166,46 @@ export function reveal(c: Comment): void {
     v.dispatch({ selection: { anchor: c.index }, scrollIntoView: true });
     v.focus();
   } catch { /* mid-update */ }
+}
+
+/* ---- turn / hunk anchors, plan steps, comment → agent (D-NEXT-W2-4) ---- */
+
+let pending: CommentRef | null = null;
+const pendingSubs = new Set<() => void>();
+
+/** The turn or hunk the NEXT comment will be pinned to (null: the cursor line). */
+export function setPendingAnchor(ref: CommentRef | null): void {
+  pending = ref;
+  pendingSubs.forEach((l) => l());
+}
+
+export function usePendingAnchor(): CommentRef | null {
+  return useSyncExternalStore(
+    (l) => {
+      pendingSubs.add(l);
+      return () => pendingSubs.delete(l);
+    },
+    () => pending,
+  );
+}
+
+/** Comment on a turn or a hunk. Stored in the open file's doc (the one sealed
+ *  comment store), so it needs a shared editor; null when there is none. A hunk
+ *  also gets a text anchor when its `index` is known. */
+export function addWithRef(text: string, ref: CommentRef, step?: PlanStepRef | null, index?: number | null): string | null {
+  if (!active || !text.trim()) return null;
+  const { ctx } = active;
+  return addComment(ctx.ydoc, ctx.E.Y, { author: ctx.me(), text: text.trim(), index: index ?? null, ref, step });
+}
+
+export function attachStep(id: string, step: PlanStepRef | null): void {
+  if (active) linkStep(active.ctx.ydoc, id, step);
+}
+
+/** Send a comment, with its exact lines, to `target`'s agent through the
+ *  steer channel: the team's steer policy (default ask) still decides. The
+ *  text is framed as data and capped (comment-anchor.mjs). */
+export async function commentToAgent(c: Comment, target: SteerTarget): Promise<void> {
+  const lineText = c.line == null || !active ? null : active.ctx.getText().split("\n")[c.line - 1] ?? null;
+  await sendSteerTo(target, frameForAgent({ author: c.author, text: c.text, ref: c.ref, step: c.step, line: c.line, lineText }));
 }

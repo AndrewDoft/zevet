@@ -48,6 +48,7 @@
  * is in this pane's own title row (App.tsx).
  */
 import { SessionClaimChip } from "./claimviews";
+import { ownersOf, useStepOwners } from "../lib/claimstore";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { Twist } from "./twist";
 import {
@@ -75,7 +76,8 @@ import { AgentLogo } from "./brand";
 import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
-import { SteerButton } from "./steer";
+import { InviteIntoSession, JoinSession } from "./sessionshare";
+import { SteerButton, TakeOverButton } from "./steer";
 import { TeamPayer } from "./payer";
 import { RunOnTheirs } from "./spawn";
 import { PromptGhost } from "./promptboxes";
@@ -258,6 +260,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
   const now = serverNow();
 
   const c = row.console;
+  const stepOwners = useStepOwners((s) => s.steps);
   const s = row.session;
   const isOpen = c ? activeConsole?.key === c.key : Boolean(s) && open?.id === s!.id && open?.source === s!.source;
   // Finished while you were looking at something else; board.ts § seenRuns.
@@ -303,6 +306,9 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
         {/* A sibling, not inside `agent-row-pick`: a <button> cannot nest in a
             <button>. Only a console row has one — a disk session already
             finished writing and cannot be stopped. */}
+        {/* A console's sessionId is the CLI's own session_id; the hook posts the
+            same id to the hub, so it names this session there (D-NEXT-W2-17). */}
+        {c ? <InviteIntoSession session={c.sessionId || undefined} /> : null}
         {c ? (
           <button
             type="button"
@@ -325,7 +331,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
       {c && c.error ? (
         <div className="agent-row-err">{plainError(c.error, { model: c.model, fallback: "Couldn't start." })}</div>
       ) : null}
-      {c?.plan ? <AgentPlan steps={c.plan.steps.map((step) => step.text)} activeIndex={c.plan.done} className="agent-row-plan" /> : null}
+      {c?.plan ? <AgentPlan steps={c.plan.steps.map((step) => step.text)} activeIndex={c.plan.done} owners={ownersOf(stepOwners, c.sessionId, c.plan.steps.map((step) => step.text))} className="agent-row-plan" /> : null}
     </div>
   );
 }
@@ -335,6 +341,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
  *  Steer (components/steer.tsx), which asks THEM, through the hub (D-058). */
 function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; session?: string; startedBy?: string; agent: string; repo: string; branch: string; mission: string; current: string; lastTs: number; state?: string; plan?: string }; hue: number; now: number }) {
   const where = a.repo ? a.repo + (a.branch ? " · " + a.branch : "") : "";
+  const stepOwners = useStepOwners((s) => s.steps);
   let plan: { text: string; status: "pending" | "in_progress" | "completed" }[] | null = null;
   try {
     const raw = a.plan ? JSON.parse(atob(a.plan)) : null;
@@ -358,10 +365,12 @@ function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; sessio
             <span className="agent-row-ago">{agoLabel(a.lastTs, now)}</span>
           )}
         </div>
+        <InviteIntoSession session={a.session} />
         <SteerButton a={a} />
+        <TakeOverButton a={a} />
       </div>
       <TeamPayer actor={a.actor} session={a.session} agent={a.agent} />
-      {plan?.length ? <AgentPlan steps={plan.map((step) => step.text)} activeIndex={plan.filter((step) => step.status === "completed").length} className="agent-row-plan" /> : null}
+      {plan?.length ? <AgentPlan steps={plan.map((step) => step.text)} activeIndex={plan.filter((step) => step.status === "completed").length} owners={ownersOf(stepOwners, a.session, plan.map((step) => step.text))} className="agent-row-plan" /> : null}
     </div>
   );
 }
@@ -653,6 +662,7 @@ export function PeoplePane({
 
   return (
     <>
+      <JoinSession />
       {[...roster].sort((a, b) => b.lastTs - a.lastTs).map((r) => {
         const idle = isIdle(r, now);
         const open = expanded.indexOf(r.actor) >= 0;

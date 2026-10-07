@@ -14,9 +14,12 @@ import { GithubMark, GoogleMark, MicrosoftMark } from "./logos";
 import { IdentityRows } from "./identity";
 import { handle } from "./invite";
 import { InPage, PageSection } from "./settings/parts";
+import { KeysSection, NotifySection } from "./settings/prefs";
 import { ReposPanel } from "./settings/repos";
 import { TeamPanel } from "./settings/team";
-import { SteerPolicyControl } from "./steerpolicy";
+import { ApprovePolicyControl, SteerPolicyControl } from "./steerpolicy";
+import { RetentionControl } from "./retention";
+import { buildCatalogue, formatCost, formatPair } from "../lib/model-catalogue.mjs";
 
 function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   return (
@@ -707,6 +710,35 @@ function CredentialsSection() {
   );
 }
 
+/** Read-only: what this machine can run, who pays, indicative price. Settings > Agents,
+ *  beside the credentials and the ladder it reads (D-083). */
+function ModelsSection() {
+  const agents = useBoard((s) => s.localAgents);
+  const consoles = useBoard((s) => s.myConsoles);
+  const [creds, setCreds] = useState<CredentialMeta[]>([]);
+  const [ladder, setLadder] = useState<LadderStep[]>([]);
+  useEffect(() => {
+    window.zevet?.listCredentials?.().then((r) => { if (r && r.ok) setCreds((r.credentials as CredentialMeta[]) || []); }, () => {});
+    window.zevet?.credentialLadder?.().then((l) => setLadder(l || []), () => {});
+  }, []);
+  const rows = buildCatalogue({ agents, credentials: creds, ladder, consoles });
+  return (
+    <SSection title="Models" summary={`${rows.filter((r) => r.available).length} of ${rows.length} ready`}>
+      {rows.map((r) => (
+        <div className="srow" key={r.engine + ":" + r.id} data-model-row={r.id}>
+          <span className="k">
+            {r.name} <span className="mono">{r.engine}</span>
+          </span>
+          <span className="v mono">
+            {r.available ? "ready" : "unavailable"} · {r.payers.join(", ") || "no credential"} · {formatPair(r.price)} · run {formatCost(r.runMedian)}
+          </span>
+        </div>
+      ))}
+      <SNote>$ per MTok in / out</SNote>
+    </SSection>
+  );
+}
+
 function IndexSection() {
   const stripMachine = useBoard((s) => s.strip.machine);
   const indexStatus = useBoard((s) => s.indexStatus);
@@ -1285,17 +1317,31 @@ export function SettingsPage() {
                 <IndexSection />
               </>
             ) : null}
-            {tab === "team" ? <TeamPanel /> : null}
+            {tab === "team" ? (
+              <>
+                <TeamPanel />
+                <PageSection title="Keep prompts and commands">
+                  <RetentionControl />
+                </PageSection>
+              </>
+            ) : null}
             {tab === "collab" ? (
-              <PageSection title="Steering and starting agents">
-                <SteerPolicyControl />
-              </PageSection>
+              <>
+                <PageSection title="Steering and starting agents">
+                  <SteerPolicyControl />
+                </PageSection>
+                <PageSection title="Answering teammates' prompts">
+                  <ApprovePolicyControl />
+                </PageSection>
+              </>
             ) : null}
             {tab === "agents" ? (
               <>
                 <PermissionSection />
+                <NotifySection />
                 <AgentSettings />
                 <CredentialsSection />
+                <ModelsSection />
               </>
             ) : null}
             {tab === "integrations" ? (
@@ -1305,7 +1351,12 @@ export function SettingsPage() {
                 <ConnectionsSection />
               </>
             ) : null}
-            {tab === "appearance" ? <AppearancePanel /> : null}
+            {tab === "appearance" ? (
+              <>
+                <AppearancePanel />
+                <KeysSection />
+              </>
+            ) : null}
           </div>
         </div>
       </div>

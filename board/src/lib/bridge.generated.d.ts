@@ -213,8 +213,16 @@ export interface LocalBridge {
   claim?: (input: { root: string; paths: string[]; session: string; actor?: string; auto?: boolean }) => Promise<{ ok: boolean; claim?: unknown; shared?: boolean; error?: string }>;
   /** Release one path, or every path of a session when none is given. */
   releaseClaims?: (session: string, path?: string) => Promise<{ ok: boolean }>;
+  /** Pinned notes for a folder (or one file), each flagged stale when the file's hash moved. Computed locally. */
+  memoryList?: (input: { root: string; path?: string }) => Promise<{ ok: boolean; notes: Array<{ id: string; repo: string; path: string; text: string; hash: string; author: string; createdAt: number; updatedAt: number; retired: boolean; stale: "fresh" | "stale" | "missing" | "unknown" }>; error?: string }>;
+  /** Pin a note to a file at its current hash; sealed with the document key. */
+  memoryCreate?: (input: { root: string; path: string; text: string }) => Promise<{ ok: boolean; note?: unknown; error?: string }>;
+  /** Edit a note; rehash re-pins it to the file as it is now. */
+  memoryEdit?: (input: { root: string; id: string; text?: string; rehash?: boolean }) => Promise<{ ok: boolean; note?: unknown; error?: string }>;
+  /** Retire a note. */
+  memoryRetire?: (input: { root: string; id: string }) => Promise<{ ok: boolean; error?: string }>;
   /** Live claims, mine and the team's. */
-  claims?: () => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }> }>;
+  claims?: () => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }>; steps?: Array<{ session: string; step: string; actor: string }> }>;
   /** One text file, by path relative to its root. */
   read: (root: string, relPath: string) => Promise<ReadResult>;
   /**
@@ -411,6 +419,11 @@ export interface LocalBridge {
   /** Start an agent in a folder. Returns { ok, id }. */
   startAgent: (name: string, root: string, opts: { model: string; mode: string; forkFrom?: string; prompt?: string; effort?: string; addDirs?: string[]; continueLatest?: boolean; engine?: string; label?: string }) => Promise<StartAgentResult>;
   sendToAgent: (id: string, text: string) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * An OS notification for an agent that finished or needs a person. The board
+   * decides whether one is wanted (lib/notify.mjs); this only shows it.
+   */
+  notify?: (title: string, body: string, key: string) => Promise<{ ok: boolean }>;
   boardReply?: (reqId: string, result: unknown) => Promise<unknown>;
   stopAgent: (id: string) => Promise<unknown>;
   /**
@@ -451,6 +464,10 @@ export interface LocalBridge {
    * UI must not be able to, which is why the card is removed optimistically.
    */
   askAnswer?: (id: string, picked: string[]) => Promise<{ ok: boolean; error?: string }>;
+  /** Invite a teammate into one session (D-090): main seals the session reference with the document key and registers it with the hub. Returns the invite id to share. */
+  sessionInvite?: (session: string, mode: string, repo: string) => Promise<{ ok: boolean; id?: string; error?: string }>;
+  /** Join a session by invite id. The hub runs the checks (member, role, seat, push, agent) and answers the first failure as one error; main probes push access to the repo for an edit join. */
+  sessionJoin?: (id: string, mode?: string) => Promise<{ ok: boolean; check?: string; mode?: string; readOnly?: boolean; session?: string; repo?: string; agent?: string; actor?: string; error?: string }>;
   /**
    * Steer a teammate's agent (D-058): main seals the text with the document
    * key and sends it through the hub, which enforces the team's steer policy.
@@ -463,11 +480,20 @@ export interface LocalBridge {
    * mode and resolves the repo by name. Optional: an older desktop build cannot.
    */
   spawnSend?: (to: string, repo: string, agent: string, model: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>;
+  /**
+   * Take over a teammate's running turn: main seals the request with the document
+   * key; the hub allows one winner per session and enforces the team's steer
+   * policy. The new turn runs on THIS machine's account, on the engine named.
+   * Optional: an older desktop build cannot.
+   */
+  takeoverSend?: (to: string, session: string, repo: string, agent: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; winner?: string; payer?: string; error?: string }>;
   /** Who pays for an agent's turns on this machine: engine and account, from the engine's own login (never a token). Empty label = unknown. */
   payerFor?: (agent: string, model?: string, engine?: string) => Promise<{ engine: string; account: string; label: string }>;
   /** Seal this session's payer with the document key and share it with the team (a release when unknown). */
   sharePayer?: (session: string, agent: string, model?: string, engine?: string) => Promise<{ ok: boolean; label?: string }>;
   steerAnswer?: (id: string, approve: boolean) => Promise<{ ok: boolean; error?: string }>;
+  /** Answer a teammate agent's permission prompt (D-086). Main seals the answer with the exact action it was shown; the hub only arbitrates the first answer, and the teammate's app checks it before acting. Editor and above; refused while the team policy is off. */
+  approvalAnswer?: (id: string, allow: boolean) => Promise<{ ok: boolean; status?: string; by?: string; error?: string }>;
   onUpdate: (cb: (s: unknown) => void) => void;
   onIndexEvent: (cb: (p: { kind?: string; total?: number; loaded?: number; indexed?: number }) => void) => void;
   /**
@@ -482,6 +508,8 @@ export interface LocalBridge {
    * clobber this exists to prevent. See `fire()` in desktop/file-watch.js.
    */
   onFileChanged: (cb: (p: { root: string; relPath: string; text?: string; bom?: boolean; eol?: string }) => void) => () => void;
+  /** A notification from notify() was clicked; key is the one it was sent with. */
+  onNotifyClick?: (cb: (key: string) => void) => () => void;
   /**
    * A due schedule just ran (or was skipped); the board's own list is
    * otherwise only refreshed after a save/toggle/remove round-trip.
@@ -520,8 +548,10 @@ export interface LocalBridge {
    * pair beside them: an older main process simply never sends one.
    */
   onAskRequest?: (cb: (req: AskRequest) => void) => () => void;
+  /** Pinned notes changed (a teammate's note arrived or one was edited). */
+  onMemoryEvent?: (cb: (e: { repo: string }) => void) => () => void;
   /** The live claims changed (a claim, a release, an expiry, a teammate's frame). */
-  onClaimsEvent?: (cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }> }) => void) => () => void;
+  onClaimsEvent?: (cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }>; steps?: Array<{ session: string; step: string; actor: string }> }) => void) => () => void;
   /**
    * Steering (D-058): `ask` an approval card for a teammate's steer, `done`
    * when one was injected or declined, `status` for a steer this person sent.
