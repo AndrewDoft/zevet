@@ -378,7 +378,7 @@ describe("secrets never reach the hub", () => {
       });
       const { body } = await state(hub.base);
       const sent = body.events.at(-1).detail;
-      assert.match(sent, /\[redacted\]/, `nothing was redacted from: ${sent}`);
+      assert.match(sent, /\[redacted:[a-z-]+\]/, `nothing was redacted from: ${sent}`);
       // And the secret itself must be gone, not merely accompanied by a marker.
       const secret = command.match(/(sk_live_\S+|ghp_\S+|sk-ant-\S+|AKIA\w+|hunter2\S*|abc123def456ghi789jkl)/);
       if (secret) {
