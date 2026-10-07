@@ -85,33 +85,52 @@ token stays valid at the hub until its idle TTL, but no app here presents it any
 - Signed out everywhere, or no family dir at all: every app works as before (dictation never needs a hub
   session); `sync` is a no-op and never throws.
 
-## Relationship to feat/one-login (masora2)
+## Relationship to feat/one-login
 
-`origin/feat/one-login` (2026-10-04, 11 commits, unmerged as a ref) is **already on masora2 main in substance**:
-the same change landed through another branch as D-905 (consent hint) and D-906 (one login), shipped in Masora
-Context 0.3.137 (`c852db7f`). Compared file by file against `origin/main`, the branch's `routers/family.py`,
-`shell/family-cloud.js` and the rest differ only in decision numbers (D-901/D-902 vs D-905/D-906) and in what
-main gained afterwards (Microsoft sign-in). Nothing on it needs merging; it can be deleted.
+Both `origin/feat/one-login` branches are duplicates of what is already on main (triage: scrap-dup). masora2's
+landed on main as D-905/D-906 (Masora Context 0.3.137, `c852db7f`); file by file it differs from `origin/main` only
+in decision numbers and in what main gained since (Microsoft sign-in). zevet's two commits (`cc03467`, `8dc9aed`)
+are patch-equivalent to commits on main (`git cherry main origin/feat/one-login`: both `-`). Neither needs
+merging. This design builds on what they shipped and adds only the missing local-sharing piece.
 
-What one-login does, and how this design uses it:
+### Already exists (do not rebuild)
 
-- **Masora -> Zevet (built on, unchanged).** Masora's cloud shell writes `zevet.credentials.json` with a
-  `hub: {url, assertion}` block; Zevet redeems it at the hub's `/auth/masora` and writes its config as a key join
-  does; Zevet's heartbeat reports `masora.hub_email` so the shell re-issues when Zevet has no session for the
-  signed-in person. This design adds one line on the Zevet side: that sign-in is published to `sso.json`, so
-  **Masora -> Zevet -> Voice** works with no Masora change.
-- **What one-login does not cover, and this design adds:** Zevet <-> Voice in both directions, sign-out
-  propagation (one-login has none: Masora signing out only deletes the credentials files), apps that start
-  later, and an encrypted at-rest record instead of a 10-minute plaintext hand-off.
-- **Why not extend one-login's mechanism to Zevet <-> Voice** (a `voice.credentials.json` written by Zevet):
-  it is one-way and one-shot (consume and delete), so a sibling that is not running or starts later misses it;
-  it carries no sign-out; and the hand-off file is plaintext JSON protected only by its ACL. `sso.json` is the
-  durable, authenticated last-state record those three cases need. The two coexist: Masora keeps issuing
-  credentials files; `sso.json` is the hub-session record among the hub's clients.
+masora2 `origin/main`:
+- `packages/core/core/config.py:221,563`: `zevet_hub_secret` / `ZEVET_HUB_SECRET` (with `ZEVET_HUB_URL`).
+- `apps/api/api/routers/family.py:214-225`: `_hub_assertion`, an HS256 `zevet_hub_assertion` (aud `zevet-hub`,
+  10 min, `jti`, person, email, workspace, `admin`).
+- `apps/api/api/routers/family.py:274-276`: `/family/cloud/credentials` adds `hub: {url, assertion}` for
+  `app == "zevet"` only.
+- `apps/desktop/shell/family-cloud.js:56-57,67`: re-issues for a Zevet whose heartbeat `hub_email` is not the
+  signed-in person; writes the `hub` block into `zevet.credentials.json`.
+- `apps/api/api/auth/desktop.py:179,193,792` and `apps/desktop/shell/desktop-login.js:6,52`: `signin_hint`
+  (incremental Google consent, D-905). Unrelated to hub sign-in.
+
+zevet `main`:
+- `hub/masora-auth.mjs:10,33`: `verifyAssertion` (pinned alg/typ/aud, expiry) and `replayGuard` (single-use jti).
+- `hub/server.mjs:1015,2199-2218`: `POST /auth/masora`, with an ownerless team opening only for a Masora admin.
+- `hub/accounts.mjs:293-297`: `signInMasora`, a Google-style record keyed by email.
+- `desktop/family.js:9,338-378`: consumes `zevet.credentials.json` in cloud mode and redeems its `hub` block
+  (`#signInHub`, :388); `:220-222` heartbeat `masora.hub_email`.
+- `desktop/main.js:1609` (main): `hubSignInFromMasora` writes the config as a key join does.
+
+### The gap this change fills
+
+- **Zevet <-> Voice on one machine, both directions.** Nothing on main shares a hub session between them; Voice's
+  hub sign-in (`feat/signin`) was standalone.
+- **Sign-out propagation.** None exists: Masora signing out only deletes the credentials files.
+- **Apps that start later.** `<app>.credentials.json` is one-shot (consumed and deleted, 10 min), so an app that
+  is not running misses it. `sso.json` is the durable, authenticated last-state record.
+- **Masora -> Voice.** Gets through by chaining: Masora -> Zevet (D-906, unchanged) -> `sso.json` -> Voice.
+  The one Zevet line added for it is the `sso.publish` after `hubSignInFromMasora`.
+
+Why not extend the credentials-file mechanism (a `voice.credentials.json` written by Zevet): it is one-way,
+one-shot, carries no sign-out, and holds the token in plain JSON protected only by its ACL. The two coexist:
+Masora keeps issuing credentials files, and `sso.json` is the hub-session record shared by the hub's clients.
 
 ## Masora (usemasora.com cloud accounts) <-> hub identity
 
-The hub already accepts Masora's signed assertion (one-login, D-906; `POST /auth/masora`, `hub/masora-auth.mjs`): HS256 over a
+The hub already accepts Masora's signed assertion (D-906, see "Already exists"; `POST /auth/masora`, `hub/masora-auth.mjs`): HS256 over a
 secret shared only by the Masora API (`ZEVET_HUB_SECRET`) and the hub (`ZEVET_MASORA_SECRET`), `typ`
 `zevet_hub_assertion`, `aud` `zevet-hub`, 10 min, single-use `jti`. `accounts.mjs signInMasora` stores the person
 as a Google-style record keyed by the asserted email, so a later Google sign-in with that email links to it.
@@ -154,7 +173,9 @@ match an existing person.
 
 ## Masora follow-up spec (not implemented: needs masora2 changes plus hub and Masora API deploys)
 
-Ordered smallest first; (1)-(3) extend D-906 rather than replace it.
+The Masora-side gap, ordered smallest first. (1)-(3) extend D-906 and do not replace it. Only (2) and (3) are
+needed for "log into one, logged into all three" between Masora and Voice and for sign-out from Masora; (4) is
+the reverse direction and needs a decision from Andrew first.
 
 1. **Move `desktop/sso.js` into `@masora/desktop-kit`** as `kit.sso` (new tag, never move an existing one), and
    bump Zevet. Masora's shell then uses the same code, not a copy.
