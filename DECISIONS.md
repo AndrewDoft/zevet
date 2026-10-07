@@ -2239,3 +2239,32 @@ test/make-feed.test.mjs (four-platform feed). Mutation-checked: dropping the lin
 make-feed TARGETS entries turns them red. Dropping the chmod does NOT (mode assertion is skipped on Windows; runs on Linux CI).
 
 **Not verified.** The installers are not uploaded by `ship.mjs` yet and there are no download links; the AppImage swap has never run on a Linux desktop; the ARM64 installer is only install-checked, never launched. The branch's two `workflow_dispatch` builds (cef01ab, dbc4417) failed the macOS smoke at "payload 0.2.125 activated; relaunching" (app exited 0 inside the 12 s window); main's own tag builds 0.2.120-0.2.126 all passed that smoke. Not root-caused: the branch diff does not touch the macOS or payload-swap path.
+
+## D-089 — Team task board: sealed cards in a `tasks:<team>` doc-sync room
+
+*Renumbered at merge from D-NEXT-W2-15.*
+
+**2026-10-07.** Item 15 of the Amoeba build order.
+
+**What existed.** No team chat. Zevet Chat (`desktop/chat*.js`) is one person's local conversation with a model; there is no human-to-human channel, so cards link to no chat message. Team chat is logged as a follow-up, not half-built.
+
+**Decision.** A card is `{title, owner, status todo|doing|done, link {path|agent, ref}, comments[]}`. Cards live in the doc-sync room `tasks:<team>` (`board/src/lib/tasks.mjs`, `tasks-sync.mjs`). Each frame is JSON sealed in the main process with the document key and the room name as AAD (the existing `doc:*` bridge; no new IPC), so the hub relays and replays ciphertext only. State and delta share one shape and merge is last-writer-wins per field plus append-only comments: commutative and idempotent, so log replay, snapshots and live deltas cannot disagree. Every reconnect answers `ready` with the client's whole state; the hub's log replays to a late joiner. Bounded: 500 cards, 200 comments a card, field lengths capped; junk is dropped on receipt. Removal is a tombstone field.
+
+**Roles.** Viewer reads; Commenter comments; Editor (and Owner) creates, moves, assigns, edits, removes, starts an agent. Three layers:
+- *Sender:* `apply` refuses an op the role does not allow (nothing is sent). Controls a role cannot use are not drawn.
+- *Receiver:* `merge` keeps an entry only if its author's role (from whoami `people[].role`) allows it. Read at receipt, so a later demotion also hides that person's earlier edits on a fresh merge.
+- *Hub (the only layer the sender cannot bypass):* `ACTION_ROLE.tasks = commenter`. On a socket opened with a person's SESSION token, binary frames and snapshot requests into a `tasks:` room are dropped when the role is below Commenter, with a `{"type":"refused"}` text frame back. The role is read per frame, so a demotion bites at once. Reads (replay, relay to the Viewer) are unaffected.
+
+**What the hub cannot enforce, said plainly.** (1) A comment and an edit are the same sealed bytes, so the hub's floor is Commenter; Commenter-vs-Editor is client-side. (2) `/ws` is usually opened with the shared team token (D-081): no person is behind it, so the hub gates nothing there. (3) The author name in an entry is not signed; anyone holding the document key can forge one. The receiver check stops a modified client from a Viewer only if the forger does not claim another login. These are the same limits roles already carry for `/ws`.
+
+**Start agent on this.** `handoff(card, role)` gates at Editor on the client, then uses the existing paths: a card owned by a teammate goes through `setSpawnTarget` + `sendSpawn` (hub `/api/spawn`, Editor-gated at the hub); otherwise `startAgent` on this machine, which has no hub route to gate.
+
+**Alternatives.** (a) Yjs: the dependency lives in `editor/` only and a plain LWW map is enough for flat cards. (b) A hub-owned `/api/tasks`: readable content on the server, against the blind-hub rule. (c) Local persistence of cards: plaintext on disk for a feature whose copy is the room; skipped.
+
+**Not done / follow-ups.** Team chat and card-to-message links. Cards are not persisted if every client leaves and the hub restarts (rooms are memory-only, D-hub). No drag-and-drop, no link picker UI (links are set by `edit` ops; the panel does not yet draw a field for them).
+
+**Reversibility.** Additive: a board, a room name, one `ACTION_ROLE` key. Removing the panel leaves sealed frames nobody reads.
+
+**Tests.** `test/tasks.test.mjs` (11): create/move/assign/comment under each role, receiver drops Viewer/unknown authors, merge order-independence, handoff gate, ready/snapshot resend, and against a real hub: ciphertext-only relay (a keyless spy; wrong-room AAD fails), late-joiner and offline-edit convergence, Viewer session-socket frames dropped / Commenter relayed / demotion immediate. Mutation-checked, each turned the suite red and was restored: `may()` always true; receiver ignoring author role; handoff gate removed; `ready` not resending; `do()` not sending; hub gate off; hub role cached at join; doc-sync sending plaintext.
+
+**Not verified.** Rooms are in hub memory only; at the hub a Commenter and an Editor are indistinguishable (the same sealed bytes), so that split is client-side; a card link has no UI; no browser walk of the panel; no two-machine run; the Start-agent buttons were not exercised; the shared-token path is ungated by design.

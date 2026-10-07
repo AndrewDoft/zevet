@@ -461,7 +461,9 @@ interface WhoStateShape {
   ok?: boolean;
   actor?: string;
   login?: string;
+  team?: string;
   teamName?: string;
+  role?: string | null;
   owner?: boolean;
   allow?: string[];
   shared?: boolean;
@@ -470,6 +472,7 @@ interface WhoStateShape {
     login: string;
     key?: string;
     owner?: boolean;
+    role?: string;
     pending?: boolean;
     identities?: Array<{ provider: string; login: string }>;
     aliases?: string[];

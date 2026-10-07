@@ -1625,3 +1625,18 @@
 .pinned-note[data-stale="stale"] .pinned-text,.pinned-note[data-stale="missing"] .pinned-text{opacity:.7}
 .pinned-text{flex:1;min-width:0}.pinned-who{color:var(--muted);font-size:11px}
 .pinned-add input,.pinned-note textarea{flex:1;min-width:0}
+
+  /* Team task board (components/tasks.tsx). Bottom-left; a pill when closed. */
+  .tasks-panel { position: fixed; left: 16px; bottom: 16px; z-index: 30; display: flex; flex-direction: column-reverse; align-items: flex-start; font-family: var(--font-mono); font-size: 11.5px; }
+  .tasks-toggle { padding: 6px 12px; border-radius: 999px; background: var(--raise); border: 1px solid var(--line); color: var(--ink); cursor: pointer; }
+  .tasks-toggle:hover { background: var(--raise-soft); }
+  .tasks-body { margin-bottom: 6px; padding: 8px; width: min(420px, 90vw); max-height: 60vh; overflow: auto; background: var(--raise); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .tasks-body h4 { margin: 6px 0 2px; color: var(--subtle); font-weight: 500; }
+  .tasks-body input { font: inherit; background: transparent; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; min-width: 0; }
+  .tasks-card { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .tasks-card[data-status="done"] .tasks-title { opacity: 0.55; text-decoration: line-through; }
+  .tasks-title { color: var(--ink); }
+  .tasks-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--subtle); }
+  .tasks-meta button { font: inherit; background: transparent; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+  .tasks-comment { color: var(--subtle); }
+  .tasks-note { color: var(--subtle); }
