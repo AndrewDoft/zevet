@@ -5222,6 +5222,30 @@ function stopSteerChannel() {
   pushClaims();
 }
 
+const sessionShare = require("./session-share.js");
+
+bridge.handle("local:sessionInvite", async (_e, arg) => {
+  const a = steerAuth(readConfig());
+  if (!a.session) return { ok: false, error: "Sign in to your team to invite someone." };
+  return sessionShare.sendInvite({ hub: a.hub, token: a.token, key: a.key, session: String((arg && arg.session) || ""), mode: String((arg && arg.mode) || "watch"), repo: String((arg && arg.repo) || "") });
+});
+
+bridge.handle("local:sessionJoin", async (_e, arg) => {
+  const a = steerAuth(readConfig());
+  if (!a.session) return { ok: false, error: "Sign in to your team to join a session." };
+  return sessionShare.joinInvite({
+    hub: a.hub,
+    token: a.token,
+    key: a.key,
+    id: String((arg && arg.id) || "").trim(),
+    mode: arg && arg.mode ? String(arg.mode) : "",
+    resolveRepo: (name) => {
+      const w = agentSpawn.resolveRepo(name, readWorkspaces());
+      return w && w.dir ? w.dir : null;
+    },
+  });
+});
+
 bridge.handle("local:steerSend", async (_e, arg) => {
   const a = steerAuth(readConfig());
   if (!a.session) return { ok: false, error: "Sign in to your team to steer a teammate's agent." };

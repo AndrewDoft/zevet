@@ -20,6 +20,7 @@ import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedE
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 import * as ms from "./microsoft-auth.mjs";
 import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
+import { checkJoin, createInviteStore, MODES, INVITE_ID_RE, INVITE_SEALED_MAX } from "./session-share.mjs";
 import { initSentry } from "./sentry.mjs";
 import { agentsOf } from "../board/src/lib/agents.mjs";
 import { verifyAssertion, replayGuard, parseTeamMap } from "./masora-auth.mjs";
@@ -1438,6 +1439,7 @@ const TAKEOVER_RATE_MAX = Number(process.env.ZEVET_TAKEOVER_RATE_MAX || 5);
 const TAKEOVER_OWNER_STATUSES = new Set(["delivered", "declined"]);
 const TAKEOVER_TAKER_STATUSES = new Set(["started", "start-failed"]);
 const steerTeams = new Map(); // team -> { listeners:Set<res>, byId:Map<id,rec>, rate:Map<person,ts[]> }
+const sessionInvites = createInviteStore();
 
 function steerTeam(team) {
   let t = steerTeams.get(team);
@@ -2547,6 +2549,62 @@ async function handleRequest(req, res) {
       if (r.changed && key === "retention") boards.get(auth.team).compact();
     }
     return json(res, 200, { ok: true, policy: acc.policy });
+  }
+
+  /* Invite into ONE session (D-090). Create: an Editor (or the owner)
+   * who owns that session seals its key on their desktop; the hub keeps the
+   * ciphertext. Join: checkJoin's five checks, first failure wins, ONE error. */
+  if (url.pathname === "/api/session-invite" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const denied = roleRefusal(auth, "share");
+    if (denied) return json(res, 403, denied);
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, INVITE_SEALED_MAX + 2 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "expected a JSON object" });
+    const id = typeof body.id === "string" ? body.id : "";
+    const session = typeof body.session === "string" ? body.session.slice(0, 64) : "";
+    const sealed = typeof body.sealed === "string" ? body.sealed : "";
+    if (!INVITE_ID_RE.test(id) || !session || !sealed || !MODES.includes(body.mode)) return json(res, 400, { error: "an invite needs id, session, mode and sealed" });
+    if (sealed.length > INVITE_SEALED_MAX || !/^[A-Za-z0-9+/]+={0,2}$/.test(sealed)) return json(res, 400, { error: "sealed must be base64" });
+    const agent = boards.get(auth.team).snapshot(auth.accounts.actorResolver()).agents.find((a) => a.session === session);
+    if (!agent) return json(res, 404, { error: "Session ended" });
+    const mine = auth.accounts.namesOfSession(auth.session).includes(String(agent.actor).toLowerCase());
+    if (!mine && auth.accounts.roleOf(auth.session) !== "owner") return json(res, 403, { error: `Only ${agent.actor} or the owner can invite into this session` });
+    sessionInvites.add(auth.team, { id, session, mode: body.mode, sealed, repo: agent.repo || "", agent: agent.agent, actor: agent.actor, by: auth.session.login });
+    return json(res, 200, { ok: true, id });
+  }
+
+  if (url.pathname === "/api/session-invite/join" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const inv = body && typeof body.id === "string" ? sessionInvites.get(auth.team, body.id) : null;
+    if (!inv) return json(res, 404, { ok: false, check: "invite", error: "Invite not found or expired. Ask for a new one" });
+    const acc = auth.accounts;
+    const sess = auth.session;
+    const mode = typeof body.mode === "string" ? body.mode : inv.mode;
+    const agent = boards.get(auth.team).snapshot(acc.actorResolver()).agents.find((a) => a.session === inv.session);
+    const r = checkJoin({
+      invite: inv,
+      role: sess ? acc.roleOf(sess) : null,
+      can: (action) => acc.can(sess, action),
+      mode,
+      pushAccess: typeof body.push === "boolean" ? body.push : null,
+      agentOnBoard: Boolean(agent),
+      agentOnline: steerChannelsFor(auth.team, acc, inv.actor).length > 0,
+    });
+    if (!r.ok) return json(res, r.status, { ok: false, check: r.check, error: r.error, ...(r.check === "push" ? { repo: inv.repo } : {}) });
+    return json(res, 200, { ok: true, mode: r.mode, readOnly: r.readOnly, session: inv.session, repo: inv.repo, agent: inv.agent, actor: inv.actor, sealed: inv.sealed, id: inv.id });
   }
 
   /* Send a steer — see the block comment above `steerTeam`. */

@@ -149,6 +149,7 @@ export const ACTION_ROLE = Object.freeze({
   approve: "editor",
   spawn: "editor",
   takeover: "editor",
+  share: "editor",
   credential: "editor",
   // Writing to a `tasks:` document room. The hub cannot tell a comment from an edit
   // (sealed), so it holds the floor at Commenter; clients enforce the rest.

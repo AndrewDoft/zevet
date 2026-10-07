@@ -94,6 +94,7 @@
       "agent-approval.js",
       "agent-spawn.js",
       "agent-takeover.js",
+      "session-share.js",
       "chat.js",
       "chat-claude.js",
       "chat-cli.js",

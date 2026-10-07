@@ -2268,3 +2268,24 @@ make-feed TARGETS entries turns them red. Dropping the chmod does NOT (mode asse
 **Tests.** `test/tasks.test.mjs` (11): create/move/assign/comment under each role, receiver drops Viewer/unknown authors, merge order-independence, handoff gate, ready/snapshot resend, and against a real hub: ciphertext-only relay (a keyless spy; wrong-room AAD fails), late-joiner and offline-edit convergence, Viewer session-socket frames dropped / Commenter relayed / demotion immediate. Mutation-checked, each turned the suite red and was restored: `may()` always true; receiver ignoring author role; handoff gate removed; `ready` not resending; `do()` not sending; hub gate off; hub role cached at join; doc-sync sending plaintext.
 
 **Not verified.** Rooms are in hub memory only; at the hub a Commenter and an Editor are indistinguishable (the same sealed bytes), so that split is client-side; a card link has no UI; no browser walk of the panel; no two-machine run; the Start-agent buttons were not exercised; the shared-token path is ungated by design.
+
+## D-090 — Invite into one session, with a five-check join
+
+*Renumbered at merge from D-NEXT-W2-17.*
+
+**Decision.** An Editor (or the owner) invites a teammate into a single session from its agent row ("Invite"): their desktop seals the session reference `{session, repo, mode}` with the team document key (AAD `session-invite <id> <session>`, same scheme as steers and claims) and registers it at `POST /api/session-invite`; the hub holds ciphertext, in memory, 24 h. Only the session's person or the owner may invite (else "Only X or the owner can invite into this session"); a session not on the board is "Session ended". The invite id is the thing shared; the joiner pastes it ("Join a session"). `mode` is the most the invite grants: watch, comment or edit.
+
+`POST /api/session-invite/join` runs `checkJoin` (hub/session-share.mjs), first failure wins, ONE `{check, error}`: (1) team member, "Join the team first"; (2) role: watch needs any member, comment needs Commenter, edit needs Editor via `can` ("Ask the owner for Editor"); a mode above the invite is "This invite is X only"; (3) seat; (4) push access, edit only; (5) the agent is on the board ("Session ended") and, to edit, its person's desktop channel is open ("X is offline"). A Viewer joins `watch` and gets `readOnly: true`; asking to edit is refused by the role check. A joiner defaults to the invite's mode, so a Viewer must ask for watch.
+
+- **Seat: skipped.** No seat limit exists anywhere (no plan, metering or cap in hub, accounts or desktop; the only "seat" in the tree is a comment). The check is recorded as `skipped: ["seat"]` in a successful join, not invented. It slots between role and push when a limit exists.
+- **Push access.** The hub has no GitHub token and makes no GitHub call. Push is a fact about the joiner's machine, so the joiner's desktop answers it: `git push --dry-run origin HEAD` in the open workspace folder of that name (the spawn resolver). Flow: the hub says `check: "push"` with the repo, the desktop probes, retries with `push: true|false`. The answer is client-reported, so it is a UX gate; git itself is the enforcement on a real push. Not a role.
+- **Sealed.** There is no separate per-session key in Zevet; the sealed payload is the session reference under the team doc key, opened on the joiner's desktop (a different team secret gets "The invite did not open here"). It carries no new secret.
+- New ACTION_ROLE `share: editor`. IPC `sessionInvite`, `sessionJoin`; `desktop/session-share.js` added to the payload list.
+
+**Alternatives.** (a) Hub probes GitHub: needs a stored token, rejected. (b) Per-person invites: the invite id is unguessable and team-scoped; per-person binding left out. (c) Persist invites: a restart means re-invite, same as steers.
+
+**Reversibility.** Additive: two routes, one action, two IPC calls. Nothing stored on disk.
+
+**Tests.** `test/session-share.test.mjs`: each check's pass and fail, order (first failing wins), single-error shape, Viewer read-only, expiry, and a real hub with the real desktop module (sealing, push probe only when asked, wrong secret). Mutation-checked: dropping the push check, `readOnly`, the role check, the member check, moving the agent check first, and dropping the offline check each turned the suite red; all restored.
+
+**Not verified.** Own-session Invite is missing (only team agent rows have the button); the push check is UX-only (the hub cannot see GitHub, the joiner's own git decides what a push really does); no UI walk of the Invite button or Join field; `git push --dry-run` was not run against a real remote; no two-machine run; own-session rows (AgentRow) have no Invite button, only team agent rows.
