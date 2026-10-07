@@ -17,6 +17,7 @@ import { InPage, PageSection } from "./settings/parts";
 import { ReposPanel } from "./settings/repos";
 import { TeamPanel } from "./settings/team";
 import { SteerPolicyControl } from "./steerpolicy";
+import { RetentionControl } from "./retention";
 
 function SRow({ k, v, mono }: { k: ReactNode; v: ReactNode; mono?: boolean }) {
   return (
@@ -1285,7 +1286,14 @@ export function SettingsPage() {
                 <IndexSection />
               </>
             ) : null}
-            {tab === "team" ? <TeamPanel /> : null}
+            {tab === "team" ? (
+              <>
+                <TeamPanel />
+                <PageSection title="Keep prompts and commands">
+                  <RetentionControl />
+                </PageSection>
+              </>
+            ) : null}
             {tab === "collab" ? (
               <PageSection title="Steering and starting agents">
                 <SteerPolicyControl />

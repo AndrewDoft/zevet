@@ -15,7 +15,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSyn
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Accounts, POLICY_VALUES, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
+import { Accounts, POLICY_VALUES, RETENTION_MS, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
 import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedEmails } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 import * as ms from "./microsoft-auth.mjs";
@@ -166,8 +166,18 @@ const MAX_EVENTS = Number(process.env.ZEVET_MAX_EVENTS || 2000);
 // Prompt bodies and shell commands older than this are served blank and
 // compacted out of the log at boot (see snapshot() and the replay below). 0
 // keeps everything — the default, because history is the feature and
-// retention is the operator's call, not ours to make silently.
+// retention is the operator's call, not ours to make silently. This env var is
+// the operator's floor; each team's owner may set a shorter one (policy
+// `retention`, D-NEXT-W2-13), and the shorter of the two applies.
 const DETAIL_TTL_MS = Number(process.env.ZEVET_DETAIL_TTL_MS || 0);
+
+/** The TTL in force for one team: the shorter non-zero of the operator's env
+ *  floor and the team's own `retention` policy. 0 keeps everything. */
+function detailTtl(acc) {
+  const team = RETENTION_MS[acc.policy.retention] || 0;
+  const ttl = [DETAIL_TTL_MS, team].filter((n) => n > 0).reduce((a, b) => Math.min(a, b), Infinity);
+  return Number.isFinite(ttl) ? ttl : 0;
+}
 // Two agents touching one file inside this window is worth a warning. Ten
 // minutes is a guess we can move; it is deliberately longer than a turn.
 const COLLISION_WINDOW_MS = Number(process.env.ZEVET_COLLISION_WINDOW_MS || 10 * 60 * 1000);
@@ -248,6 +258,9 @@ const SIGNED_CLIENT_MANIFEST = process.env.ZEVET_SIGNED_CLIENT_MANIFEST || path.
 /** Exactly what the update channel will serve. An allowlist, not a directory listing. */
 const CLIENT_FILES = [
   "hook.mjs",
+  // redact.mjs is imported BY hook.mjs: the secret net that runs before an event
+  // is built (D-NEXT-W2-13). The signed manifest must be re-signed at release.
+  "redact.mjs",
   "install.mjs",
   "updater.mjs",
   "detect.mjs",
@@ -378,7 +391,7 @@ async function buildManifest() {
  */
 const EVENTS_FILE = process.env.ZEVET_EVENTS || path.join(HERE, "..", "var", "events.jsonl");
 
-function makeBoard(file) {
+function makeBoard(file, ttlMs = () => DETAIL_TTL_MS) {
   /** @type {Array<object>} newest last */
   const events = [];
   /** @type {Set<import("node:http").ServerResponse>} */
@@ -396,28 +409,6 @@ function makeBoard(file) {
           // One corrupt line is not a corrupt log. Skip it and keep the rest.
         }
       }
-      // Retention compaction: details older than the TTL are blanked in place,
-      // so the archive keeps the structure (who/tool/file/repo) and forgets the
-      // words. Best effort; a failure here costs nothing at runtime.
-      if (DETAIL_TTL_MS > 0) {
-        try {
-          const now = Date.now();
-          const compacted = lines.map((line) => {
-            try {
-              const evt = JSON.parse(line);
-              if (evt && typeof evt === "object" && now - evt.ts > DETAIL_TTL_MS) {
-                return JSON.stringify({ ...evt, detail: "" });
-              }
-            } catch {
-              // Keep the line as-is; the replay above already skipped it.
-            }
-            return line;
-          });
-          writeFileSync(file, `${compacted.join("\n")}\n`);
-        } catch {
-          // The uncompacted log still replays fine above.
-        }
-      }
     }
   } catch (err) {
     // A hub that cannot read its log still serves the board; it just starts
@@ -427,7 +418,42 @@ function makeBoard(file) {
 
   // session -> who started it on this person's machine (D-060, remote
   // spawn). Bounded; folded onto `agents` in the snapshot below.
-  const board = { events, listeners, file, warned: false, startedBy: new Map() };
+  const board = { events, listeners, file, warned: false, startedBy: new Map(), ttlMs };
+
+  /** Retention compaction: details older than the TTL are blanked in place, so
+   *  the archive keeps the structure (who/tool/file/repo) and forgets the
+   *  words. Runs at boot and whenever the owner changes the team's retention.
+   *  Best effort; a failure here costs nothing at runtime. Returns the number
+   *  of lines blanked. */
+  board.compact = function compact() {
+    const ttl = ttlMs();
+    if (ttl <= 0 || !existsSync(file)) return 0;
+    let blanked = 0;
+    try {
+      const now = Date.now();
+      const lines = readFileSync(file, "utf8").split("\n").filter((l) => l.trim());
+      const compacted = lines.map((line) => {
+        try {
+          const evt = JSON.parse(line);
+          if (evt && typeof evt === "object" && evt.detail && now - evt.ts > ttl) {
+            blanked += 1;
+            return JSON.stringify({ ...evt, detail: "" });
+          }
+        } catch {
+          // Keep the line as-is; replay already skipped it.
+        }
+        return line;
+      });
+      if (blanked) writeFileSync(file, `${compacted.join("\n")}\n`);
+      for (let i = 0; i < events.length; i++) {
+        if (events[i].detail && now - events[i].ts > ttl) events[i] = { ...events[i], detail: "" };
+      }
+    } catch {
+      // The uncompacted log still replays fine.
+    }
+    return blanked;
+  };
+  board.compact();
 
   /** Every SSE push on this board's listeners goes through here — `record`
    *  below for the activity log, and `notifyPeopleChanged` (module scope)
@@ -485,8 +511,8 @@ function makeBoard(file) {
     // never trimmed; `detail` is the sensitive half and the only thing with a
     // TTL. The log file is compacted the same way at boot (see above), so this
     // is retention, not a view filter.
-    const show = (e) =>
-      DETAIL_TTL_MS > 0 && now - e.ts > DETAIL_TTL_MS ? { ...e, detail: "" } : e;
+    const ttl = ttlMs();
+    const show = (e) => (ttl > 0 && now - e.ts > ttl ? { ...e, detail: "" } : e);
     const actors = new Map();
     for (const e of named) {
       const a = actors.get(e.actor) || { actor: e.actor, hue: null, lastTs: 0, lastEvent: null, turns: 0, tools: 0 };
@@ -777,7 +803,7 @@ function sessionCookie(req, token) {
 }
 
 /** One board per team — see `makeBoard` above. */
-const boards = new Map([[DEFAULT_TEAM, makeBoard(EVENTS_FILE)]]);
+const boards = new Map([[DEFAULT_TEAM, makeBoard(EVENTS_FILE, () => detailTtl(accounts))]]);
 
 /** Reactive rosters (P3, "the member/invite list updates live"): pushed on
  *  the SAME SSE connection board.ts already opens for the activity feed —
@@ -877,8 +903,9 @@ function loadTeams() {
     const m = /^accounts-([a-z0-9-]+)\.json$/.exec(f); // named slugs, and the random ones from before names
     if (!m || m[1] === DEFAULT_TEAM || teamAccounts.has(m[1])) continue;
     try {
-      teamAccounts.set(m[1], new Accounts({ file: path.join(TEAMS_DIR, f) }));
-      boards.set(m[1], makeBoard(path.join(TEAMS_DIR, `events-${m[1]}.jsonl`)));
+      const acc = new Accounts({ file: path.join(TEAMS_DIR, f) });
+      teamAccounts.set(m[1], acc);
+      boards.set(m[1], makeBoard(path.join(TEAMS_DIR, `events-${m[1]}.jsonl`), () => detailTtl(acc)));
     } catch (err) {
       teamAccounts.delete(m[1]);
       console.error(`zevet: could not load team ${m[1]} (${f}): ${err.message}`);
@@ -1005,7 +1032,7 @@ function createTeam(name) {
   const acc = new Accounts({ file: path.join(TEAMS_DIR, `accounts-${slug}.json`) });
   if (name) acc.setName(name);
   teamAccounts.set(slug, acc);
-  boards.set(slug, makeBoard(path.join(TEAMS_DIR, `events-${slug}.jsonl`)));
+  boards.set(slug, makeBoard(path.join(TEAMS_DIR, `events-${slug}.jsonl`), () => detailTtl(acc)));
   return { ok: true, team: slug };
 }
 
@@ -2373,6 +2400,8 @@ async function handleRequest(req, res) {
     for (const [key, value] of Object.entries(body)) {
       const r = acc.setPolicy(key, value, sess.login);
       if (r.changed) console.log(`zevet: policy ${key} -> ${value} by @${sess.login}${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`);
+      // A shorter retention takes effect now, not at the next boot.
+      if (r.changed && key === "retention") boards.get(auth.team).compact();
     }
     return json(res, 200, { ok: true, policy: acc.policy });
   }
