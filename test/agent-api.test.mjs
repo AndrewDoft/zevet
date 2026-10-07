@@ -411,3 +411,16 @@ test("/list carries the session id a restart resumes from", () => {
   const s = _internals.summarize({ id: "a", events: [], startedAt: Date.now(), running: true, sessionId: "s-9" });
   assert.equal(s.sessionId, "s-9");
 });
+
+test("/wait does not report a relaunch's stop as the turn ending", async (t) => {
+  let relaunching = true;
+  const { url, token, close, backend } = await startApi({ isRelaunching: () => relaunching });
+  t.after(close);
+  backend.entries.set("c1", { id: "c1", running: false, state: "exited", startedAt: Date.now(), events: [] });
+  const ctl = new AbortController();
+  const pending = fetch(`${url}/wait?id=c1`, authed(token, { method: "POST", signal: ctl.signal })).then(() => "answered", () => "pending");
+  const first = await Promise.race([pending, new Promise((r) => setTimeout(() => r("pending"), 800))]);
+  assert.equal(first, "pending");
+  relaunching = false;
+  ctl.abort();
+});

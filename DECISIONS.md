@@ -1971,3 +1971,21 @@ worktree older than the app session is gone, its branch survives for a manual `g
 - **Hub** redeployed from the tag in place; `BUILD_ID` `713e53eabdb1` -> `9b6196041fef`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-NEXT-UPD-BUSY — A restart for an update never lands under a working agent, and a continued agent keeps its id and label
+
+**Observed (0.2.125, 2026-10-07 19:30:20Z).** Two hosted agents were mid-turn when every Zevet process restarted. k11-kai-rebase (ea3598ff) kept its id; zv-int126 (b3645999) went to exited, its `zagent wait` exited 1 with no result, and the work continued as bc29d564 labelled "w2-walk" in the same worktree.
+
+**Mechanism (evidence).**
+- The payload swapper's gate (`desktop/payload-swap.js` `busyReason`) only blocked on a running agent when it was NOT resumable (`a.running > 0 && !a.resumable`), and `main.js` `useGate.activity` marks every claude/codex/opencode console with a session id resumable. So a resumable agent mid-turn did not block `app.relaunch(); app.exit(0)`. The idle INSTALLER already refused mid-turn consoles (`idle-install.js` `midTurn`, from `gate.working`); the payload swapper never got `working`. 0.2.125 was payload-only, so only the swapper applied. The swap also releases consoles whose turn dies with the process (`releaseForRelaunch` -> `c.stop()`).
+- Restore keeps id and label (`restoreResumableConsoles`: `forcedId: s.id`, `label: s.label`; persistence round trip is tested). The only path that mints a new id and drops the label for a continued thread is `local:resumeAgent` (`main.js`): `instrumentedStartConsole` was called without an id (agent-console.js `options.id || randomUUID()`) and `consoleMeta` got no label. The board calls it with `continues: c.id` for any console that is not running with a session id (board.ts follow-up path), and the API's `send --via board` goes through the same path. A console that `releaseForRelaunch` had just stopped is exactly that. This matches "new id, label gone (falls back to the generated title), same worktree". Not reproduced against the live app; see Not verified.
+- A waiter had no recovery: the API port and token change on relaunch, `zevet-agent wait` made one request, and `/wait` returned "exited" when the relaunch's own `stop()` fired.
+
+**Decided.**
+- `busyReason` takes `working()` and refuses with "an agent is mid-turn" before the resumable exemption, for every console, API-spawned and hosted included. Idle resumable consoles are still restored (unchanged). Both gates (swapper, idle installer) surface the deferral through `onWaiting`; `main.js` adds it to the `app:update` state as `waiting`, pushed to the board and setup window, and clears it when the next poll (30 s swapper, 60 s installer) lets the update through. Manual "Restart now" is a person's explicit click and is unchanged.
+- A continued console keeps its id and label (`consolePersistence.resumedIdentity`, id reused only when the old process has exited). Chosen over an alias table: no second id to resolve, nothing for a waiter to follow.
+- `/wait` does not report exited while `relaunching`; `zevet-agent wait` retries a dead connection or "no such console" for 120 s, re-reading `agent-api.json`, so a waiter survives a restart that restores the agent under the same id.
+
+**Tests, each mutation-checked (break the code, red, restore).** payload-swap: busyReason mid-turn, swapper defers/surfaces/retries (gate line disabled: 2 fail). idle-install: deferral surfaced (onWaiting disabled: 1 fail). console-persistence: resumedIdentity + resumeAgent wiring (keep disabled: 1 fail). zevet-agent: wait rides out a restart (retry disabled: 2 fail). agent-api: /wait during relaunch (condition disabled: 1 fail).
+
+**Not verified.** No live app was launched. The `resumeAgent` trigger for zv-int126 is inferred from code; the incident logs were not available. Full `npm test` was not run locally (it opens sign-in windows until fix/no-signin-popup-in-tests lands); CI runs it on the branch.

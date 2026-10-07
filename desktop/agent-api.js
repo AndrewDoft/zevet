@@ -170,7 +170,7 @@ function summarize(entry) {
  *     answered in time (optional; `via: "board"` -- see board-ask.js)
  */
 async function start(deps = {}) {
-  const { startAgentCore, sendToAgentCore, stopAgentCore, setOnce, getConsole, listConsoles, askBoard } = deps;
+  const { startAgentCore, sendToAgentCore, stopAgentCore, setOnce, getConsole, listConsoles, askBoard, isRelaunching = () => false } = deps;
   for (const name of ["startAgentCore", "sendToAgentCore", "stopAgentCore", "getConsole", "listConsoles"]) {
     if (typeof deps[name] !== "function") throw new Error(`agent-api: start() requires a ${name}() function`);
   }
@@ -252,7 +252,9 @@ async function start(deps = {}) {
       // The turn is over when its `result` arrived (idle) or the process
       // died (exited) -- not only on exit, or a follow-up-capable console
       // would never finish.
-      if (!entry.running || entry.state === "idle") {
+      // Not while the app is relaunching: the consoles it stops are restored under the same id, so their "exit" is not
+      // the turn's end. The connection drops with the process and the caller (zevet-agent wait) reconnects.
+      if (!isRelaunching() && (!entry.running || entry.state === "idle")) {
         return { status: 200, body: { ok: true, ...summarize(entry), resultText: entry.lastResult || resultTextFrom(entry.events) } };
       }
       if (Date.now() >= deadline) return { status: 200, body: { ok: false, error: "timed out waiting", ...summarize(entry) } };

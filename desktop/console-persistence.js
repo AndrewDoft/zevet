@@ -33,4 +33,15 @@ function read(file, readFileSync = fs.readFileSync, unlinkSync = fs.unlinkSync) 
   finally { try { unlinkSync(`${file}.${process.pid}.tmp`); } catch {} }
 }
 
-module.exports = { FILE, AGENTS, resumable, resumableEntries, write, read };
+/**
+ * `local:resumeAgent` continuing a finished console: the thread keeps its id and label so `zagent --attach <id>`,
+ * waiters and the board's rail entry all still point at it. The id is reused only when the old process has exited
+ * (a live one still owns it). A label the caller did not name is the old console's own.
+ */
+function resumedIdentity(prev, continues, opts) {
+  const keep = Boolean(continues && prev && !prev.running);
+  const given = opts && typeof opts.label === "string" ? opts.label : "";
+  return { id: keep ? String(continues) : "", label: given || (keep && typeof prev.label === "string" ? prev.label : "") };
+}
+
+module.exports = { FILE, AGENTS, resumable, resumableEntries, resumedIdentity, write, read };

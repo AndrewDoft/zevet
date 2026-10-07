@@ -32,6 +32,11 @@ describe("busyReason: a swap never happens under work", () => {
   test("one non-resumable running console still blocks", () => {
     assert.match(busyReason(idle({ activity: () => ({ running: 2, resumable: true, nonResumable: 1, lastAt: NOW }) })), /non-resumable/);
   });
+  test("a resumable console MID-TURN blocks it (an API-spawned or hosted agent included): restore cannot save the turn", () => {
+    const activity = () => ({ running: 1, resumable: true, nonResumable: 0, lastAt: NOW - AGENT_QUIET_MS - 1 });
+    assert.match(busyReason(idle({ activity, working: () => 1 })), /mid-turn/);
+    assert.equal(busyReason(idle({ activity, working: () => 0 })), null, "idle resumable consoles are still restored");
+  });
   test("an agent that spoke 4m59s ago blocks it; at 5m it is over", () => {
     assert.match(busyReason(idle({ activity: () => ({ running: 0, lastAt: NOW - 5 * MIN + 1000 }) })), /last 5 minutes/);
     assert.equal(busyReason(idle({ activity: () => ({ running: 0, lastAt: NOW - 5 * MIN }) })), null);
@@ -70,6 +75,18 @@ function fakes({ staged = { build: "0.2.90", seq: 2090 }, ...over } = {}) {
 }
 
 describe("createSwapper", () => {
+  test("a working agent defers the swap, the deferral is surfaced, and the next poll applies it once idle", async () => {
+    let working = 1;
+    const seen = [];
+    const { swapper, calls } = fakes({ working: () => working, onWaiting: (w) => seen.push(w) });
+    assert.match(await swapper.tick(), /mid-turn/);
+    assert.deepEqual(calls, []);
+    assert.match(seen[0], /mid-turn/);
+    working = 0;
+    assert.equal(await swapper.tick(), "swapped");
+    assert.equal(seen[1], null, "the update UI is told the wait is over");
+    assert.deepEqual(calls, ["activate", "release", "relaunch", "exit 0"]);
+  });
   test("idle and staged: activate, release the app's children, relaunch, exit 0 — in that order", async () => {
     const { swapper, calls } = fakes();
     assert.equal(await swapper.tick(), "swapped");

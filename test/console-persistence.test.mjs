@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { resumableEntries, write, read } from "../desktop/console-persistence.js";
+import { resumableEntries, resumedIdentity, write, read } from "../desktop/console-persistence.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,5 +31,20 @@ describe("console persistence", () => {
     assert.match(main, /restoreResumableConsoles\(\)\.finally\(\(\) =>\s*worktrees\.prune\(new Set/);
     assert.match(main, /restorePlace: \{ root: s\.root, worktree: s\.worktreeRecord \|\| null \}/);
     assert.match(main, /const place = restorePlace\s*\?/);
+  });
+
+  test("a continued console keeps its id and label; a live process's id is never reused", () => {
+    assert.deepEqual(resumedIdentity({ running: false, label: "zv-int126" }, "b3645999", { model: "m" }), { id: "b3645999", label: "zv-int126" });
+    assert.deepEqual(resumedIdentity({ running: false, label: "old" }, "b3645999", { label: "named" }), { id: "b3645999", label: "named" });
+    assert.deepEqual(resumedIdentity({ running: true, label: "x" }, "live", {}), { id: "", label: "" });
+    assert.deepEqual(resumedIdentity(undefined, "gone", {}), { id: "", label: "" });
+    assert.deepEqual(resumedIdentity(null, "", {}), { id: "", label: "" });
+  });
+
+  test("main.js resumeAgent starts under the continued id and label, and does not stop the replacement", () => {
+    const main = fs.readFileSync(new URL("../desktop/main.js", import.meta.url), "utf8");
+    assert.match(main, /consolePersistence\.resumedIdentity\(continues \? consoleLog\.get\(continues\) : null, continues, opts\)/);
+    assert.match(main, /\.\.\.\(kept\.id \? \{ id: kept\.id \} : \{\}\),\s*agent: String\(agent \|\| ""\)/);
+    assert.match(main, /const prev = kept\.id \? null : consoles\.get\(continues\)/);
   });
 });
