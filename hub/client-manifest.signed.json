@@ -2,12 +2,17 @@
   "payload": {
     "schema": 1,
     "type": "zevet-client",
-    "version": "0.2.125",
+    "version": "0.2.126",
     "files": [
       {
         "name": "hook.mjs",
-        "bytes": 27867,
-        "sha256": "9d2c5a0d1986ba767feb8efac3898fc126c24eb57a97489ad6fb5af76a2fa793"
+        "bytes": 27310,
+        "sha256": "05f4314d9a271fcea1268b831cd1028996ce6a4fe0b1e106c63a72a23c2ffdf1"
+      },
+      {
+        "name": "redact.mjs",
+        "bytes": 3777,
+        "sha256": "421f45821e28d2a316a8d468fbe778ab5bea406a4f85c898985cfd6d16dbbc05"
       },
       {
         "name": "install.mjs",
@@ -41,8 +46,8 @@
       },
       {
         "name": "opencode-plugin.mjs",
-        "bytes": 16849,
-        "sha256": "26739937735a69a47361063b7759bcecef175fddca36579515f721aa179d458f"
+        "bytes": 17951,
+        "sha256": "a4c74f1eca9770308f09845b1bf6e21da5a6bf9112a9de90eb550eeb4a828536"
       },
       {
         "name": "uninstall.mjs",
@@ -51,8 +56,8 @@
       },
       {
         "name": "doctor.mjs",
-        "bytes": 25102,
-        "sha256": "b2a2dc724ac2cc9f6d4a28015547a73f24569df5e5b6ec58ea2469335ded2a09"
+        "bytes": 25174,
+        "sha256": "d79b6cf895568985cb8a2a1636f86688eabbfddaa4294d5a12ace9c06c992a10"
       },
       {
         "name": "secret.mjs",
@@ -84,6 +89,6 @@
   "signature": {
     "algorithm": "ed25519",
     "key_id": "zevet-2026-09",
-    "signature": "mVX6OY8jhAI3EdnoKcgf/yW9Y/t1JBAQN645rO28esJA9aj0dGjCUODzGqvR+egJwz8D1wjBYibZ/qpnnTqeDg=="
+    "signature": "kAjrjmy1SG3FlU14ZpPul+ljh1+NIWdFXXforKRmMzGaRm2rY5JnhHSS4NRse5cjkQ76J0/TeiwWQZw7Upm+DQ=="
   }
 }
