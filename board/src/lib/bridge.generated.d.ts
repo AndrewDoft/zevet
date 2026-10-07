@@ -76,6 +76,17 @@ export interface ZevetBridge {
    *  `githubLogout` under the name the Google button expects.
    */
   googleLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
+  /**
+   * Sign in with Microsoft (Entra ID or a personal Microsoft account). Exactly
+   * Google's shape — the hub owns the callback, so `microsoftStart` hands back a URL
+   * opened by the main process and `microsoftWait` resolves once the config is written.
+   * Neither call returns the secret or the session.
+   */
+  microsoftStart?: (hub?: string | null, team?: string) => Promise<{ ok?: boolean; error?: string; url?: string; expiresIn?: number; domain?: string }>;
+  microsoftWait?: () => Promise<{ ok?: boolean; cancelled?: boolean; error?: string; login?: string; owner?: boolean }>;
+  microsoftCancel?: () => void;
+  /** End this machine's session; the same call as `githubLogout` and `googleLogout`. */
+  microsoftLogout?: () => Promise<{ ok?: boolean; error?: string } | null | undefined>;
   /** Send what the person typed plus the scrubbed tail of the app log to Sentry. `{ ok }`. */
   sendReport?: (text: string) => Promise<{ ok: boolean }>;
   /**

@@ -187,6 +187,17 @@ contextBridge.exposeInMainWorld("zevet", {
    *  `githubLogout` under the name the Google button expects.
    */
   googleLogout: () => ipcRenderer.invoke("zevet:googleLogout"),
+  /**
+   * Sign in with Microsoft (Entra ID or a personal Microsoft account). Exactly
+   * Google's shape — the hub owns the callback, so `microsoftStart` hands back a URL
+   * opened by the main process and `microsoftWait` resolves once the config is written.
+   * Neither call returns the secret or the session.
+   */
+  microsoftStart: (hub, team) => ipcRenderer.invoke("zevet:microsoftStart", { hub, team }),
+  microsoftWait: () => ipcRenderer.invoke("zevet:microsoftWait"),
+  microsoftCancel: () => ipcRenderer.invoke("zevet:microsoftCancel"),
+  /** End this machine's session; the same call as `githubLogout` and `googleLogout`. */
+  microsoftLogout: () => ipcRenderer.invoke("zevet:microsoftLogout"),
   /** Send what the person typed plus the scrubbed tail of the app log to Sentry. `{ ok }`. */
   sendReport: (text) => ipcRenderer.invoke("zevet:sendReport", { text }),
   /**

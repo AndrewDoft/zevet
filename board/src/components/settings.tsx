@@ -10,7 +10,7 @@ import {
 } from "../lib/board";
 import { MODES, MODE_LABEL } from "../lib/constants";
 import { Twist } from "./twist";
-import { GithubMark, GoogleMark } from "./logos";
+import { GithubMark, GoogleMark, MicrosoftMark } from "./logos";
 import { IdentityRows } from "./identity";
 import { handle } from "./invite";
 import { InPage, PageSection } from "./settings/parts";
@@ -223,7 +223,12 @@ function TeamSignOutRow() {
   );
 }
 
-function GoogleConnectBox({ team, onDone }: { team: string; onDone: () => void }) {
+/** Google and Microsoft: the same hub web flow (start / wait / cancel), so one box with a provider. */
+function GoogleConnectBox({ team, onDone, provider = "google" }: { team: string; onDone: () => void; provider?: "google" | "microsoft" }) {
+  const name = provider === "microsoft" ? "Microsoft" : "Google";
+  const api = provider === "microsoft"
+    ? { start: window.zevet?.microsoftStart, wait: window.zevet?.microsoftWait, cancel: window.zevet?.microsoftCancel }
+    : { start: window.zevet?.googleStart, wait: window.zevet?.googleWait, cancel: window.zevet?.googleCancel };
   const [state, setState] = useState<
     | { phase: "idle" }
     | { phase: "starting" }
@@ -234,18 +239,18 @@ function GoogleConnectBox({ team, onDone }: { team: string; onDone: () => void }
 
   function click() {
     if (state.phase === "waiting") {
-      window.zevet?.googleCancel?.();
+      api.cancel?.();
       setState({ phase: "idle" });
       return;
     }
     setState({ phase: "starting" });
-    window.zevet?.googleStart?.(null, team || undefined).then((r) => {
+    api.start?.(null, team || undefined).then((r) => {
       if (!r || !r.ok) {
         setState({ phase: "fail", message: (r && r.error) || "Could not start sign-in." });
         return;
       }
       setState({ phase: "waiting", url: r.url });
-      window.zevet?.googleWait?.().then(
+      api.wait?.().then(
         (done) => {
           if (!done || !done.ok) {
             if (done && done.cancelled) setState({ phase: "idle" });
@@ -260,15 +265,15 @@ function GoogleConnectBox({ team, onDone }: { team: string; onDone: () => void }
     }, (err) => setState({ phase: "fail", message: (err && err.message) || "Could not start sign-in." }));
   }
 
-  const label = connectPhaseLabel(state.phase, "Google");
+  const label = connectPhaseLabel(state.phase, name);
   const idle = state.phase === "idle" || state.phase === "done";
 
-  const value = connectValue(state.phase, state, "Google");
+  const value = connectValue(state.phase, state, name);
 
   return (
     <div className="srow">
       <button className={MAKE_BTN} type="button" aria-label={label} disabled={state.phase === "starting"} onClick={click}>
-        {idle ? <><GoogleMark /> Google</> : label}
+        {idle ? <>{provider === "microsoft" ? <MicrosoftMark /> : <GoogleMark />} {name}</> : label}
       </button>
       <span className="v">
         {value}
@@ -366,9 +371,11 @@ function AccountSection() {
   const teamSlug = typeof whoState.team === "string" ? whoState.team : "";
   const githubSignIn = Boolean(whoState.githubSignIn);
   const googleSignIn = Boolean(whoState.googleSignIn);
+  const microsoftSignIn = Boolean(whoState.microsoftSignIn);
   const local = Boolean(bridge.local);
   const canConnect = githubSignIn && local && Boolean(window.zevet && typeof window.zevet.githubStart === "function");
   const canConnectGoogle = googleSignIn && local && Boolean(window.zevet && typeof window.zevet.googleStart === "function");
+  const canConnectMicrosoft = microsoftSignIn && local && Boolean(window.zevet && typeof window.zevet.microsoftStart === "function");
   const localSession = Boolean(bridge.cfg && bridge.cfg.session);
 
   /* ⚠️ NO "Signed in as" ROW. The closed section header already prints the
@@ -396,6 +403,7 @@ function AccountSection() {
   } else if (shared) {
     if (canConnect) out.push(<GithubConnectBox key="connect-github" team={teamSlug} onDone={() => refreshWhoami()} />);
     if (canConnectGoogle) out.push(<GoogleConnectBox key="connect-google" team={teamSlug} onDone={() => refreshWhoami()} />);
+    if (canConnectMicrosoft) out.push(<GoogleConnectBox key="connect-microsoft" provider="microsoft" team={teamSlug} onDone={() => refreshWhoami()} />);
   }
 
   // One person, many sign-ins: what is linked to me, link another, and the
@@ -410,6 +418,7 @@ function AccountSection() {
         people={people.filter((p) => !p.pending)}
         githubSignIn={githubSignIn}
         googleSignIn={googleSignIn}
+        microsoftSignIn={microsoftSignIn}
         onChanged={() => refreshWhoami()}
       />,
     );

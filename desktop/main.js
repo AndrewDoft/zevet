@@ -1385,10 +1385,10 @@ bridge.handle("zevet:githubStart", async (_e, { team } = {}) => {
  * flow racing is the same bug with two names, and each would try to write the
  * config over the other.
  */
-bridge.handle("zevet:googleStart", async (_e, { team } = {}) => {
+const startWebSignIn = (provider) => async (_e, { team } = {}) => {
   try {
     if (signIn) signIn.cancel();
-    signIn = new GoogleSignIn({ hub: targetHub(), team });
+    signIn = new GoogleSignIn({ hub: targetHub(), team, provider });
     const r = await signIn.start();
     // Opened from the MAIN process, never by the renderer — same rule as the
     // GitHub flow above, and it matters more here: this URL carries the pairing
@@ -1403,7 +1403,9 @@ bridge.handle("zevet:googleStart", async (_e, { team } = {}) => {
     signIn = null;
     return { ok: false, error: err.message };
   }
-});
+};
+bridge.handle("zevet:googleStart", startWebSignIn("google"));
+bridge.handle("zevet:microsoftStart", startWebSignIn("microsoft"));
 
 /** The team's name from the hub, for the setup window. "" when the hub is an
  *  older build, or slow: the name is a label, never a reason to fail sign-in. */
@@ -1482,6 +1484,7 @@ async function awaitSignIn(what) {
 
 bridge.handle("zevet:githubWait", () => awaitSignIn("GitHub"));
 bridge.handle("zevet:googleWait", () => awaitSignIn("Google"));
+bridge.handle("zevet:microsoftWait", () => awaitSignIn("Microsoft"));
 
 /* Cancelling is provider-blind — there is one attempt in flight and this ends
  * it, whichever kind it is. Registered under both names so the renderer can
@@ -1493,6 +1496,7 @@ const cancelSignIn = () => {
 };
 bridge.handle("zevet:githubCancel", cancelSignIn);
 bridge.handle("zevet:googleCancel", cancelSignIn);
+bridge.handle("zevet:microsoftCancel", cancelSignIn);
 
 /* ── Creating a team ───────────────────────────────────────────────────────
  *
@@ -1718,6 +1722,7 @@ const signOutTeam = async () => {
 };
 bridge.handle("zevet:signOutTeam", signOutTeam);
 bridge.handle("zevet:googleLogout", signOut);
+bridge.handle("zevet:microsoftLogout", signOut);
 
 bridge.handle("zevet:pickRepo", async () => {
   const picked = await dialog.showOpenDialog(setupWindow, {

@@ -117,6 +117,15 @@
       </svg>
       Google
     </button>
+    <button id="microsoft" class="primary" type="button" aria-label="Sign in with Microsoft">
+      <svg viewBox="0 0 23 23" width="16" height="16" aria-hidden="true" focusable="false" data-brand="microsoft">
+        <path fill="#F25022" d="M1 1h10v10H1z" />
+        <path fill="#7FBA00" d="M12 1h10v10H12z" />
+        <path fill="#00A4EF" d="M1 12h10v10H1z" />
+        <path fill="#FFB900" d="M12 12h10v10H12z" />
+      </svg>
+      Microsoft
+    </button>
     <button id="more" type="button">Other</button>
   </div>
 
@@ -231,6 +240,7 @@
     // Create: there is no key yet — GitHub/Google are how ownership is claimed.
     $("joinKeyRow").hidden = m !== "join";
     $("google").classList.toggle("primary", m !== "join");
+    $("microsoft").classList.toggle("primary", m !== "join");
     $("gh").classList.toggle("primary", m !== "join");
   }
   $("modeCreate").addEventListener("click", function () { setMode("create"); });
@@ -304,6 +314,7 @@
     showOther(false);
     $("more").hidden = true;
     $("google").hidden = true;
+    $("microsoft").hidden = true;
     say("good", "<b>" + esc(done.teamName || team || "") + "</b> · " + esc(String(done.login).split("@")[0]) + (done.owner ? " · Owner" : ""));
     // A GitHub/Google sign-in or a redeemed key already wrote a working
     // session — Finish's own save() below is passed "" (below), never a
@@ -319,8 +330,10 @@
   function busy(on, which) {
     $("gh").disabled = on;
     $("google").disabled = on;
+    $("microsoft").disabled = on;
     $("ghStep").hidden = !(on && which === "gh");
-    $("googleStep").hidden = !(on && which === "google");
+    // One step panel serves both web-flow providers (Google, Microsoft).
+    $("googleStep").hidden = !(on && (which === "google" || which === "microsoft"));
   }
 
   $("gh").addEventListener("click", async function () {
@@ -355,13 +368,14 @@
     $("msg").hidden = true;
   });
 
-  $("google").addEventListener("click", async function () {
-    busy(true, "google");
+  // Google and Microsoft are the same hub web flow; only the bridge calls differ.
+  async function webSignIn(which) {
+    busy(true, which);
     say("", "…");
     var direct = $("other").hidden;
     var team = direct ? "" : await teamFor();
     if (team === null) { busy(false); return; }
-    var started = await window.zevet.googleStart(null, team);
+    var started = await window.zevet[which + "Start"](null, team);
     if (!started.ok) {
       busy(false);
       say("bad", esc(short(started.error, "Sign-in failed")));
@@ -371,7 +385,7 @@
     $("googleUrl").textContent = started.url;
     $("googleState").textContent = started.opened === false ? "No browser" : started.domain ? started.domain : "…";
     $("msg").hidden = true;
-    var done = await window.zevet.googleWait();
+    var done = await window.zevet[which + "Wait"]();
     busy(false);
     if (!done.ok) {
       if (done.cancelled) { $("msg").hidden = true; return; }
@@ -384,7 +398,9 @@
     // with the same domain hides the part that tells people apart.
     if (!$("actor").value.trim()) $("actor").value = String(done.login).split("@")[0];
     signedIn(done);
-  });
+  }
+  $("google").addEventListener("click", function () { webSignIn("google"); });
+  $("microsoft").addEventListener("click", function () { webSignIn("microsoft"); });
   $("googleCancel").addEventListener("click", function () {
     window.zevet.googleCancel();
     busy(false);

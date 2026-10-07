@@ -7,7 +7,7 @@
  * and "@AndrewDoft").
  */
 import { useEffect, useRef, useState } from "react";
-import { GithubMark, GoogleMark } from "./logos";
+import { GithubMark, GoogleMark, MicrosoftMark } from "./logos";
 import { combinePeople, identityLabel, likelySame, linkAccount, renamePerson, unlinkAccount } from "../lib/identity.mjs";
 import { useBoard } from "../lib/board";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -34,7 +34,7 @@ function writeDismissed(v: string[]) {
   }
 }
 
-function LinkButton({ provider, onDone }: { provider: "github" | "google"; onDone: () => void }) {
+function LinkButton({ provider, onDone }: { provider: "github" | "google" | "microsoft"; onDone: () => void }) {
   const [state, setState] = useState<
     | { phase: "idle" }
     | { phase: "waiting"; code?: string; url?: string }
@@ -43,7 +43,7 @@ function LinkButton({ provider, onDone }: { provider: "github" | "google"; onDon
   >({ phase: "idle" });
   const stop = useRef(false);
   useEffect(() => () => void (stop.current = true), []);
-  const name = provider === "github" ? "GitHub" : "Google";
+  const name = provider === "github" ? "GitHub" : provider === "microsoft" ? "Microsoft" : "Google";
 
   function click() {
     if (state.phase === "waiting") {
@@ -70,7 +70,7 @@ function LinkButton({ provider, onDone }: { provider: "github" | "google"; onDon
   return (
     <div className="srow">
       <button className={BTN} type="button" onClick={click}>
-        {state.phase === "waiting" ? "Cancel" : <>{provider === "github" ? <GithubMark /> : <GoogleMark />} Link {name}</>}
+        {state.phase === "waiting" ? "Cancel" : <>{provider === "github" ? <GithubMark /> : provider === "microsoft" ? <MicrosoftMark /> : <GoogleMark />} Link {name}</>}
       </button>
       <span className="v">
         {state.phase === "waiting"
@@ -101,6 +101,7 @@ export function IdentityRows({
   people,
   githubSignIn,
   googleSignIn,
+  microsoftSignIn = false,
   onChanged,
 }: {
   identities: Ident[];
@@ -108,6 +109,7 @@ export function IdentityRows({
   people: Array<{ key?: string; login: string }>;
   githubSignIn: boolean;
   googleSignIn: boolean;
+  microsoftSignIn?: boolean;
   onChanged: () => void;
 }) {
   const roster = useBoard((s) => s.roster);
@@ -213,6 +215,7 @@ export function IdentityRows({
       ))}
       {githubSignIn ? <LinkButton provider="github" onDone={onChanged} /> : null}
       {googleSignIn ? <LinkButton provider="google" onDone={onChanged} /> : null}
+      {microsoftSignIn ? <LinkButton provider="microsoft" onDone={onChanged} /> : null}
       {owner && people.length > 1 ? (
         <form
           className="sinvite"

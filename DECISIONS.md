@@ -1764,3 +1764,24 @@ one steer end to end through a real hub), `test/activity.test.mjs`.
 - **Hub** redeployed from the tag in place; `BUILD_ID` `ae51dcbb3e12` -> `f7c2582d3539`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-060 — Microsoft is the third sign-in provider, mirroring Google; no domain door
+
+**Decided (Andrew, 2026-10-07).** Add Microsoft (Entra ID + personal accounts, tenant `common`, OIDC authorization-code)
+beside GitHub and Google, with the same routes (`/auth/microsoft/start|callback|finish`, one shared pairing table whose
+entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), account provider `"microsoft"`, and a
+"Continue with Microsoft" button wherever the other two are (setup window, Settings, Link another account).
+
+- **Token trust is Google's:** the id token is fetched by the hub itself over TLS, so the signature is not re-verified
+  (OIDC Core §3.1.3.7); the same condition applies — an id token from anywhere else makes JWKS verification mandatory.
+  Claims checked: `iss` = `https://login.microsoftonline.com/<tid>/v2.0` with `tid` a GUID from the same token, `aud`,
+  `exp`, and a per-attempt `nonce` (new; Google's flow has none).
+- **Identity is `sub`**, unique only within provider. Email is evidence only with `xms_edov`; otherwise `emails` is empty
+  and the login is namespaced `ms:<name>` so it cannot equal a Google/GitHub login that carries proof (nOAuth).
+- **Domain door skipped.** Google's `hd` is a signed claim naming a Workspace domain; Entra's nearest thing is `tid`,
+  a tenant id, not a domain, and domain proof would need `xms_edov` plus a suffix check — the exact email-suffix
+  weakness google-auth.mjs warns about. Microsoft people join by invite (verified email or an already-listed identity).
+- **Unclaimed-hub safety:** a Microsoft sign-in is held to `ZEVET_MICROSOFT_OWNER`, else `ZEVET_GOOGLE_OWNER`, else
+  `ZEVET_GITHUB_OWNER`, so enabling Microsoft cannot open a hub reserved for someone else.
+- **Cost:** personal Microsoft accounts may not carry `xms_edov` (unverified), in which case they cannot be auto-linked or claim an email invite
+  until the app registration emits it; they can still own a hub or be linked from an existing session.
