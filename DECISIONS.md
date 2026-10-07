@@ -1478,23 +1478,19 @@ launched by Zevet getting the hub hooks via `--settings` (`agent-console.js`), a
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
 
-## D-070 — Wave 2 overlap check, encrypted advisory claims, and composer notice
+## D-070 — Wave 2 overlap check and advisory path claims
 
 **2026-10-07**
 
-The overlap classifier uses local embedding cosine thresholds of **0.82 for
-overlapping** and **0.62 for adjacent**. Exact open/planned path matches and
-same-branch matches are overlapping; shared directories are adjacent. The
-thresholds live together in `desktop/overlap-check.js` so the composer and its
-tests cannot drift.
+**Overlap check** (`desktop/overlap-check.js`, run on the desktop before a prompt is dispatched; local embeddings only, never a remote model). Thresholds, in one constant: cosine **0.82 overlapping**, **0.62 adjacent**. Exact open/planned path match or same branch is overlapping; a shared directory (never the repo root) is adjacent. A claim has no task text and is never scored on text. The composer gate sits at both doors a prompt can take: `onNew` and the queue's `enqueue`/`steer` (an assistant-ui queue preempts `onNew`, so a gate only in `onNew` never sees a prompt to a running agent). Steers to a teammate and slash commands skip it. The notice names each hit (`overlapping · Kai · sess-kai`) with **Send anyway** / **Cancel**; Cancel puts the text back in the composer. Nothing is sent unasked.
 
-Claims are advisory only, expire with their session or after 30 minutes, and
-are represented for transport by a sealed envelope containing no plaintext
-path. The pure lifecycle and classifier are covered by deterministic tests.
+**Claims** (`desktop/claims.js`) are advisory: nothing blocks a write. One sealed frame per agent session carries the whole path set, sealed with the document key (`client/doc-crypto.mjs`, AAD `claim <session>`, the same mechanism as steers), posted to `/ingest` as `kind:"claim"`. The hub keeps the latest blob per actor+session in memory only (not the event log, not the board snapshot, so a claim is never an agent turn), forwards it on each signed-in desktop's `/events?steer=1` channel, replays live ones to a new connection, and drops one on `release:true`. It sees what it sees on every event (actor, session) and a base64 blob. Desktops open frames and keep teammates' claims in a second store; their own frames coming back are ignored by session.
 
-This slice intentionally does not make the hub inspect claims: wiring a sealed
-claim frame into the existing activity event schema and exposing the desktop
-pre-prompt IPC/UI gate remains the next integration slice.
+Lifetime: the claimer's timeout (30 min, capped at 1 h) sealed inside the frame; expiry and session end (console `exit`) broadcast a release; the hub forgets after 2 h regardless. A hand claim from the file tree belongs to the agent in front, else to `manual` (timeout or Release). An agent session claims, when it is sent a prompt, the files the prompt names that exist.
+
+Board: chip `claimed: <file|n files>` on the card of the claiming session, a dot in the claimer's team colour on the file (name on hover), right-click Claim / Release on a file.
+
+**Known edges.** The first prompt of a new agent cannot claim (no session id yet). The sealed body does not bind the actor, so the hub (already trusted for names) could attribute a frame to another actor; it cannot read or alter paths. Same-branch counts as overlapping as specified, so two people on `main` always see each other.
 
 ## D-039 — Shipped: 0.2.96, Bundle for 0.2.96 (Zevet model, spawn via board) (shell release, hub deploy)
 

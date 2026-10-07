@@ -16,13 +16,14 @@ async function classifyOverlap({ task = "", branch = "", openPaths = [], planned
     const theirs = pathsOf(other);
     const samePath = [...mine].some((p) => theirs.has(p));
     const sameBranch = Boolean(branch && other.branch && branch === other.branch);
-    const score = vectors.length > i + 1 ? cosine(vectors[0], vectors[i + 1]) : 0;
-    const sameDir = [...mine].some((p) => [...theirs].some((q) => p.split("/").slice(0, -1).join("/") === q.split("/").slice(0, -1).join("/")));
+    // A claim has no task text: nothing to compare, and "" must not score.
+    const score = other.task && vectors.length > i + 1 ? cosine(vectors[0], vectors[i + 1]) : 0;
+    const dirOf = (p) => p.split("/").slice(0, -1).join("/");
+    const sameDir = [...mine].some((p) => dirOf(p) && [...theirs].some((q) => dirOf(q) === dirOf(p)));
     const label = samePath || sameBranch || score >= OVERLAP_THRESHOLDS.textOverlap ? "overlapping" : (sameDir || score >= OVERLAP_THRESHOLDS.textAdjacent ? "adjacent" : null);
     return label ? { ...other, label, score } : null;
   }).filter(Boolean);
 }
 
-function composerGate(hits, choice) { return hits.length && choice !== "cancel" ? { action: "send" } : hits.length ? { action: "cancel" } : { action: "send" }; }
 
-module.exports = { classifyOverlap, composerGate, OVERLAP_THRESHOLDS, cosine };
+module.exports = { classifyOverlap, OVERLAP_THRESHOLDS, cosine };

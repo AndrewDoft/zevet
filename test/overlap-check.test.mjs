@@ -22,10 +22,14 @@ test("classifies same path or branch as overlapping and similarity as adjacent/o
   assert.ok(OVERLAP_THRESHOLDS.textOverlap > OVERLAP_THRESHOLDS.textAdjacent);
 });
 
-test("composer gate sends normally or waits for explicit cancel/send-anyway", async () => {
-  const { composerGate } = await import("../desktop/overlap-check.js");
-  const hit = [{ actor: "Kai", session: "s", label: "overlapping" }];
-  assert.deepEqual(composerGate(hit, "cancel"), { action: "cancel" });
-  assert.deepEqual(composerGate(hit, "send"), { action: "send" });
-  assert.deepEqual(composerGate([], undefined), { action: "send" });
+test("an agent with no task text (a claim) is never scored on text", async () => {
+  // "" embeds like everything else; it must not be called "similar" to the prompt.
+  const embed = async (texts) => texts.map(() => [1, 0]);
+  const hits = await classifyOverlap({ task: "anything", plannedPaths: [], active: [{ actor: "Kai", session: "s", task: "", openPaths: ["a/b.ts"] }], embed });
+  assert.deepEqual(hits, []);
+});
+
+test("files at the repo root are not 'the same folder'", async () => {
+  const hits = await classifyOverlap({ task: "x", plannedPaths: ["a.ts"], active: [{ actor: "Kai", session: "s", openPaths: ["b.ts"] }] });
+  assert.deepEqual(hits, []);
 });

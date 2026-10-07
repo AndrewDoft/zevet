@@ -196,9 +196,14 @@ export interface LocalBridge {
   masoraRepoToggle?: (root: string, on: boolean) => Promise<{ ok: boolean; error?: string; repos?: Record<string, boolean> }>;
   /** A file tree under one of those folders. */
   tree: (dir: string) => Promise<{ ok: boolean; entries?: LocalEntry[]; truncated?: boolean; origin?: string; error?: string }>;
-  overlapCheck?: (input: unknown) => Promise<{ ok: boolean; hits: unknown[] }>;
-  claim?: (input: unknown) => Promise<{ ok: boolean; claim?: unknown; error?: string }>;
-  releaseClaims?: (session: string) => Promise<{ ok: boolean }>;
+  /** The pre-prompt overlap check (D-070): the task against every agent the board knows and every claim, locally. */
+  overlapCheck?: (input: { task: string; branch: string; repo: string; session: string; openPaths: string[]; plannedPaths: string[]; active: unknown[] }) => Promise<{ ok: boolean; hits: Array<{ actor: string; session: string; label: "overlapping" | "adjacent"; claimed?: boolean }> }>;
+  /** Advisory claim of paths for one agent session; sealed and shared with the team. Never blocks a write. */
+  claim?: (input: { root: string; paths: string[]; session: string; actor?: string; auto?: boolean }) => Promise<{ ok: boolean; claim?: unknown; shared?: boolean; error?: string }>;
+  /** Release one path, or every path of a session when none is given. */
+  releaseClaims?: (session: string, path?: string) => Promise<{ ok: boolean }>;
+  /** Live claims, mine and the team's. */
+  claims?: () => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }> }>;
   /** One text file, by path relative to its root. */
   read: (root: string, relPath: string) => Promise<ReadResult>;
   /**
@@ -488,6 +493,8 @@ export interface LocalBridge {
    * pair beside them: an older main process simply never sends one.
    */
   onAskRequest?: (cb: (req: AskRequest) => void) => () => void;
+  /** The live claims changed (a claim, a release, an expiry, a teammate's frame). */
+  onClaimsEvent?: (cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }> }) => void) => () => void;
   /**
    * Steering (D-058): `ask` an approval card for a teammate's steer, `done`
    * when one was injected or declined, `status` for a steer this person sent.

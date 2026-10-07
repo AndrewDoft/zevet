@@ -1608,4 +1608,12 @@
   .subagents-meta, .subagents-tool { color: var(--subtle); overflow: hidden; text-overflow: ellipsis; }
   .subagents-elapsed, .subagents-tokens { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
 .overlap-notice{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;border:1px solid var(--line,#ddd);background:var(--paper,#fff)}
-.overlap-notice span{margin-right:auto}
+.overlap-hits{display:flex;flex-direction:column;margin-right:auto;min-width:0}
+.overlap-hit{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.overlap-hit[data-label="overlapping"]{color:var(--bad,#b3261e)}
+.claim-chip{flex:none;max-width:9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--who,var(--muted));border:1px solid color-mix(in srgb,var(--who,var(--muted)) 40%,transparent);border-radius:999px;padding:0 6px}
+.claim-mark{flex:none;width:7px;height:7px;margin-inline:4px;border-radius:2px;background:var(--who);outline:1px solid color-mix(in srgb,var(--who) 40%,transparent);outline-offset:1px}
+.claim-menu-scrim{position:fixed;inset:0;z-index:60}
+.claim-menu{position:fixed;display:flex;flex-direction:column;min-width:96px;padding:4px;background:var(--paper,#fff);border:1px solid var(--line,#ddd);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18)}
+.claim-menu button{text-align:left;padding:4px 8px;font-size:12.5px;border-radius:4px}
+.claim-menu button:hover,.claim-menu button:focus-visible{background:color-mix(in srgb,var(--ink,#000) 8%,transparent)}

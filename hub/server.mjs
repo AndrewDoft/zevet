@@ -1316,8 +1316,48 @@ const steerTeams = new Map(); // team -> { listeners:Set<res>, byId:Map<id,rec>,
 
 function steerTeam(team) {
   let t = steerTeams.get(team);
-  if (!t) steerTeams.set(team, (t = { listeners: new Set(), byId: new Map(), rate: new Map() }));
+  if (!t) steerTeams.set(team, (t = { listeners: new Set(), byId: new Map(), rate: new Map(), claims: new Map() }));
   return t;
+}
+
+/* Advisory path claims (D-070). One sealed blob per session, replaced by the
+ * next frame and dropped by a release. The hub keeps them in memory only, never
+ * in the event log or the board snapshot (a claim must not look like an agent
+ * turn), forwards them on the desktop channel, and cannot read a path: it sees
+ * the actor and session it sees on every event, and a base64 blob. */
+const CLAIM_SEALED_MAX = 32 * 1024;
+const CLAIM_KEEP = 300; // per team; oldest dropped
+const CLAIM_TTL_MS = 2 * 60 * 60 * 1000; // the client caps a claim at 1 h
+
+function claimsPrune(t) {
+  const cut = Date.now() - CLAIM_TTL_MS;
+  for (const [k, c] of t.claims) if (c.ts < cut) t.claims.delete(k);
+  while (t.claims.size > CLAIM_KEEP) t.claims.delete(t.claims.keys().next().value);
+}
+
+/** Store and forward one claim frame. `error` is a 400 message, else ok. */
+function relayClaim(team, actor, p) {
+  const session = String(p.session || "").slice(0, 64);
+  if (!session) return { error: "a claim needs a session" };
+  const t = steerTeam(team);
+  const key = `${actor}\u0000${session}`;
+  let name;
+  let data;
+  if (p.release === true) {
+    t.claims.delete(key);
+    name = "claim-release";
+    data = { actor, session };
+  } else {
+    const claim = typeof p.claim === "string" ? p.claim : "";
+    if (!claim || claim.length > CLAIM_SEALED_MAX || !/^[A-Za-z0-9+/]+={0,2}$/.test(claim)) return { error: "a claim needs a sealed base64 payload" };
+    t.claims.delete(key);
+    t.claims.set(key, { ts: Date.now(), frame: { actor, session, claim } });
+    claimsPrune(t);
+    name = "claim";
+    data = { actor, session, claim };
+  }
+  for (const res of t.listeners) steerFrame(res, name, data);
+  return {};
 }
 
 /** Which person a session is, by a stable key (their primary login). */
@@ -2185,10 +2225,9 @@ async function handleRequest(req, res) {
       return json(res, 400, { error: "expected a JSON object" });
     }
     if (parsed.kind === "claim") {
-      const sealed = typeof parsed.claim === "string" ? parsed.claim.slice(0, 32768) : "";
-      if (!sealed) return json(res, 400, { error: "claim requires sealed payload" });
-      boards.get(auth.team).record({ id: randomUUID(), ts: Date.now(), actor: String(parsed.actor || "unknown").slice(0, 40), kind: "claim", session: String(parsed.session || "").slice(0, 64), claim: sealed }, teamAccounts.get(auth.team).actorResolver());
-      return json(res, 200, { ok: true });
+      const actor = teamAccounts.get(auth.team).actorResolver()(String(parsed.actor || "unknown").slice(0, 40));
+      const r = relayClaim(auth.team, actor, parsed);
+      return r.error ? json(res, 400, { error: r.error }) : json(res, 200, { ok: true });
     }
     const evt = {
       id: randomUUID(),
@@ -2350,6 +2389,8 @@ async function handleRequest(req, res) {
       res.write(`retry: 1000\nevent: hello\ndata: {"steer":true}\n\n`);
       res.zevetSteer = { session: auth.session };
       const t = steerTeam(auth.team);
+      claimsPrune(t);
+      for (const c of t.claims.values()) steerFrame(res, "claim", c.frame);
       t.listeners.add(res);
       const ping = setInterval(() => {
         try {
