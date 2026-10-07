@@ -22,7 +22,9 @@ const CONFIRM_TIMEOUT_MS = 120 * 1000;
 function busyReason({ now, activity, chatBusy, lastInputAt, windows, inputQuietMs = INPUT_QUIET_MS, working }) {
   // A console mid-turn is never restarted, resumable or not: a restore resumes the session but the waiter on the old
   // turn, and the turn's own in-flight tool calls, are lost (0.2.125, 2026-10-07).
-  if (typeof working === "function" && working() > 0) return "an agent is mid-turn";
+  // Required, not optional: a caller that forgot to pass it would silently restart through a mid-turn agent.
+  if (typeof working !== "function") throw new TypeError("busyReason: working() is required");
+  if (working() > 0) return "an agent is mid-turn";
   const a = activity();
   if (a.nonResumable > 0) return "a non-resumable agent is running";
   if (a.running > 0 && !a.resumable) return "an agent is running";
