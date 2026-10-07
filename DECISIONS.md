@@ -1889,3 +1889,14 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
 - **Hub** redeployed from the tag in place; `BUILD_ID` `f7c2582d3539` -> `e65b755bd3fc`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-072 — Shipped: 0.2.123, Merge remote-tracking branch 'origin/main' into int/0.2.123 (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 11 commit(s) past v0.2.122.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.123 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.123`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `a36367c6…` (153116656 B), dmg `def3f55f…` (205254623 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2123 on both platforms. Manifests win `50fe6f8e…`, mac `786cedf8…`. Delta: 6 new blob(s) uploaded. 84 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `e65b755bd3fc` -> `79c173a36ba9`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
