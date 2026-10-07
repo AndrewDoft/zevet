@@ -84,6 +84,7 @@
       "agent-api.js",
       "agent-steer.js",
       "agent-spawn.js",
+      "session-share.js",
       "chat.js",
       "chat-claude.js",
       "chat-cli.js",

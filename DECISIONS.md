@@ -1940,3 +1940,22 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
 **Tests.** `test/roles.test.mjs` (accounts unit + real hub). Mutation-checked: removing the steer gate, the spawn gate, the ingest gate, the owner check on `/auth/role`, the audit write, the rank comparison in `can`, and changing the migration default to viewer each turned the suite red; all restored.
 
 **Not verified.** No UI walk of the role select, no two-machine run, `/ws` not role-gated.
+
+## D-NEXT-W2-17 — Invite into one session, with a five-check join
+
+**Decision.** An Editor (or the owner) invites a teammate into a single session from its agent row ("Invite"): their desktop seals the session reference `{session, repo, mode}` with the team document key (AAD `session-invite <id> <session>`, same scheme as steers and claims) and registers it at `POST /api/session-invite`; the hub holds ciphertext, in memory, 24 h. Only the session's person or the owner may invite (else "Only X or the owner can invite into this session"); a session not on the board is "Session ended". The invite id is the thing shared; the joiner pastes it ("Join a session"). `mode` is the most the invite grants: watch, comment or edit.
+
+`POST /api/session-invite/join` runs `checkJoin` (hub/session-share.mjs), first failure wins, ONE `{check, error}`: (1) team member, "Join the team first"; (2) role: watch needs any member, comment needs Commenter, edit needs Editor via `can` ("Ask the owner for Editor"); a mode above the invite is "This invite is X only"; (3) seat; (4) push access, edit only; (5) the agent is on the board ("Session ended") and, to edit, its person's desktop channel is open ("X is offline"). A Viewer joins `watch` and gets `readOnly: true`; asking to edit is refused by the role check. A joiner defaults to the invite's mode, so a Viewer must ask for watch.
+
+- **Seat: skipped.** No seat limit exists anywhere (no plan, metering or cap in hub, accounts or desktop; the only "seat" in the tree is a comment). The check is recorded as `skipped: ["seat"]` in a successful join, not invented. It slots between role and push when a limit exists.
+- **Push access.** The hub has no GitHub token and makes no GitHub call. Push is a fact about the joiner's machine, so the joiner's desktop answers it: `git push --dry-run origin HEAD` in the open workspace folder of that name (the spawn resolver). Flow: the hub says `check: "push"` with the repo, the desktop probes, retries with `push: true|false`. The answer is client-reported, so it is a UX gate; git itself is the enforcement on a real push. Not a role.
+- **Sealed.** There is no separate per-session key in Zevet; the sealed payload is the session reference under the team doc key, opened on the joiner's desktop (a different team secret gets "The invite did not open here"). It carries no new secret.
+- New ACTION_ROLE `share: editor`. IPC `sessionInvite`, `sessionJoin`; `desktop/session-share.js` added to the payload list.
+
+**Alternatives.** (a) Hub probes GitHub: needs a stored token, rejected. (b) Per-person invites: the invite id is unguessable and team-scoped; per-person binding left out. (c) Persist invites: a restart means re-invite, same as steers.
+
+**Reversibility.** Additive: two routes, one action, two IPC calls. Nothing stored on disk.
+
+**Tests.** `test/session-share.test.mjs`: each check's pass and fail, order (first failing wins), single-error shape, Viewer read-only, expiry, and a real hub with the real desktop module (sealing, push probe only when asked, wrong secret). Mutation-checked: dropping the push check, `readOnly`, the role check, the member check, moving the agent check first, and dropping the offline check each turned the suite red; all restored.
+
+**Not verified.** No UI walk of the Invite button or Join field; `git push --dry-run` was not run against a real remote; no two-machine run; own-session rows (AgentRow) have no Invite button, only team agent rows.

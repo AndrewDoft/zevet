@@ -447,6 +447,10 @@ export interface LocalBridge {
    * UI must not be able to, which is why the card is removed optimistically.
    */
   askAnswer?: (id: string, picked: string[]) => Promise<{ ok: boolean; error?: string }>;
+  /** Invite a teammate into one session (D-NEXT-W2-17): main seals the session reference with the document key and registers it with the hub. Returns the invite id to share. */
+  sessionInvite?: (session: string, mode: string, repo: string) => Promise<{ ok: boolean; id?: string; error?: string }>;
+  /** Join a session by invite id. The hub runs the checks (member, role, seat, push, agent) and answers the first failure as one error; main probes push access to the repo for an edit join. */
+  sessionJoin?: (id: string, mode?: string) => Promise<{ ok: boolean; check?: string; mode?: string; readOnly?: boolean; session?: string; repo?: string; agent?: string; actor?: string; error?: string }>;
   /**
    * Steer a teammate's agent (D-058): main seals the text with the document
    * key and sends it through the hub, which enforces the team's steer policy.

@@ -525,6 +525,10 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * UI must not be able to, which is why the card is removed optimistically.
    */
   askAnswer: (id, picked) => ipcRenderer.invoke("local:askAnswer", { id, picked }),
+  /** Invite a teammate into one session (D-NEXT-W2-17): main seals the session reference with the document key and registers it with the hub. Returns the invite id to share. */
+  sessionInvite: (session, mode, repo) => ipcRenderer.invoke("local:sessionInvite", { session, mode, repo }),
+  /** Join a session by invite id. The hub runs the checks (member, role, seat, push, agent) and answers the first failure as one error; main probes push access to the repo for an edit join. */
+  sessionJoin: (id, mode) => ipcRenderer.invoke("local:sessionJoin", { id, mode }),
   /**
    * Steer a teammate's agent (D-058): main seals the text with the document
    * key and sends it through the hub, which enforces the team's steer policy.

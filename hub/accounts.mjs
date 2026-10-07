@@ -137,6 +137,7 @@ export const ACTION_ROLE = Object.freeze({
   steer: "editor",
   spawn: "editor",
   takeover: "editor",
+  share: "editor",
   credential: "editor",
 });
 

@@ -75,6 +75,7 @@ import { AgentLogo } from "./brand";
 import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
+import { InviteIntoSession, JoinSession } from "./sessionshare";
 import { SteerButton } from "./steer";
 import { TeamPayer } from "./payer";
 import { RunOnTheirs } from "./spawn";
@@ -358,6 +359,7 @@ function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; sessio
             <span className="agent-row-ago">{agoLabel(a.lastTs, now)}</span>
           )}
         </div>
+        <InviteIntoSession session={a.session} />
         <SteerButton a={a} />
       </div>
       <TeamPayer actor={a.actor} session={a.session} agent={a.agent} />
@@ -653,6 +655,7 @@ export function PeoplePane({
 
   return (
     <>
+      <JoinSession />
       {[...roster].sort((a, b) => b.lastTs - a.lastTs).map((r) => {
         const idle = isIdle(r, now);
         const open = expanded.indexOf(r.actor) >= 0;
