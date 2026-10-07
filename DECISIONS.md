@@ -1918,3 +1918,25 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
 **Known limits.** A steer's owner card knows the console's agent but not its model, so an opencode steer card shows no payer. The second Max account (engine2) and team/auto-ladder credentials are unknown, so claude agents launched on them show nothing. A teammate on an older build shares nothing.
 
 **Tests.** `test/payer.test.mjs`: per-engine extraction from fixture files (and that no token or email other than the named one leaks), the sealed frame (session AAD, key), through a real hub (relay, late joiner, release, never in clear, not an agent turn, bad payloads refused), the board wording, and the steer/spawn/agent-card wiring.
+
+## D-NEXT-W2-7 — Roles: Viewer / Commenter / Editor / Owner, enforced at the hub
+
+**2026-10-07.** Item 7 of the Amoeba build order.
+
+**Decision.** Each person on a team has a role: `viewer` < `commenter` < `editor` < `owner`. `owner` is not stored; it is `state.owner` and cannot be granted, removed or re-roled. Everyone else carries `role` on their person record. `accounts.roleOf(ref)` reads it live on every call and `accounts.can(ref, action)` checks it against `ACTION_ROLE`, so a demotion refuses that person's very next request (nothing is cached in a session).
+
+- **Gated at the hub (403 `<role> role required`):** `/api/steer`, `/api/spawn` (Editor), `/team/credentials` add and secret fetch (Editor: the secret goes to a machine), and, for a person's own desktop (a session token), `/ingest` events (Editor) and claim/payer frames (Commenter). `take-over` is in `ACTION_ROLE` (Editor) for item 2 to call; there is no route yet.
+- **Not gated:** `/ingest` carrying only the bare team secret (a hook-only machine has no person), board reads, `/ws` document sync (ciphertext; its token is usually the shared secret, so the hub cannot tell who is writing).
+- **Change a role:** `POST /auth/role {login, role}`, owner only; `viewer|commenter|editor`. Audit entry `{what: "role.<login>", from, to, by}` in the same trail as policy. whoami, `/api/policy` and the people list report `role`. Board: a role select per member row in team settings, role label for non-owners; no explanatory text.
+- **Migration:** a record with no valid `role` loads as Editor; the owner is Owner. Nobody loses what they could do. New invitees are Editors.
+- **Merge:** two rows merged into one human keep the LOWER role, so linking an account cannot undo a demotion.
+
+**Alternatives.** (a) Role on the session: stale after demotion, rejected. (b) Per-workspace roles: no workspace object exists yet; per team now. (c) Gate `/ws` by session role: blocked by the shared-secret token and by the hub being blind to which frames are comments vs edits. (d) Ownership transfer: out of scope.
+
+**Why.** The ship rule: a demoted user must be stopped by the server, not by a desktop that obeys.
+
+**Reversibility.** Additive. `role` is an extra field older hubs ignore; removing the gates restores today's behaviour (everyone Editor). No data to unwind.
+
+**Tests.** `test/roles.test.mjs` (accounts unit + real hub). Mutation-checked: removing the steer gate, the spawn gate, the ingest gate, the owner check on `/auth/role`, the audit write, the rank comparison in `can`, and changing the migration default to viewer each turned the suite red; all restored.
+
+**Not verified.** No UI walk of the role select, no two-machine run, `/ws` not role-gated.

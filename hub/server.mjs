@@ -15,7 +15,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSyn
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Accounts, POLICY_VALUES, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
+import { ACTION_ROLE, Accounts, POLICY_VALUES, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
 import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedEmails } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
 import * as ms from "./microsoft-auth.mjs";
@@ -1073,6 +1073,15 @@ function teamFrom(req, url) {
  * shared-token caller still needs to learn "sign in with GitHub/Google" —
  * it answers, but strips the people list before it does.
  */
+/** Role gate: a 403 body when this session may not `action`, else null. The
+ *  role is read live from the account on every call (accounts.can), so a
+ *  demotion refuses the person's very next request. */
+function roleRefusal(auth, action) {
+  if (auth.accounts.can(auth.session, action)) return null;
+  const need = ACTION_ROLE[action];
+  return { error: `${need} role required`, role: auth.accounts.roleOf(auth.session) };
+}
+
 function teamFromSession(req, url) {
   const auth = teamFrom(req, url);
   return auth && auth.session ? auth : null;
@@ -1306,6 +1315,7 @@ function person(a, acc, asOwner = false) {
     key: a.login,
     provider: a.provider,
     owner: a.owner,
+    role: a.owner ? "owner" : a.role || "editor",
     pending,
     state,
     invitedAt: a.added || null,
@@ -1846,6 +1856,7 @@ async function handleRequest(req, res) {
       login: sess ? sess.login : null,
       shared: !sess,
       owner: Boolean(sess && acc.owner === sess.login),
+      role: sess ? acc.roleOf(sess) : null,
       githubSignIn: Boolean(GITHUB_CLIENT_ID),
       // Kept alongside `githubSignIn` rather than replacing it with a single
       // `providers` list: a board cached before Google existed reads that exact
@@ -2062,6 +2073,29 @@ async function handleRequest(req, res) {
    * without an invite, which is exactly the kind of change a shared token
    * must not be able to make for itself. `acc.setDomain` is what actually
    * refuses anything but the owner's own `hd` — see its comment. */
+  /* Change somebody's role. OWNER ONLY, enforced here; takes effect on that
+   * person's very next request (accounts.roleOf is read per call). */
+  if (url.pathname === "/auth/role" && req.method === "POST") {
+    const auth = teamFromSession(req, url);
+    if (!auth) return refuse(req, res, url);
+    const acc = auth.accounts;
+    const sess = auth.session;
+    if (acc.owner !== sess.login) {
+      return json(res, 403, { error: acc.owner ? `only @${acc.owner} can change roles` : "nobody has claimed this team yet" });
+    }
+    let body = null;
+    try {
+      body = JSON.parse(await readBody(req, 4 * 1024));
+    } catch {
+      return json(res, 400, { error: "expected JSON" });
+    }
+    const r = acc.setRole(body && body.login, body && body.role, sess.login);
+    if (!r.ok) return json(res, 400, { error: r.error });
+    if (r.changed) console.log(`zevet: role of ${String(body.login).slice(0, 40)} -> ${r.role} by @${sess.login}${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`);
+    notifyPeopleChanged(auth.team);
+    return json(res, 200, { ok: true, role: r.role, people: acc.list().map((a) => person(a, acc, true)) });
+  }
+
   if (url.pathname === "/auth/domain" && req.method === "POST") {
     const auth = teamFrom(req, url);
     if (!auth) return refuse(req, res, url);
@@ -2102,6 +2136,8 @@ async function handleRequest(req, res) {
     // `addedBy`, and "added by nobody" is not a record this hub can later
     // use to decide who may remove it.
     if (!sess) return json(res, 403, { error: "sign in to add a team credential" });
+    const denied = roleRefusal(auth, "credential");
+    if (denied) return json(res, 403, denied);
     let body = null;
     try {
       body = JSON.parse(await readBody(req));
@@ -2134,6 +2170,8 @@ async function handleRequest(req, res) {
   if (url.pathname.startsWith("/team/credentials/") && url.pathname.endsWith("/secret") && req.method === "GET") {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
+    const denied = roleRefusal(auth, "credential");
+    if (denied) return json(res, 403, denied);
     const id = safeDecode(url.pathname.slice("/team/credentials/".length, -"/secret".length));
     const key = id ? auth.accounts.credentialKey(id) : null;
     if (key === null) return json(res, 404, { error: "no such credential" });
@@ -2307,6 +2345,12 @@ async function handleRequest(req, res) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return json(res, 400, { error: "expected a JSON object" });
     }
+    // A person's own desktop (a session) is held to their role; a bare team
+    // secret (a hook-only machine) has no person, so it is not.
+    if (auth.session) {
+      const denied = roleRefusal(auth, parsed.kind === "claim" || parsed.kind === "payer" ? "claim" : "report");
+      if (denied) return json(res, 403, denied);
+    }
     if (parsed.kind === "claim" || parsed.kind === "payer") {
       const actor = teamAccounts.get(auth.team).actorResolver()(String(parsed.actor || "unknown").slice(0, 40));
       const r = relayClaim(auth.team, actor, parsed);
@@ -2346,7 +2390,7 @@ async function handleRequest(req, res) {
     const auth = teamFromSession(req, url);
     if (!auth) return refuse(req, res, url);
     const acc = auth.accounts;
-    return json(res, 200, { ok: true, policy: acc.policy, admin: acc.owner === auth.session.login, owner: acc.owner });
+    return json(res, 200, { ok: true, policy: acc.policy, admin: acc.owner === auth.session.login, owner: acc.owner, role: acc.roleOf(auth.session) });
   }
 
   if (url.pathname === "/api/policy" && req.method === "PUT") {
@@ -2383,6 +2427,8 @@ async function handleRequest(req, res) {
     if (!auth) return refuse(req, res, url);
     const acc = auth.accounts;
     const sess = auth.session;
+    const denied = roleRefusal(auth, "steer");
+    if (denied) return json(res, 403, denied);
     let body = null;
     try {
       body = JSON.parse(await readBody(req, STEER_SEALED_MAX + 4 * 1024));
@@ -2438,6 +2484,8 @@ async function handleRequest(req, res) {
     if (!auth) return refuse(req, res, url);
     const acc = auth.accounts;
     const sess = auth.session;
+    const denied = roleRefusal(auth, "spawn");
+    if (denied) return json(res, 403, denied);
     let body = null;
     try {
       body = JSON.parse(await readBody(req, STEER_SEALED_MAX + 4 * 1024));
