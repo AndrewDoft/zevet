@@ -202,6 +202,29 @@ describe("run — command dispatch", () => {
     await assert.rejects(() => run(["wait"], { disc, fetchImpl: async () => ({}) }), /--id/);
   });
 
+  test("wait rides out a restart: dead connection, then an id not restored yet, then the result, from the re-read discovery", async () => {
+    const urls = [];
+    const replies = [
+      () => { throw new TypeError("fetch failed"); },
+      () => ({ status: 404, json: async () => ({ ok: false, error: "no such console" }) }),
+      () => ({ status: 200, json: async () => ({ ok: true, resultText: "done" }) }),
+    ];
+    const fetchImpl = async (url) => { urls.push(new URL(url).port); return replies.shift()(); };
+    let reads = 0;
+    const next = () => ({ url: `http://127.0.0.1:${9100 + ++reads}`, token: "t2" });
+    const r = await run(["wait", "--id", "c1"], { disc, fetchImpl, sleepImpl: async () => {}, now: () => 0, reloadDisc: next });
+    assert.equal(r.exitCode, 0);
+    assert.equal(r.text, "done");
+    assert.deepEqual(urls, ["9", "9101", "9102"]);
+  });
+
+  test("wait gives up after the grace period and says Zevet is not answering", async () => {
+    let t = 0;
+    const r = await run(["wait", "--id", "c1"], { disc, fetchImpl: async () => { throw new TypeError("fetch failed"); }, sleepImpl: async () => { t += 60_000; }, now: () => t });
+    assert.equal(r.exitCode, 1);
+    assert.match(r.text, /not answering/);
+  });
+
   test("output formats the transcript tail", async () => {
     const fetchImpl = async () => ({ status: 200, json: async () => ({ ok: true, events: [{ type: "prompt", text: "hi" }] }) });
     const r = await run(["output", "--id", "c1", "--tail", "5"], { disc, fetchImpl });

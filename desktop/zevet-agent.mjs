@@ -177,7 +177,30 @@ async function promptFrom(opts, stdin) {
   return readStdin(stdin);
 }
 
-async function run(argv, { disc, fetchImpl = fetch, stdin = process.stdin, stdout = console.log, stderr = console.error } = {}) {
+const RESTART_GRACE_MS = 120 * 1000;
+
+/** Zevet restarting to apply an update drops the connection (a new port and token follow in agent-api.json) and
+ *  restores the agents under the SAME id a moment later. A wait rides that out instead of reporting a lost agent:
+ *  it re-reads the discovery file and retries on a dead connection or an id the new process has not restored yet. */
+async function waitAcrossRestart({ d, fetchImpl, sleepImpl, reload, now, query, graceMs = RESTART_GRACE_MS }) {
+  let disc = d;
+  let since = null;
+  for (;;) {
+    let r = null;
+    try {
+      r = await request(disc, "POST", "/wait", { fetchImpl, query });
+    } catch {
+      r = null;
+    }
+    if (r && !(r.status === 404 && /no such console/.test((r.body && r.body.error) || ""))) return r;
+    if (since === null) since = now();
+    if (now() - since >= graceMs) return r || { status: 0, body: { ok: false, error: "Zevet is not answering (it may be restarting)" } };
+    await sleepImpl(1000);
+    try { disc = reload(); } catch { /* the file is rewritten a moment after the relaunch */ }
+  }
+}
+
+async function run(argv, { disc, fetchImpl = fetch, stdin = process.stdin, stdout = console.log, stderr = console.error, sleepImpl = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, reloadDisc } = {}) {
   const { command, opts } = parseArgs(argv);
   const d = disc || loadDiscovery();
 
@@ -220,8 +243,8 @@ async function run(argv, { disc, fetchImpl = fetch, stdin = process.stdin, stdou
   }
 
   if (command === "wait") {
-    const { status, body } = await request(d, "POST", "/wait", {
-      fetchImpl,
+    const { status, body } = await waitAcrossRestart({
+      d, fetchImpl, sleepImpl, reload: reloadDisc || (disc ? () => disc : loadDiscovery), now,
       query: { id: opts.id, ...(opts["timeout-ms"] ? { timeoutMs: opts["timeout-ms"] } : {}) },
     });
     if (status !== 200 || !body.ok) return { ok: false, exitCode: 1, text: body.error || `wait failed (${status})` };

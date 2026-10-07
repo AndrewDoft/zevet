@@ -4063,7 +4063,10 @@ bridge.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) 
   const resolved = await agentEnvFor(engineReq);
   if (!resolved.ok) return { ok: false, error: resolved.error };
   const env = resolved.env;
+  // The thread keeps its id and label across the new process, so `zagent --attach <id>` and any waiter still find it.
+  const kept = consolePersistence.resumedIdentity(continues ? consoleLog.get(continues) : null, continues, opts);
   const started = instrumentedStartConsole({
+    ...(kept.id ? { id: kept.id } : {}),
     agent: String(agent || ""),
     cwd: place.cwd,
     repoRoot: place.root,
@@ -4092,8 +4095,8 @@ bridge.handle("local:resumeAgent", async (_e, { agent, cwd, resumeFrom, opts }) 
   consoles.set(started.id, started);
   // The same thread, a new process: its history moves over rather than
   // coming back after a reload as a second thread, and the old handle goes.
-  consoleLog.open(started.id, consoleMeta(agent, dir, opts, place, resolved.engine), continues);
-  const prev = consoles.get(continues);
+  const prev = kept.id ? null : consoles.get(continues); // same id: consoles.set above already replaced the dead handle
+  consoleLog.open(started.id, consoleMeta(agent, dir, { ...opts, ...(kept.label ? { label: kept.label } : {}) }, place, resolved.engine), continues);
   if (prev) {
     try {
       prev.stop();
@@ -4289,6 +4292,7 @@ if (bootShell.payload) {
     ...useGate,
     inputQuietMs: process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS ? Number(process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS) : undefined, // the packaged proof only
     release: releaseForRelaunch,
+    onWaiting: (why) => { payloadWaiting = why; pushUpdateStatus(); },
     log: bootShell.log,
   });
   swapper.start();
@@ -4571,7 +4575,22 @@ function withRunningBuild(s) {
   } catch (err) {
     bootShell.log(`payload staged() unreadable: ${err && err.message}`);
   }
-  return { ...s, running: APP_VERSION, ...(staged && staged.build !== APP_VERSION ? { next: { build: staged.build, when: "on restart" } } : {}) };
+  const waiting = payloadWaiting || installWaiting;
+  return {
+    ...s,
+    running: APP_VERSION,
+    ...(staged && staged.build !== APP_VERSION ? { next: { build: staged.build, when: "on restart" } } : {}),
+    // Why a ready update has not applied yet (an agent mid-turn, a recent keystroke); absent when nothing holds it.
+    ...(waiting ? { waiting } : {}),
+  };
+}
+/** What is holding a staged payload / a downloaded installer back; the next gate poll retries and clears it. */
+let payloadWaiting = null;
+let installWaiting = null;
+function pushUpdateStatus() {
+  const s = withRunningBuild(appUpdater.state);
+  toBoard("app:update", s);
+  if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send("app:update", s);
 }
 const appUpdater = new AppUpdater({
   rollback,
@@ -4659,6 +4678,7 @@ function startIdleInstall() {
       return all.length > 0 && all.every((w) => w.isMinimized() || !w.isVisible() || !w.isFocused());
     },
     persist: persistResumableConsoles, // before the installer spawns; a non-resumable console never gets here (busyReason)
+    onWaiting: (why) => { if (why !== installWaiting) { installWaiting = why; pushUpdateStatus(); } },
     log: (m) => bootShell.log(m),
   });
   const run = (o) => void tick(o).catch((err) => bootShell.log(`idle install: ${err && err.message}`));
@@ -5149,6 +5169,7 @@ async function startAgentApi() {
     setOnce: (id) => consoleLog.setOnce(id),
     getConsole: (id) => consoleLog.get(id),
     listConsoles: () => consoleLog.snapshot().consoles,
+    isRelaunching: () => relaunching,
   });
   // HOME is otherwise created by whichever writer runs first; on a fresh profile that is not this one.
   fs.mkdirSync(HOME, { recursive: true });

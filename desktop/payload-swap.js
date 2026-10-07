@@ -19,7 +19,10 @@ const POLL_MS = 30 * 1000;
 const CONFIRM_TIMEOUT_MS = 120 * 1000;
 
 /** Why a swap must wait, or null when it may go. */
-function busyReason({ now, activity, chatBusy, lastInputAt, windows, inputQuietMs = INPUT_QUIET_MS }) {
+function busyReason({ now, activity, chatBusy, lastInputAt, windows, inputQuietMs = INPUT_QUIET_MS, working }) {
+  // A console mid-turn is never restarted, resumable or not: a restore resumes the session but the waiter on the old
+  // turn, and the turn's own in-flight tool calls, are lost (0.2.125, 2026-10-07).
+  if (typeof working === "function" && working() > 0) return "an agent is mid-turn";
   const a = activity();
   if (a.nonResumable > 0) return "a non-resumable agent is running";
   if (a.running > 0 && !a.resumable) return "an agent is running";
@@ -30,14 +33,15 @@ function busyReason({ now, activity, chatBusy, lastInputAt, windows, inputQuietM
   return null;
 }
 
-function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows, inputQuietMs, release, log, now = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval }) {
+function createSwapper({ payload, app, activity, chatBusy, lastInputAt, windows, inputQuietMs, working, onWaiting = () => {}, release, log, now = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval }) {
   let swapping = false;
   let timer = null;
   let lastWhy = null;
 
   async function tick() {
     if (swapping || !payload.staged()) return "idle";
-    const why = busyReason({ now: now(), activity, chatBusy, lastInputAt, windows, inputQuietMs });
+    const why = busyReason({ now: now(), activity, chatBusy, lastInputAt, windows, inputQuietMs, working });
+    if (why !== lastWhy) onWaiting(why);
     if (why !== lastWhy) log(`payload ${payload.staged().build} staged; ${why ? `waiting: ${why}` : "idle"}`);
     lastWhy = why;
     if (why) return why;
