@@ -2,7 +2,7 @@
   "payload": {
     "schema": 1,
     "type": "zevet-client",
-    "version": "0.2.121",
+    "version": "0.2.122",
     "files": [
       {
         "name": "hook.mjs",
@@ -12,7 +12,7 @@
       {
         "name": "install.mjs",
         "bytes": 13584,
-        "sha256": "dfa58bd6084312ca4481aa968c124b59650884769ed49e29b34d9c7ff2b89f8b"
+        "sha256": "412694f99fb5ce8a377399df246f1dc4bc464bb1fb2ddddc493c73f167f4fe5b"
       },
       {
         "name": "updater.mjs",
@@ -21,8 +21,8 @@
       },
       {
         "name": "detect.mjs",
-        "bytes": 10182,
-        "sha256": "921626ba2c3103238973daebba12059b4703bbb8ebef5585bee36da3b2e40e9e"
+        "bytes": 10177,
+        "sha256": "48a6da3457d500503f805ab40c52f952c82a417b255772ca0ebe8a209d7cfa5c"
       },
       {
         "name": "install-codex.mjs",
@@ -46,8 +46,8 @@
       },
       {
         "name": "uninstall.mjs",
-        "bytes": 13627,
-        "sha256": "1fbe03198611c092054cdb877a0f9d1a3efde1002e6c3b6415ba6ecd1b52c67a"
+        "bytes": 13622,
+        "sha256": "5b03fbee8b5e85d42d9f07f431bfd81f2a6dcf3b0ef977fd08902ee92b11dc5b"
       },
       {
         "name": "doctor.mjs",
@@ -84,6 +84,6 @@
   "signature": {
     "algorithm": "ed25519",
     "key_id": "zevet-2026-09",
-    "signature": "4iTu97gfkrv9ejeXjJ3RC/5y0fBOoW4/cTndelT9ku3XPfTsg5T/ulmYvr+oT8qcleqyQafvUgx/rYDgvhEUBg=="
+    "signature": "ArwlwO9a3wT7o7uefl0ahvEvcyobfF8uYmt+IoHi8l5ysKug/MdHWKJ1loIjr35ZGdVQbiB+FTlQCN1KlgW2AA=="
   }
 }

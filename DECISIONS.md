@@ -1878,3 +1878,14 @@ entries record the provider that minted them), env (`ZEVET_MICROSOFT_*`), accoun
   `ZEVET_GITHUB_OWNER`, so enabling Microsoft cannot open a hub reserved for someone else.
 - **Cost:** personal Microsoft accounts may not carry `xms_edov` (unverified), in which case they cannot be auto-linked or claim an email invite
   until the app registration emits it; they can still own a hub or be linked from an existing session.
+
+## D-062 — Shipped: 0.2.122, Rebuild board.js.map from a clean checkout (sources pointed at a linked node_modules, CI r (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 17 commit(s) past v0.2.121.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.122 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.122`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `ca8a466d…` (153111440 B), dmg `fc8569b5…` (205272671 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2122 on both platforms. Manifests win `0ed56733…`, mac `81d1dcce…`. Delta: 9 new blob(s) uploaded. 82 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `f7c2582d3539` -> `e65b755bd3fc`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
