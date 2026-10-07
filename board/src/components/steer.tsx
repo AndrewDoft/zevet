@@ -28,6 +28,7 @@ import {
 } from "../lib/steer";
 import { usePolicy } from "../lib/policy";
 import { SpawnApproval, SpawnTargetLine } from "./spawn";
+import { PayerNote, useTeammatePayer } from "./payer";
 
 const btn =
   "text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96] disabled:opacity-40";
@@ -69,6 +70,7 @@ function policyLine(steer: string, who: string): string {
 
 function TargetLine({ t }: { t: SteerTarget }) {
   const policy = usePolicy();
+  const payer = useTeammatePayer(t.actor, t.session);
   return (
     <div data-slot="steer-target" className={cn(paper, "flex w-full items-start gap-3 rounded-[16px] px-4 py-3")}>
       <div className="flex min-w-0 flex-1 flex-col">
@@ -77,6 +79,7 @@ function TargetLine({ t }: { t: SteerTarget }) {
           {t.repo ? ` in ${t.repo}` : ""}. Steer their agent…
         </span>
         <span className="text-foreground/50 text-xs">Your next message goes to {t.actor}'s agent, not yours. {policyLine(policy.steer, t.actor)}</span>
+        <PayerNote who={t.actor} label={payer} />
       </div>
       <button type="button" className={btn} onClick={clearSteerTarget} aria-label="Stop steering">
         Done
@@ -103,6 +106,7 @@ export function SteerBanner() {
         >
           <span className="shrink-0 font-medium">{s.kind === "spawn" ? `new agent for ${s.to || "teammate"}` : `to ${s.to || "teammate"}`}</span>
           {s.text ? <span className={cn(mono, "min-w-0 flex-1 truncate")}>{s.text}</span> : <span className="flex-1" />}
+          {s.payer ? <PayerNote who={s.to} label={s.payer} /> : null}
           <span className={cn("shrink-0", s.status === "accepted" || s.status === "started" ? "text-foreground/80" : steerSettled(s.status, s.kind) ? "text-foreground/90" : "text-foreground/45")}>
             {statusText(s)}
             {s.reason && s.status !== "start-failed" ? ` (${s.reason})` : ""}
@@ -132,6 +136,7 @@ export function SteerApprovals() {
           {a.repo ? ` · ${a.repo}` : ""} — nothing reaches it until you approve
           {asks.length > 1 ? ` · ${asks.length - 1} more waiting` : ""}
         </span>
+        <PayerNote label={a.payer} />
       </div>
       <pre className={cn(mono, "text-foreground/70 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs")}>{a.text}</pre>
       <div className="flex items-center justify-end gap-2">

@@ -22,6 +22,7 @@ import { paper, field, mono } from "./assistant-ui/elements/surfaces";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { useBoard } from "../lib/board";
 import { usePolicy } from "../lib/policy";
+import { PayerNote, useTeammatePayer } from "./payer";
 import { agentLabel, answerSteer, canSpawn, reposOf, setSpawnTarget, useSteer, validRepoName, type SpawnTarget, type SteerAsk } from "../lib/steer";
 
 const AGENTS = ["claude", "codex", "opencode"] as const;
@@ -139,6 +140,7 @@ export function SpawnTargetLine({ t }: { t: SpawnTarget }) {
   const policy = usePolicy();
   const set = (patch: Partial<SpawnTarget>) => setSpawnTarget({ ...t, ...patch });
   const typed = t.repo && !validRepoName(t.repo);
+  const payer = useTeammatePayer(t.actor, "", t.agent);
   return (
     <div data-slot="spawn-target" className={cn(paper, "flex w-full flex-col gap-2 rounded-[16px] px-4 py-3")}>
       <div className="flex items-start gap-3">
@@ -148,6 +150,7 @@ export function SpawnTargetLine({ t }: { t: SpawnTarget }) {
             Your next message is its first prompt. It runs in {t.actor}'s app, in their repo, with their account and their own safe permission mode.{" "}
             {policy.steer === "on" ? "It starts straight away." : policy.steer === "off" ? "This is turned off for this team; it will be refused." : `${t.actor} approves it first.`}
           </span>
+          <PayerNote who={t.actor} label={payer} />
         </div>
         <button type="button" className={btn} onClick={() => setSpawnTarget(null)} aria-label="Run as me instead">
           Cancel
@@ -205,8 +208,10 @@ export function SpawnApproval({ a, more }: { a: SteerAsk; more: number }) {
         <dt className="text-foreground/50">Agent</dt>
         <dd>
           {agentLabel(a.agent)}
-          {a.model ? ` · ${a.model}` : ""} — your account
+          {a.model ? ` · ${a.model}` : ""}
         </dd>
+        <dt className="text-foreground/50">Bills</dt>
+        <dd data-payer={a.payer || undefined}>{a.payer || "your account"}</dd>
         <dt className="text-foreground/50">Folder</dt>
         <dd className={cn(mono, "break-all")}>{a.dir || a.repo}</dd>
         <dt className="text-foreground/50">Permissions</dt>

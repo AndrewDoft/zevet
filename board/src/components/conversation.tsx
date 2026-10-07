@@ -24,6 +24,7 @@ import { QuoteToComposer } from "./guards";
 import { VoiceHint } from "./voicedialog";
 import { PermitPrompt, PermitQueue } from "./permits";
 import { SteerApprovals, SteerBanner } from "./steer";
+import { ComposerPayer } from "./payer";
 import { useSteer } from "../lib/steer";
 import { RunAsPicker } from "./spawn";
 import { AskPrompt, AskQueue } from "./asks";
@@ -218,6 +219,7 @@ export function Conversation() {
           to each steer I sent. Above the transcript like the permits. */}
       <SteerApprovals />
       <SteerBanner />
+      <ComposerPayer />
       {/* "Run as" (D-060): only while starting a new agent. */}
       {reading || active ? null : <RunAsPicker />}
       {/* Above the chat box, in both views - see StartupActivity's own

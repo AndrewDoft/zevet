@@ -104,6 +104,10 @@ export interface ConsoleEntry {
   model: string;
   effort?: string;
   account?: string;
+  /** Who pays for this console's turns, "Claude · you@x.com (Max)" (D-073). Unknown: absent. */
+  payer?: string;
+  /** What was last sealed for the team, and when, so it is re-shared only on change or every 30 min. */
+  payerShared?: { session: string; label: string; at: number };
   root: string;
   hue: number;
   /** What this console has spent, as IT reported it.

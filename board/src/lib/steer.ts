@@ -14,6 +14,8 @@
 import { useSyncExternalStore } from "react";
 import { bridge } from "./bridge";
 import { agentName } from "./mentions.mjs";
+import { usePayers } from "./claimstore";
+import { payerOfActor, payerOfSession } from "./payer.mjs";
 
 export interface SteerTarget {
   actor: string;
@@ -39,6 +41,8 @@ export interface SentSteer {
   reason: string;
   /** A started spawn's new session id. */
   session: string;
+  /** Whose account pays on THEIR machine, as their sealed frame said ("" = unknown). */
+  payer: string;
   at: number;
 }
 
@@ -52,6 +56,8 @@ export interface SteerAsk {
   /** spawn: the folder on this machine it would run in, and the model. */
   dir: string;
   model: string;
+  /** Whose account pays here, on this machine ("" = unknown). */
+  payer: string;
 }
 
 export interface SteerState {
@@ -158,9 +164,9 @@ function patchSent(id: string, patch: Partial<SentSteer>) {
 }
 
 /** Put a row up, run the send, and settle the row with what came back. */
-async function track(kind: "steer" | "spawn", to: string, text: string, send: () => Promise<{ ok: boolean; id?: string; status?: string; error?: string }>) {
+async function track(kind: "steer" | "spawn", to: string, text: string, payer: string, send: () => Promise<{ ok: boolean; id?: string; status?: string; error?: string }>) {
   const temp = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  update((s) => ({ ...s, sent: [{ id: temp, kind, to, text, status: "sending", reason: "", session: "", at: Date.now() }, ...s.sent].slice(0, SENT_KEEP) }));
+  update((s) => ({ ...s, sent: [{ id: temp, kind, to, text, status: "sending", reason: "", session: "", payer, at: Date.now() }, ...s.sent].slice(0, SENT_KEEP) }));
   try {
     const r = await send();
     const status = r.status || (r.ok ? "queued" : "failed");
@@ -183,7 +189,7 @@ export async function sendSteer(text: string): Promise<void> {
   const t = state.target;
   const local = bridge.local;
   if (!t) return;
-  await track("steer", t.actor, text, async () =>
+  await track("steer", t.actor, text, payerOfSession(usePayers.getState().payers, t.actor, t.session), async () =>
     local?.steerSend ? local.steerSend(t.actor, t.session, t.repo, text) : { ok: false, error: "this app cannot steer — update Zevet" },
   );
 }
@@ -193,7 +199,7 @@ export async function sendSpawn(text: string): Promise<void> {
   const t = state.spawn;
   const local = bridge.local;
   if (!t) return;
-  await track("spawn", t.actor, text, async () => {
+  await track("spawn", t.actor, text, payerOfActor(usePayers.getState().payers, t.actor, t.agent), async () => {
     if (!local?.spawnSend) return { ok: false, error: "this app cannot start agents for teammates — update Zevet" };
     if (!validRepoName(t.repo)) return { ok: false, error: "pick one of their repos, or type its folder name" };
     return local.spawnSend(t.actor, t.repo, t.agent, t.model, text);
@@ -220,18 +226,21 @@ function onEvent(e: { kind: string; id: string; [k: string]: unknown }) {
       repo: str(e.repo),
       dir: str(e.dir),
       model: str(e.model),
+      payer: str(e.payer),
     };
     update((s) => (s.asks.some((a) => a.id === ask.id) ? s : { ...s, asks: [...s.asks, ask] }));
   } else if (e.kind === "done") {
     update((s) => ({ ...s, asks: s.asks.filter((a) => a.id !== e.id) }));
   } else if (e.kind === "status") {
-    const patch = { status: str(e.status), reason: str(e.reason), ...(str(e.session) ? { session: str(e.session) } : {}) };
     const known = state.sent.some((x) => x.id === e.id);
+    const prior = state.sent.find((x) => x.id === e.id);
+    const payer = str(e.session) ? payerOfSession(usePayers.getState().payers, str(e.to) || prior?.to || "", str(e.session)) : "";
+    const patch = { status: str(e.status), reason: str(e.reason), ...(str(e.session) ? { session: str(e.session) } : {}), ...(payer ? { payer } : {}) };
     if (known) patchSent(e.id, patch);
     else
       update((s) => ({
         ...s,
-        sent: [{ id: e.id, kind: e.of === "spawn" ? ("spawn" as const) : ("steer" as const), to: str(e.to), text: "", session: "", at: Date.now(), ...patch }, ...s.sent].slice(0, SENT_KEEP),
+        sent: [{ id: e.id, kind: e.of === "spawn" ? ("spawn" as const) : ("steer" as const), to: str(e.to), text: "", session: "", payer: "", at: Date.now(), ...patch }, ...s.sent].slice(0, SENT_KEEP),
       }));
   }
 }

@@ -2081,6 +2081,32 @@ function recordUsage(c: ConsoleEntry, u: UsageReading | null, cost: number | nul
   c.usage = next;
 }
 
+/** Who pays for this console's turns (D-073): asked of the desktop, which reads
+ *  the engine's own login. Shared with the team (sealed) once there is a session
+ *  to hang it on. True when the console changed. */
+const PAYER_RESHARE_MS = 30 * 60 * 1000;
+async function refreshPayer(c: ConsoleEntry): Promise<boolean> {
+  const l = bridge.local;
+  if (!l || !l.payerFor) return false;
+  const r = await l.payerFor(c.agent, c.model, c.engine).catch(() => null);
+  const label = (r && r.label) || "";
+  let changed = false;
+  if (label !== (c.payer || "")) {
+    c.payer = label || undefined;
+    changed = true;
+  }
+  if (r && r.account && !c.account) {
+    c.account = r.account;
+    changed = true;
+  }
+  const sh = c.payerShared;
+  if (c.sessionId && l.sharePayer && (!sh || sh.session !== c.sessionId || sh.label !== label || Date.now() - sh.at > PAYER_RESHARE_MS)) {
+    c.payerShared = { session: c.sessionId, label, at: Date.now() };
+    void l.sharePayer(c.sessionId, c.agent, c.model, c.engine).catch(() => {});
+  }
+  return changed;
+}
+
 /** Adopt what each running console's CLI has written to its own session file:
  *  its title, and codex's real context (see desktop/agent-sessions.js § live).
  *  Called on a timer by the rail; a console that has exited keeps what it had. */
@@ -2089,6 +2115,7 @@ export async function pollConsoleFiles(): Promise<void> {
   if (!ask) return;
   let changed = false;
   for (const c of useBoard.getState().myConsoles) {
+    if (c.running && (await refreshPayer(c))) changed = true;
     if (!c.running || !c.sessionId) continue;
     const r = await ask(c.agent, c.sessionId).catch(() => null);
     if (!r) continue;

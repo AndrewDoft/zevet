@@ -214,7 +214,7 @@ export interface LocalBridge {
   /** Release one path, or every path of a session when none is given. */
   releaseClaims?: (session: string, path?: string) => Promise<{ ok: boolean }>;
   /** Live claims, mine and the team's. */
-  claims?: () => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }> }>;
+  claims?: () => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }> }>;
   /** One text file, by path relative to its root. */
   read: (root: string, relPath: string) => Promise<ReadResult>;
   /**
@@ -459,6 +459,10 @@ export interface LocalBridge {
    * mode and resolves the repo by name. Optional: an older desktop build cannot.
    */
   spawnSend?: (to: string, repo: string, agent: string, model: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>;
+  /** Who pays for an agent's turns on this machine: engine and account, from the engine's own login (never a token). Empty label = unknown. */
+  payerFor?: (agent: string, model?: string, engine?: string) => Promise<{ engine: string; account: string; label: string }>;
+  /** Seal this session's payer with the document key and share it with the team (a release when unknown). */
+  sharePayer?: (session: string, agent: string, model?: string, engine?: string) => Promise<{ ok: boolean; label?: string }>;
   steerAnswer?: (id: string, approve: boolean) => Promise<{ ok: boolean; error?: string }>;
   onUpdate: (cb: (s: unknown) => void) => void;
   onIndexEvent: (cb: (p: { kind?: string; total?: number; loaded?: number; indexed?: number }) => void) => void;
@@ -511,7 +515,7 @@ export interface LocalBridge {
    */
   onAskRequest?: (cb: (req: AskRequest) => void) => () => void;
   /** The live claims changed (a claim, a release, an expiry, a teammate's frame). */
-  onClaimsEvent?: (cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }> }) => void) => () => void;
+  onClaimsEvent?: (cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }> }) => void) => () => void;
   /**
    * Steering (D-058): `ask` an approval card for a teammate's steer, `done`
    * when one was injected or declined, `status` for a steer this person sent.
