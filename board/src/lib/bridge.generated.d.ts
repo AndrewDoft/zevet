@@ -434,6 +434,12 @@ export interface LocalBridge {
    * Optional: an older desktop build cannot steer.
    */
   steerSend?: (to: string, session: string, repo: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>;
+  /**
+   * Start an agent on a teammate's machine (D-060): main seals the prompt and
+   * sends it through the hub, which enforces the team policy. Their app picks the
+   * mode and resolves the repo by name. Optional: an older desktop build cannot.
+   */
+  spawnSend?: (to: string, repo: string, agent: string, model: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>;
   steerAnswer?: (id: string, approve: boolean) => Promise<{ ok: boolean; error?: string }>;
   onUpdate: (cb: (s: unknown) => void) => void;
   onIndexEvent: (cb: (p: { kind?: string; total?: number; loaded?: number; indexed?: number }) => void) => void;

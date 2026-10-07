@@ -4496,17 +4496,68 @@ const steerInbox = agentSteer.createSteerInbox({
       toBoard("local:steerEvent", { kind: "ask", id: req.id, from: req.from, text: req.text, agent: req.agent, repo: req.repo, consoleId: req.consoleId });
     }),
   inject: injectSteer,
-  report: async (id, status, reason) => {
-    const a = steerAuth(readConfig());
-    if (!a.hub || !a.token) return;
-    await fetch(`${a.hub}/api/steer/status`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-zevet-token": a.token },
-      body: JSON.stringify({ id, status, reason }),
-      redirect: "error",
-      signal: AbortSignal.timeout(10000),
-    });
+  report: reportSteerStatus,
+});
+
+/** Tell the hub what happened to a steer or a spawn sent to this person. */
+async function reportSteerStatus(id, status, reason, extra) {
+  const a = steerAuth(readConfig());
+  if (!a.hub || !a.token) return;
+  await fetch(`${a.hub}/api/steer/status`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-zevet-token": a.token },
+    body: JSON.stringify({ id, status, reason, ...(extra && typeof extra.session === "string" ? { session: extra.session } : {}) }),
+    redirect: "error",
+    signal: AbortSignal.timeout(10000),
+  });
+}
+
+/* ── A teammate starting an agent HERE (D-060, desktop/agent-spawn.js) ──────
+ * The repo is resolved against this app's own open workspaces by folder
+ * name; the mode is this person's own default when that is a safe one (plan
+ * or ask), otherwise ask — never what the sender wanted; the engine is this
+ * machine's default login. Started directly, not through the board page: the
+ * page is served by the hub, and nothing it says may change how this runs. */
+const agentSpawn = require("./agent-spawn.js");
+/** Consoles a teammate started here; the cap counts the ones still running. */
+const remoteStarted = new Set();
+
+function runningRemote() {
+  for (const id of remoteStarted) {
+    const c = consoleLog.get(id);
+    if (!c || !c.running) remoteStarted.delete(id);
+  }
+  return remoteStarted.size;
+}
+
+async function startRemoteSpawn({ agent, dir, model, prompt, from }) {
+  const who = String(from || "a teammate").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 40);
+  const r = await startAgentCore({ agent, cwd: dir, opts: { model, mode: agentSpawn.safeMode(storedMode()), label: `started by ${who}` } });
+  if (!r.ok) return r;
+  remoteStarted.add(r.id);
+  const sent = sendToAgentCore(r.id, prompt);
+  // After the prompt, so the board's re-attach replays it in the transcript.
+  announceConsole(r.id);
+  if (!sent || sent.ok === false) return { ok: false, error: (sent && sent.error) || "the prompt could not be sent" };
+  return { ok: true, id: r.id };
+}
+
+const spawnInbox = agentSpawn.createSpawnInbox({
+  open: (msg) => agentSpawn._internals.open(agentSteer.loadDocCrypto(), steerAuth(readConfig()).key, msg, msg.sealed),
+  resolveRepo: (name) => agentSpawn.resolveRepo(name, readWorkspaces()),
+  runningRemote,
+  askOwner: (req) =>
+    new Promise((resolve) => {
+      if (!boardWindow || boardWindow.isDestroyed()) return resolve(null);
+      pendingSteers.set(req.id, resolve);
+      toBoard("local:steerEvent", { kind: "spawn-ask", id: req.id, from: req.from, agent: req.agent, repo: req.repo, dir: req.dir, model: req.model, text: req.prompt });
+    }),
+  start: (req) => startRemoteSpawn(req),
+  sessionOf: (id) => {
+    const c = consoleLog.get(id);
+    return (c && c.sessionId) || "";
   },
+  report: reportSteerStatus,
 });
 
 function startSteerChannel(cfg) {
@@ -4528,8 +4579,14 @@ function startSteerChannel(cfg) {
           pendingSteers.delete(id);
           if (status === "accepted" || status === "declined") toBoard("local:steerEvent", { kind: "done", id, from: String((data && data.from) || ""), status });
         });
+      } else if (name === "spawn") {
+        void spawnInbox.handle(data).then((status) => {
+          const id = data && typeof data.id === "string" ? data.id : "";
+          pendingSteers.delete(id);
+          if (status !== "replay" && status !== "ignored") toBoard("local:steerEvent", { kind: "done", id, from: String((data && data.from) || ""), status });
+        });
       } else if (name === "steer-status" && data && typeof data.id === "string") {
-        toBoard("local:steerEvent", { kind: "status", id: data.id, to: String(data.to || ""), status: String(data.status || ""), reason: String(data.reason || "") });
+        toBoard("local:steerEvent", { kind: "status", id: data.id, of: data.kind === "spawn" ? "spawn" : "steer", to: String(data.to || ""), status: String(data.status || ""), reason: String(data.reason || ""), session: String(data.session || "") });
       }
     },
   });
@@ -4560,7 +4617,24 @@ bridge.handle("local:steerSend", async (_e, arg) => {
   });
 });
 
-/** The person's answer to one steer approval card. */
+bridge.handle("local:spawnSend", async (_e, arg) => {
+  const a = steerAuth(readConfig());
+  if (!a.session) return { ok: false, error: "Sign in to your team to start an agent for a teammate." };
+  // Exactly these five fields cross: the renderer cannot add a mode, a path
+  // or a flag, because nothing else is read.
+  return agentSpawn.sendSpawn({
+    hub: a.hub,
+    token: a.token,
+    key: a.key,
+    to: String((arg && arg.to) || ""),
+    repo: String((arg && arg.repo) || ""),
+    agent: String((arg && arg.agent) || ""),
+    model: String((arg && arg.model) || ""),
+    text: String((arg && arg.text) || ""),
+  });
+});
+
+/** The person's answer to one steer (or spawn) approval card. */
 bridge.handle("local:steerAnswer", (_e, arg) => {
   const id = arg && typeof arg.id === "string" ? arg.id : "";
   const resolve = pendingSteers.get(id);

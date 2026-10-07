@@ -512,6 +512,12 @@ contextBridge.exposeInMainWorld("zevetLocal", {
    * Optional: an older desktop build cannot steer.
    */
   steerSend: (to, session, repo, text) => ipcRenderer.invoke("local:steerSend", { to, session, repo, text }),
+  /**
+   * Start an agent on a teammate's machine (D-060): main seals the prompt and
+   * sends it through the hub, which enforces the team policy. Their app picks the
+   * mode and resolves the repo by name. Optional: an older desktop build cannot.
+   */
+  spawnSend: (to, repo, agent, model, text) => ipcRenderer.invoke("local:spawnSend", { to, repo, agent, model, text }),
   steerAnswer: (id, approve) => ipcRenderer.invoke("local:steerAnswer", { id, approve }),
   onUpdate: (fn) => subscribe("app:update", fn),
   onIndexEvent: (fn) => subscribe("local:indexEvent", fn),

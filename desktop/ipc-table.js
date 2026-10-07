@@ -458,6 +458,9 @@ UI must not be able to, which is why the card is removed optimistically.` },
     steerSend: { channel: "local:steerSend", params: ["to","session","repo","text"], pack: "object", type: `(to: string, session: string, repo: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>`, optional: true, doc: `Steer a teammate's agent (D-058): main seals the text with the document
 key and sends it through the hub, which enforces the team's steer policy.
 Optional: an older desktop build cannot steer.` },
+    spawnSend: { channel: "local:spawnSend", params: ["to","repo","agent","model","text"], pack: "object", type: `(to: string, repo: string, agent: string, model: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>`, optional: true, doc: `Start an agent on a teammate's machine (D-060): main seals the prompt and
+sends it through the hub, which enforces the team policy. Their app picks the
+mode and resolves the repo by name. Optional: an older desktop build cannot.` },
     steerAnswer: { channel: "local:steerAnswer", params: ["id","approve"], pack: "object", type: `(id: string, approve: boolean) => Promise<{ ok: boolean; error?: string }>`, optional: true },
   },
   events: {
