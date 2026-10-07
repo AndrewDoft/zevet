@@ -55,6 +55,8 @@
       "overlap-check.js",
       "claims.js",
       "pinned-memory.js",
+      "agent-tools.js",
+      "step-claims.js",
       "payer.js",
       "index-capability.js",
       "code-index.js",

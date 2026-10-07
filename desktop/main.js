@@ -2589,7 +2589,7 @@ function allClaims() {
   return [...mine, ...teamClaims.claims().filter((e) => !own.has(e.session)).map((e) => ({ ...e, mine: false }))];
 }
 function pushClaims() {
-  toBoard("local:claimsEvent", { claims: allClaims(), payers: allPayers() });
+  toBoard("local:claimsEvent", { claims: allClaims(), payers: allPayers(), steps: stepClaims.all() });
 }
 setInterval(() => {
   if (myClaims.expire() | teamClaims.expire()) pushClaims();
@@ -2700,7 +2700,56 @@ bridge.handle("local:memoryRetire", async (_e, arg) => {
   if (note) toBoard("local:memoryEvent", { repo: g.repo });
   return note ? { ok: true } : { ok: false, error: "no such note" };
 });
-bridge.handle("local:claims", async () => ({ ok: true, claims: allClaims(), payers: allPayers() }));
+/* Agent coordination tools (D-NEXT-W2-9, desktop/agent-tools.js). Reached from
+ * zevet-mcp.js over the ask-server's /tool route; every dependency is this
+ * app's own signed-in team, so no argument can name another team. */
+const agentToolsLib = require("./agent-tools.js");
+const stepClaimsLib = require("./step-claims.js");
+const stepClaims = stepClaimsLib.createStepClaims({
+  send: (room, bytes) => {
+    const got = ensureDocSync();
+    if (got.error) return; // saved locally; teammates see it when sync is back
+    try {
+      got.sync.join(room);
+      got.sync.send(room, bytes);
+    } catch {
+      // Local claim stands.
+    }
+  },
+  onChange: () => pushClaims(),
+});
+let myTeamNames = [];
+async function fetchTeamState() {
+  const a = steerAuth(readConfig());
+  if (!a.session || !a.hub) return null;
+  const r = await fetch(`${a.hub}/api/state`, { headers: { "x-zevet-token": a.token }, redirect: "error", signal: AbortSignal.timeout(10000) });
+  return r.ok ? r.json() : null;
+}
+let agentToolsInstance = null;
+function agentTools() {
+  if (!agentToolsInstance) {
+    agentToolsInstance = agentToolsLib.createAgentTools({
+      getState: async () => {
+        const st = await fetchTeamState().catch(() => null);
+        if (st) for (const ag of Array.isArray(st.agents) ? st.agents : []) if (ag.repo) try { ensureDocSync().sync?.join(stepClaims.room(ag.repo)); } catch { /* local only */ }
+        return st;
+      },
+      me: () => [readConfig()?.actor, ...myTeamNames],
+      actor: () => String(readConfig()?.actor || ""),
+      claims: () => allClaims(),
+      stepOwner: (session, step) => stepClaims.ownerOf(session, step),
+      stepClaim: (c) => stepClaims.claim(c),
+      steer: (m) => {
+        const a = steerAuth(readConfig());
+        return agentSteer.sendSteer({ hub: a.hub, token: a.token, key: a.key, to: m.to, session: m.session, repo: m.repo, text: m.text });
+      },
+      memory: () => memoryFor(),
+      memoryChanged: (repo) => toBoard("local:memoryEvent", { repo }),
+    });
+  }
+  return agentToolsInstance;
+}
+bridge.handle("local:claims", async () => ({ ok: true, claims: allClaims(), payers: allPayers(), steps: stepClaims.all() }));
 bridge.handle("local:payerFor", async (_e, arg) => {
   const { engine, account, label } = payerOf(String((arg && arg.agent) || ""), { model: String((arg && arg.model) || ""), engine: String((arg && arg.engine) || "") });
   return { engine, account, label };
@@ -3293,6 +3342,10 @@ function ensureDocSync() {
       secret: cfg.secret,
       onEvent: (room, payload) => {
         // Pinned memory rides the same sealed rooms but is main's, not the editor's.
+        if (room.startsWith("steps:")) {
+          if (payload.kind === "update" && payload.bytes) stepClaims.applyRemote(payload.bytes);
+          return;
+        }
         if (room.startsWith("memory:")) {
           if (payload.kind === "update" && payload.bytes && memoryFor() && memoryFor().applyRemote(room.slice(7), payload.bytes)) toBoard("local:memoryEvent", { repo: room.slice(7) });
           return;
@@ -3678,6 +3731,8 @@ const permitGrantsModule = require("./permit-grants.js");
 const permitGrants = { ...permitGrantsModule.createGrants(), ruleKey: permitGrantsModule.ruleKey };
 let permitSeq = 0;
 let askServerPromise = null;
+/** MCP run id -> the folder that run was started in (agent-tools.js record_memory). */
+const runRoots = new Map();
 
 function ensureAskServer() {
   if (!askServerPromise) {
@@ -3731,6 +3786,11 @@ function ensureAskServer() {
           pendingAsks.set(id, resolve);
           toBoard("local:askRequest", { id, ...(request || {}) });
         }),
+      onTool: (request) => {
+        const r = request && typeof request === "object" ? request : {};
+        // The folder comes from OUR record of this run, never from the agent's arguments.
+        return agentTools().call(String(r.tool || ""), r.arguments, { root: runRoots.get(String(r.run || "")) || null });
+      },
     });
   }
   return askServerPromise;
@@ -3779,8 +3839,12 @@ async function mcpConfigFor(dir, mode) {
      claude asks the person instead of silently denying what would prompt. Every
      posture but "skip permissions" needs it (nothing prompts under that one). */
   const gate = mode !== "dangerous";
-  if ((computerUse || gate) && fs.existsSync(MCP_SERVER)) {
+  /* Coordination tools (D-NEXT-W2-9) need a team to coordinate with. */
+  const team = steerAuth(readConfig()).session;
+  if ((computerUse || gate || team) && fs.existsSync(MCP_SERVER)) {
     const { url, token } = await ensureAskServer();
+    const run = `r${process.pid}-${++permitSeq}`;
+    runRoots.set(run, dir);
     servers.zevet = {
       command: process.execPath,
       args: [MCP_SERVER],
@@ -3788,7 +3852,8 @@ async function mcpConfigFor(dir, mode) {
         ELECTRON_RUN_AS_NODE: "1",
         ZEVET_MCP_URL: url,
         ZEVET_MCP_TOKEN: token,
-        ZEVET_MCP_RUN: `r${process.pid}-${++permitSeq}`,
+        ZEVET_MCP_RUN: run,
+        ZEVET_MCP_TEAM: team ? "1" : "0",
         // Without this the four computer tools are never listed, whatever the setting says.
         ZEVET_MCP_COMPUTER: computerUse ? "1" : "0",
       },
@@ -3802,7 +3867,7 @@ async function mcpConfigFor(dir, mode) {
   // `permissions` says whether the `zevet` tool server (and so its permission
   // tool) is actually in this file -- a masora-only config must not claim a
   // permission tool that config does not register.
-  return { file, computerUse, permissions: Boolean(servers.zevet) };
+  return { file, computerUse, permissions: Boolean(servers.zevet) && (computerUse || gate) };
 }
 
 /**
@@ -5275,6 +5340,9 @@ async function refreshActivity(cfg) {
     );
     if (!state) return;
     const me = who && who.me ? [who.me.name, who.me.login, ...(who.me.aliases || []), ...(who.me.identities || []).map((i) => i.login)] : [];
+    myTeamNames = [who && who.login, ...me].filter(Boolean);
+    // Step claims ride a room per repo; join the ones teammates are working in so their owners show.
+    for (const ag of Array.isArray(state.agents) ? state.agents : []) if (ag && ag.repo) try { ensureDocSync().sync?.join(stepClaims.room(ag.repo)); } catch { /* local only */ }
     activityText = act.activityBlock(state, { me: [cfg && cfg.actor, who && who.login, ...me].filter(Boolean), comments: act.readComments(HOME) });
     act.writeActivityFile(HOME, activityText);
   } catch (err) {

@@ -7,6 +7,14 @@ import type { Payer } from "./payer.mjs";
 
 export const useClaims = create<{ claims: Claim[] }>(() => ({ claims: [] }));
 /** Teammates' payers (D-073), opened by the desktop from sealed frames. */
+/** Plan-step owners (D-NEXT-W2-9): who claimed which step of which session's plan. */
+export type StepOwner = { session: string; step: string; actor: string };
+export const useStepOwners = create<{ steps: StepOwner[] }>(() => ({ steps: [] }));
+const normStep = (t: string) => String(t || "").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 200);
+/** The owner of each step, in step order; "" for an unclaimed one. Same key rule as desktop/step-claims.js. */
+export function ownersOf(steps: StepOwner[], session: string | null | undefined, texts: readonly string[]): string[] {
+  return texts.map((t) => (session ? steps.find((s) => s.session === session && normStep(s.step) === normStep(t))?.actor || "" : ""));
+}
 export const usePayers = create<{ payers: Payer[] }>(() => ({ payers: [] }));
 
 let wired = false;
@@ -17,11 +25,13 @@ function wire() {
   l.onClaimsEvent((e) => {
     useClaims.setState({ claims: e.claims || [] });
     usePayers.setState({ payers: e.payers || [] });
+    useStepOwners.setState({ steps: e.steps || [] });
   });
   void l.claims?.().then((r) => {
     if (r && r.ok) {
       useClaims.setState({ claims: r.claims });
       usePayers.setState({ payers: r.payers || [] });
+      useStepOwners.setState({ steps: r.steps || [] });
     }
   });
 }
