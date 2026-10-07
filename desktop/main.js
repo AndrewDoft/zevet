@@ -119,6 +119,39 @@ const CONFIG = path.join(HOME, "config.json");
 const AGENT_API_FILE = path.join(HOME, "agent-api.json");
 
 /**
+ * D-NEXT-NOPOPUP: automated runs never put a window on a person's screen.
+ * Every harness launch sets ZEVET_TEST_HOOKS=1 (scripts/drive); those windows are created hidden and
+ * show/focus are no-ops, unless ZEVET_TEST_VISIBLE=1 asks for a visible one. ZEVET_TEST_HEADLESS=1 forces
+ * hidden on its own. Each window is logged to HOME/windows.jsonl (test hooks only) so a test can prove it.
+ */
+const HIDE_WINDOWS =
+  process.env.ZEVET_TEST_HEADLESS === "1" ||
+  (process.env.ZEVET_TEST_HOOKS === "1" && process.env.ZEVET_TEST_VISIBLE !== "1");
+function windowOptions(kind, opts) {
+  // A hidden page is throttled by Chromium (timers, rAF); the harness waits on those, so keep it running.
+  return HIDE_WINDOWS
+    ? { ...opts, show: false, skipTaskbar: true, paintWhenInitiallyHidden: true, webPreferences: { ...opts.webPreferences, backgroundThrottling: false } }
+    : opts;
+}
+function trackWindow(kind, win) {
+  if (process.env.ZEVET_TEST_HOOKS !== "1") return win;
+  const log = (event) => {
+    try {
+      fs.mkdirSync(HOME, { recursive: true });
+      fs.appendFileSync(path.join(HOME, "windows.jsonl"), `${JSON.stringify({ kind, event, visible: win.isDestroyed() ? false : win.isVisible(), hidden: HIDE_WINDOWS, at: Date.now() })}
+`);
+    } catch { /* a harness that cannot read this notices from its assertion */ }
+  };
+  if (HIDE_WINDOWS) {
+    for (const m of ["show", "showInactive", "focus", "restore", "moveTop"]) win[m] = () => log(`blocked-${m}`);
+    win.on("show", () => log("shown"));
+  }
+  log("created");
+  win.webContents.on("did-finish-load", () => log("loaded"));
+  return win;
+}
+
+/**
  * Error reporting, wired before anything else -- including the two windows --
  * so a crash during startup is not a crash nobody hears about. What actually
  * gets scrubbed and tagged lives in desktop/sentry.js; this only supplies the
@@ -713,7 +746,7 @@ function openBoard(cfg) {
   }
   // Background, after onboarding: never awaited, so it cannot gate the window.
   masoraLink.start();
-  boardWindow = new BrowserWindow({
+  boardWindow = new BrowserWindow(windowOptions("board", {
     width: 1240,
     height: 820,
     minWidth: 720,
@@ -750,7 +783,8 @@ function openBoard(cfg) {
       contextIsolation: true,
       sandbox: false,
     },
-  });
+  }));
+  trackWindow("board", boardWindow);
 
   // Restore the remembered zoom. It has to be set per load, not once: a reload
   // or a navigation resets zoomLevel to 0, and a board that silently springs
@@ -946,7 +980,7 @@ function openSetup(existing) {
     setupWindow.focus();
     return;
   }
-  setupWindow = new BrowserWindow({
+  setupWindow = new BrowserWindow(windowOptions("setup", {
     width: 620,
     height: 820,
     resizable: false,
@@ -971,7 +1005,8 @@ function openSetup(existing) {
       // button on this page is dead (same as the board window above).
       sandbox: false,
     },
-  });
+  }));
+  trackWindow("setup", setupWindow);
   setupWindow.loadFile(path.join(__dirname, "setup.html"), {
     query: {
       ...(existing ? { actor: existing.actor || "" } : {}),

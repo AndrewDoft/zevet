@@ -2300,3 +2300,9 @@ make-feed TARGETS entries turns them red. Dropping the chmod does NOT (mode asse
 - **Hub** redeployed from the tag in place; `BUILD_ID` `f5ebdfe979d7` -> `3b0988dac86b`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-092 — Automated runs never show a window (renumbered at merge from D-NEXT-NOPOPUP)
+
+**Mechanism.** `scripts/drive/drive.mjs` (cmdLaunch) spawns the real Electron app for ~25 test files (setup-window, setup-sso-e2e, hub-unreachable, identity-ui, ...). On a fresh profile `desktop/main.js` `app.whenReady` calls `openSetup(null)` (the "Set up zevet" sign-in window); with a config it calls `openBoard`. Both used `new BrowserWindow({...})` with no `show:false`, so every agent running `npm test` in a zevet worktree put a visible sign-in/setup window on the screen. The hook/CLI path (`client/hook.mjs`, `doctor.mjs`) never launches the app, so it is not a cause.
+
+**Decided.** Under `ZEVET_TEST_HOOKS=1` (every harness launch) or `ZEVET_TEST_HEADLESS=1`, windows are created `show:false, skipTaskbar`, and `show/showInactive/focus/restore/moveTop` are blocked. `ZEVET_TEST_VISIBLE=1` is the only opt-in to a visible window. Each window is logged to `$ZEVET_HOME/windows.jsonl` (test hooks only); `test/no-visible-windows.test.mjs` fails if any window was created visible, became visible, or none exists (vacuous). A real user launch is unchanged.

@@ -103,6 +103,8 @@ async function cmdLaunch() {
         LOCALAPPDATA: path.join(base, "localappdata"),
         ZEVET_TEST_HOOKS: "1",
         ZEVET_ALLOW_MULTI: "1",
+        // No window may appear on a person's screen from automated work (D-NEXT-NOPOPUP). Opt in with ZEVET_TEST_VISIBLE=1.
+        ZEVET_TEST_HEADLESS: process.env.ZEVET_TEST_VISIBLE === "1" ? "" : "1",
       },
       detached: true,
       stdio: ["ignore", outLog, errLog],
