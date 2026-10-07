@@ -25,6 +25,12 @@ jobs:
           - os: macos-latest
             script: dist:mac
             artifact: zevet-macos
+          # AppImage (linux x64). Built on ubuntu-latest; the Test step is skipped
+          # on this leg (the Windows and macOS legs run the suite; the Electron
+          # window tests need a display this runner does not have).
+          - os: ubuntu-latest
+            script: dist:linux
+            artifact: zevet-linux
     runs-on: ${{ matrix.os }}
     # Only the Windows leg's federated credential is scoped to this environment
     # (repo:AndrewDoft/zevet:environment:signing); the macOS leg never reaches
@@ -100,6 +106,7 @@ jobs:
       # tests ran — e.g. Electron missing) and fails the job on it, since
       # "cancelled" is not "fail" and a green-looking "fail 0" can hide it.
       - name: Test
+        if: runner.os != 'Linux'
         run: npm test
 
       # A fresh CI keychain has no path to Apple's Developer ID intermediate, so
@@ -138,6 +145,25 @@ jobs:
           fi
         env:
           APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY }}
+
+      # electron-builder builds AppImage on Linux only; no signing (there is no
+      # AppImage publisher check, see desktop/app-update.js PUBLISHER).
+      - name: Build (Linux AppImage)
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        run: npm run dist:linux
+
+      - name: Check the AppImage is a real x86-64 ELF and named for the feed
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(node -p "require('./desktop/package.json').version")
+          f="desktop/out/zevet-$v-linux-x64.AppImage"
+          ls -la desktop/out
+          test -f "$f"
+          file "$f" | tee /dev/stderr | grep -q "ELF 64-bit.*x86-64"
+          test "$(stat -c %s "$f")" -gt 20000000
 
       - name: Build (macOS)
         if: runner.os == 'macOS'
@@ -181,6 +207,15 @@ jobs:
         working-directory: desktop
         run: node build.cjs -c electron-builder.config.js --win dir --publish never
 
+      # Windows ARM64, cross-built on this x64 runner. --arm64 overrides the config's
+      # x64 arch (electron-builder/out/builder.js processTargets); the output dir is
+      # out/win-arm64-unpacked. Installed and checked on a real ARM64 runner by the
+      # windows-arm64-smoke job below.
+      - name: Build (Windows ARM64, unsigned unpacked app)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node build.cjs -c electron-builder.config.js --win dir --arm64 --publish never
+
       - name: Azure login (OIDC, Windows signing only)
         if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
         uses: azure/login@v3
@@ -202,13 +237,26 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      - name: Sign the ARM64 app executable(s)
+        if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_CODE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_CODE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERT_PROFILE }}
+          files-folder: desktop/out/win-arm64-unpacked
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
       - name: Verify the app executable signature
         if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $files = Get-ChildItem desktop/out/win-unpacked/*.exe
-          if ($files.Count -eq 0) { throw "no exe found in desktop/out/win-unpacked" }
+          $files = Get-ChildItem desktop/out/win-unpacked/*.exe, desktop/out/win-arm64-unpacked/*.exe
+          if ($files.Count -lt 2) { throw "expected an exe in both win-unpacked and win-arm64-unpacked" }
           foreach ($f in $files) {
             $sig = Get-AuthenticodeSignature $f.FullName
             Write-Host "$($f.Name): $($sig.Status) — $($sig.SignerCertificate.Subject)"
@@ -220,6 +268,11 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: desktop
         run: node build.cjs -c electron-builder.config.js --win nsis --prepackaged out/win-unpacked --publish never
+
+      - name: Pack the ARM64 NSIS installer from the signed app
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: node build.cjs -c electron-builder.config.js --win nsis --arm64 --prepackaged out/win-arm64-unpacked --publish never
 
       - name: Sign the NSIS installer
         if: runner.os == 'Windows' && vars.AZURE_CODE_SIGNING_ACCOUNT != ''
@@ -350,10 +403,40 @@ jobs:
           name: ${{ matrix.artifact }}
           path: |
             desktop/out/*.exe
+            desktop/out/*.AppImage
             desktop/out/*.dmg
             desktop/out/*.zip
           if-no-files-found: error
           retention-days: 30
+  # The ARM64 installer, run on a real ARM64 Windows runner: silent install, then the
+  # installed exe must exist and be an ARM64 PE (machine 0xAA64). It does not launch the app.
+  windows-arm64-smoke:
+    needs: build
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: zevet-windows
+          path: dl
+      - name: Install silently and check the architecture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = Get-ChildItem dl/zevet-*-windows-arm64-setup.exe
+          if ($setup.Count -ne 1) { throw "expected one arm64 installer in dl" }
+          $dir = Join-Path $env:RUNNER_TEMP "zevet-arm64"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/S","/currentuser","/D=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
+          $exe = Join-Path $dir "zevet.exe"
+          if (-not (Test-Path $exe)) { Get-ChildItem $dir -ErrorAction SilentlyContinue; throw "zevet.exe missing after install" }
+          $fs = [IO.File]::OpenRead($exe)
+          $br = New-Object IO.BinaryReader($fs)
+          $fs.Position = 0x3C; $pe = $br.ReadInt32()
+          $fs.Position = $pe + 4; $machine = $br.ReadUInt16()
+          $fs.Dispose()
+          "machine = 0x{0:X}" -f $machine
+          if ($machine -ne 0xAA64) { throw "zevet.exe is not ARM64" }
+
 # ---------------------------------------------------------------------------
 # SIGNING STATUS, AS OF THIS BUILD
 #

@@ -1961,3 +1961,31 @@ starts release the worktree (branch kept if it has commits) and never merge, sin
 worktree (waiting/failed/no checks) stays until Integrate, Discard, thread close, or the next start's prune; a held
 worktree older than the app session is gone, its branch survives for a manual `git merge`.
 
+
+## D-NEXT-W2-12 — Linux AppImage and Windows ARM64 in CI, feed and updater
+
+**Decision.** Two new artifacts, `zevet-<v>-windows-arm64-setup.exe` and `zevet-<v>-linux-x64.AppImage`, built by
+`build.yml`; feed keys `win32-arm64` and `linux-x64`; `app-update.js` gains the matching names, accepts the
+`.AppImage` extension (kit `exts` option, default is exe|dmg only) and self-replaces an AppImage.
+
+**Verified this session.**
+- `windows-11-arm` and `ubuntu-*` runners are free and unlimited on public repos (docs.github.com
+  .../actions/reference/runners/github-hosted-runners, fetched). Windows ARM64 is cross-built on windows-latest
+  with `--win --arm64` (CLI arch overrides config arch: desktop/node_modules/electron-builder/out/builder.js
+  processTargets; NSIS handles Arch.arm64: app-builder-lib/out/targets/nsis/NsisTarget.js); the ARM64 runner only smoke-installs.
+- `${arch}` in `win.artifactName` expands to `x64` / `arm64` for exe (builder-util/out/arch.js getArtifactArchName),
+  so the x64 name is unchanged. Linux name is hardcoded (the macro would give x86_64 for AppImage).
+- AppImage self-update follows electron-updater's AppImageUpdater (raw.githubusercontent.com/electron-userland/
+  electron-builder/master/packages/electron-updater/src/AppImageUpdater.ts, fetched): reads `APPIMAGE`, requires an
+  absolute path without NUL, replaces the file, relaunches. Difference: we copy to `<file>.update` and rename
+  (atomic) and relaunch via a detached shell that waits for our pid, because the single-instance lock would make an
+  immediate relaunch quit.
+- Default AppImage args include `--no-sandbox` unless the `appimage` toolset is set (AppImageTarget.js:27).
+
+**Not decided / not done.** No payload (pulse) platform for either; ship.mjs and the landing page not extended (landing is
+another repo); no AppImage publisher check (PUBLISHER has no linux entry; the feed signature and sha256 are the lock);
+no Linux code-signing. Windows ARM64 is signed by the same Azure steps as x64.
+
+**Tests.** test/app-update.test.mjs (key/name selection per platform, AppImage check/install/installOnQuit/no-APPIMAGE),
+test/make-feed.test.mjs (four-platform feed). Mutation-checked: dropping the linux suffix, the exts option, or the
+make-feed TARGETS entries turns them red. Dropping the chmod does NOT (mode assertion is skipped on Windows; runs on Linux CI).

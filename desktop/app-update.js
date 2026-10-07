@@ -48,8 +48,15 @@
 //            the person drag it to Applications, once, like every other
 //            unsigned Mac app they have.
 //
-//   Linux    Nothing. The AppImage target exists in the builder config and has
-//            never been produced or run; a code path for it would be fiction.
+//   Linux    Only an AppImage that knows its own path ($APPIMAGE, set by the
+//            AppImage runtime; electron-updater's AppImageUpdater reads the same
+//            variable). Downloads the new .AppImage, verifies it like the others,
+//            copies it beside the old one and renames it over it (atomic; the
+//            running copy keeps its inode), then relaunches once this process has
+//            exited. Anything else (deb, a tarball, a dev checkout) has no
+//            $APPIMAGE and gets { ok: false } rather than a guess.
+//            ⚠️ UNVERIFIED ON REAL HARDWARE: the swap is unit-tested against a
+//            temp directory; no Linux desktop has run it.
 //
 // Nothing here is on the path of anything the user is doing: the check is on a
 // timer, the download is a background stream, and the only blocking step is a
@@ -82,7 +89,12 @@ const WITHDRAWN = "this version was withdrawn after it failed to start";
 const ARTIFACT_SUFFIXES = {
   "win32-x64": "windows-x64-setup.exe",
   "darwin-arm64": "macos-arm64.dmg",
+  "win32-arm64": "windows-arm64-setup.exe",
+  "linux-x64": "linux-x64.AppImage",
 };
+
+/** What a feed's file names may end in: the kit's default (exe, dmg) plus the AppImage. */
+const ARTIFACT_EXTS = /\.(exe|dmg|AppImage)$/i;
 
 /**
  * Is this JSON a manifest, and does it describe THIS machine? Zevet's artifacts
@@ -92,6 +104,7 @@ const ARTIFACT_SUFFIXES = {
 function readManifest(json, key) {
   return kit.readManifest(json, key, {
     artifactName: (version, k) => (ARTIFACT_SUFFIXES[k] ? `zevet-${version}-${ARTIFACT_SUFFIXES[k]}` : null),
+    exts: ARTIFACT_EXTS,
   });
 }
 
@@ -282,11 +295,12 @@ class AppUpdater extends UpdaterCore {
       onStatus: o.onStatus,
       log: o.log,
       artifactName: (version, k) => (ARTIFACT_SUFFIXES[k] ? `zevet-${version}-${ARTIFACT_SUFFIXES[k]}` : null),
+      exts: ARTIFACT_EXTS,
       state: { manual: platform === "darwin" },
       steps: {
         restart: () => this._restart(),
         onQuit: () => this._onQuit(),
-        canOnQuit: () => this.platform === "win32" || (this.platform === "darwin" && this.canSelfReplaceMac()),
+        canOnQuit: () => this.platform === "win32" || (this.platform === "darwin" && this.canSelfReplaceMac()) || this.canSelfReplaceAppImage(),
         publisherProblem: (file) => this._publisherProblem(file),
       },
     });
@@ -297,6 +311,8 @@ class AppUpdater extends UpdaterCore {
      *  update", independent of whatever the registry claims. See
      *  winInstallLocation()'s header. */
     this.execPath = o.execPath || process.execPath;
+    /** The running AppImage file ($APPIMAGE); only meaningful on linux. */
+    this.appImagePath = o.appImagePath !== undefined ? o.appImagePath : process.env.APPIMAGE || null;
     this.openImpl = o.openImpl || null; // set by main.js to shell.openPath
     this.quitImpl = typeof o.quitImpl === "function" ? o.quitImpl : () => {};
     /** The running .app's own path, e.g. /Applications/zevet.app. Only meant
@@ -489,7 +505,53 @@ class AppUpdater extends UpdaterCore {
       return { ok: true, manual: true };
     }
 
+    if (this.platform === "linux") {
+      if (!this.canSelfReplaceAppImage()) return { ok: false, error: "not running from an AppImage; install the new one by hand" };
+      try {
+        this._swapAppImage(this.state.file);
+        this._spawnAppImageRelaunch();
+      } catch (err) {
+        return { ok: false, error: `could not apply the update: ${err.message}` };
+      }
+      setTimeout(() => this.quitImpl(), 600);
+      return { ok: true, restarting: true };
+    }
+
     return { ok: false, error: `${this.platform} builds are not published` };
+  }
+
+  /** linux, and $APPIMAGE is an absolute path whose directory is writable. */
+  canSelfReplaceAppImage() {
+    const f = this.appImagePath;
+    if (this.platform !== "linux" || typeof f !== "string" || !path.isAbsolute(f) || f.includes(String.fromCharCode(0))) return false;
+    try {
+      fs.accessSync(path.dirname(f), fs.constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Copy the verified download beside the AppImage, mark it executable, rename it over the old file. */
+  _swapAppImage(downloaded) {
+    const target = this.appImagePath;
+    const staged = `${target}.update`;
+    try {
+      fs.copyFileSync(downloaded, staged);
+      fs.chmodSync(staged, 0o755);
+      fs.renameSync(staged, target);
+    } catch (err) {
+      fs.rmSync(staged, { force: true });
+      throw err;
+    }
+  }
+
+  /** Detached: wait for this process to exit (the single-instance lock), then start the new AppImage. */
+  _spawnAppImageRelaunch() {
+    const script = `while kill -0 ${Number(process.pid)} 2>/dev/null; do sleep 0.2; done; exec ${shQuote(this.appImagePath)}`;
+    const child = this.spawnImpl("/bin/sh", ["-c", script], { detached: true, stdio: "ignore" });
+    if (child && typeof child.unref === "function") child.unref();
+    return child;
   }
 
   /**
@@ -514,6 +576,8 @@ class AppUpdater extends UpdaterCore {
           windowsVerbatimArguments: true,
         });
         if (child && typeof child.unref === "function") child.unref();
+      } else if (this.platform === "linux") {
+        this._swapAppImage(this.state.file);
       } else {
         this._spawnMacReplace(this.state.file, { relaunch: false });
       }

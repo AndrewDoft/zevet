@@ -10,6 +10,8 @@
     "icon": "node make-icon.mjs",
     "dist": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --publish never",
     "dist:win": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --win --publish never",
+    "dist:win-arm64": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --win --arm64 --publish never",
+    "dist:linux": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --linux --x64 --publish never",
     "dist:mac": "node make-icon.mjs && node build.cjs -c electron-builder.config.js --mac --publish never",
     "smoke:mac": "node ../scripts/smoke-macos.mjs",
     "smoke:win": "node ../scripts/smoke-windows.mjs",
@@ -142,7 +144,7 @@
           ]
         }
       ],
-      "artifactName": "zevet-${version}-windows-x64-setup.${ext}",
+      "artifactName": "zevet-${version}-windows-${arch}-setup.${ext}",
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -193,9 +195,16 @@
     },
     "linux": {
       "target": [
-        "AppImage"
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
-      "category": "Development"
+      "category": "Development",
+      "artifactName": "zevet-${version}-linux-x64.${ext}",
+      "icon": "build/icon.png"
     }
   }
 }

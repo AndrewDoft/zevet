@@ -1327,3 +1327,93 @@ describe("rollback wiring (update-rollback.js)", () => {
     }
   });
 });
+
+describe("per-platform feed keys: linux-x64 and win32-arm64", () => {
+  const feed = (key, file) => ({ version: "0.2.0", platforms: { [key]: { file, sha256: "a".repeat(64), bytes: 10 } } });
+
+  test("platformKey is platform-arch, so linux/x64 and win32/arm64 select their own entries", () => {
+    assert.equal(platformKey("linux", "x64"), "linux-x64");
+    assert.equal(platformKey("win32", "arm64"), "win32-arm64");
+  });
+
+  test("each new key accepts only its own artifact name", () => {
+    assert.equal(readManifest(feed("linux-x64", "zevet-0.2.0-linux-x64.AppImage"), "linux-x64").error, undefined);
+    assert.equal(readManifest(feed("win32-arm64", "zevet-0.2.0-windows-arm64-setup.exe"), "win32-arm64").error, undefined);
+    assert.match(readManifest(feed("win32-arm64", "zevet-0.2.0-windows-x64-setup.exe"), "win32-arm64").error, /not the win32-arm64 artifact/);
+    assert.match(readManifest(feed("win32-x64", "zevet-0.2.0-windows-arm64-setup.exe"), "win32-x64").error, /not the win32-x64 artifact/);
+    assert.match(readManifest(feed("linux-x64", "zevet-0.2.0-macos-arm64.dmg"), "linux-x64").error, /not the linux-x64 artifact/);
+  });
+
+  test("a feed with no entry for this machine says so", () => {
+    assert.match(readManifest(feed("win32-x64", "zevet-0.2.0-windows-x64-setup.exe"), "linux-x64").error, /no build for linux-x64/);
+  });
+});
+
+describe("self-replacing a Linux AppImage", () => {
+  const LKEY = "linux-x64";
+  const LFILE = "zevet-0.2.0-linux-x64.AppImage";
+
+  async function ready(context, appImageName = "zevet.AppImage") {
+    const t = tempDir("zevet linux with spaces ");
+    const body = randomBytes(4096);
+    const host = await fakeHost({
+      manifest: { version: "0.2.0", platforms: { [LKEY]: { file: LFILE, sha256: sha(body), bytes: body.length } } },
+      files: { [LFILE]: body },
+    });
+    context.after(async () => {
+      await host.close();
+      t.cleanup();
+    });
+    const appImage = path.join(t.dir, appImageName);
+    writeFileSync(appImage, "old build");
+    const spawned = [];
+    let quit = 0;
+    const u = updaterFor(host, path.join(t.dir, "dl"), {
+      platform: "linux",
+      platformKey: LKEY,
+      appImagePath: appImage,
+      spawnImpl: (cmd, args, o) => { spawned.push({ cmd, args, o }); return { unref() {} }; },
+      quitImpl: () => { quit++; },
+    });
+    assert.equal((await u.check()).phase, "ready");
+    return { u, body, appImage, spawned, quit: () => quit };
+  }
+
+  test("check offers the AppImage (the .AppImage name passes the kit's extension filter)", async (t) => {
+    const { u } = await ready(t);
+    assert.equal(u.state.version, "0.2.0");
+  });
+
+  test("no $APPIMAGE means no self-replace and no guess", async (t) => {
+    const { u } = await ready(t);
+    u.appImagePath = null;
+    assert.equal(u.canSelfReplaceAppImage(), false);
+    assert.equal((await u.install()).ok, false);
+    assert.equal(u.installOnQuit().ok, false);
+  });
+
+  test("install swaps the file in place and relaunches after this process exits", async (t) => {
+    const { u, body, appImage, spawned, quit } = await ready(t);
+    assert.equal(u.canSelfReplaceAppImage(), true);
+    const r = await u.install();
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(readFileSync(appImage), body);
+    assert.equal(existsSync(`${appImage}.update`), false, "no staging file left behind");
+    if (process.platform !== "win32") assert.ok(statSync(appImage).mode & 0o100, "executable");
+    assert.equal(spawned.length, 1);
+    assert.equal(spawned[0].cmd, "/bin/sh");
+    assert.match(spawned[0].args[1], /kill -0 \d+.*exec '.*zevet\.AppImage'$/);
+    assert.equal(spawned[0].o.detached, true);
+    await new Promise((r2) => setTimeout(r2, 800));
+    assert.equal(quit(), 1);
+  });
+
+  test("installOnQuit swaps the file but neither relaunches nor quits", async (t) => {
+    const { u, body, appImage, spawned, quit } = await ready(t);
+    const r = u.installOnQuit();
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(readFileSync(appImage), body);
+    assert.equal(spawned.length, 0);
+    assert.equal(quit(), 0);
+  });
+});

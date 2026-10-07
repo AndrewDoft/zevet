@@ -121,3 +121,24 @@ test("--sign-only re-signs a published feed in place, from its payload, keeping 
   assert.equal(readSignedFeed(feed, trustedFrom(r.dir)).payload.notes, "old");
   assert.equal(feed.platforms["darwin-arm64"].bytes, 3);
 });
+
+test("the feed carries linux-x64 and win32-arm64 alongside the original two", (t) => {
+  const files = {
+    [mac()]: Buffer.from("Mac fixture bytes"),
+    [win()]: Buffer.from("Windows fixture bytes"),
+    [`zevet-${version}-windows-arm64-setup.exe`]: Buffer.from("Windows ARM fixture bytes"),
+    [`zevet-${version}-linux-x64.AppImage`]: Buffer.from("Linux fixture bytes"),
+  };
+  const r = release(t, files);
+  const result = r.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /incomplete/);
+  const feed = JSON.parse(readFileSync(r.feed, "utf8"));
+  assert.deepEqual(Object.keys(feed.platforms).sort(), ["darwin-arm64", "linux-x64", "win32-arm64", "win32-x64"]);
+  assert.deepEqual(Object.keys(feed.payload.platforms).sort(), Object.keys(feed.platforms).sort());
+  for (const key of Object.keys(feed.platforms)) {
+    const m = readManifest(feed, key);
+    assert.equal(m.error, undefined, `${key}: ${m.error}`);
+    assert.equal(m.entry.sha256, createHash("sha256").update(files[m.entry.file]).digest("hex"));
+  }
+});
