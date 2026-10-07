@@ -2156,3 +2156,28 @@ per-token price.
 - **Hub** redeployed from the tag in place; `BUILD_ID` `9b6196041fef` -> `f5ebdfe979d7`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-086 — Cross-machine approval cards: an Editor answers a teammate agent's permission prompt
+
+*Renumbered at merge from D-NEXT-W2-8.*
+
+**2026-10-07.** Item 8 of the Amoeba build order.
+
+**Decision.** When an agent on machine A asks permission, A (the executing side) may publish a card sealed with the document key (`desktop/agent-approval.js`, `POST /api/approval/open`). Any Editor on the team may answer it (`POST /api/approval/answer`, gated by `roleRefusal(auth, "approve")`; `approve: "editor"` in `ACTION_ROLE`). The hub relays the sealed answer to A's own channel as `approval-answer`.
+
+- **Policy `approve` ∈ {off, ask, on}, default OFF**, owner-set through the existing `PUT /api/policy`, enforced at the hub on open AND on answer (turning it off bites an already-open card). `on`: the answer is applied. `ask`: the answer is only shown to the owner, whose own click decides. A frame missing the flag is read as `ask`.
+- **The hub never decides.** It checks policy and role and arbitrates one thing: the first answer from an Editor wins (synchronous, so atomic); later ones get 409 with the winner. It sees ids, names, the allow/deny bit and times, never the tool or arguments.
+- **Exact action, once, enforced on the executing machine.** The card seals a secret nonce and sha256 of the canonical `[tool, arguments]`. The answer seals the nonce, the hash and the decision, with AAD `id+session+hash`. A recomputes the hash from its OWN pending request and rejects any answer whose nonce, hash or decision (also sent in the clear for arbitration) differs. A rejected answer is reported `invalid` and the hub re-opens the card (3 tries). A settled id is remembered, so a replay settles nothing, and an old answer cannot authorise a later identical prompt (new id, new nonce). A remote answer never carries `always`.
+- **Local wins.** A remote answer is held 1.5 s before it is applied; the person's own click inside that window (or at any time under `ask`) cancels it, and a local report overrides a relayed remote answer at the hub.
+- **Outcomes shown to everyone:** open, answered, held, approved by X, denied by X, expired, unknown ("outcome unknown"). Unknown = an answer was relayed or an approval released less than 30 s ago and the executing app closed or its channel dropped (reported by the app on interrupt, and by the hub when the owner's last channel closes). An interruption before anyone answered is `expired`: the action never ran.
+- **Board:** `ApprovalCards` (zevet-style one-liners, text children only), a policy control in Settings, the owner's own permit card is removed when a teammate's answer is applied (`permit-gone`). Own cards offer no buttons.
+
+**Alternatives.** (a) Hub decides validity: it cannot, it is blind to the action. (b) Reuse the steer policy: steer is prompt injection, this is tool authorisation; they need separate switches. (c) Timestamp-only local-wins: a hold window is the only way a click can beat an already-relayed frame.
+
+**Reversibility.** Additive. With `approve: off` (default) nothing is published and no route accepts an answer.
+
+**Limits.** "Unknown" is best-effort: there is no tool-completion signal from the CLI, so a 30 s window stands in for "may still be running". Hub state is in memory (a hub restart loses open cards; the prompt then times out locally).
+
+**Tests.** `test/approvals.test.mjs` (20). Mutation-checked, see the task report.
+
+**Not verified.** Hub approval state is in memory (a hub restart loses open cards); "outcome unknown" is best-effort (30 s window, no tool-completion signal); no two-machine run, no UI walk, no real claude permission prompt end to end.

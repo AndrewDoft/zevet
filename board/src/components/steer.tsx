@@ -17,7 +17,10 @@ import { cn } from "@/lib/utils";
 import { paper, field, mono } from "./assistant-ui/elements/surfaces";
 import {
   agentLabel,
+  answerApproval,
   answerSteer,
+  approvalLive,
+  approvalText,
   canSteer,
   canTakeOver,
   clearSteerTarget,
@@ -176,6 +179,44 @@ export function SteerBanner() {
           ) : null}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Teammates' agents waiting on a permission answer, and how each ended. Every
+ *  string here came from a teammate's machine: text children only. */
+export function ApprovalCards() {
+  const cards = useSteer((s) => s.approvals);
+  const policy = usePolicy();
+  if (!cards.length) return null;
+  return (
+    <div data-slot="approval-cards" className="flex w-full flex-col gap-2 px-4 pt-2">
+      {cards.map((a) => {
+        const live = approvalLive(a.status);
+        return (
+          <div key={a.id} data-approval-status={a.status} className={cn(paper, "flex max-w-md flex-col gap-2 rounded-[20px] p-4")}>
+            <div className="flex items-baseline gap-2">
+              <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">
+                {a.from || "A teammate"}'s {agentLabel(a.agent)} wants {a.tool || "a tool"}
+              </span>
+              <span className={cn("shrink-0 text-xs", a.status === "unknown" ? "text-foreground/90" : "text-foreground/55")}>{approvalText(a)}</span>
+            </div>
+            {a.args && live ? <pre className={cn(mono, "text-foreground/70 max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs")}>{a.args}</pre> : null}
+            {a.reason ? <span className="text-foreground/50 text-xs">{a.reason}</span> : null}
+            {a.advice ? <span className="text-foreground/50 text-xs">{a.advice}</span> : null}
+            {a.status === "open" && !a.mine ? (
+              <div className="flex items-center justify-end gap-2">
+                <button type="button" className={btn} disabled={policy.approve === "off"} onClick={() => void answerApproval(a.id, false)}>
+                  Deny
+                </button>
+                <button type="button" className={btn} disabled={policy.approve === "off"} onClick={() => void answerApproval(a.id, true)}>
+                  Allow once
+                </button>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }

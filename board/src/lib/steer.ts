@@ -61,14 +61,34 @@ export interface SteerAsk {
   payer: string;
 }
 
+/** A teammate's agent waiting on a permission answer, or how it ended (D-086). */
+export interface ApprovalCard {
+  id: string;
+  status: string;
+  from: string;
+  repo: string;
+  agent: string;
+  tool: string;
+  args: string;
+  by: string;
+  decision: string;
+  reason: string;
+  /** Policy `ask`: a teammate said this, but only the owner's click applies it. */
+  advice: string;
+  /** My own agent: I answer it in my prompt, not here. */
+  mine: boolean;
+  at: number;
+}
+
 export interface SteerState {
+  approvals: ApprovalCard[];
   target: SteerTarget | null;
   spawn: SpawnTarget | null;
   sent: SentSteer[];
   asks: SteerAsk[];
 }
 
-let state: SteerState = { target: null, spawn: null, sent: [], asks: [] };
+let state: SteerState = { approvals: [], target: null, spawn: null, sent: [], asks: [] };
 const subs = new Set<() => void>();
 
 function update(fn: (s: SteerState) => SteerState) {
@@ -231,6 +251,43 @@ export async function takeOver(t: SteerTarget, agent: string): Promise<void> {
   );
 }
 
+const APPROVAL_KEEP = 12;
+
+/** Words for each stage, zevet style: say what happened and who did it. */
+export function approvalText(a: Pick<ApprovalCard, "status" | "by" | "from" | "decision" | "advice">): string {
+  switch (a.status) {
+    case "open":
+      return "waiting";
+    case "answered":
+      return `${a.by || "someone"} answered`;
+    case "held":
+      return `${a.by || "someone"} said ${a.decision === "allow" ? "allow" : "deny"}; ${a.from} decides`;
+    case "approved":
+      return `approved by ${a.by || a.from}`;
+    case "denied":
+      return `denied by ${a.by || a.from}`;
+    case "expired":
+      return "expired";
+    case "unknown":
+      return "outcome unknown";
+    default:
+      return a.status;
+  }
+}
+
+export const approvalLive = (status: string) => status === "open" || status === "answered" || status === "held";
+
+/** An Editor answers a teammate's agent. The first valid answer wins; a later one says who won. */
+export async function answerApproval(id: string, allow: boolean): Promise<{ ok: boolean; error?: string }> {
+  const r = await (bridge.local?.approvalAnswer?.(id, allow) ?? Promise.resolve({ ok: false, error: "this app cannot answer — update Zevet" }));
+  if (!r.ok) patchApproval(id, { reason: r.error || "not accepted" });
+  return r;
+}
+
+function patchApproval(id: string, patch: Partial<ApprovalCard>) {
+  update((s) => ({ ...s, approvals: s.approvals.map((a) => (a.id === id ? { ...a, ...patch } : a)) }));
+}
+
 export async function answerSteer(id: string, approve: boolean): Promise<void> {
   // Removed first: answering twice must not be possible from the UI.
   update((s) => ({ ...s, asks: s.asks.filter((a) => a.id !== id) }));
@@ -241,7 +298,27 @@ export async function answerSteer(id: string, approve: boolean): Promise<void> {
 function onEvent(e: { kind: string; id: string; [k: string]: unknown }) {
   const str = (v: unknown) => (typeof v === "string" ? v : "");
   if (!e || typeof e.id !== "string") return;
-  if (e.kind === "ask" || e.kind === "spawn-ask" || e.kind === "takeover-ask") {
+  if (e.kind === "approval") {
+    const prior = state.approvals.find((a) => a.id === e.id);
+    const card: ApprovalCard = {
+      id: e.id,
+      status: str(e.status),
+      from: str(e.from),
+      repo: str(e.repo),
+      agent: str(e.agent) || prior?.agent || "",
+      tool: str(e.tool) || prior?.tool || "",
+      args: str(e.args) || prior?.args || "",
+      by: str(e.by),
+      decision: str(e.decision),
+      reason: str(e.reason),
+      advice: prior?.advice || "",
+      mine: e.mine === true || Boolean(prior?.mine),
+      at: prior?.at || Date.now(),
+    };
+    update((s) => ({ ...s, approvals: prior ? s.approvals.map((a) => (a.id === card.id ? card : a)) : [card, ...s.approvals].slice(0, APPROVAL_KEEP) }));
+  } else if (e.kind === "approval-advice") {
+    patchApproval(e.id, { advice: `${str(e.by)} said ${str(e.decision) === "allow" ? "allow" : "deny"}` });
+  } else if (e.kind === "ask" || e.kind === "spawn-ask" || e.kind === "takeover-ask") {
     const ask: SteerAsk = {
       id: e.id,
       kind: e.kind === "spawn-ask" ? "spawn" : e.kind === "takeover-ask" ? "takeover" : "steer",

@@ -488,6 +488,8 @@ export interface LocalBridge {
   /** Seal this session's payer with the document key and share it with the team (a release when unknown). */
   sharePayer?: (session: string, agent: string, model?: string, engine?: string) => Promise<{ ok: boolean; label?: string }>;
   steerAnswer?: (id: string, approve: boolean) => Promise<{ ok: boolean; error?: string }>;
+  /** Answer a teammate agent's permission prompt (D-086). Main seals the answer with the exact action it was shown; the hub only arbitrates the first answer, and the teammate's app checks it before acting. Editor and above; refused while the team policy is off. */
+  approvalAnswer?: (id: string, allow: boolean) => Promise<{ ok: boolean; status?: string; by?: string; error?: string }>;
   onUpdate: (cb: (s: unknown) => void) => void;
   onIndexEvent: (cb: (p: { kind?: string; total?: number; loaded?: number; indexed?: number }) => void) => void;
   /**

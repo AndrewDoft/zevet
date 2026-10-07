@@ -17,7 +17,7 @@ import { InPage, PageSection } from "./settings/parts";
 import { KeysSection, NotifySection } from "./settings/prefs";
 import { ReposPanel } from "./settings/repos";
 import { TeamPanel } from "./settings/team";
-import { SteerPolicyControl } from "./steerpolicy";
+import { ApprovePolicyControl, SteerPolicyControl } from "./steerpolicy";
 import { RetentionControl } from "./retention";
 import { buildCatalogue, formatCost, formatPair } from "../lib/model-catalogue.mjs";
 
@@ -1326,9 +1326,14 @@ export function SettingsPage() {
               </>
             ) : null}
             {tab === "collab" ? (
-              <PageSection title="Steering and starting agents">
-                <SteerPolicyControl />
-              </PageSection>
+              <>
+                <PageSection title="Steering and starting agents">
+                  <SteerPolicyControl />
+                </PageSection>
+                <PageSection title="Answering teammates' prompts">
+                  <ApprovePolicyControl />
+                </PageSection>
+              </>
             ) : null}
             {tab === "agents" ? (
               <>

@@ -113,12 +113,17 @@ const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorks
 /** Team-wide policies an admin (the owner) sets, and every value each may take.
  *  `steer`: may a teammate steer somebody else's agent — `on` always, `ask`
  *  the owner of the agent approves each one (the default), `off` never. The
- *  hub enforces it (server.mjs § steering); the desktop only obeys. */
+ *  hub enforces it (server.mjs § steering); the desktop only obeys.
+ *  `approve` (D-086): may a teammate answer somebody else's agent's
+ *  permission prompt — `on` the answer is applied, `ask` it is shown to the
+ *  agent's owner who still clicks, `off` never (the default: it lets a remote
+ *  person authorise a tool call on another machine). */
 export const POLICY_VALUES = Object.freeze({
   steer: Object.freeze(["on", "ask", "off"]),
+  approve: Object.freeze(["on", "ask", "off"]),
   retention: Object.freeze(["forever", "90d", "30d", "7d", "1d"]),
 });
-export const DEFAULT_POLICY = Object.freeze({ steer: "ask", retention: "forever" });
+export const DEFAULT_POLICY = Object.freeze({ steer: "ask", approve: "off", retention: "forever" });
 /** `retention`: how long the hub keeps prompt and command text (`detail`) on
  *  the board and in the event log. Who/tool/file/repo is never trimmed. */
 export const RETENTION_MS = Object.freeze({ forever: 0, "90d": 90 * 864e5, "30d": 30 * 864e5, "7d": 7 * 864e5, "1d": 864e5 });
@@ -141,6 +146,7 @@ export const ACTION_ROLE = Object.freeze({
   claim: "commenter",
   report: "editor",
   steer: "editor",
+  approve: "editor",
   spawn: "editor",
   takeover: "editor",
   credential: "editor",
