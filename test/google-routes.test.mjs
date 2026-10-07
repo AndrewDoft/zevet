@@ -83,7 +83,7 @@ describe("redeeming a Google sign-in", () => {
     const src = readFileSync(path.join(ROOT, "hub", "server.mjs"), "utf8");
     const guard = src.indexOf("if (pair.tried)");
     const mark = src.indexOf("pair.tried = true;");
-    const exchange = src.indexOf("const ex = await exchangeCode({");
+    const exchange = src.indexOf("const ex = await IDP.exchangeCode({");
     assert.ok(guard > 0, "the already-used guard is gone");
     assert.ok(mark > 0, "nothing marks a pair as used");
     assert.ok(exchange > 0, "the exchange call moved; re-check this test");

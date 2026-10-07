@@ -20,7 +20,7 @@
 // lookup) by falling through to the real `fetch`, so only the upstream that
 // would otherwise need a human clicking "Authorize" in a real browser is
 // faked.
-export function makeFakeIdpFetch({ googleClientId }) {
+export function makeFakeIdpFetch({ googleClientId, microsoftClientId = "" }) {
   let ghPolls = 0;
 
   function jsonRes(status, body) {
@@ -43,6 +43,29 @@ export function makeFakeIdpFetch({ googleClientId }) {
         sub: "900002",
         email: "zevet-e2e-google@example.com",
         email_verified: true,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        ...extra,
+      }),
+    ).toString("base64url");
+    return `${header}.${payload}.fake-signature`;
+  }
+
+  // The Microsoft twin. A code of `claims:<base64url JSON>` overrides claims (nonce, tid, iss, xms_edov…);
+  // the default is a verified-email personal-tenant token with NO nonce, so a test that wants the real
+  // nonce check to pass has to put the attempt's nonce in the code — exactly like a real IdP echoing it.
+  const MS_TID = "9188040d-6c67-4c5b-b112-36a304b66dad";
+  function fakeMsIdToken(code = "") {
+    const extra = code.startsWith("claims:") ? JSON.parse(Buffer.from(code.slice(7), "base64url").toString()) : {};
+    const tid = extra.tid || MS_TID;
+    const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+    const payload = Buffer.from(
+      JSON.stringify({
+        iss: `https://login.microsoftonline.com/${tid}/v2.0`,
+        aud: microsoftClientId,
+        sub: "900003",
+        tid,
+        email: "zevet-e2e-microsoft@example.com",
+        xms_edov: true,
         exp: Math.floor(Date.now() / 1000) + 3600,
         ...extra,
       }),
@@ -84,6 +107,10 @@ export function makeFakeIdpFetch({ googleClientId }) {
     }
     if (u === "https://oauth2.googleapis.com/token") {
       return jsonRes(200, { id_token: fakeIdToken(new URLSearchParams(String(init.body)).get("code") || "") });
+    }
+
+    if (u === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
+      return jsonRes(200, { id_token: fakeMsIdToken(new URLSearchParams(String(init.body)).get("code") || "") });
     }
 
     return fetch(url, init);
