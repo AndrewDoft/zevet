@@ -1578,6 +1578,7 @@
      for width. */
   .subagents-panel {
     position: fixed; right: 16px; bottom: 16px; z-index: 30;
+    display: flex; flex-direction: column; align-items: flex-end; /* the toggle stays on top, at the right edge */
     font-family: var(--font-mono); font-size: 11.5px;
   }
   .subagents-toggle {
