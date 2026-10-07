@@ -1478,6 +1478,24 @@ launched by Zevet getting the hub hooks via `--settings` (`agent-console.js`), a
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
 
+## D-060 — Wave 2 overlap primitives and advisory claim lifecycle
+
+**2026-10-07**
+
+The overlap classifier uses local embedding cosine thresholds of **0.82 for
+overlapping** and **0.62 for adjacent**. Exact open/planned path matches and
+same-branch matches are overlapping; shared directories are adjacent. The
+thresholds live together in `desktop/overlap-check.js` so the composer and its
+tests cannot drift.
+
+Claims are advisory only, expire with their session or after 30 minutes, and
+are represented for transport by a sealed envelope containing no plaintext
+path. The pure lifecycle and classifier are covered by deterministic tests.
+
+This slice intentionally does not make the hub inspect claims: wiring a sealed
+claim frame into the existing activity event schema and exposing the desktop
+pre-prompt IPC/UI gate remains the next integration slice.
+
 ## D-039 — Shipped: 0.2.96, Bundle for 0.2.96 (Zevet model, spawn via board) (shell release, hub deploy)
 
 **Decided (automatic, `npm run ship`, 2026-09-30).** ? commit(s) past v0.2.95.
