@@ -2289,3 +2289,14 @@ make-feed TARGETS entries turns them red. Dropping the chmod does NOT (mode asse
 **Tests.** `test/session-share.test.mjs` (incl. a role-gate-only test added at merge: removing `roleRefusal(auth, "share")` from invite creation was NOT caught before, the ownership check masked it; now it is): each check's pass and fail, order (first failing wins), single-error shape, Viewer read-only, expiry, and a real hub with the real desktop module (sealing, push probe only when asked, wrong secret). Mutation-checked: dropping the push check, `readOnly`, the role check, the member check, moving the agent check first, and dropping the offline check each turned the suite red; all restored.
 
 **Not verified.** Own-session Invite is missing (only team agent rows have the button); the push check is UX-only (the hub cannot see GitHub, the joiner's own git decides what a push really does); no UI walk of the Invite button or Join field; `git push --dry-run` was not run against a real remote; no two-machine run; own-session rows (AgentRow) have no Invite button, only team agent rows.
+
+## D-091 — Shipped: 0.2.127, Rebuild board bundle after W2-8/9/12/15/17 integration (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-07).** 17 commit(s) past v0.2.126.
+
+- **Shell release.** desktop/app-update.js, desktop/data-frame.d.mts, desktop/package.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.127) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.127`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `8b4875d1…` (153160488 B), dmg `c3659174…` (205306843 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2127 on both platforms. Manifests win `c4e45f6f…`, mac `23fcd612…`. Delta: 10 new blob(s) uploaded. 95 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `f5ebdfe979d7` -> `3b0988dac86b`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
