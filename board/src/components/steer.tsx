@@ -105,7 +105,7 @@ export function SteerBanner() {
           {s.text ? <span className={cn(mono, "min-w-0 flex-1 truncate")}>{s.text}</span> : <span className="flex-1" />}
           <span className={cn("shrink-0", s.status === "accepted" || s.status === "started" ? "text-foreground/80" : steerSettled(s.status, s.kind) ? "text-foreground/90" : "text-foreground/45")}>
             {statusText(s)}
-            {s.reason ? ` (${s.reason})` : ""}
+            {s.reason && s.status !== "start-failed" ? ` (${s.reason})` : ""}
           </span>
           {steerSettled(s.status, s.kind) ? (
             <button type="button" className="text-foreground/40 hover:text-foreground/80 shrink-0" aria-label="Dismiss" onClick={() => dismissSent(s.id)}>

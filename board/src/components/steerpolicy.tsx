@@ -10,9 +10,9 @@ import { useState } from "react";
 import { setPolicy, usePolicy, type SteerPolicy } from "../lib/policy";
 
 const OPTIONS: Array<{ value: SteerPolicy; label: string; note: string }> = [
-  { value: "on", label: "Always on", note: "A teammate's steer goes straight into the agent." },
-  { value: "ask", label: "Ask first", note: "The agent's owner approves each steer before it is sent." },
-  { value: "off", label: "Always off", note: "Nobody can steer anyone else's agent." },
+  { value: "on", label: "Always on", note: "A teammate's steer, or an agent they start on your machine, goes straight in." },
+  { value: "ask", label: "Ask first", note: "The owner approves each steer, and each agent started on their machine, first." },
+  { value: "off", label: "Always off", note: "Nobody can steer anyone else's agent or start one on their machine." },
 ];
 
 export function SteerPolicyControl() {
@@ -25,7 +25,7 @@ export function SteerPolicyControl() {
     return (
       <div data-slot="steer-policy" data-readonly="true">
         <div className="srow">
-          <span className="k">Steering</span>
+          <span className="k">Steering and starting agents</span>
           <span className="v">{current.label}</span>
         </div>
         <div className="snote">
@@ -41,7 +41,7 @@ export function SteerPolicyControl() {
      current choice is pressed and disabled, the other two are buttons. */
   return (
     <div data-slot="steer-policy">
-      <div role="radiogroup" aria-label="Steering teammates' agents" className="sbtn-row">
+      <div role="radiogroup" aria-label="Steering and starting teammates' agents" className="sbtn-row">
         {OPTIONS.map((o) => (
           <button
             key={o.value}

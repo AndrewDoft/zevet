@@ -376,7 +376,7 @@ longer true (D-058).** You can steer a teammate's agent: the Steer button on
 their agent row aims your composer at it, and what you send is sealed on your
 machine with the document key, relayed by the hub (which cannot open it), and
 queued on their agent as a turn starting `[from <you>]`. Whether that is
-allowed is one team-wide setting only the team owner can change, enforced by
+allowed (and whether a teammate may start an agent on your machine, below) is one team-wide setting only the team owner can change, enforced by
 the hub: **Ask first** (the default — their app shows an approval card and
 nothing reaches the agent until they approve), **Always on**, or **Always
 off**. You see every steer's outcome: sent, delivered, accepted, declined (with
@@ -404,7 +404,7 @@ default safe mode (plan or ask first — never auto, never skip permissions),
 whatever the sender wanted; a request carrying a mode, flags, a folder path or
 an environment is refused by the hub; at most three agents started by
 teammates run on one machine at a time; and senders are rate limited. You see
-sent, delivered, accepted, started (with the new session), declined, no such
+sent, delivered, accepted, started (with the new session; and if it then cannot work, for example because the app is not signed in to Claude, "started, but it failed" with the reason), declined, no such
 repo, refused by policy, or offline.
 
 **Prompt text is shared, including into agents.** Every teammate already sees

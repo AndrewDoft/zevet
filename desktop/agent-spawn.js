@@ -113,6 +113,36 @@ async function sendSpawn({ fetchImpl = fetch, hub, token, key, docCrypto = loadD
   }
 }
 
+const OUTCOME_WINDOW_MS = 90 * 1000;
+
+/** A short plain reason from what a failed console left behind; never raw output, env or paths. */
+function failureReason(c) {
+  const text = [c && c.lastResult, ...((c && c.events) || []).flatMap((e) => [e && e.error, e && e.payload && e.payload.result])]
+    .filter((v) => typeof v === "string")
+    .join(" ");
+  if (/not logged in|\/login|not signed in|invalid api key|authentication|unauthori[sz]ed|\b401\b/i.test(text)) return "not signed in";
+  if (/ENOENT|not found|not recognized|could not (find|start)|spawn /i.test(text)) return "the agent program is missing";
+  if (c && c.state === "exited" && !(c.turns > 0)) return "it stopped right away";
+  return "its first turn failed";
+}
+
+/**
+ * After `started`: poll the new console until its first turn lands or it
+ * fails. Resolves { ok:true } on a clean first result (or at the window's end
+ * with the agent still working), else { ok:false, reason }.
+ */
+async function watchOutcome(get, id, { windowMs = OUTCOME_WINDOW_MS, pollMs = 500 } = {}) {
+  const end = Date.now() + windowMs;
+  for (;;) {
+    const c = get(id);
+    if (!c) return { ok: false, reason: "it stopped right away" };
+    if (c.turns > 0) return c.isError ? { ok: false, reason: failureReason(c) } : { ok: true };
+    if (!c.running) return { ok: false, reason: failureReason(c) };
+    if (Date.now() >= end) return { ok: true };
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
 /**
  * The owner's side. `deps`:
  *   open(msg) -> prompt plaintext (throws when it does not open)
@@ -121,10 +151,12 @@ async function sendSpawn({ fetchImpl = fetch, hub, token, key, docCrypto = loadD
  *   askOwner({ id, from, agent, repo, dir, model, prompt }) -> Promise<boolean|null>
  *   start({ agent, dir, model, from, prompt }) -> Promise<{ ok, id?, error? }>   (prompt already prefixed)
  *   sessionOf(consoleId) -> the agent's session id once it has one, else ""
+ *   outcome(consoleId) -> Promise<{ ok, reason? }>   (optional; see watchOutcome. A failure is reported as `start-failed`)
  *   report(id, status, reason, extra?) -> Promise                        (POST /api/steer/status)
  */
 function createSpawnInbox(deps, { askTimeoutMs = ASK_TIMEOUT_MS, maxRunning = MAX_RUNNING, sessionWaitMs = SESSION_WAIT_MS } = {}) {
   const seen = new Set();
+  const watching = new Set(); // settled follow-ups, so a caller (or test) can wait for them
   const report = (id, status, reason = "", extra) => Promise.resolve(deps.report(id, status, reason, extra)).catch(() => {});
   const full = () => Number(deps.runningRemote()) >= maxRunning;
   const fullReason = () => `they already have ${maxRunning} agents running that teammates started`;
@@ -197,10 +229,17 @@ function createSpawnInbox(deps, { askTimeoutMs = ASK_TIMEOUT_MS, maxRunning = MA
     const end = Date.now() + sessionWaitMs;
     while (!(session = String(deps.sessionOf(r.id) || "")) && Date.now() < end) await new Promise((res) => setTimeout(res, 200));
     await report(id, "started", "", { session });
+    if (deps.outcome) {
+      const w = Promise.resolve(deps.outcome(r.id))
+        .then((o) => (o && o.ok === false ? report(id, "start-failed", String(o.reason || "it stopped").slice(0, 100), { session }) : undefined))
+        .catch(() => {})
+        .finally(() => watching.delete(w));
+      watching.add(w);
+    }
     return "started";
   }
 
-  return { handle };
+  return { handle, settled: () => Promise.all([...watching]) };
 }
 
-module.exports = { sendSpawn, createSpawnInbox, resolveRepo, safeMode, startedPrompt, MAX_RUNNING, _internals: { aadFor, seal, open, validRepo } };
+module.exports = { watchOutcome, failureReason, sendSpawn, createSpawnInbox, resolveRepo, safeMode, startedPrompt, MAX_RUNNING, _internals: { aadFor, seal, open, validRepo } };

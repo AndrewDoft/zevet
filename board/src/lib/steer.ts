@@ -78,16 +78,18 @@ export const STEER_STATUS: Record<string, string> = {
   delivered: "delivered — waiting on them",
   accepted: "accepted — their agent has it",
   declined: "declined",
-  "refused-by-policy": "refused — steering is off for this team",
+  "refused-by-policy": "refused — steering and starting agents are off for this team",
   offline: "not delivered — their app is offline",
   "unknown-agent": "not delivered — that agent is not on the board",
   started: "started on their machine",
   "no-such-repo": "not started — no such repo on their machine",
+  "start-failed": "started, but it failed",
   failed: "not sent",
 };
 
 /** For a spawn, "accepted" means "approved, starting". */
-export function statusText(s: Pick<SentSteer, "kind" | "status">): string {
+export function statusText(s: Pick<SentSteer, "kind" | "status"> & Partial<Pick<SentSteer, "to" | "reason">>): string {
+  if (s.status === "start-failed") return `started, but it failed: ${s.reason || "it stopped"} on ${s.to || "their"}${s.to ? "’s" : ""} machine`;
   if (s.kind === "spawn" && s.status === "accepted") return "approved — starting…";
   return STEER_STATUS[s.status] || s.status;
 }

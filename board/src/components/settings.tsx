@@ -1287,7 +1287,7 @@ export function SettingsPage() {
             ) : null}
             {tab === "team" ? <TeamPanel /> : null}
             {tab === "collab" ? (
-              <PageSection title="Steering">
+              <PageSection title="Steering and starting agents">
                 <SteerPolicyControl />
               </PageSection>
             ) : null}

@@ -13,7 +13,7 @@
  * Collapsed to a small pill by default so it costs nothing when nobody is
  * watching; a running count is the only thing shown until it is opened.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { selectMyConsoles, serverNow, useBoard } from "../lib/board";
 import { ago, tokens } from "../lib/fmt";
 import { turnInFlight } from "../lib/transcript.mjs";
@@ -45,9 +45,26 @@ export function SubagentsPanel() {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => serverNow());
 
+  const panel = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    const t = setInterval(() => setNow(serverNow()), 1000);
-    return () => clearInterval(t);
+    // Sit above the composer, not over its Context and send buttons: lift by
+    // however much of the composer is on screen (it grows with the draft).
+    const lift = () => {
+      const c = document.querySelector<HTMLElement>("[data-slot=\"aui_composer-shell\"]");
+      const top = c ? c.getBoundingClientRect().top : window.innerHeight;
+      panel.current?.style.setProperty("--composer-lift", Math.max(0, window.innerHeight - top) + "px");
+    };
+    const t = setInterval(() => {
+      setNow(serverNow());
+      lift();
+    }, 1000);
+    lift();
+    window.addEventListener("resize", lift);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("resize", lift);
+    };
   }, []);
 
   const running = consoles.filter((c) => c.running);
@@ -57,7 +74,7 @@ export function SubagentsPanel() {
   const summary = idle ? `${working} working · ${idle} idle` : `${working} working`;
 
   return (
-    <div className="subagents-panel" data-open={open}>
+    <div className="subagents-panel" data-open={open} ref={panel}>
       <button
         type="button"
         className="subagents-toggle"

@@ -71,7 +71,7 @@ describe("sealing and names", () => {
   });
 });
 
-function harness({ answer = true, running = 0, workspaces = [ZEVET], startResult, session = "sess-new" } = {}) {
+function harness({ outcome, answer = true, running = 0, workspaces = [ZEVET], startResult, session = "sess-new" } = {}) {
   const log = { reports: [], started: [], asked: [] };
   let n = running;
   const inbox = spawn.createSpawnInbox(
@@ -89,6 +89,7 @@ function harness({ answer = true, running = 0, workspaces = [ZEVET], startResult
         return startResult || { ok: true, id: "console-1" };
       },
       sessionOf: () => session,
+      ...(outcome ? { outcome } : {}),
       report: async (id, status, reason, extra) => log.reports.push({ id, status, reason, ...(extra || {}) }),
     },
     { askTimeoutMs: 100, sessionWaitMs: 300 },
@@ -101,6 +102,34 @@ function msg(extra = {}) {
   const meta = { id, to: "bob", repo: extra.repo || "zevet", agent: extra.agent || "claude", model: extra.model || "" };
   return { ...meta, from: "Andrew", approval: true, sealed: seal(docCrypto, KEY, meta, extra.text || "write the retry tests"), ...extra };
 }
+
+describe("a started agent that cannot work", () => {
+  test("a fake engine that fails login is reported start-failed after started", async () => {
+    const consoles = { "console-1": { running: true, turns: 1, isError: true, lastResult: "Not logged in · Please run /login", state: "idle", events: [] } };
+    const { inbox, log } = harness({ outcome: (id) => spawn.watchOutcome((c) => consoles[c], id, { pollMs: 5 }) });
+    assert.equal(await inbox.handle(msg()), "started");
+    await inbox.settled();
+    assert.deepEqual(log.reports.map((r) => r.status), ["delivered", "accepted", "started", "start-failed"]);
+    assert.equal(log.reports.at(-1).reason, "not signed in");
+    assert.equal(log.reports.at(-1).session, "sess-new");
+  });
+
+  test("a clean first turn, or a still-working agent, adds nothing", async () => {
+    for (const c of [{ running: true, turns: 1, isError: false, events: [] }, { running: true, turns: 0, isError: false, events: [] }]) {
+      const { inbox, log } = harness({ outcome: (id) => spawn.watchOutcome(() => c, id, { pollMs: 5, windowMs: 30 }) });
+      await inbox.handle(msg());
+      await inbox.settled();
+      assert.deepEqual(log.reports.map((r) => r.status), ["delivered", "accepted", "started"]);
+    }
+  });
+
+  test("a process that exits or vanishes right away is a failure with a plain reason", async () => {
+    assert.deepEqual(await spawn.watchOutcome(() => ({ running: false, state: "exited", turns: 0, events: [] }), "x", { pollMs: 5 }), { ok: false, reason: "it stopped right away" });
+    assert.deepEqual(await spawn.watchOutcome(() => undefined, "x", { pollMs: 5 }), { ok: false, reason: "it stopped right away" });
+    const missing = { running: false, state: "exited", turns: 0, events: [{ type: "exit", error: "spawn claude ENOENT" }] };
+    assert.equal((await spawn.watchOutcome(() => missing, "x", { pollMs: 5 })).reason, "the agent program is missing");
+  });
+});
 
 describe("the owner's inbox", () => {
   test("ask: the card shows agent, folder and the whole prompt; nothing starts before approval", async () => {

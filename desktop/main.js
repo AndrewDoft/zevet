@@ -4562,6 +4562,7 @@ const spawnInbox = agentSpawn.createSpawnInbox({
     const c = consoleLog.get(id);
     return (c && c.sessionId) || "";
   },
+  outcome: (id) => agentSpawn.watchOutcome((c) => consoleLog.get(c), id),
   report: reportSteerStatus,
 });
 

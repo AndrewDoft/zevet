@@ -192,6 +192,24 @@ describe("spawn: what the hub relays", () => {
     assert.equal(agent.startedBy, "AndrewDoft");
   });
 
+  test("start-failed follows started only, once, and only for a spawn", async () => {
+    const { hub, andrew, bob } = await team();
+    const andrewCh = await channel(hub.base, andrew);
+    await channel(hub.base, bob);
+    const id = randomUUID();
+    await spawn(hub.base, andrew, { id });
+    assert.equal((await status(hub.base, bob, { id, status: "start-failed", reason: "not signed in" })).status, 409, "not before started");
+    await status(hub.base, bob, { id, status: "accepted" });
+    assert.equal((await status(hub.base, bob, { id, status: "start-failed" })).status, 409, "not straight after accepted");
+    assert.equal((await status(hub.base, bob, { id, status: "started", session: "s-f1" })).status, 200);
+    assert.equal((await status(hub.base, bob, { id, status: "start-failed", reason: "not signed in", session: "s-f1" })).status, 200);
+    assert.equal((await status(hub.base, bob, { id, status: "start-failed" })).status, 409, "final");
+    assert.equal((await status(hub.base, bob, { id, status: "declined" })).status, 409, "final");
+    await waitFor(() => andrewCh.frames.some((f) => f.name === "steer-status" && f.data.status === "start-failed"));
+    const last = andrewCh.frames.filter((f) => f.name === "steer-status").at(-1).data;
+    assert.deepEqual([last.kind, last.reason], ["spawn", "not signed in"]);
+  });
+
   test("no-such-repo is a status the owner can report, and it settles", async () => {
     const { hub, andrew, bob } = await team();
     const andrewCh = await channel(hub.base, andrew);

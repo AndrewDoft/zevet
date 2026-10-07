@@ -1577,7 +1577,7 @@
      it costs nothing collapsed, and never fights the rail or detail columns
      for width. */
   .subagents-panel {
-    position: fixed; right: 16px; bottom: 16px; z-index: 30;
+    position: fixed; right: 16px; bottom: calc(var(--composer-lift, 0px) + 16px); z-index: 30; /* --composer-lift: set by the panel, so it never covers the composer */
     display: flex; flex-direction: column; align-items: flex-end; /* the toggle stays on top, at the right edge */
     font-family: var(--font-mono); font-size: 11.5px;
   }
@@ -1594,7 +1594,7 @@
   .subagents-list {
     margin-top: 6px; padding: 6px;
     background: var(--raise); border: 1px solid var(--line); border-radius: 10px;
-    max-width: 60vw; max-height: 40vh; overflow: auto;
+    max-width: 60vw; max-height: min(40vh, calc(100vh - var(--composer-lift, 0px) - 72px)); overflow: auto;
   }
   .subagents-row {
     display: grid;

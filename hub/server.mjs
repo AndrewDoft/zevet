@@ -1383,7 +1383,7 @@ const SPAWN_FORBIDDEN = ["mode", "permissionMode", "permission_mode", "permissio
 const SPAWN_RATE_MAX = Number(process.env.ZEVET_SPAWN_RATE_MAX || 5);
 /** Spawns waiting on one person's answer at once — a flood of cards is a DoS. */
 const SPAWN_PENDING_MAX = 3;
-const SPAWN_OWNER_STATUSES = new Set(["delivered", "accepted", "started", "declined", "no-such-repo"]);
+const SPAWN_OWNER_STATUSES = new Set(["delivered", "accepted", "started", "start-failed", "declined", "no-such-repo"]);
 const steerTeams = new Map(); // team -> { listeners:Set<res>, byId:Map<id,rec>, rate:Map<person,ts[]> }
 
 function steerTeam(team) {
@@ -2458,7 +2458,9 @@ async function handleRequest(req, res) {
     const spawn = rec.kind === "spawn";
     const status = String(body.status || "");
     if (!(spawn ? SPAWN_OWNER_STATUSES : STEER_OWNER_STATUSES).has(status)) return json(res, 400, { error: "not a status the owner can report" });
-    if (!(spawn ? ["queued", "delivered", "accepted"] : ["queued", "delivered"]).includes(rec.status)) return json(res, 409, { error: `already ${rec.status}` });
+    // `start-failed` is the one thing that may follow `started`: the agent came up and could not work. Once, and final.
+    const open = status === "start-failed" ? ["started"] : spawn ? ["queued", "delivered", "accepted"] : ["queued", "delivered"];
+    if (!open.includes(rec.status)) return json(res, 409, { error: status === "start-failed" ? `not started yet (${rec.status})` : `already ${rec.status}` });
     if (spawn && status === "started" && rec.status !== "accepted") return json(res, 409, { error: "started before it was accepted" });
     rec.status = status;
     rec.reason = typeof body.reason === "string" ? body.reason.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 200) : "";
