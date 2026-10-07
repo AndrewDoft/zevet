@@ -2004,3 +2004,22 @@ worktree older than the app session is gone, its branch survives for a manual `g
 **Limits (known).** Turn and hunk comments live in the open file's doc, so they need a shared editor open; with none, the Comment buttons are hidden. No separate per-session comment room was built. Turn index is the last message of the active console. The step picker lists the plan of the ACTIVE LOCAL console only (teammate plans are an opaque blob, D-071).
 
 **Tests.** `test/comment-anchor.test.mjs`; each guard mutation-checked (defang, cap, data header, ref storage, step link, ref validation).
+
+
+## D-079 — Per-team retention, and secret redaction on the client before anything leaves
+
+*Renumbered at merge from D-NEXT-W2-13.*
+
+**2026-10-07 (build-order item 13).**
+
+**Retention.** A new team policy `retention` (forever | 90d | 30d | 7d | 1d; default forever), set by the owner through the existing `PUT /api/policy` (owner gate, validation and audit trail all reused) and shown under Settings > Team. The hub's existing TTL compaction now takes its window from `detailTtl(accounts)`: the shorter non-zero of the operator's `ZEVET_DETAIL_TTL_MS` (kept, as the floor) and the team's own setting. Compaction was boot-only; it is now `board.compact()`, run at boot and again the moment retention changes, and it blanks the in-memory events as well as the log file. Only `detail` is blanked; who/tool/file/repo is the board's long memory and is never trimmed. Alternative not taken: a free-form number of days. Five fixed windows are enough, are validated by the same table as `steer`, and cannot be set to a value that silently deletes everything.
+
+**Redaction.** `client/redact.mjs` is the one net: 14 named rules (PEM private keys, sk-ant-, sk-or-, sk-, stripe, xai-, ghp_/gho_/ghu_/ghs_/ghr_/github_pat_, AKIA/ASIA, AIza, xox*, JWT, Bearer, NAME=secret .env lines, and the old keyword=value rule), each replacing with `[redacted:<kind>]`. It replaces the two divergent copies in `hook.mjs` and `opencode-plugin.mjs`. It runs in the hook before the event body is built (prompt, command and plan-step text), so what reaches the hub, its log and every board is already clean. It is client-side because the hub cannot read sealed traffic and a hub-side scrub would only cover the plaintext half. The opencode plugin is one self-contained file and cannot import; it carries a byte-identical copy of the rules block, and a test fails on drift.
+
+**Behaviour change, deliberate.** The old net replaced any 40+ character hex run as a "long hex blob". That redacted every git sha and sha-256 on the board and caught almost no real secret (real keys carry a prefix and now have a rule). It is removed; a test pins that a 40-hex sha survives. Markers changed from `[redacted]` to typed ones.
+
+**Where it is NOT applied.** Steer and spawn text typed into Zevet's own composer, and sealed claims, are not run through the net: the user typed those to an agent on purpose and a silently altered instruction is worse than a visible secret. No transcript is relayed to the hub today (the board shows hook activity and sealed steers only), so there is no transcript path to redact.
+
+**Release note.** `client/redact.mjs` is new and listed in `CLIENT_FILES`; `hub/client-manifest.signed.json` is stale until re-signed with `scripts/sign-client-manifest.mjs` at release (release-check will say so).
+
+**Tests.** `test/redact.test.mjs` (one case per rule, each proved reachable through that rule alone via `matchedRules`; false-positive cases; the hook end to end against a real hub; plugin parity) and `test/retention.test.mjs` (default keeps; owner 1d blanks board and log immediately; 7d keeps; member refused; bad value refused).

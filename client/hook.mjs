@@ -21,6 +21,7 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { resolveAuth, insecureHub } from "./secret.mjs";
+import { redact, redactDeep } from "./redact.mjs";
 import { zevetHome } from "./zevet-home.mjs";
 
 /**
@@ -434,22 +435,8 @@ function siblingRelative(file, cwd, repo) {
  * command and drops prompt bodies entirely, for anyone who would rather not
  * rely on a net at all.
  */
-const SECRET_PATTERNS = [
-  /\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{16,}/g, // stripe, openai and friends
-  /\bsk-ant-[A-Za-z0-9_-]{16,}/g,
-  /\bgh[pousr]_[A-Za-z0-9]{16,}/g, // github tokens
-  /\bAKIA[0-9A-Z]{16}\b/g, // aws access key id
-  /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, // slack
-  /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // jwt
-  /\b(?:bearer|token|api[-_]?key|secret|password|passwd|pwd)\b[\s"':=]+\S+/gi,
-  /\b[A-Fa-f0-9]{40,}\b/g, // long hex blobs
-];
-
 function scrub(text) {
-  if (typeof text !== "string" || !text) return text;
-  let out = text;
-  for (const re of SECRET_PATTERNS) out = out.replace(re, "[redacted]");
-  return out;
+  return redact(text);
 }
 
 /** The one file or command this tool call is about. */
@@ -568,7 +555,7 @@ async function main() {
     const todo = p.tool_input || p.toolInput;
     if (/^(TodoWrite|todo_write|todo|update_plan)$/i.test(tool) && todo && typeof todo === "object") {
       const steps = todo.todos || todo.items || todo.plan || todo.steps;
-      if (Array.isArray(steps)) body.plan = Buffer.from(JSON.stringify(steps)).toString("base64");
+      if (Array.isArray(steps)) body.plan = Buffer.from(JSON.stringify(redactDeep(steps))).toString("base64");
     }
   }
 

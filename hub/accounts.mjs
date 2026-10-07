@@ -114,8 +114,14 @@ const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorks
  *  `steer`: may a teammate steer somebody else's agent — `on` always, `ask`
  *  the owner of the agent approves each one (the default), `off` never. The
  *  hub enforces it (server.mjs § steering); the desktop only obeys. */
-export const POLICY_VALUES = Object.freeze({ steer: Object.freeze(["on", "ask", "off"]) });
-export const DEFAULT_POLICY = Object.freeze({ steer: "ask" });
+export const POLICY_VALUES = Object.freeze({
+  steer: Object.freeze(["on", "ask", "off"]),
+  retention: Object.freeze(["forever", "90d", "30d", "7d", "1d"]),
+});
+export const DEFAULT_POLICY = Object.freeze({ steer: "ask", retention: "forever" });
+/** `retention`: how long the hub keeps prompt and command text (`detail`) on
+ *  the board and in the event log. Who/tool/file/repo is never trimmed. */
+export const RETENTION_MS = Object.freeze({ forever: 0, "90d": 90 * 864e5, "30d": 30 * 864e5, "7d": 7 * 864e5, "1d": 864e5 });
 const AUDIT_MAX = 200;
 
 /** A stored credential record, minus its `key` — what everything except

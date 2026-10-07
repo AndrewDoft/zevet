@@ -47,6 +47,8 @@ const TIMEOUT_MS = Number(process.env.ZEVET_TIMEOUT_MS || 3000);
  */
 const CLIENT_FILES = [
   "hook.mjs",
+  // redact.mjs is imported BY hook.mjs (D-NEXT-W2-13).
+  "redact.mjs",
   "install.mjs",
   "updater.mjs",
   "detect.mjs",
