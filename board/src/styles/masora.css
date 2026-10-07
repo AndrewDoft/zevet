@@ -1607,3 +1607,5 @@
   .subagents-name { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
   .subagents-meta, .subagents-tool { color: var(--subtle); overflow: hidden; text-overflow: ellipsis; }
   .subagents-elapsed, .subagents-tokens { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.overlap-notice{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;border:1px solid var(--line,#ddd);background:var(--paper,#fff)}
+.overlap-notice span{margin-right:auto}

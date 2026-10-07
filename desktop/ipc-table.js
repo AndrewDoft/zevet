@@ -287,6 +287,9 @@ const zevetLocal = defineIpc({
 C1's per-repo opt-in, keyed by resolved folder path; default none.` },
     masoraRepoToggle: { channel: "local:masoraRepoToggle", params: ["root","on"], pack: "object", type: `(root: string, on: boolean) => Promise<{ ok: boolean; error?: string; repos?: Record<string, boolean> }>`, optional: true },
     tree: { channel: "local:tree", params: ["root"], type: `(dir: string) => Promise<{ ok: boolean; entries?: LocalEntry[]; truncated?: boolean; origin?: string; error?: string }>`, doc: `A file tree under one of those folders.` },
+    overlapCheck: { channel: "local:overlapCheck", params: ["input"], pack: "object", type: `(input: unknown) => Promise<{ ok: boolean; hits: unknown[] }>`, optional: true },
+    claim: { channel: "local:claim", params: ["input"], pack: "object", type: `(input: unknown) => Promise<{ ok: boolean; claim?: unknown; error?: string }>`, optional: true },
+    releaseClaims: { channel: "local:releaseClaims", params: ["session"], pack: "object", type: `(session: string) => Promise<{ ok: boolean }>`, optional: true },
     read: { channel: "local:read", params: ["root","relPath"], pack: "object", type: `(root: string, relPath: string) => Promise<ReadResult>`, doc: `One text file, by path relative to its root.` },
     write: { channel: "local:write", params: ["root","relPath","text","opts"], pack: "object", type: `(root: string, relPath: string, text: string, opts: { bom?: boolean; eol?: string }) => Promise<{ ok: boolean; error?: string }>`, doc: `One text file back, by path relative to its root.
 

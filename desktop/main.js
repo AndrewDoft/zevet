@@ -54,6 +54,7 @@ const statusSources = require("./status-sources.js");
 const crypto = require("node:crypto");
 const indexCapability = require("./index-capability.js");
 const embedder = require("./embedder.js");
+const { classifyOverlap } = require("./overlap-check.js");
 const codeIndex = require("./code-index.js");
 const { FileWatch } = require("./file-watch.js");
 const { AppUpdater, loopbackProofKeys, INSTALL_ARGS, winInstallArgs } = bootShell.require("./app-update.js");
@@ -2467,6 +2468,39 @@ bridge.handle("local:indexSearch", async (_e, arg) => {
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err), hits: [] };
   }
+});
+
+const localClaims = new Map();
+function purgeLocalClaims() {
+  const now = Date.now();
+  for (const [p, c] of localClaims) if (c.expiresAt <= now) localClaims.delete(p);
+}
+bridge.handle("local:overlapCheck", async (_e, arg) => {
+  const input = arg && typeof arg.input === "object" ? arg.input : {};
+  purgeLocalClaims();
+  const active = Array.isArray(input.active) ? input.active.slice() : [];
+  for (const claim of localClaims.values()) active.push({ actor: claim.actor, session: claim.session, openPaths: [claim.path], plannedPaths: [], task: "" });
+  try {
+    // The composer check is advisory and must never trigger a model download.
+    const result = await classifyOverlap({ ...input, active, embed: sharedEmbedder && sharedEmbedder.ok ? sharedEmbedder.embed : undefined });
+    return { ok: true, hits: result };
+  } catch {
+    return { ok: true, hits: [] };
+  }
+});
+bridge.handle("local:claim", async (_e, arg) => {
+  const input = arg && typeof arg.input === "object" ? arg.input : {};
+  const pathName = typeof input.path === "string" ? input.path.replaceAll("\\", "/") : "";
+  const session = typeof input.session === "string" ? input.session : "";
+  if (!pathName || !session) return { ok: false, error: "path and session are required" };
+  const claim = { path: pathName, session, actor: String(input.actor || ""), expiresAt: Date.now() + Math.min(Math.max(Number(input.timeoutMs) || 1800000, 1000), 86400000) };
+  localClaims.set(pathName, claim);
+  return { ok: true, claim };
+});
+bridge.handle("local:releaseClaims", async (_e, arg) => {
+  const session = String((arg && arg.session) || "");
+  for (const [p, c] of localClaims) if (c.session === session) localClaims.delete(p);
+  return { ok: true };
 });
 
 bridge.handle("local:status", async (_e, arg) => {

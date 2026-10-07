@@ -4,6 +4,11 @@ export function claimEnvelope(claim, seal) {
   return { type: "claim", sealed: seal({ path: claim.path, session: claim.session, actor: claim.actor, expiresAt: claim.expiresAt }) };
 }
 
+export function claimActivity(claim, seal) {
+  const envelope = claimEnvelope(claim, seal);
+  return { kind: "claim", claim: envelope.sealed, session: String(claim.session || ""), actor: String(claim.actor || "") };
+}
+
 export class ClaimStore {
   #claims = new Map();
   constructor({ now = () => Date.now(), broadcast = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) { this.now = now; this.broadcast = broadcast; this.timeoutMs = timeoutMs; }

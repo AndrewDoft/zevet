@@ -2184,6 +2184,12 @@ async function handleRequest(req, res) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return json(res, 400, { error: "expected a JSON object" });
     }
+    if (parsed.kind === "claim") {
+      const sealed = typeof parsed.claim === "string" ? parsed.claim.slice(0, 32768) : "";
+      if (!sealed) return json(res, 400, { error: "claim requires sealed payload" });
+      boards.get(auth.team).record({ id: randomUUID(), ts: Date.now(), actor: String(parsed.actor || "unknown").slice(0, 40), kind: "claim", session: String(parsed.session || "").slice(0, 64), claim: sealed }, teamAccounts.get(auth.team).actorResolver());
+      return json(res, 200, { ok: true });
+    }
     const evt = {
       id: randomUUID(),
       ts: Date.now(),

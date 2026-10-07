@@ -1478,7 +1478,7 @@ launched by Zevet getting the hub hooks via `--settings` (`agent-console.js`), a
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
 
-## D-060 — Wave 2 overlap primitives and advisory claim lifecycle
+## D-070 — Wave 2 overlap check, encrypted advisory claims, and composer notice
 
 **2026-10-07**
 

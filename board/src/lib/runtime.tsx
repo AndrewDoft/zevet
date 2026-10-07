@@ -18,7 +18,7 @@
  * The provider wraps the whole shell rather than just the chat column, because
  * the rail's agent cards and the strip's meters read thread state too.
  */
-import { type PropsWithChildren, useEffect, useMemo, useRef } from "react";
+import { type PropsWithChildren, useEffect, useMemo, useRef, useState } from "react";
 import {
   AssistantRuntimeProvider,
   CompositeAttachmentAdapter,
@@ -89,6 +89,8 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
   const setActiveConsole = useBoard((s) => s.setActiveConsole);
   const openLauncher = useBoard((s) => s.openLauncher);
   const startAgent = useBoard((s) => s.startAgent);
+  const teamAgents = useBoard((s) => s.teamAgents);
+  const [overlap, setOverlap] = useState<{ text: string; send: () => void; cancel: () => void } | null>(null);
   const launchAgent = useBoard((s) => s.launchAgent);
   const localRoot = useBoard((s) => s.localRoot);
   const setModelSelectorOpen = useBoard((s) => s.setModelSelectorOpen);
@@ -308,6 +310,23 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
       if (reading) return;
       const text = textOf(message);
       if (!text) return;
+      const dispatch = () => {
+        if (active) sendPrompt(active.key, text);
+        else if (canStart) startAgent(launchAgent, { prompt: text });
+      };
+      if (!overlap && typeof bridge.local?.overlapCheck === "function") {
+        const result = await bridge.local.overlapCheck({
+          task: text,
+          branch: "",
+          openPaths: [],
+          plannedPaths: [],
+          active: teamAgents.map((a) => { const x = a as typeof a & { openPaths?: string[]; plannedPaths?: string[] }; return { actor: a.actor, session: a.session, branch: a.branch, openPaths: x.openPaths || [], plannedPaths: x.plannedPaths || [], task: a.current || "" }; }),
+        });
+        if (result?.ok && result.hits?.length) {
+          setOverlap({ text, send: () => { setOverlap(null); dispatch(); }, cancel: () => setOverlap(null) });
+          return;
+        }
+      }
       if (steering) {
         // Never a slash command here: the text goes to someone else's agent,
         // prefixed with my name, and zevet's own commands mean nothing there.
@@ -336,10 +355,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
         setActiveConsole(null);
         return;
       }
-      if (active) {
-        sendPrompt(active.key, text);
-        return;
-      }
+      if (active) { sendPrompt(active.key, text); return; }
       // Nothing running: start what the picker names and ask it. The agent,
       // model and posture all come from the launcher state, so pressing Send
       // is the same launch the Start buttons do, with a first prompt attached.
@@ -375,6 +391,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
       {/* Registers a rendering per tool name. Draws nothing itself, and has to
           be inside the provider to register at all. */}
       <ToolUIs />
+      {overlap ? <div className="overlap-notice" role="alert"><span>overlapping</span><button type="button" onClick={overlap.send}>Send anyway</button><button type="button" onClick={overlap.cancel}>Cancel</button></div> : null}
       {children}
     </AssistantRuntimeProvider>
   );

@@ -295,6 +295,9 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   masoraRepoToggle: (root, on) => ipcRenderer.invoke("local:masoraRepoToggle", { root, on }),
   /** A file tree under one of those folders. */
   tree: (root) => ipcRenderer.invoke("local:tree", root),
+  overlapCheck: (input) => ipcRenderer.invoke("local:overlapCheck", { input }),
+  claim: (input) => ipcRenderer.invoke("local:claim", { input }),
+  releaseClaims: (session) => ipcRenderer.invoke("local:releaseClaims", { session }),
   /** One text file, by path relative to its root. */
   read: (root, relPath) => ipcRenderer.invoke("local:read", { root, relPath }),
   /**

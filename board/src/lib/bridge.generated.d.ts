@@ -196,6 +196,9 @@ export interface LocalBridge {
   masoraRepoToggle?: (root: string, on: boolean) => Promise<{ ok: boolean; error?: string; repos?: Record<string, boolean> }>;
   /** A file tree under one of those folders. */
   tree: (dir: string) => Promise<{ ok: boolean; entries?: LocalEntry[]; truncated?: boolean; origin?: string; error?: string }>;
+  overlapCheck?: (input: unknown) => Promise<{ ok: boolean; hits: unknown[] }>;
+  claim?: (input: unknown) => Promise<{ ok: boolean; claim?: unknown; error?: string }>;
+  releaseClaims?: (session: string) => Promise<{ ok: boolean }>;
   /** One text file, by path relative to its root. */
   read: (root: string, relPath: string) => Promise<ReadResult>;
   /**
