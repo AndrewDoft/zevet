@@ -407,6 +407,18 @@ teammates run on one machine at a time; and senders are rate limited. You see
 sent, delivered, accepted, started (with the new session; and if it then cannot work, for example because the app is not signed in to Claude, "started, but it failed" with the reason), declined, no such
 repo, refused by policy, or offline.
 
+**Take over a teammate's running turn.** The Take over button on a teammate's
+agent row asks for the baton: pick the engine (Claude, Codex, OpenCode or the
+Zevet model) and a new turn starts in YOUR app, on YOUR account, in your copy
+of that repo, carrying their transcript and a diff summary and opening with
+where it resumes. The same team setting governs it (**Ask first** by default:
+their app shows a card, and nothing is read or stopped until they approve).
+Their turn stops only after the hub has relayed the baton. Exactly one taker
+wins a session; the others see "lost" and who has it. The request and the
+baton are sealed with the document key; the hub relays ciphertext. The new
+agent runs in your own safe mode (plan or ask), and the board shows whose
+account pays: yours.
+
 **Prompt text is shared, including into agents.** Every teammate already sees
 everyone's prompts on the board; now agents see a short summary too. A
 desktop-launched Claude gets a bounded "team activity" block (who is working
@@ -441,6 +453,7 @@ client/install-opencode.mjs wires/removes the plugin in a repo's .opencode/plugi
 client/updater.mjs     keeps this machine in step with the hub. runs detached.
 client/activity.mjs    the team activity block agents read (~/.zevet/activity.md).
 desktop/agent-steer.js steering a teammate's agent: seal, send, approve, inject.
+desktop/agent-takeover.js taking over a teammate's running turn: request, baton, resume.
 dist/setup.ps1         what a Windows teammate runs once.
 dist/setup.sh          what a macOS teammate runs once.
 ```

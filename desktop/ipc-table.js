@@ -472,6 +472,10 @@ Optional: an older desktop build cannot steer.` },
     spawnSend: { channel: "local:spawnSend", params: ["to","repo","agent","model","text"], pack: "object", type: `(to: string, repo: string, agent: string, model: string, text: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; error?: string }>`, optional: true, doc: `Start an agent on a teammate's machine (D-060): main seals the prompt and
 sends it through the hub, which enforces the team policy. Their app picks the
 mode and resolves the repo by name. Optional: an older desktop build cannot.` },
+    takeoverSend: { channel: "local:takeoverSend", params: ["to","session","repo","agent"], pack: "object", type: `(to: string, session: string, repo: string, agent: string) => Promise<{ ok: boolean; id?: string; status?: string; approval?: boolean; winner?: string; payer?: string; error?: string }>`, optional: true, doc: `Take over a teammate's running turn: main seals the request with the document
+key; the hub allows one winner per session and enforces the team's steer
+policy. The new turn runs on THIS machine's account, on the engine named.
+Optional: an older desktop build cannot.` },
     payerFor: { channel: "local:payerFor", params: ["agent","model","engine"], pack: "object", type: `(agent: string, model?: string, engine?: string) => Promise<{ engine: string; account: string; label: string }>`, optional: true, doc: `Who pays for an agent's turns on this machine: engine and account, from the engine's own login (never a token). Empty label = unknown.` },
     sharePayer: { channel: "local:sharePayer", params: ["session","agent","model","engine"], pack: "object", type: `(session: string, agent: string, model?: string, engine?: string) => Promise<{ ok: boolean; label?: string }>`, optional: true, doc: `Seal this session's payer with the document key and share it with the team (a release when unknown).` },
     steerAnswer: { channel: "local:steerAnswer", params: ["id","approve"], pack: "object", type: `(id: string, approve: boolean) => Promise<{ ok: boolean; error?: string }>`, optional: true },

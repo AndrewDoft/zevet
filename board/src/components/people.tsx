@@ -75,7 +75,7 @@ import { AgentLogo } from "./brand";
 import { SquareIcon, XIcon } from "lucide-react";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
-import { SteerButton } from "./steer";
+import { SteerButton, TakeOverButton } from "./steer";
 import { TeamPayer } from "./payer";
 import { RunOnTheirs } from "./spawn";
 import { PromptGhost } from "./promptboxes";
@@ -359,6 +359,7 @@ function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; sessio
           )}
         </div>
         <SteerButton a={a} />
+        <TakeOverButton a={a} />
       </div>
       <TeamPayer actor={a.actor} session={a.session} agent={a.agent} />
       {plan?.length ? <AgentPlan steps={plan.map((step) => step.text)} activeIndex={plan.filter((step) => step.status === "completed").length} className="agent-row-plan" /> : null}
