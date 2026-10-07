@@ -14,6 +14,7 @@ import type { ThreadMessageLike } from "@assistant-ui/react";
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { AgentHandoff } from "./assistant-ui/elements/agent-handoff";
 import { AgentPlan } from "./assistant-ui/elements/agent-plan";
+import { latestPlan } from "../lib/plan-progress.mjs";
 import { ArtifactCard } from "./assistant-ui/elements/artifact-card";
 import { TaskCard, type TaskCardState } from "./assistant-ui/elements/task-card";
 import { TraceWaterfall, type SpanStatus, type TraceSpan } from "./assistant-ui/elements/trace-waterfall";
@@ -146,24 +147,14 @@ export function TurnTrace() {
  * ------------------------------------------------------------------------- */
 
 const isTodoWrite = (n: string) => n === "todowrite" || n === "todo_write" || n === "todo";
-const isActiveStatus = (s: string) => s === "in_progress" || s === "active";
-const isDoneStatus = (s: string) => s === "completed" || s === "done";
-
 export function AgentPlanView() {
   const messages = useTranscriptMessages();
   const calls = allToolCalls(messages, isTodoWrite);
   const latest = calls[calls.length - 1];
   if (!latest) return null;
 
-  const raw = rec(latest.args).todos;
-  const todos = Array.isArray(raw) ? raw : [];
-  if (!todos.length) return null;
-
-  const steps = todos.map((t, i) => str(rec(t).content, `step ${i + 1}`));
-  const activeIndex = todos.findIndex((t) => isActiveStatus(str(rec(t).status).toLowerCase()));
-  const completedCount = todos.filter((t) => isDoneStatus(str(rec(t).status).toLowerCase())).length;
-
-  return <AgentPlan steps={steps} activeIndex={activeIndex >= 0 ? activeIndex : completedCount} />;
+  const plan = latestPlan(messages as unknown[]);
+  return plan ? <AgentPlan steps={plan.steps.map((step) => step.text)} activeIndex={plan.done} /> : null;
 }
 
 /* ---------------------------------------------------------------------------

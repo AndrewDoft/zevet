@@ -20,6 +20,14 @@ test("a late-arriving older event does not rewind the agent", () => {
   assert.equal([...m.values()][0].mission, "old", "and never overwrites one it has");
 });
 
+test("the newest ordered plan snapshot replaces an older one", () => {
+  const m = new Map();
+  foldAgent(m, ev({ ts: 10, kind: "tool", session: "s", plan: "old" }));
+  foldAgent(m, ev({ ts: 11, kind: "tool", session: "s", plan: "new" }));
+  foldAgent(m, ev({ ts: 9, kind: "tool", session: "s", plan: "late" }));
+  assert.equal([...m.values()][0].plan, "new");
+});
+
 test("state: working, then idle after the window, finished after turn_end; 12h old agents vanish", () => {
   const base = { ...ev({ session: "s" }), firstTs: 0, mission: "", current: "", ended: false };
   const [w] = withState([{ ...base, key: "w", lastTs: 1000 }], 2000, 90000);

@@ -29,6 +29,7 @@ export function foldAgent(map, e) {
     return a;
   }
   a.lastTs = e.ts;
+  if (e.plan && typeof e.plan === "string") a.plan = e.plan;
   a.repo = e.repo || a.repo;
   a.branch = e.branch || a.branch;
   if (e.kind === "prompt") {

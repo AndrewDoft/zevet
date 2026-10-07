@@ -1492,6 +1492,26 @@ Board: chip `claimed: <file|n files>` on the card of the claiming session, a dot
 
 **Known edges.** The first prompt of a new agent cannot claim (no session id yet). The sealed body does not bind the actor, so the hub (already trusted for names) could attribute a frame to another actor; it cannot read or alter paths. Same-branch counts as overlapping as specified, so two people on `main` always see each other.
 
+## D-071 — Plan progress on read-only agent cards
+
+_Renumbered at merge from D-060 (collided with spawn)._
+
+**2026-10-07**
+
+**Decision (Andrew, final).** Derive plans only from native engine todo snapshots:
+Claude `TodoWrite`, Codex `update_plan`, and OpenCode todo events. The latest
+snapshot replaces the previous one; no plan is inferred for an engine that did
+not emit a todo list. Local console cards read the existing transcript, while
+teammate cards receive an opaque client payload through the existing activity
+event so the relay only folds and orders it and does not parse step text.
+
+Cards show `done/total`, the active step, and an expandable step list with
+done/active/pending states. Step owners and offer-to-take are explicitly out of
+scope for this item.
+
+**Tests.** Recorded per-engine parser fixtures, replacement ordering, local
+card rendering, and teammate event folding.
+
 ## D-039 — Shipped: 0.2.96, Bundle for 0.2.96 (Zevet model, spawn via board) (shell release, hub deploy)
 
 **Decided (automatic, `npm run ship`, 2026-09-30).** ? commit(s) past v0.2.95.
