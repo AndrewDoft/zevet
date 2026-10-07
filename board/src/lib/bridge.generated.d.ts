@@ -213,6 +213,14 @@ export interface LocalBridge {
   claim?: (input: { root: string; paths: string[]; session: string; actor?: string; auto?: boolean }) => Promise<{ ok: boolean; claim?: unknown; shared?: boolean; error?: string }>;
   /** Release one path, or every path of a session when none is given. */
   releaseClaims?: (session: string, path?: string) => Promise<{ ok: boolean }>;
+  /** Pinned notes for a folder (or one file), each flagged stale when the file's hash moved. Computed locally. */
+  memoryList?: (input: { root: string; path?: string }) => Promise<{ ok: boolean; notes: Array<{ id: string; repo: string; path: string; text: string; hash: string; author: string; createdAt: number; updatedAt: number; retired: boolean; stale: "fresh" | "stale" | "missing" | "unknown" }>; error?: string }>;
+  /** Pin a note to a file at its current hash; sealed with the document key. */
+  memoryCreate?: (input: { root: string; path: string; text: string }) => Promise<{ ok: boolean; note?: unknown; error?: string }>;
+  /** Edit a note; rehash re-pins it to the file as it is now. */
+  memoryEdit?: (input: { root: string; id: string; text?: string; rehash?: boolean }) => Promise<{ ok: boolean; note?: unknown; error?: string }>;
+  /** Retire a note. */
+  memoryRetire?: (input: { root: string; id: string }) => Promise<{ ok: boolean; error?: string }>;
   /** Live claims, mine and the team's. */
   claims?: () => Promise<{ ok: boolean; claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }> }>;
   /** One text file, by path relative to its root. */
@@ -514,6 +522,8 @@ export interface LocalBridge {
    * pair beside them: an older main process simply never sends one.
    */
   onAskRequest?: (cb: (req: AskRequest) => void) => () => void;
+  /** Pinned notes changed (a teammate's note arrived or one was edited). */
+  onMemoryEvent?: (cb: (e: { repo: string }) => void) => () => void;
   /** The live claims changed (a claim, a release, an expiry, a teammate's frame). */
   onClaimsEvent?: (cb: (e: { claims: Array<{ actor: string; session: string; repo: string; paths: string[]; expiresAt: number; mine: boolean }>; payers: Array<{ actor: string; session: string; label: string; account: string }> }) => void) => () => void;
   /**

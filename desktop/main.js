@@ -2592,6 +2592,70 @@ bridge.handle("local:releaseClaims", async (_e, arg) => {
   if (session) myClaims.release({ session, path: typeof (arg && arg.path) === "string" ? arg.path : undefined });
   return { ok: true };
 });
+/* Pinned memory (D-NEXT-W2-10): per-file notes sealed with the document key,
+ * on disk and on the hub's room. desktop/pinned-memory.js owns the rules;
+ * staleness is read off the working tree here, never by the hub. */
+const pinnedMemory = require("./pinned-memory.js");
+function memoryFor() {
+  const docCrypto = agentSteer.loadDocCrypto();
+  const key = steerAuth(readConfig()).key;
+  if (!docCrypto || !key) return null;
+  return pinnedMemory.createMemory({
+    dir: path.join(zevetHome(), "memory"),
+    docCrypto,
+    key,
+    send: (room, bytes) => {
+      const got = ensureDocSync();
+      if (got.error) return; // offline or not set up: the note is saved locally and goes at the next edit
+      try {
+        got.sync.join(room);
+        got.sync.send(room, bytes);
+      } catch {
+        // Local note stands; teammates get it at its next change.
+      }
+    },
+  });
+}
+const memoryGate = (arg) => {
+  const input = arg && typeof arg.input === "object" && arg.input ? arg.input : {};
+  const root = typeof input.root === "string" ? knownRoot(input.root) : null;
+  const mem = root ? memoryFor() : null;
+  if (!root) return { error: "a known folder is required" };
+  if (!mem) return { error: "not set up: no document key" };
+  return { input, root, mem, repo: path.basename(root) };
+};
+bridge.handle("local:memoryList", async (_e, arg) => {
+  const g = memoryGate(arg);
+  if (g.error) return { ok: false, notes: [], error: g.error };
+  try {
+    ensureDocSync().sync?.join(g.mem.room(g.repo));
+  } catch {
+    // Listing is local; the room only brings teammates' notes.
+  }
+  return { ok: true, notes: g.mem.list({ repo: g.repo, path: typeof g.input.path === "string" ? g.input.path : "", root: g.root }) };
+});
+bridge.handle("local:memoryCreate", async (_e, arg) => {
+  const g = memoryGate(arg);
+  if (g.error) return { ok: false, error: g.error };
+  const cfg = readConfig();
+  const note = g.mem.create({ repo: g.repo, path: claimablePath(g.input.path), text: g.input.text, root: g.root, author: String((cfg && cfg.actor) || "") });
+  if (note) toBoard("local:memoryEvent", { repo: g.repo });
+  return note ? { ok: true, note } : { ok: false, error: "a note needs a file that exists and some text" };
+});
+bridge.handle("local:memoryEdit", async (_e, arg) => {
+  const g = memoryGate(arg);
+  if (g.error) return { ok: false, error: g.error };
+  const note = g.mem.edit(String(g.input.id || ""), { text: g.input.text, rehash: g.input.rehash === true, root: g.root });
+  if (note) toBoard("local:memoryEvent", { repo: g.repo });
+  return note ? { ok: true, note } : { ok: false, error: "no such note" };
+});
+bridge.handle("local:memoryRetire", async (_e, arg) => {
+  const g = memoryGate(arg);
+  if (g.error) return { ok: false, error: g.error };
+  const note = g.mem.retire(String(g.input.id || ""));
+  if (note) toBoard("local:memoryEvent", { repo: g.repo });
+  return note ? { ok: true } : { ok: false, error: "no such note" };
+});
 bridge.handle("local:claims", async () => ({ ok: true, claims: allClaims(), payers: allPayers() }));
 bridge.handle("local:payerFor", async (_e, arg) => {
   const { engine, account, label } = payerOf(String((arg && arg.agent) || ""), { model: String((arg && arg.model) || ""), engine: String((arg && arg.engine) || "") });
@@ -3183,7 +3247,14 @@ function ensureDocSync() {
       // The secret goes IN and never comes back out. DocSync derives the auth
       // token and the document key from it inside this process.
       secret: cfg.secret,
-      onEvent: (room, payload) => toBoard("doc:message", docMessage(room, payload)),
+      onEvent: (room, payload) => {
+        // Pinned memory rides the same sealed rooms but is main's, not the editor's.
+        if (room.startsWith("memory:")) {
+          if (payload.kind === "update" && payload.bytes && memoryFor() && memoryFor().applyRemote(room.slice(7), payload.bytes)) toBoard("local:memoryEvent", { repo: room.slice(7) });
+          return;
+        }
+        toBoard("doc:message", docMessage(room, payload));
+      },
       onStatus: (room, state, detail) => toBoard("doc:status", { room, state, detail }),
     });
     return { sync: docSync };
