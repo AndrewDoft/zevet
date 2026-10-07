@@ -5,7 +5,7 @@ A multiplayer IDE for teams whose agents are doing the typing.
 Watch your team's AI coding agents work, live, in one place — and edit the files
 they are working in, together, while they do it.
 
-Three people, three machines, three Claude Code agents. `zevet` shows you who is
+Three people, three machines, three Claude agents. `zevet` shows you who is
 prompting what, which files each agent is touching, and — the part that actually
 saves you — **when two of you are about to edit the same file.**
 

@@ -2,7 +2,7 @@ import { agentClientId, agentLabel, AGENT_TTL_MS } from "./presence.mjs";
 
 /**
  * Synthetic Yjs awareness states, one per agent, so the editor's ordinary
- * remote-selection layer draws "Mina · Claude Code" over the lines the agent
+ * remote-selection layer draws "Mina · Claude" over the lines the agent
  * just edited. Each agent gets its own tiny Awareness (own clientID, derived
  * from actor+agent) whose updates are applied to the editor's awareness and
  * sent to the room like any other presence frame.

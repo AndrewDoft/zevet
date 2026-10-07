@@ -248,7 +248,7 @@ function main() {
     let touched = false;
     let said = false;
     for (const [label, result] of [
-      ["Claude Code", removeClaude(repo)],
+      ["Claude", removeClaude(repo)],
       ["Codex", removeCodex(repo)],
       ["OpenCode", removeOpencode(repo)],
     ]) {

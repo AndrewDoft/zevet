@@ -206,8 +206,8 @@ for (const agent of targets) {
     }
     console.log(
       remove
-        ? `Claude Code   removed ${r.removed} hook entr${r.removed === 1 ? "y" : "ies"} from ${r.detail}`
-        : `Claude Code   3 hooks -> ${r.detail}${r.removed ? ` (replaced ${r.removed})` : ""}`,
+        ? `Claude        removed ${r.removed} hook entr${r.removed === 1 ? "y" : "ies"} from ${r.detail}`
+        : `Claude        3 hooks -> ${r.detail}${r.removed ? ` (replaced ${r.removed})` : ""}`,
     );
   } else if (agent.id === "codex") {
     const r = installCodex(repo, { hookPath: HOOK, node, mark: MARK, remove });

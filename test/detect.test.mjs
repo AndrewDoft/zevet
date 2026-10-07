@@ -41,7 +41,7 @@ test("nothing installed anywhere reports nothing to watch", async (t) => {
     HOME: dir.dir, USERPROFILE: dir.dir, PATH: emptyBin,
     APPDATA: path.join(dir.dir, "Roaming"), LOCALAPPDATA: path.join(dir.dir, "Local"),
   });
-  assert.match(out, /Claude Code\s+not installed/);
+  assert.match(out, /Claude\s+not installed/);
   assert.match(out, /Codex\s+not installed/);
   assert.match(out, /OpenCode\s+not installed/);
   assert.match(out, /zevet has nothing to watch here/);
@@ -58,7 +58,7 @@ test("Claude Code on PATH with a credentials file reads as signed in", async (t)
     HOME: dir.dir, USERPROFILE: dir.dir, PATH: bin,
     APPDATA: path.join(dir.dir, "Roaming"), LOCALAPPDATA: path.join(dir.dir, "Local"),
   });
-  assert.match(out, /Claude Code\s+installed, signed in/);
+  assert.match(out, /Claude\s+installed, signed in/);
 });
 
 test("Codex installed only under the Windows build-hash directory, not on PATH, still detected", { skip: !WIN }, async (t) => {

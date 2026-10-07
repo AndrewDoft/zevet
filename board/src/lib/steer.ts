@@ -13,6 +13,7 @@
  */
 import { useSyncExternalStore } from "react";
 import { bridge } from "./bridge";
+import { agentName } from "./mentions.mjs";
 
 export interface SteerTarget {
   actor: string;
@@ -99,7 +100,7 @@ export function steerSettled(status: string, kind: "steer" | "spawn" = "steer"):
 
 export function agentLabel(agent: string): string {
   const a = String(agent || "").toLowerCase();
-  if (a === "claude-code" || a === "claude") return "Claude Code";
+  if (a === "claude-code" || a === "claude") return agentName(a);
   if (a === "codex") return "Codex";
   if (a === "opencode") return "OpenCode";
   return agent || "agent";

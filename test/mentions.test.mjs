@@ -19,7 +19,7 @@ test("picker: Teammates and Agents, never me, never a finished agent", () => {
   assert.deepEqual(cats.map((c) => c.label), ["Teammates", "Agents"]);
   assert.deepEqual(cats[0].items.map((i) => i.label), ["Mina", "Bob"]);
   assert.deepEqual(cats[1].items.map((i) => [i.label, i.id, i.type]), [
-    ["Mina · Claude Code", "m1", "agent"],
+    ["Mina · Claude", "m1", "agent"],
     ["Bob · Codex", "b1", "agent"],
   ]);
 });
@@ -52,7 +52,7 @@ test("a directive with no {name=} uses the label as the id; text with none is un
 });
 
 test("agentName", () => {
-  assert.equal(agentName("claude-code"), "Claude Code");
+  assert.equal(agentName("claude-code"), "Claude");
   assert.equal(agentName("whatever"), "whatever");
 });
 
@@ -78,4 +78,11 @@ test("Settings page: tabs, Collaboration renders the steer policy control, Team 
   assert.ok(settings.includes("<SteerPolicyControl />") && settings.includes('from "./steerpolicy"'));
   assert.ok(settings.includes("<TeamPanel />") && settings.includes("<ReposPanel />"));
   assert.ok(src("components/steerpolicy.tsx").includes("export function SteerPolicyControl"));
+});
+
+test("every display-name path shows Claude, never Claude Code, for claude-code", async () => {
+  const P = await import("../board/src/lib/presence.mjs");
+  assert.equal(agentName("claude-code"), "Claude");
+  assert.equal(agentName("claude"), "Claude");
+  assert.equal(P.agentLabel("Mina", "claude-code"), "Mina · Claude");
 });
