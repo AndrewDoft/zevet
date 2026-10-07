@@ -3212,6 +3212,7 @@ function handleControlMessage(conn, payload) {
       wsClose(conn, CLOSE_POLICY, "join needs a room name of 1..256 characters");
       return false;
     }
+    conn.roomName = room;
     return joinRoom(conn, roomKey(conn.team, room));
   }
 
@@ -3220,7 +3221,7 @@ function handleControlMessage(conn, payload) {
       wsClose(conn, CLOSE_POLICY, "join before sending a snapshot");
       return false;
     }
-    conn.pendingSnapshot = true;
+    if (!taskWriteRefused(conn)) conn.pendingSnapshot = true;
     return true;
   }
 
@@ -3228,11 +3229,24 @@ function handleControlMessage(conn, payload) {
   return false;
 }
 
+/** Task boards (`tasks:<team>` rooms) are written by people, so a socket opened
+ *  with a person's SESSION token needs Commenter or above to write one; a Viewer's
+ *  frames are dropped before the room sees them and the socket is told why. The
+ *  role is read live per frame, so a demotion bites at once. A socket opened with
+ *  the shared team token has no person behind it: the hub cannot gate that, and
+ *  says so in D-NEXT-W2-15. Returns true when the frame is refused. */
+function taskWriteRefused(conn) {
+  if (!conn.roomName.startsWith("tasks:") || !conn.auth || !conn.auth.session) return false;
+  if (conn.auth.accounts.can(conn.auth.session, "tasks")) return false;
+  wsSend(conn, OP_TEXT, Buffer.from(JSON.stringify({ type: "refused", error: "commenter role required", role: conn.auth.accounts.roleOf(conn.auth.session) })));
+  return true;
+}
+
 /** Everything after a successful handshake: one socket's whole life.
  *  `team` is fixed for the socket's lifetime — decided once, at the auth layer,
  *  from the token it upgraded with, never from anything the client sends after. */
-function attachWebSocket(socket, head, team) {
-  const conn = { socket, team, room: null, joined: false, pendingSnapshot: false, sawTraffic: true };
+function attachWebSocket(socket, head, team, auth) {
+  const conn = { socket, team, auth, roomName: "", room: null, joined: false, pendingSnapshot: false, sawTraffic: true };
   wsClients.add(conn);
   const assemble = createAssembler();
   let buffered = head && head.length ? Buffer.from(head) : EMPTY;
@@ -3306,6 +3320,7 @@ function attachWebSocket(socket, head, team) {
         wsClose(conn, CLOSE_POLICY, "join before sending data");
         return;
       }
+      if (taskWriteRefused(conn)) continue;
       relay(conn, out.payload);
     }
   });
@@ -3403,7 +3418,7 @@ server.on("upgrade", (req, socket, head) => {
   // `head` is whatever arrived glued to the handshake. A client that sends
   // frames before it has seen the 101 is within its rights, and those bytes are
   // already off the wire — dropping them loses a message for no reason.
-  attachWebSocket(socket, head, team);
+  attachWebSocket(socket, head, team, auth);
 });
 
 // Without this, restarting while the old hub still holds the port prints an
