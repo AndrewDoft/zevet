@@ -11,6 +11,17 @@ export function GoogleMark() {
   );
 }
 
+export function MicrosoftMark() {
+  return (
+    <svg className="brandmark" viewBox="0 0 23 23" width="14" height="14" aria-hidden="true" focusable="false" data-brand="microsoft">
+      <path fill="#F25022" d="M1 1h10v10H1z" />
+      <path fill="#7FBA00" d="M12 1h10v10H12z" />
+      <path fill="#00A4EF" d="M1 12h10v10H1z" />
+      <path fill="#FFB900" d="M12 12h10v10H12z" />
+    </svg>
+  );
+}
+
 export function GithubMark() {
   return (
     <svg className="brandmark" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true" focusable="false" data-brand="github">

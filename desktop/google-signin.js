@@ -45,8 +45,12 @@ class SignInError extends Error {}
  * `cancel()` stops the polling; `wait()` then rejects with "cancelled".
  */
 class GoogleSignIn {
-  constructor({ hub, team = "", fetchImpl, now = () => Date.now(), sleep } = {}) {
+  // `provider` is "google" (default) or "microsoft": the hub serves both on the same three routes
+  // (`/auth/<provider>/start|callback|finish`), so this class is the whole desktop half of either.
+  constructor({ hub, team = "", provider = "google", fetchImpl, now = () => Date.now(), sleep } = {}) {
     if (!hub) throw new SignInError("Offline");
+    this.provider = provider === "microsoft" ? "microsoft" : "google";
+    this.label = this.provider === "microsoft" ? "Microsoft" : "Google";
     this.base = String(hub).replace(/\/+$/, "");
     // Empty/absent means the hub's DEFAULT team. `finish`/`callback` need no
     // copy of this — the hub records it against the pairCode at `start`.
@@ -81,14 +85,14 @@ class GoogleSignIn {
       // 503 is the hub saying it has no Google client. That is a DEPLOYMENT
       // problem, not a user problem, and "sign-in failed" would send somebody
       // looking at their own Google account for an hour.
-      if (res.status === 503) throw new SignInError("Google sign-in is off");
+      if (res.status === 503) throw new SignInError(`${this.label} sign-in is off`);
       throw new SignInError(parsed && parsed.error ? parsed.error : `Server error ${res.status}`);
     }
     return parsed;
   }
 
   async start() {
-    const r = await this.#post("/auth/google/start", { team: this.team });
+    const r = await this.#post(`/auth/${this.provider}/start`, { team: this.team });
     if (!r || !r.pairCode || !r.authUrl) throw new SignInError("Sign-in failed");
     this.pair = r;
     this.deadline = this.now() + Math.min(MAX_WAIT_MS, (Number(r.expiresIn) || 600) * 1000);
@@ -107,7 +111,7 @@ class GoogleSignIn {
    * Rejects with a SignInError carrying a sentence meant for a human.
    */
   async wait() {
-    if (!this.pair) throw new SignInError("Start Google sign-in first.");
+    if (!this.pair) throw new SignInError(`Start ${this.label} sign-in first.`);
 
     // The first wait comes before the first poll: the person has not even seen
     // the account chooser yet in the moment the browser is opened, so the first
@@ -119,7 +123,7 @@ class GoogleSignIn {
         throw new SignInError("Sign-in expired. Try again.");
       }
 
-      const r = await this.#post("/auth/google/finish", { pairCode: this.pair.pairCode });
+      const r = await this.#post(`/auth/${this.provider}/finish`, { pairCode: this.pair.pairCode });
       if (r && r.pending) continue;
       if (r && r.ok && r.token) return { token: r.token, secret: r.secret || "", login: r.login, owner: Boolean(r.owner) };
       throw new SignInError((r && r.error) || "Invalid sign-in response");

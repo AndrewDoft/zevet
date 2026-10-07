@@ -52,8 +52,10 @@ export async function linkAccount(provider, { fetchImpl, sleep, open, onWaiting,
       }
     }
 
-    const s = await post(fetchImpl, "/auth/google/start", { link: true });
-    if (!s.ok || !s.body.pairCode || !s.body.authUrl) return fail(s, "Could not start Google sign-in.");
+    // Google and Microsoft are the same web flow on two route prefixes.
+    const idp = provider === "microsoft" ? "microsoft" : "google";
+    const s = await post(fetchImpl, `/auth/${idp}/start`, { link: true });
+    if (!s.ok || !s.body.pairCode || !s.body.authUrl) return fail(s, `Could not start ${idp === "microsoft" ? "Microsoft" : "Google"} sign-in.`);
     if (onWaiting) onWaiting({ url: s.body.authUrl });
     if (open) open(s.body.authUrl);
     const deadline = now() + (Number(s.body.expiresIn) || 600) * 1000;
@@ -61,7 +63,7 @@ export async function linkAccount(provider, { fetchImpl, sleep, open, onWaiting,
       await wait(Math.max(1, Number(s.body.interval) || 2) * 1000);
       if (cancelled()) return { ok: false, cancelled: true, error: "cancelled" };
       if (now() > deadline) return { ok: false, error: "That sign-in expired. Try again." };
-      const f = await post(fetchImpl, "/auth/google/finish", { pairCode: s.body.pairCode });
+      const f = await post(fetchImpl, `/auth/${idp}/finish`, { pairCode: s.body.pairCode });
       if (f.ok && f.body.pending) continue;
       if (f.ok && f.body.linked) return { ok: true, login: f.body.login, merged: Boolean(f.body.merged) };
       return fail(f, "Linking failed.");
@@ -155,7 +157,9 @@ export async function renamePerson(fetchImpl, { login, name }) {
   }
 }
 
-/** "GitHub · @octocat" / "Google · a@b.com" */
+/** "GitHub · @octocat" / "Google · a@b.com" / "Microsoft · a@b.com" */
 export function identityLabel(i) {
-  return i.provider === "google" ? `Google · ${i.login}` : `GitHub · @${i.login}`;
+  if (i.provider === "google") return `Google · ${i.login}`;
+  if (i.provider === "microsoft") return `Microsoft · ${i.login}`;
+  return `GitHub · @${i.login}`;
 }

@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { Accounts, POLICY_VALUES, defaultAccountsFile, deriveAuthToken, invitableLogin } from "./accounts.mjs";
 import { deviceStart, devicePoll, githubUser, githubPublicEmail, githubVerifiedEmails } from "./github-auth.mjs";
 import { authorizeUrl, exchangeCode, readIdToken } from "./google-auth.mjs";
+import * as ms from "./microsoft-auth.mjs";
 import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
 import { initSentry } from "./sentry.mjs";
 import { agentsOf } from "../board/src/lib/agents.mjs";
@@ -87,6 +88,18 @@ const GOOGLE_CLIENT_SECRET = process.env.ZEVET_GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT = process.env.ZEVET_GOOGLE_REDIRECT || "";
 const GOOGLE_DOMAIN = process.env.ZEVET_GOOGLE_DOMAIN || "";
 const GOOGLE_OWNER = process.env.ZEVET_GOOGLE_OWNER || "";
+/* ── Microsoft sign-in (Entra ID + personal accounts, tenant "common") ──────────
+ * The third door, wired exactly like Google's — same routes, same pairing table.
+ * ⚠️ `ZEVET_MICROSOFT_CLIENT_SECRET` is a real secret (.env mode 600, never served).
+ * ⚠️ `ZEVET_MICROSOFT_REDIRECT` must match a Redirect URI on the app registration byte for byte.
+ * `ZEVET_MICROSOFT_OWNER` (an email) reserves an unclaimed hub, as the GitHub/Google owners do. There is
+ * no domain door: see hub/microsoft-auth.mjs and DECISIONS.md. */
+const MICROSOFT_CLIENT_ID = process.env.ZEVET_MICROSOFT_CLIENT_ID || "";
+const MICROSOFT_CLIENT_SECRET = process.env.ZEVET_MICROSOFT_CLIENT_SECRET || "";
+const MICROSOFT_REDIRECT = process.env.ZEVET_MICROSOFT_REDIRECT || "";
+const MICROSOFT_OWNER = process.env.ZEVET_MICROSOFT_OWNER || "";
+const MICROSOFT_ON = Boolean(MICROSOFT_CLIENT_ID && MICROSOFT_CLIENT_SECRET && MICROSOFT_REDIRECT);
+
 /** ZEVET_TEAM_DOMAINS=usemasora.com,metrodora.ai — Workspace domains whose people join the DEFAULT team on a Google
  *  sign-in with no invite and no team name. A door, not a gate: invited people on any other domain still get in. */
 const TEAM_DOMAINS = [...new Set((process.env.ZEVET_TEAM_DOMAINS || "").toLowerCase().split(/[\s,]+/).map((d) => d.replace(/^@/, "")).filter(Boolean))];
@@ -95,7 +108,7 @@ const TEAM_DOMAINS = [...new Set((process.env.ZEVET_TEAM_DOMAINS || "").toLowerC
  *  unless ZEVET_TEST_HOOKS=1, which no real deployment or install ever sets. */
 const TEST_IDP_FETCH =
   process.env.ZEVET_TEST_HOOKS === "1"
-    ? (await import("./test-fake-idp.mjs")).makeFakeIdpFetch({ googleClientId: GOOGLE_CLIENT_ID })
+    ? (await import("./test-fake-idp.mjs")).makeFakeIdpFetch({ googleClientId: GOOGLE_CLIENT_ID, microsoftClientId: MICROSOFT_CLIENT_ID })
     : undefined;
 const GOOGLE_ON = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REDIRECT);
 
@@ -107,7 +120,7 @@ const GOOGLE_ON = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_RED
  * hubs with a plain `ZEVET_TOKEN`, would each write an account store into the
  * tree and then share it with the next run.
  */
-const ACCOUNTS_FILE = process.env.ZEVET_ACCOUNTS || (GITHUB_CLIENT_ID || GOOGLE_CLIENT_ID ? defaultAccountsFile(HERE) : null);
+const ACCOUNTS_FILE = process.env.ZEVET_ACCOUNTS || (GITHUB_CLIENT_ID || GOOGLE_CLIENT_ID || MICROSOFT_CLIENT_ID ? defaultAccountsFile(HERE) : null);
 
 const accounts = new Accounts({ file: ACCOUNTS_FILE, secret: process.env.ZEVET_SECRET || "" });
 
@@ -175,9 +188,9 @@ const WRITING_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Up
  * good credential that NOBODY ON EARTH KNOWS, listening on a public port,
  * reporting itself healthy. That is worse than not starting, and it is
  * indistinguishable from working until the first teammate tries to connect. */
-if (!ENV_TOKEN && !process.env.ZEVET_SECRET && !GITHUB_CLIENT_ID && !GOOGLE_CLIENT_ID) {
+if (!ENV_TOKEN && !process.env.ZEVET_SECRET && !GITHUB_CLIENT_ID && !GOOGLE_CLIENT_ID && !MICROSOFT_CLIENT_ID) {
   console.error("zevet: refusing to start with no way for anyone to authenticate.");
-  console.error("      Set ZEVET_GITHUB_CLIENT_ID or ZEVET_GOOGLE_CLIENT_ID for sign-in, or ZEVET_SECRET (or ZEVET_TOKEN) for the shared credential.");
+  console.error("      Set ZEVET_GITHUB_CLIENT_ID, ZEVET_GOOGLE_CLIENT_ID or ZEVET_MICROSOFT_CLIENT_ID for sign-in, or ZEVET_SECRET (or ZEVET_TOKEN) for the shared credential.");
   process.exit(1);
 }
 
@@ -201,6 +214,16 @@ if (GOOGLE_CLIENT_ID && !GOOGLE_ON) {
   process.exit(1);
 }
 
+if (MICROSOFT_CLIENT_ID && !MICROSOFT_ON) {
+  const missing = [
+    !MICROSOFT_CLIENT_SECRET && "ZEVET_MICROSOFT_CLIENT_SECRET",
+    !MICROSOFT_REDIRECT && "ZEVET_MICROSOFT_REDIRECT",
+  ].filter(Boolean);
+  console.error(`zevet: ZEVET_MICROSOFT_CLIENT_ID is set but ${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} not.`);
+  console.error("      Microsoft's web flow needs all three. Refusing to start rather than fail at the end of somebody's sign-in.");
+  process.exit(1);
+}
+
 if (GOOGLE_DOMAIN && TEAM_DOMAINS.length) {
   // GOOGLE_DOMAIN gates EVERY sign-in on one hd, which would refuse the second mapped domain at the door.
   console.error("zevet: ZEVET_GOOGLE_DOMAIN and ZEVET_TEAM_DOMAINS are both set. Use ZEVET_TEAM_DOMAINS alone.");
@@ -214,7 +237,7 @@ if (GOOGLE_ON && !GOOGLE_DOMAIN && !TEAM_DOMAINS.length) {
   console.warn("zevet: ZEVET_GOOGLE_DOMAIN is not set — Google sign-in admits only people already on the list, not a whole Workspace.");
 }
 
-if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
+if (!GITHUB_CLIENT_ID && !GOOGLE_ON && !MICROSOFT_ON) {
   console.warn("zevet: no sign-in provider is configured — the shared secret is the only way in.");
 } else if (!accounts.owner) {
   console.warn("zevet: nobody has claimed this hub yet. The FIRST sign-in becomes the owner.");
@@ -954,7 +977,7 @@ function resolveTeamSlug(slug) {
 }
 
 function createTeam(name) {
-  if (!GITHUB_CLIENT_ID && !GOOGLE_ON) {
+  if (!GITHUB_CLIENT_ID && !GOOGLE_ON && !MICROSOFT_ON) {
     return { ok: false, status: 503, error: "sign-in is not configured" };
   }
   sweepUnclaimedTeams();
@@ -1195,6 +1218,34 @@ function googlePage(res, status, message) {
   res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
   res.end(body);
 }
+
+/** The OIDC web-flow providers that share the three routes and the pairing table below. A pair records
+ *  which one minted it, so a state minted for Google is dead on Microsoft's callback. */
+const IDPS = {
+  google: {
+    label: "Google",
+    on: GOOGLE_ON,
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
+    redirectUri: GOOGLE_REDIRECT,
+    exchangeCode,
+    authUrl: (pair, state, domain) => authorizeUrl({ clientId: GOOGLE_CLIENT_ID, redirectUri: GOOGLE_REDIRECT, state, domain }),
+    read: (idToken, { domain = "" } = {}) => readIdToken(idToken, { clientId: GOOGLE_CLIENT_ID, domain }),
+    requiredOwner: (domain) => (domain ? GOOGLE_OWNER : ""),
+  },
+  microsoft: {
+    label: "Microsoft",
+    on: MICROSOFT_ON,
+    clientId: MICROSOFT_CLIENT_ID,
+    clientSecret: MICROSOFT_CLIENT_SECRET,
+    redirectUri: MICROSOFT_REDIRECT,
+    exchangeCode: ms.exchangeCode,
+    authUrl: (pair, state) => ms.authorizeUrl({ clientId: MICROSOFT_CLIENT_ID, redirectUri: MICROSOFT_REDIRECT, state, nonce: pair.nonce }),
+    read: (idToken, { pair } = {}) => ms.readIdToken(idToken, { clientId: MICROSOFT_CLIENT_ID, nonce: pair && pair.nonce }),
+    // Always reserved: an unclaimed hub reserved for a GitHub/Google owner must not be claimable here.
+    requiredOwner: () => MICROSOFT_OWNER || GOOGLE_OWNER || GITHUB_OWNER,
+  },
+};
 
 /**
  * The invite field is ONE text input (Andrew: "keep the invite field
@@ -1535,8 +1586,11 @@ async function handleRequest(req, res) {
    * (the identity comes from an id token this process fetched from Google
    * itself), and `finish` returns only what `callback` already established.
    */
-  if (url.pathname === "/auth/google/start" && req.method === "POST") {
-    if (!GOOGLE_ON) return json(res, 503, { error: "Google sign-in is not configured" });
+  const oidcRoute = /^\/auth\/(google|microsoft)\/(start|callback|finish)$/.exec(url.pathname);
+  const IDP = oidcRoute ? IDPS[oidcRoute[1]] : null;
+  const oidcStep = oidcRoute ? oidcRoute[2] : "";
+  if (IDP && oidcStep === "start" && req.method === "POST") {
+    if (!IDP.on) return json(res, 503, { error: `${IDP.label} sign-in is not configured` });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
     let body = null;
@@ -1572,11 +1626,12 @@ async function handleRequest(req, res) {
     // set here, from the caller's own session, never from anything Google or
     // the browser later sends.
     const link = linking ? { provider: linking.auth.session.provider, login: linking.auth.session.login, id: linking.auth.session.id } : null;
-    googlePairs.set(pairCode, { at: Date.now(), ip, team, link, result: null, error: null, tried: false });
+    const pair = { at: Date.now(), ip, team, link, idp: oidcRoute[1], nonce: randomBytes(16).toString("hex"), result: null, error: null, tried: false };
+    googlePairs.set(pairCode, pair);
     return json(res, 200, {
       ok: true,
       pairCode,
-      authUrl: authorizeUrl({ clientId: GOOGLE_CLIENT_ID, redirectUri: GOOGLE_REDIRECT, state: pairCode, domain }),
+      authUrl: IDP.authUrl(pair, pairCode, domain),
       // Google has nothing to say about how fast to poll, unlike GitHub's
       // device flow. Two seconds is the app waiting on a human in a browser.
       interval: 2,
@@ -1586,12 +1641,12 @@ async function handleRequest(req, res) {
     });
   }
 
-  if (url.pathname === "/auth/google/callback" && req.method === "GET") {
-    if (!GOOGLE_ON) return googlePage(res, 503, "Google sign-in is not configured.");
+  if (IDP && oidcStep === "callback" && req.method === "GET") {
+    if (!IDP.on) return googlePage(res, 503, `${IDP.label} sign-in is not configured.`);
 
     const state = url.searchParams.get("state") || "";
     const pair = googlePairs.get(state);
-    if (!pair) {
+    if (!pair || pair.idp !== oidcRoute[1]) {
       // Either expired, already used, or never minted here. All three read the
       // same to the person and none of them is worth distinguishing for whoever
       // is guessing.
@@ -1612,16 +1667,16 @@ async function handleRequest(req, res) {
 
     const denied = url.searchParams.get("error");
     if (denied) {
-      pair.error = denied === "access_denied" ? "the request was declined on Google" : `Google said: ${denied}`;
+      pair.error = denied === "access_denied" ? `the request was declined on ${IDP.label}` : `${IDP.label} said: ${denied}`;
       return googlePage(res, 200, "Sign-in was cancelled. You can close this tab.");
     }
 
     pair.tried = true;
-    const ex = await exchangeCode({
-      clientId: GOOGLE_CLIENT_ID,
-      clientSecret: GOOGLE_CLIENT_SECRET,
+    const ex = await IDP.exchangeCode({
+      clientId: IDP.clientId,
+      clientSecret: IDP.clientSecret,
       code: url.searchParams.get("code"),
-      redirectUri: GOOGLE_REDIRECT,
+      redirectUri: IDP.redirectUri,
       fetchImpl: TEST_IDP_FETCH,
     });
     if (!ex.ok) {
@@ -1634,7 +1689,7 @@ async function handleRequest(req, res) {
       pair.error = "that team no longer exists";
       return googlePage(res, 404, pair.error);
     }
-    if (!pair.link) {
+    if (!pair.link && pair.idp === "google") {
       // Route by Workspace BEFORE the team's own domain gate: the identity is read ungated first.
       const peek = readIdToken(ex.idToken, { clientId: GOOGLE_CLIENT_ID });
       const home = peek.ok ? teamForWorkspace(peek) : null;
@@ -1644,13 +1699,14 @@ async function handleRequest(req, res) {
         acc = teamAccounts.get(home);
       }
     }
-    const domain = pair.link ? "" : domainFor(pair.team || DEFAULT_TEAM, acc);
+    // The domain door is Google's (`hd`); Microsoft has no analogue, so it is never gated or routed by one.
+    const domain = pair.link || pair.idp !== "google" ? "" : domainFor(pair.team || DEFAULT_TEAM, acc);
 
     /* ⚠️ THE IDENTITY COMES FROM HERE AND NOWHERE ELSE. Not from the query
      * string, not from anything the browser carried — from an id token this
      * process just fetched from Google over TLS. See google-auth.mjs for why
      * that is also the reason its signature is not separately verified. */
-    const who = readIdToken(ex.idToken, { clientId: GOOGLE_CLIENT_ID, domain });
+    const who = IDP.read(ex.idToken, { domain, pair });
     if (!who.ok) {
       pair.error = who.error;
       authFailed(req, url);
@@ -1671,7 +1727,7 @@ async function handleRequest(req, res) {
     }
 
     const may = acc.mayEnter(who, {
-      requiredOwner: domain ? GOOGLE_OWNER : "",
+      requiredOwner: IDP.requiredOwner(domain),
       domain,
       domains: claimedDomains(pair.team || DEFAULT_TEAM, acc),
     });
@@ -1696,8 +1752,8 @@ async function handleRequest(req, res) {
     return googlePage(res, 200, `Signed in as ${sess.login}. You can close this tab and go back to zevet.`);
   }
 
-  if (url.pathname === "/auth/google/finish" && req.method === "POST") {
-    if (!GOOGLE_ON) return json(res, 503, { error: "Google sign-in is not configured" });
+  if (IDP && oidcStep === "finish" && req.method === "POST") {
+    if (!IDP.on) return json(res, 503, { error: `${IDP.label} sign-in is not configured` });
     if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
 
     let body = null;
@@ -1709,8 +1765,8 @@ async function handleRequest(req, res) {
 
     const code = String((body && body.pairCode) || "");
     const pair = googlePairs.get(code);
-    if (!pair || Date.now() - pair.at > GOOGLE_PAIR_TTL_MS) {
-      googlePairs.delete(code);
+    if (!pair || pair.idp !== oidcRoute[1] || Date.now() - pair.at > GOOGLE_PAIR_TTL_MS) {
+      if (pair && pair.idp === oidcRoute[1]) googlePairs.delete(code);
       authFailed(req, url);
       return json(res, 400, { error: "that sign-in expired — start again" });
     }
@@ -1751,6 +1807,7 @@ async function handleRequest(req, res) {
       // field to decide whether to show its connect button, and it is served by
       // this same hub on a slower refresh cycle than the hub itself.
       googleSignIn: GOOGLE_ON,
+      microsoftSignIn: MICROSOFT_ON,
       googleDomain: domainFor(auth.team, acc),
       // The owner's own Workspace domain, if they have one — the one value
       // `/auth/domain` will accept, whether or not the toggle is currently

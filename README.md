@@ -82,6 +82,23 @@ node hub/server.mjs
 
 The board is at `<hub>/?token=<ZEVET_TOKEN>`.
 
+### Sign-in providers
+
+A hub signs people in with GitHub, Google or Microsoft — any mix; each is on when its variables are set. All three
+buttons ("Continue with …") appear on the desktop setup window, in Settings, and as "Link …" for a second account.
+Masora's own sign-in is separate and optional; nothing here requires it.
+
+| Variable | Meaning |
+|---|---|
+| `ZEVET_MICROSOFT_CLIENT_ID`, `ZEVET_MICROSOFT_CLIENT_SECRET`, `ZEVET_MICROSOFT_REDIRECT` | Microsoft (Entra ID **and** personal accounts, tenant `common`). Register a *web* app, supported accounts "any organizational directory and personal Microsoft accounts", add the redirect `https://<hub>/auth/microsoft/callback`. All three or the hub refuses to start. |
+| `ZEVET_MICROSOFT_OWNER` | Optional email that alone may claim an unclaimed hub through Microsoft. Without it an unclaimed hub reserved by `ZEVET_GITHUB_OWNER`/`ZEVET_GOOGLE_OWNER` stays reserved against Microsoft too. |
+
+Microsoft's `email` claim is **not proof** (a tenant admin can set it to anything). Zevet treats it as a verified
+address — for auto-linking to the same person on another provider, and for claiming an email invite — only when the
+id token carries `xms_edov` (add it as an optional claim on the app registration). Without it the person can still
+sign in where they are already on the team's list, but is never linked or admitted by an address. There is no Microsoft
+domain door (Google's `hd` has no clean analogue); invite people by email instead.
+
 ### Onboarding a teammate
 
 Send them **one command and one secret**. On macOS:

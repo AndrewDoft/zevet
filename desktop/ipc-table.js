@@ -179,6 +179,13 @@ type — but the app's side of it is the same start / wait / cancel.` },
     googleLogout: { channel: "zevet:googleLogout", params: [], type: `() => Promise<{ ok?: boolean; error?: string } | null | undefined>`, optional: true, doc: `End this machine's session, hub-side and locally. A session does not
  remember which provider minted it, so this is the same call as
  \`githubLogout\` under the name the Google button expects.` },
+    microsoftStart: { channel: "zevet:microsoftStart", params: ["hub","team"], pack: "object", type: `(hub?: string | null, team?: string) => Promise<{ ok?: boolean; error?: string; url?: string; expiresIn?: number; domain?: string }>`, optional: true, doc: `Sign in with Microsoft (Entra ID or a personal Microsoft account). Exactly
+Google's shape — the hub owns the callback, so \`microsoftStart\` hands back a URL
+opened by the main process and \`microsoftWait\` resolves once the config is written.
+Neither call returns the secret or the session.` },
+    microsoftWait: { channel: "zevet:microsoftWait", params: [], type: `() => Promise<{ ok?: boolean; cancelled?: boolean; error?: string; login?: string; owner?: boolean }>`, optional: true },
+    microsoftCancel: { channel: "zevet:microsoftCancel", params: [], type: `() => void`, optional: true },
+    microsoftLogout: { channel: "zevet:microsoftLogout", params: [], type: `() => Promise<{ ok?: boolean; error?: string } | null | undefined>`, optional: true, doc: `End this machine's session; the same call as \`githubLogout\` and \`googleLogout\`.` },
     sendReport: { channel: "zevet:sendReport", params: ["text"], pack: "object", type: `(text: string) => Promise<{ ok: boolean }>`, optional: true, doc: `Send what the person typed plus the scrubbed tail of the app log to Sentry. \`{ ok }\`.` },
     signOutTeam: { channel: "zevet:signOutTeam", params: [], type: `() => Promise<{ ok?: boolean; error?: string } | null | undefined>`, optional: true, doc: `Leave the team entirely: ends the hub session, then drops session,
  secret AND hub from config.json (backed up first) so this machine

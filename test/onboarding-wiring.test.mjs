@@ -25,7 +25,10 @@ describe("sign-in opens the system browser", () => {
     const gh = handler("zevet:githubStart");
     assert.match(gh, /opened = await openSafe\(r\.verificationUriComplete\)\.then\(\(\) => true, \(\) => false\)/);
     assert.match(gh, /expiresIn: r\.expiresIn, opened/);
-    const g = handler("zevet:googleStart");
+    // Google and Microsoft share one start handler (startWebSignIn), registered under each name.
+    assert.ok(main.includes('bridge.handle("zevet:googleStart", startWebSignIn("google"))'));
+    assert.ok(main.includes('bridge.handle("zevet:microsoftStart", startWebSignIn("microsoft"))'));
+    const g = main.slice(main.indexOf("const startWebSignIn"), main.indexOf("bridge.handle(\"zevet:googleStart\""));
     assert.match(g, /opened = await openSafe\(r\.authUrl\)\.then\(\(\) => true, \(\) => false\)/);
     assert.match(g, /domain: r\.domain, opened/);
   });
@@ -85,7 +88,7 @@ describe("Settings", () => {
   const s = read("board", "src", "components", "settings.tsx");
   test("the connect buttons show the provider mark and keep an aria-label", () => {
     assert.match(s, /aria-label=\{label\}[^>]*>\s*\{idle \? <><GithubMark \/> GitHub<\/> : label\}/);
-    assert.match(s, /aria-label=\{label\}[^>]*>\s*\{idle \? <><GoogleMark \/> Google<\/> : label\}/);
+    assert.match(s, /aria-label=\{label\}[^>]*>\s*\{idle \? <>\{provider === "microsoft" \? <MicrosoftMark \/> : <GoogleMark \/>\} \{name\}<\/> : label\}/);
   });
   test("the Family panel lists Masora and Zevet Voice with one chip each", () => {
     assert.match(s, /function FamilySection/);

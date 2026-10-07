@@ -3,7 +3,7 @@ type Ident = { provider: string; login: string };
 type Person = { login: string; key?: string; identities?: Ident[]; aliases?: string[] };
 
 export function linkAccount(
-  provider: "github" | "google",
+  provider: "github" | "google" | "microsoft",
   opts: {
     fetchImpl: Fetch;
     sleep?: (ms: number) => Promise<void>;

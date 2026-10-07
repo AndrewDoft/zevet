@@ -143,7 +143,7 @@ function provider(rec) {
  *  "@"; an email address already has one and gains nothing from a second. */
 function display(rec) {
   const l = String((rec && rec.login) || "");
-  return provider(rec) === "google" ? l : `@${l}`;
+  return provider(rec) === "github" ? `@${l}` : l;
 }
 
 /** A record's identities, primary first. A person record is the old allowlist
@@ -475,7 +475,7 @@ export class Accounts {
       // Google id token's verified email) — the only evidence linking uses.
       emails: verifiedEmails(user),
     };
-    if (!me.login || !me.id) return { ok: false, error: `${me.provider === "google" ? "Google" : "GitHub"} did not say who you are` };
+    if (!me.login || !me.id) return { ok: false, error: `${{ google: "Google", microsoft: "Microsoft" }[me.provider] || "GitHub"} did not say who you are` };
 
     // ⚠️ CHECKED BEFORE EVERYTHING, INCLUDING TRUST-ON-FIRST-USE. A revoked
     // person must not be able to claim an unowned hub, and must not be let back
