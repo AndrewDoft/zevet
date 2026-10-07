@@ -18,6 +18,7 @@ const idle = (over = {}) => ({
   chatBusy: () => false,
   lastInputAt: () => NOW - INPUT_QUIET_MS - 1,
   windows: () => 1,
+  working: () => 0,
   ...over,
 });
 
@@ -279,3 +280,9 @@ describe("main.js hands the gate real state and the swap real teardown", async (
     assert.match(main, /agentApiHandle\.url\}\/list[\s\S]{0,120}Bearer \$\{agentApiHandle\.token\}/);
   });
 });
+
+test("busyReason refuses to judge without working(): a caller that forgot it would restart through a mid-turn agent", () => {
+  const { working, ...rest } = idle();
+  assert.throws(() => busyReason(rest), /working\(\) is required/);
+});
+

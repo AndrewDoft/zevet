@@ -53,6 +53,7 @@ describe("createIdleInstaller", () => {
         chatBusy: () => false,
         lastInputAt: () => NOW - INPUT_QUIET_MS - 1,
         windows: () => 1,
+        working: () => 0,
         ...over.gate,
       },
       systemIdleSeconds: () => 900,
