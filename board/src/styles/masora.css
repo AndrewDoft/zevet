@@ -1628,6 +1628,7 @@
 
   /* Team task board (components/tasks.tsx). Bottom-left; a pill when closed. */
   .tasks-panel { position: fixed; left: 16px; bottom: 16px; z-index: 30; display: flex; flex-direction: column-reverse; align-items: flex-start; font-family: var(--font-mono); font-size: 11.5px; }
+  .tasks-panel.chat-panel { left: 88px; }
   .tasks-toggle { padding: 6px 12px; border-radius: 999px; background: var(--raise); border: 1px solid var(--line); color: var(--ink); cursor: pointer; }
   .tasks-toggle:hover { background: var(--raise-soft); }
   .tasks-body { margin-bottom: 6px; padding: 8px; width: min(420px, 90vw); max-height: 60vh; overflow: auto; background: var(--raise); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 6px; }

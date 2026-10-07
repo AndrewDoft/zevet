@@ -14,6 +14,7 @@ import { SettingsPage } from "./components/settings";
 import { VoiceDialog } from "./components/voicedialog";
 import { SubagentsPanel } from "./components/subagents-panel";
 import { TasksPanel } from "./components/tasks";
+import { TeamChatPanel } from "./components/team-chat";
 import {
   applyPanes,
   applyTheme,
@@ -292,6 +293,7 @@ function App() {
       <VoiceDialog />
       <SubagentsPanel />
       <TasksPanel />
+      <TeamChatPanel />
     </ConsoleRuntimeProvider>
   );
 }

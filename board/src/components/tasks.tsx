@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { useBoard } from "../lib/board";
 import { sendSpawn, setSpawnTarget, canSpawn } from "../lib/steer";
+import { useChat } from "../lib/team-chat-room";
 import { closeTasks, doTask, ensureTasks, myRole, newId, useTasks } from "../lib/tasks-room";
 import { STATUSES, handoff, may, type Card, type Status } from "../lib/tasks.mjs";
 
@@ -17,6 +18,7 @@ function CardView({ card, role, me }: { card: Card; role: ReturnType<typeof myRo
   const [text, setText] = useState("");
   const [note, setNote] = useState("");
   const edit = may(role, "edit");
+  const talk = useChat().byCard[card.id] ?? 0;
   const startAgent = async () => {
     const h = handoff(card, role);
     if (!h.ok) return setNote(h.error);
@@ -43,6 +45,7 @@ function CardView({ card, role, me }: { card: Card; role: ReturnType<typeof myRo
         {edit ? (
           <input aria-label="Owner" placeholder="owner" defaultValue={card.owner} onBlur={(e) => e.target.value !== card.owner && setNote(doTask({ op: "assign", id: card.id, owner: e.target.value }))} />
         ) : <span>{card.owner || "unassigned"}</span>}
+        {talk ? <span>chat: {talk}</span> : null}
         {card.link ? <span className="tasks-link">{card.link.kind}: {card.link.ref}</span> : null}
         {edit ? <button type="button" onClick={startAgent}>Start agent</button> : null}
         {edit ? <button type="button" onClick={() => setNote(doTask({ op: "remove", id: card.id }))}>Remove</button> : null}

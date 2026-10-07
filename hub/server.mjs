@@ -3682,15 +3682,16 @@ function handleControlMessage(conn, payload) {
   return false;
 }
 
-/** Task boards (`tasks:<team>` rooms) are written by people, so a socket opened
+/** Task boards and team chat (`tasks:<team>`, `chat:<team>` rooms) are written by people, so a socket opened
  *  with a person's SESSION token needs Commenter or above to write one; a Viewer's
  *  frames are dropped before the room sees them and the socket is told why. The
  *  role is read live per frame, so a demotion bites at once. A socket opened with
  *  the shared team token has no person behind it: the hub cannot gate that, and
  *  says so in D-089. Returns true when the frame is refused. */
 function taskWriteRefused(conn) {
-  if (!conn.roomName.startsWith("tasks:") || !conn.auth || !conn.auth.session) return false;
-  if (conn.auth.accounts.can(conn.auth.session, "tasks")) return false;
+  const kind = conn.roomName.startsWith("tasks:") ? "tasks" : conn.roomName.startsWith("chat:") ? "chat" : "";
+  if (!kind || !conn.auth || !conn.auth.session) return false;
+  if (conn.auth.accounts.can(conn.auth.session, kind)) return false;
   wsSend(conn, OP_TEXT, Buffer.from(JSON.stringify({ type: "refused", error: "commenter role required", role: conn.auth.accounts.roleOf(conn.auth.session) })));
   return true;
 }

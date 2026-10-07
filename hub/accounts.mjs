@@ -154,6 +154,8 @@ export const ACTION_ROLE = Object.freeze({
   // Writing to a `tasks:` document room. The hub cannot tell a comment from an edit
   // (sealed), so it holds the floor at Commenter; clients enforce the rest.
   tasks: "commenter",
+  // Same floor for a `chat:` room: Viewers read, Commenter and above post.
+  chat: "commenter",
 });
 
 /** A stored credential record, minus its `key` — what everything except

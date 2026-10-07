@@ -2317,3 +2317,31 @@ make-feed TARGETS entries turns them red. Dropping the chmod does NOT (mode asse
 - **Hub** redeployed from the tag in place; `BUILD_ID` `3b0988dac86b` -> `05452a9a0a03`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+**Not verified.** No browser walk of the panel; no two-machine run; the Start-agent buttons were not exercised; the shared-token path is ungated by design.
+
+## D-NEXT-W2-15B — Team chat
+
+**2026-10-07.** Item 15, second half. D-NEXT-W2-15 shipped the task board and logged team chat as a follow-up.
+
+**Decision.** Team chat is a sealed `chat:<team>` doc-sync room beside `tasks:<team>`. A message is `{id, author(by), ts(t), text, replyTo?, cardId?}`, append-only: never edited or deleted, and the first message seen for an id wins (a replay cannot rewrite it). Model `board/src/lib/team-chat.mjs`; wire `team-chat-sync.mjs`. The sync loop (join, answer `ready` with the whole state, answer `snapshot-due`, merge `update`, role-gated local op) is now one module, `room-sync.mjs`, and `tasks-sync.mjs` is a thin wrapper over it: no copy. Frames are sealed in the main process with the room name as AAD (existing `doc:*` bridge, no new IPC); the hub relays and replays ciphertext only.
+
+**Roles.** Viewer reads; Commenter and above post. Sender: `apply` refuses a Viewer (nothing sent, composer not drawn). Receiver: `merge` drops a message whose author is not at least Commenter in the hub's whoami table. Hub: `ACTION_ROLE.chat = commenter`; `taskWriteRefused` now covers `chat:` rooms as well as `tasks:` (binary frames and snapshot requests on a session-token socket below Commenter are dropped with a `refused` text frame, role read per frame). Same unavoidable limits as D-NEXT-W2-15: shared-token sockets are ungated, author names are not signed.
+
+**Cap and rendering.** Text is capped at 4000 characters: refused at the sender with a message, truncated on receipt. At most 500 messages are kept, the newest by (t, id); the top N of a union is order-independent, so merge stays commutative, and a message older than the window is not resurrected. Text is a React text node; nothing sets HTML (a test greps the panel source for `innerHTML`).
+
+**Cards.** `cardId` links a message to a task card; the card shows `chat: n` from `countByCard`. The id is not checked against the task room (the rooms are independent and arrive in any order), so a message can name a card that no longer exists; the panel shows "card" then.
+
+**Unread.** A local last-read marker (ms timestamp, `localStorage` key `zevet.chat.lastRead.<team>`); unread = other people's messages with `t` above it. Opening the panel or posting moves it. Timestamps are the sender's clock: a machine whose clock is behind can post messages that count as already read.
+
+**Notifications.** `board/src/lib/notify.mjs` (W2-14) is not on this base. Not built; follow-up: raise a needs-attention notification when a message `@mention`s me, through that module once it lands.
+
+**Persistence.** Same as tasks: the room lives in hub memory (log capped, `ROOM_LOG_MAX_BYTES`), replayed to a late joiner, and every (re)connect re-sends the client's whole log. If every client leaves and the hub restarts, history is gone. No local copy on disk (plaintext at rest for a feature whose copy is the room). A reconnect re-sends up to 500 messages of 4000 characters (2 MB worst case).
+
+**Not done.** `@mention` notifications; message edit/delete; threads beyond `replyTo`; moving a card's message count into a click-through; a browser walk.
+
+**Reversibility.** Additive: one room name, one `ACTION_ROLE` key, one panel. `tasks-sync` behaviour is unchanged (its tests are the proof).
+
+**Tests.** `test/team-chat.test.mjs` (15): post/read under each role; receiver drops Viewer and unknown authors; append-only and merge order; the cap (sender, receiver, window); markup is data; card linking; unread; ready/snapshot resend; and against a real hub: ciphertext-only relay (keyless spy, wrong-room AAD fails), late-joiner and offline-post convergence, Viewer session-socket frames dropped / Commenter relayed / demotion immediate. Mutation-checked, each turned a named test red and was restored: `may()` always true (post gates, received-drop, refused-sends-nothing); receiver ignores author role (received-drop: "viewer"); no local cap (refused locally); no receive cap (truncated on receipt); cardId dropped (card linking: deep-equal counts); unread counts own (unread: "bo's two, not ann's own"); unread ignores marker (unread: "marker at m2"); overwrite allowed (append-only); no 500 window (window test); `ready` not re-sending (resend test); `do()` not sending (sent test plus all three hub tests time out); hub gate off for `chat:` (Viewer socket test: "a viewer's frame reached the room").
+
+**Not verified.** No browser walk of the panel; no two-machine run; the unread badge and card count were not looked at on screen; the shared-token path is ungated by design.

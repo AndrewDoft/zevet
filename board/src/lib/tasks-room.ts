@@ -22,7 +22,7 @@ const emit = (error = snapshot.error) => {
 const clean = (n: unknown) => String(n || "").toLowerCase().replace(/^@/, "");
 
 /** The people the hub reports, keyed by login and every linked name. Read live. */
-function roleTable(): { me: string; roleOf: (login: string) => Role | null; mine: () => Role | null } {
+export function roleTable(): { me: string; roleOf: (login: string) => Role | null; mine: () => Role | null } {
   const who = useBoard.getState().who.state;
   const me = clean(who?.login);
   const table = new Map<string, Role>();
