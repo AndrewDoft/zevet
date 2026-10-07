@@ -87,7 +87,7 @@ const APPDATA = process.env.APPDATA || path.join(HOME, "AppData", "Roaming");
 const AGENTS = [
   {
     id: "claude-code",
-    label: "Claude Code",
+    label: "Claude",
     bin: "claude",
     hooks: true,
     extraPaths: () => [path.join(HOME, ".local", "bin", "claude")],

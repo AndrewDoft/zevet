@@ -1,3 +1,4 @@
+import { agentName } from "./mentions.mjs";
 /**
  * Where is an agent editing? Pure functions, no DOM, no Yjs: the hook records
  * what a tool is ABOUT to do (PreToolUse is all it reports), the desktop hands
@@ -14,12 +15,9 @@ export const AGENT_TTL_MS = 10_000;
 /** A hint older than this at the moment the file changes is not about that change. */
 export const HINT_MAX_AGE_MS = 20_000;
 
-const NAMES = { "claude-code": "Claude Code", claude: "Claude Code", codex: "Codex", opencode: "opencode" };
-
-/** "Mina · Claude Code" */
+/** "Mina · Claude" */
 export function agentLabel(actor, agent) {
-  const a = NAMES[String(agent || "").toLowerCase()] || String(agent || "agent");
-  return `${actor || "someone"} · ${a}`;
+  return `${actor || "someone"} · ${agentName(String(agent || "").toLowerCase())}`;
 }
 
 /** A stable awareness clientID for one actor's agent (FNV-1a, never 0). Real

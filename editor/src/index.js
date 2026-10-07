@@ -121,7 +121,7 @@ const transparentTheme = EditorView.theme({
   },
   "&.cm-focused": { outline: "none" },
   // Remote cursors/ranges always show their name (y-codemirror only shows it on
-  // hover): "Mina · Claude Code" is the point of an agent's presence.
+  // hover): "Mina · Claude" is the point of an agent's presence.
   ".cm-ySelectionInfo": { opacity: "1", fontFamily: "inherit", padding: "1px 5px", borderRadius: "3px 3px 3px 0" },
   ".cm-commentGutter": { width: "16px" },
   ".cm-commentMark": { cursor: "pointer", fontSize: "10px", lineHeight: "1", borderRadius: "8px", padding: "1px 5px", background: "var(--ink, #2c2f44)", color: "var(--paper, #fff)" },

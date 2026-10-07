@@ -80,7 +80,7 @@ describe("locating an agent's edit", () => {
   });
 
   test("labels and ids", () => {
-    assert.equal(P.agentLabel("Mina", "claude-code"), "Mina · Claude Code");
+    assert.equal(P.agentLabel("Mina", "claude-code"), "Mina · Claude");
     assert.equal(P.agentClientId("a", "codex"), P.agentClientId("a", "codex"));
     assert.notEqual(P.agentClientId("a", "codex"), P.agentClientId("b", "codex"));
   });
@@ -101,7 +101,7 @@ describe("synthetic agent awareness", () => {
     const id = P.agentClientId("Mina", "claude-code");
     ap.show({ actor: "Mina", agent: "claude-code", tool: "Edit", from: 15, to: 28, fromLine: 2, toLine: 2 }, "#2f6f8f");
     const st = awareness.getStates().get(id);
-    assert.equal(st.user.name, "Mina · Claude Code");
+    assert.equal(st.user.name, "Mina · Claude");
     const abs = (j) => Y.createAbsolutePositionFromRelativePosition(Y.createRelativePositionFromJSON(j), ydoc).index;
     assert.deepEqual([abs(st.cursor.anchor), abs(st.cursor.head)], [15, 28]);
     assert.equal(sent.length, 1);
@@ -170,7 +170,7 @@ describe("anchored comments", () => {
 
 describe("live prompt drafts", () => {
   test("shared by default; hide, empty and over-long handled", () => {
-    assert.equal(D.draftField({ text: "fix it", target: "Claude Code", hidden: false, now: 5 }).text, "fix it");
+    assert.equal(D.draftField({ text: "fix it", target: "Claude", hidden: false, now: 5 }).text, "fix it");
     assert.equal(D.draftField({ text: "secret", hidden: true }), null);
     assert.equal(D.draftField({ text: "   ", hidden: false }), null);
     assert.equal(D.draftField({ text: "x".repeat(5000), hidden: false }).text.length, D.DRAFT_MAX);

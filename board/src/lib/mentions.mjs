@@ -2,14 +2,14 @@
  *  Plain JavaScript so the gate runs this exact file.
  *
  *  A mention is stored IN the message text as assistant-ui's default directive,
- *  `:user[Kai]{name=kai}` or `:agent[Kai · Claude Code]{name=<agent key>}`
+ *  `:user[Kai]{name=kai}` or `:agent[Kai · Claude]{name=<agent key>}`
  *  (the regex below is the library's own), so an older client that does not
  *  know about mentions simply shows that text. What leaves for the agent is
  *  `plainMentions(text)`: `@Kai`. */
 
 const DIRECTIVE = /:(user|agent)\[([^\]\n]{1,1024})\](?:\{name=([^}\n]{1,1024})\})?/gu;
 
-const AGENT_NAMES = { "claude-code": "Claude Code", claude: "Claude Code", codex: "Codex", opencode: "opencode" };
+const AGENT_NAMES = { "claude-code": "Claude", claude: "Claude", codex: "Codex", opencode: "opencode" };
 export const agentName = (a) => AGENT_NAMES[a] || a || "agent";
 
 /** Directive syntax cannot carry `]`, `}` or a newline. */
@@ -61,7 +61,7 @@ export function mentionsOf(text) {
     .filter((m) => !seen.has(m.type + "\0" + m.id) && seen.add(m.type + "\0" + m.id));
 }
 
-/** What the agent is told: `@Kai`, `@Kai · Claude Code`. */
+/** What the agent is told: `@Kai`, `@Kai · Claude`. */
 export function plainMentions(text) {
   return splitMentions(text)
     .map((s) => (s.kind === "text" ? s.text : "@" + s.label))

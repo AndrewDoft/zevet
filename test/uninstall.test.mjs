@@ -121,7 +121,7 @@ describe("the uninstaller takes out ours and only ours", () => {
     );
     assert.ok(!("Stop" in cfg.hooks), "an event key emptied of our hooks should go, not linger as []");
     assert.ok(!JSON.stringify(cfg).includes(MARK), "a zevet hook survived the uninstall");
-    assert.match(r.stdout, /Claude Code\s+removed 2 hook entries/);
+    assert.match(r.stdout, /Claude\s+removed 2 hook entries/);
   });
 
   test("a settings file with nothing of ours is not rewritten at all", async (t) => {
