@@ -1617,6 +1617,7 @@
 .claim-menu-scrim{position:fixed;inset:0;z-index:60}
 .claim-menu{position:fixed;display:flex;flex-direction:column;min-width:96px;padding:4px;background:var(--paper,#fff);border:1px solid var(--line,#ddd);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18)}
 .claim-menu button{text-align:left;padding:4px 8px;font-size:12.5px;border-radius:4px}
+.row-menu button{margin:0;width:100%;justify-content:flex-start}
 .claim-menu button:hover,.claim-menu button:focus-visible{background:color-mix(in srgb,var(--ink,#000) 8%,transparent)}
 .memory-chip{flex:none;font-size:11px;color:var(--muted);border:1px solid color-mix(in srgb,var(--muted) 40%,transparent);border-radius:999px;padding:0 6px}
 .memory-chip[data-stale="true"]{color:var(--warn,#c47f00);border-color:color-mix(in srgb,var(--warn,#c47f00) 50%,transparent)}
@@ -1626,9 +1627,9 @@
 .pinned-text{flex:1;min-width:0}.pinned-who{color:var(--muted);font-size:11px}
 .pinned-add input,.pinned-note textarea{flex:1;min-width:0}
 
-  /* Team task board (components/tasks.tsx). Bottom-left; a pill when closed. */
-  .tasks-panel { position: fixed; left: 16px; bottom: 16px; z-index: 30; display: flex; flex-direction: column-reverse; align-items: flex-start; font-family: var(--font-mono); font-size: 11.5px; }
-  .tasks-panel.chat-panel { left: 88px; }
+  /* Team task board (components/tasks.tsx). Bottom-right (Andrew, 2026-10-08: left overlapped the rail); a pill when closed. */
+  .tasks-panel { position: fixed; right: 16px; bottom: 16px; z-index: 30; display: flex; flex-direction: column-reverse; align-items: flex-end; font-family: var(--font-mono); font-size: 11.5px; }
+  .tasks-panel.chat-panel { right: 88px; }
   .tasks-toggle { padding: 6px 12px; border-radius: 999px; background: var(--raise); border: 1px solid var(--line); color: var(--ink); cursor: pointer; }
   .tasks-toggle:hover { background: var(--raise-soft); }
   .tasks-body { margin-bottom: 6px; padding: 8px; width: min(420px, 90vw); max-height: 60vh; overflow: auto; background: var(--raise); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 6px; }

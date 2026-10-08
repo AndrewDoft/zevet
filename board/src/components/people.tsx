@@ -308,7 +308,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
             finished writing and cannot be stopped. */}
         {/* A console's sessionId is the CLI's own session_id; the hook posts the
             same id to the hub, so it names this session there (D-090). */}
-        {c ? <InviteIntoSession session={c.sessionId || undefined} /> : null}
+        {c ? <RowMenu><InviteIntoSession session={c.sessionId || undefined} /></RowMenu> : null}
         {c ? (
           <button
             type="button"
@@ -333,6 +333,36 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
       ) : null}
       {c?.plan ? <AgentPlan steps={c.plan.steps.map((step) => step.text)} activeIndex={c.plan.done} owners={ownersOf(stepOwners, c.sessionId, c.plan.steps.map((step) => step.text))} className="agent-row-plan" /> : null}
     </div>
+  );
+}
+
+/** Invite, Steer and Take over live on a right-click of the row, not as
+ *  always-visible pills — they overlapped agent names in a narrow rail
+ *  (Andrew, 2026-10-08). Kept mounted while closed so their dialogs survive. */
+function RowMenu({ children }: { children: ReactNode }) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  const anchor = useRef<HTMLSpanElement>(null);
+  const items = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const row = anchor.current?.parentElement;
+    if (!row) return;
+    const onMenu = (ev: MouseEvent) => {
+      if (!items.current?.querySelector("button")) return;
+      ev.preventDefault();
+      setAt({ x: ev.clientX, y: ev.clientY });
+    };
+    row.addEventListener("contextmenu", onMenu);
+    return () => row.removeEventListener("contextmenu", onMenu);
+  }, []);
+  return (
+    <>
+      <span ref={anchor} hidden />
+      <div className="claim-menu-scrim" hidden={!at} onClick={() => setAt(null)} onContextMenu={(e) => { e.preventDefault(); setAt(null); }}>
+        <div ref={items} className="claim-menu row-menu" role="menu" style={at ? { left: at.x, top: at.y } : undefined} onClickCapture={() => setAt(null)}>
+          {children}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -365,9 +395,11 @@ function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; sessio
             <span className="agent-row-ago">{agoLabel(a.lastTs, now)}</span>
           )}
         </div>
-        <InviteIntoSession session={a.session} />
-        <SteerButton a={a} />
-        <TakeOverButton a={a} />
+        <RowMenu>
+          <InviteIntoSession session={a.session} />
+          <SteerButton a={a} />
+          <TakeOverButton a={a} />
+        </RowMenu>
       </div>
       <TeamPayer actor={a.actor} session={a.session} agent={a.agent} />
       {plan?.length ? <AgentPlan steps={plan.map((step) => step.text)} activeIndex={plan.filter((step) => step.status === "completed").length} owners={ownersOf(stepOwners, a.session, plan.map((step) => step.text))} className="agent-row-plan" /> : null}
