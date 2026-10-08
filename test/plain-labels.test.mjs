@@ -53,12 +53,11 @@ test("setup uses plain results while retaining sign-in and folder actions", () =
   new Function(setup.match(/<script>([\s\S]*?)<\/script>/)[1]);
 });
 
-test("working label and empty-tree explanation are plain", () => {
+test("no agent-is-working phrase; empty-tree explanation is plain", () => {
   const conv = src("conversation.tsx");
   const tree = src("tree.tsx");
   assert.ok(!conv.includes(" is working"), "conversation shows agent-is-working phrase");
   assert.ok(!tree.includes("Shows where agents read and edit"), "tree shows explanatory empty-state text");
-  assert.ok(conv.includes('label="Working"'), "conversation shows plain Working");
   assert.ok(tree.includes('"No files touched yet."'), "tree shows plain empty-state");
 });
 

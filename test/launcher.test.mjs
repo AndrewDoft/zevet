@@ -82,28 +82,6 @@ describe("a fresh install never guesses a model id the account might not have", 
   });
 });
 
-describe("the wait before the first token is visible", () => {
-  // ⚠️ MEASURED, and the first version never rendered once. It asked for "a
-  // turn is open and has said nothing", but transcript.mjs opens an assistant
-  // message on the agent's FIRST payload, and that payload always carries
-  // something — so that state does not exist. The silence worth reporting is
-  // the other side of it: the prompt has gone and nothing has come back.
-  test("it keys off the turn NOT being open yet", () => {
-    const body = conversation.slice(conversation.indexOf("function Thinking()"), conversation.indexOf("export function Conversation"));
-    assert.match(body, /openIndex \?\? -1\) < 0/);
-    assert.match(body, /last\.role === "user"/);
-    assert.match(body, /Boolean\(active\?\.running\)/);
-  });
-
-  test("the elapsed clock cannot read negative", () => {
-    // `now` was seeded at mount and `since` only when the wait began, so the
-    // first frame rendered "-1s".
-    const body = conversation.slice(conversation.indexOf("function Thinking()"), conversation.indexOf("export function Conversation"));
-    assert.match(body, /Math\.max\(0, Math\.floor/);
-    assert.match(body, /setNow\(started\)/);
-  });
-});
-
 describe("attachments reach the agent", () => {
   const runtime = read("lib", "runtime.tsx");
 

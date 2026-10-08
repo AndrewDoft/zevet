@@ -230,25 +230,17 @@ describe("the words on the board", () => {
 });
 
 describe("cards and wiring", () => {
-  test("steer: target line and sender's confirmation name the executing machine's account; the owner's card names theirs", () => {
-    const steer = read("board/src/components/steer.tsx");
-    assert.match(steer, /useTeammatePayer\(t\.actor, t\.session\)/);
-    assert.match(steer, /<PayerNote who=\{t\.actor\} label=\{payer\}/);
-    assert.match(steer, /<PayerNote who=\{s\.to\} label=\{s\.payer\}/);
-    assert.match(steer, /<PayerNote label=\{a\.payer\} \/>/);
+  // Andrew, 2026-10-08: "no need for the billing stuff anywhere but settings".
+  // The payer still travels (desktop + hub, below); the board just never draws it.
+  test("billing is not drawn outside settings", () => {
+    for (const f of ["steer.tsx", "spawn.tsx", "people.tsx", "conversation.tsx", "strip.tsx"]) {
+      const src = read(`board/src/components/${f}`);
+      assert.doesNotMatch(src, /PayerNote|TeamPayer|ComposerPayer|useTeammatePayer|data-payer|>Bills</, f);
+    }
+    assert.doesNotMatch(read("board/src/components/people.tsx"), /row\.account\]/, "rail rows name the account");
+    assert.doesNotMatch(read("board/src/components/strip.tsx"), /key="cost"/, "the rail shows spend");
   });
-  test("spawn: target line, owner's card row, sender's confirmation", () => {
-    const spawn = read("board/src/components/spawn.tsx");
-    assert.match(spawn, /useTeammatePayer\(t\.actor, "", t\.agent\)/);
-    assert.match(spawn, /<PayerNote who=\{t\.actor\} label=\{payer\}/);
-    assert.match(spawn, /data-payer=\{a\.payer \|\| undefined\}>\{a\.payer \|\| "your account"\}/);
-    const lib = read("board/src/lib/steer.ts");
-    assert.match(lib, /payerOfSession\(usePayers\.getState\(\)\.payers, str\(e\.to\)/);
-    assert.match(lib, /payerOfActor\(usePayers\.getState\(\)\.payers, t\.actor, t\.agent\)/);
-  });
-  test("agent cards: mine through the console, a teammate's through the sealed store; composer line", () => {
-    assert.match(read("board/src/components/people.tsx"), /<TeamPayer actor=\{a\.actor\} session=\{a\.session\} agent=\{a\.agent\} \/>/);
-    assert.match(read("board/src/components/conversation.tsx"), /<ComposerPayer \/>/);
+  test("the console still carries its payer, a teammate's through the sealed store", () => {
     const board = read("board/src/lib/board.ts");
     assert.match(board, /l\.payerFor\(c\.agent, c\.model, c\.engine\)/);
     assert.match(board, /l\.sharePayer\(c\.sessionId, c\.agent, c\.model, c\.engine\)/);

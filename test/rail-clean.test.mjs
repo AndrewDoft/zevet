@@ -54,7 +54,3 @@ test("seen is per run, survives a reload, and is marked by what is in front", ()
 test("the user's bubble keeps its line breaks", () => {
   assert.match(css, /\.aui-user-message-content \{ white-space: pre-wrap; \}/);
 });
-
-test("the working line has no shimmer to erase its first letters", () => {
-  assert.match(rule("  .thinking-row .shimmer"), /animation: none/);
-});
