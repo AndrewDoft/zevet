@@ -2405,3 +2405,14 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 - **Payload:** stable, verified over HTTPS; seq 2131 on both platforms. Manifests win `b5968bad…`, mac `f013c93a…`. Delta: 2 new blob(s) uploaded. 95 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-099 — Shipped: 0.2.132, Support Claude Haiku 5.5 and Sonnet 5.5 (picker, tiered prices, 1M context meter) (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-08).** 3 commit(s) past v0.2.131.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.132 were built and published, and the stable `Zevet-Setup.exe` / `Zevet-Setup-arm64.exe` / `Zevet.dmg` / `Zevet.AppImage` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.132`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `46726166…` (153161256 B), dmg `5c03e3c1…` (205314770 B), win-arm64 exe `51350b95…` (160429552 B), AppImage `9f2b042f…` (387388171 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2132 on both platforms. Manifests win `9c316286…`, mac `00fb6f95…`. Delta: 0 new blob(s) uploaded. 95 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `98e1d340a224` -> `7429485506b6`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
