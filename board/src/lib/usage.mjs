@@ -6,6 +6,15 @@
 
 export const CONTEXT_FLOOR = 200_000;
 
+/** Windows of models whose size is known before the CLI reports one (modelUsage.contextWindow
+ *  arrives only with the first result). Both are 1M tokens: platform.claude.com/docs/en/models/{haiku,sonnet}-5-5/overview. */
+const KNOWN_WINDOWS = { "claude-haiku-5-5": 1_000_000, "claude-sonnet-5-5": 1_000_000 };
+
+/** The window a meter draws against: the one the agent reported, else the model's known one, else the floor. */
+export function windowFor(reported, model) {
+  return reported && reported > 0 ? reported : KNOWN_WINDOWS[model] || CONTEXT_FLOOR;
+}
+
 /**
  * What a single usage payload yields. This is the shape both
  * ConsoleEntry.usage and ChatThread.usage store.
@@ -59,8 +68,8 @@ export function usageOf(payload) {
 /**
  * 0..1 share of context used. Clamped because the floor is a guess.
  */
-export function contextShare(used, window) {
-  const w = window && window > 0 ? window : CONTEXT_FLOOR;
+export function contextShare(used, window, model) {
+  const w = windowFor(window, model);
   if (!used || used < 0) return 0;
   return Math.min(1, used / w);
 }

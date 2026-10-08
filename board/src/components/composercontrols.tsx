@@ -34,7 +34,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { mono } from "./assistant-ui/elements/surfaces";
 import { cn } from "@/lib/utils";
 import { MODES, MODE_LABEL } from "../lib/constants";
-import { CONTEXT_FLOOR, contextShare } from "../lib/meter.mjs";
+import { contextShare, windowFor } from "../lib/meter.mjs";
 import { selectActiveConsole, useBoard } from "../lib/board";
 import { CHAT_AGENTS, useChat } from "../lib/chat";
 import { runningModelName } from "../lib/models.mjs";
@@ -259,8 +259,8 @@ export function ComposerControls() {
      next start. Token counts and cost live in the ring's tooltip. */
   const facts = usage
     ? (() => {
-        const window = usage.window ?? CONTEXT_FLOOR;
-        const share = contextShare(usage.context, usage.window);
+        const window = windowFor(usage.window, usage.model);
+        const share = contextShare(usage.context, usage.window, usage.model);
         const detail = [
           model,
           usage.context != null ? `${tokens(usage.context)} of ${tokens(window)} context` : null,

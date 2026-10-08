@@ -1,4 +1,5 @@
 export const CONTEXT_FLOOR: number;
+export function windowFor(reported: number | null | undefined, model?: string | null): number;
 
 export interface UsageReading {
   context: number;

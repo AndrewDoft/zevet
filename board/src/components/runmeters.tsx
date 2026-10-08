@@ -19,13 +19,7 @@ import { selectActiveConsole, selectMyConsoles, useBoard } from "../lib/board";
 import { ContextChart, ContextTicker, RunUsageTable } from "./usageviews";
 import { ContextGauge } from "./mapviews";
 import { money, tokens } from "../lib/fmt";
-
-/** The fallback context window, used only when the agent hasn't said what its
- *  real one is (ConsoleUsage.window, lib/types.ts — claude's result payload
- *  carries `modelUsage[<model>].contextWindow`, which is 1,000,000 on
- *  opus-5[1m], not this). Smallest common window across agents, so a bar
- *  drawn against it undersells rather than oversells how full it is. */
-const CONTEXT_LIMIT = 200_000;
+import { windowFor } from "../lib/meter.mjs";
 
 /** What the meter reads: a console's usage has all of it, a chat thread's has no cost or window. */
 export interface RunUsage {
@@ -71,9 +65,8 @@ export function RunMeterCard({ usage: passedUsage }: RunMeterCardProps) {
   if (!usage || usage.context == null) return null;
 
   const context = usage.context;
-  // The run's own reported window, when it said — see the CONTEXT_LIMIT
-  // comment above.
-  const window = usage.window ?? CONTEXT_LIMIT;
+  // The run's own reported window, else its model's known one, else the 200k floor (lib/usage.mjs).
+  const window = windowFor(usage.window, usage.model);
   /* The number the agent GAVE, when it gave one. Recovering it from a rounded
      percentage is what the ConsoleUsage doc warns against, and it only ever
      got used because the strip carries the percentage and not the parts. */

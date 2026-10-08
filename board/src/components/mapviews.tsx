@@ -15,13 +15,7 @@ import {
 } from "./assistant-ui/elements/conversation-map";
 import { ContextDisplay, type TokenUsage } from "./assistant-ui/elements/context-display";
 import { selectActiveConsole, useBoard } from "../lib/board";
-
-/** Same fallback window runmeters.tsx bars context against, for a console
- *  that hasn't reported its real one (ConsoleUsage.window, lib/types.ts) —
- *  the smallest common window rather than an invented per-model number. Not
- *  exported from runmeters.tsx, duplicated here per house style (see
- *  moreviews.tsx's reader helpers). */
-const CONTEXT_LIMIT = 200_000;
+import { windowFor } from "../lib/meter.mjs";
 
 /* ---------------------------------------------------------------------------
  * ThreadMap — one tick per transcript message, addressed by the
@@ -171,7 +165,7 @@ export function ContextGauge({
   return (
     <ContextDisplay.Bar
       usage={usage}
-      modelContextWindow={active.usage.window ?? CONTEXT_LIMIT}
+      modelContextWindow={windowFor(active.usage.window, active.usage.model)}
       resetKey={String(active.key)}
       side={side}
       className={className}

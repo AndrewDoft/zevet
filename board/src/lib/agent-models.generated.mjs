@@ -7,7 +7,7 @@
 // "opus/sonnet/haiku" with no Fable, and codex "gpt-5/gpt-5-codex/o3", none of
 // which exist any more.
 //
-// Generated 2026-09-22 — 5 claude, 7 codex.
+// Generated 2026-10-08 — 7 claude, 7 codex.
 
 /** Models `claude --model` accepts, with the names Claude Code shows. */
 export const CLAUDE_MODELS = [
@@ -15,7 +15,9 @@ export const CLAUDE_MODELS = [
   { id: "claude-opus-5", name: "Opus 5", note: "For complex tasks" },
   { id: "claude-fable-5-1", name: "Fable 5.1", note: "For your toughest challenges" },
   { id: "claude-sonnet-5", name: "Sonnet 5", note: "Most efficient for everyday tasks" },
+  { id: "claude-sonnet-5-5", name: "Sonnet 5.5", note: "Most efficient for simpler tasks" },
   { id: "claude-haiku-4-5-20251001", name: "Haiku 4.5", note: "Fastest for quick answers" },
+  { id: "claude-haiku-5-5", name: "Haiku 5.5", note: "Fastest for quick answers" },
 ];
 
 /** Models `codex -m` accepts, with the names codex shows. */

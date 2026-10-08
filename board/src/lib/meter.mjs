@@ -3,6 +3,6 @@
  *
  * .mjs so the gate can test it straight off the source tree (see sessions.mjs).
  */
-import { CONTEXT_FLOOR, contextShare } from "./usage.mjs";
+import { CONTEXT_FLOOR, contextShare, windowFor } from "./usage.mjs";
 
-export { CONTEXT_FLOOR, contextShare };
+export { CONTEXT_FLOOR, contextShare, windowFor };

@@ -172,6 +172,16 @@ test("a console is named by the model it runs, not the launch default", () => {
   assert.equal(runningModelName(null, ""), "");
 });
 
+test("Haiku 5.5 and Sonnet 5.5 are in the picker under their full ids, named as claude names them", () => {
+  const byId = Object.fromEntries(CLAUDE_MODELS.map((m) => [m.id, m.name]));
+  assert.equal(byId["claude-haiku-5-5"], "Haiku 5.5");
+  assert.equal(byId["claude-sonnet-5-5"], "Sonnet 5.5");
+  // The alias `haiku` still means 4.5, so the picker has to pass the full id, never the alias.
+  assert.equal(describeModel("claude-haiku-5-5").label, "Haiku 5.5");
+  assert.equal(runningModelName("claude-haiku-5-5", "claude-opus-5-5"), "Haiku 5.5");
+  assert.equal(runningModelName("claude-sonnet-5-5", "claude-opus-5-5"), "Sonnet 5.5");
+});
+
 test("claude and codex models are named the way their own CLIs name them", () => {
   // The bug this closes: the picker listed raw ids, and the hand-written list
   // it drew them from had gone stale in both directions — claude with no Fable

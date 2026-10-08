@@ -51,6 +51,15 @@ test("ladder: every backend's rungs are looked up in its own catalogue", () => {
   assert.deepEqual(f.open, R.OPEN_MODELS.map((m) => m[0]).filter((id) => OPEN_LIST.includes(id)));
 });
 
+test("ladder: Haiku 5.5 and Sonnet 5.5 are catalogue models; the haiku/sonnet rungs keep the older id while it is listed", () => {
+  const FIVE = [{ id: "claude-sonnet-5-5", name: "Sonnet 5.5" }, { id: "claude-haiku-5-5", name: "Haiku 5.5" }];
+  const only = R.buildLadder({ has: { claude: true }, claude: FIVE });
+  assert.deepEqual(byFamily(only).claude, ["claude-haiku-5-5", "claude-sonnet-5-5"]);
+  assert.equal(only.rungs[0].label, "Haiku 5.5");
+  const both = R.buildLadder({ has: { claude: true }, claude: [{ id: "claude-haiku-4-5-20251001", name: "Haiku 4.5" }, ...FIVE] });
+  assert.equal(both.rungs[0].model, "claude-haiku-4-5-20251001", "the haiku rung does not jump to 5.5 because it was added");
+});
+
 test("free only: a paid OpenRouter model is never a rung, whatever the catalogue lists", () => {
   const paid = GEMINI_LIST.filter((id) => !R.isFreeModel(id));
   assert.ok(paid.length >= 5);

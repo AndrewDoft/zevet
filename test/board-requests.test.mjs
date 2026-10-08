@@ -16,6 +16,7 @@ const agentApi = require(path.join(ROOT, "desktop", "agent-api.js"));
 const { createBoardAsk } = require(path.join(ROOT, "desktop", "board-ask.js"));
 const { answerBoardRequest, pickerModel } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "board-requests.mjs")).href);
 
+const { CLAUDE_MODELS } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "agent-models.generated.mjs")).href);
 const AGENTS = [{ name: "claude", models: [{ id: "claude-opus-5-5" }, { id: "claude-sonnet-5" }] }];
 
 /** The main-process half (board-ask + a direct backend) wired to a fake board window. */
@@ -175,6 +176,14 @@ describe("pieces", () => {
     assert.equal(pickerModel("claude", "claude-opus-5-5", AGENTS), "claude-opus-5-5");
     assert.equal(pickerModel("codex", "gpt-5", AGENTS), "gpt-5");
     assert.equal(pickerModel("claude", "", AGENTS), "");
+  });
+
+  test("the haiku and sonnet aliases keep meaning 4.5 and 5; the 5.5 ids pass through whole", () => {
+    // Haiku 5.5 / Sonnet 5.5 are picked by full id. The alias must not drift to them: they sit after the older ones.
+    assert.equal(pickerModel("claude", "haiku", [{ name: "claude", models: CLAUDE_MODELS }]), "claude-haiku-4-5-20251001");
+    assert.equal(pickerModel("claude", "sonnet", [{ name: "claude", models: CLAUDE_MODELS }]), "claude-sonnet-5");
+    assert.equal(pickerModel("claude", "claude-haiku-5-5", [{ name: "claude", models: CLAUDE_MODELS }]), "claude-haiku-5-5");
+    assert.equal(pickerModel("claude", "claude-sonnet-5-5", [{ name: "claude", models: CLAUDE_MODELS }]), "claude-sonnet-5-5");
   });
 
   test("a reply nobody is waiting for is refused", () => {

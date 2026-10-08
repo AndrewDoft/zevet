@@ -24,6 +24,23 @@ test("price file: every entry has source, as_of and numeric prices", () => {
   }
 });
 
+test("Haiku 5.5 is priced per tier, cache write and read included; Sonnet 5.5 flat", () => {
+  const h = priceOf("claude-haiku-5-5");
+  assert.deepEqual(
+    [h.input, h.output, h.cacheWrite5m, h.cacheWrite1h, h.cacheRead],
+    [0.1, 0.5, 0.125, 0.2, 0.01],
+    "<=100k prompts",
+  );
+  assert.deepEqual(h.over, { above: 100_000, input: 0.5, output: 2.5, cacheWrite5m: 0.625, cacheWrite1h: 1, cacheRead: 0.05 });
+  const s = priceOf("claude-sonnet-5-5");
+  assert.deepEqual([s.input, s.output, s.cacheWrite5m, s.cacheWrite1h, s.cacheRead], [2, 10, 2.5, 4, 0.1]);
+  assert.equal(s.over, undefined, "sonnet 5.5 has no size tier");
+  const rows = buildCatalogue({ agents: agents() });
+  assert.equal(byId(rows, "claude-haiku-5-5").price, h);
+  assert.equal(byId(rows, "claude-sonnet-5-5").price, s);
+  assert.equal(formatPair(h), "$0.10 / $0.50");
+});
+
 test("formatting: unknown is a dash, never a guess", () => {
   assert.equal(formatPrice(undefined), "—");
   assert.equal(formatPrice(null), "—");

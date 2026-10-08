@@ -6,7 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ROOT } from "./helpers.mjs";
 
-const { contextShare, CONTEXT_FLOOR, usageOf } = await import(
+const { contextShare, CONTEXT_FLOOR, usageOf, windowFor } = await import(
   pathToFileURL(path.join(ROOT, "board", "src", "lib", "usage.mjs")).href
 );
 const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
@@ -19,6 +19,20 @@ describe("contextShare", () => {
     assert.equal(contextShare(100_000, 1_000_000), 0.1);
     assert.equal(contextShare(50_000, null), 50_000 / CONTEXT_FLOOR);
     assert.equal(CONTEXT_FLOOR, 200_000);
+  });
+
+  test("Haiku 5.5 and Sonnet 5.5 are 1M before the CLI reports a window; a reported window still wins", () => {
+    for (const m of ["claude-haiku-5-5", "claude-sonnet-5-5"]) {
+      assert.equal(windowFor(null, m), 1_000_000);
+      assert.equal(contextShare(250_000, null, m), 0.25, "250k is a quarter of 1M, not a full 200k ring");
+      assert.equal(windowFor(200_000, m), 200_000);
+    }
+    assert.equal(windowFor(null, "claude-haiku-4-5-20251001"), CONTEXT_FLOOR);
+    assert.equal(windowFor(null, null), CONTEXT_FLOOR);
+    // The three meters all go through windowFor, none through a private 200k.
+    for (const f of ["composercontrols.tsx", "mapviews.tsx", "runmeters.tsx"]) {
+      assert.match(readFileSync(path.join(ROOT, "board", "src", "components", f), "utf8"), /windowFor\(/, f);
+    }
   });
 
   test("never passes full, never goes negative", () => {
