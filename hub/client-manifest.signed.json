@@ -2,7 +2,7 @@
   "payload": {
     "schema": 1,
     "type": "zevet-client",
-    "version": "0.2.130",
+    "version": "0.2.131",
     "files": [
       {
         "name": "hook.mjs",
@@ -89,6 +89,6 @@
   "signature": {
     "algorithm": "ed25519",
     "key_id": "zevet-2026-09",
-    "signature": "9Dtp8V0VFIUqI+TIbr213+vyhVQ35IVHws+TEWJ6Ayt6aSlVy6gyJZZWVyRGR+/dVw/uu1GOvBMre75NcQdzBg=="
+    "signature": "N5MY67IGMkHSmNagzXSd7kGhy68ItdWxldfd/UVMFmy5NcTbGCnJJGFzbPcHPLUTeRWXCYG7R+Q455my7x0YBA=="
   }
 }
