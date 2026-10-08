@@ -197,7 +197,9 @@ function removeFromOutbox(n, file = OUTBOX_PATH) {
  * next cycle -- this is the durability: nothing is removed before Masora has
  * accepted it.
  */
-async function flushOutbox({ baseUrl, token, fetchImpl, file = OUTBOX_PATH }) {
+async function flushOutbox({ baseUrl, token, fetchImpl, file = OUTBOX_PATH, team }) {
+  // Masora records the device's team from this optional header (D-1087).
+  const teamHeader = String(team || "").replace(/[\r\n]+/g, " ").trim().slice(0, 200).trim();
   const f = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
   let sent = 0;
   for (;;) {
@@ -209,7 +211,10 @@ async function flushOutbox({ baseUrl, token, fetchImpl, file = OUTBOX_PATH }) {
     try {
       res = await f(`${String(baseUrl).replace(/\/+$/, "")}/api/connector/ingest`, {
         method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/gzip" },
+        headers: {
+          authorization: `Bearer ${token}`, "content-type": "application/gzip",
+          ...(teamHeader ? { "x-zevet-team": teamHeader } : {}),
+        },
         body: gz,
         signal: AbortSignal.timeout(30000),
       });
@@ -230,7 +235,7 @@ async function flushOutbox({ baseUrl, token, fetchImpl, file = OUTBOX_PATH }) {
  * are `agent-sessions.js`'s `list`/`read` (injected so this is testable with
  * fixtures instead of a real `~/.claude`).
  */
-async function runOnce({ repos, baseUrl, token, listSessions, readSession, fetchImpl, actor }) {
+async function runOnce({ repos, baseUrl, token, listSessions, readSession, fetchImpl, actor, team }) {
   const dirs = Object.keys(repos || {});
   if (!dirs.length || !token) return { queued: 0, sent: 0 };
   const cursor = readCursor();
@@ -251,7 +256,7 @@ async function runOnce({ repos, baseUrl, token, listSessions, readSession, fetch
     for (const q of toQueue) nextCursor[q.key] = q.summary.updated || Date.now();
     writeCursor(nextCursor);
   }
-  const { sent } = await flushOutbox({ baseUrl, token, fetchImpl });
+  const { sent } = await flushOutbox({ baseUrl, token, fetchImpl, team });
   return { queued: toQueue.length, sent };
 }
 

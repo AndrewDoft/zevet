@@ -3080,7 +3080,7 @@ async function runMasoraPushOnce() {
     const auth = await masoraToken();
     if (auth) {
       await masoraPush
-        .flushOutbox({ baseUrl: auth.cfg.url, token: auth.token, file: masoraPush.CHAT_OUTBOX_PATH })
+        .flushOutbox({ baseUrl: auth.cfg.url, token: auth.token, file: masoraPush.CHAT_OUTBOX_PATH, team: await currentTeamName() })
         .catch((err) => console.error(`zevet: chat push failed: ${err.message}`));
     }
   }
@@ -3094,7 +3094,7 @@ async function runMasoraPushOnce() {
     await masoraPush.runOnce({
       repos, baseUrl: cfg.url, token,
       listSessions: agentSessions.list, readSession: agentSessions.read,
-      actor: chatAuthor(),
+      actor: chatAuthor(), team: await currentTeamName(),
     });
   } catch (err) {
     console.error(`zevet: masora push failed: ${err.message}`);
@@ -4506,7 +4506,7 @@ async function pushChat(chat) {
   masoraPush.appendOutbox([chats.toRecord(chat)], masoraPush.CHAT_OUTBOX_PATH);
   const auth = await masoraToken();
   if (!auth) return; // stays queued until a paired, unlocked cycle
-  await masoraPush.flushOutbox({ baseUrl: auth.cfg.url, token: auth.token, file: masoraPush.CHAT_OUTBOX_PATH });
+  await masoraPush.flushOutbox({ baseUrl: auth.cfg.url, token: auth.token, file: masoraPush.CHAT_OUTBOX_PATH, team: await currentTeamName() });
 }
 
 function finishChatTurn(run, reply, error) {

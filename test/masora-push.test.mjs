@@ -125,6 +125,23 @@ describe("the outbox: durable retry", () => {
     assert.deepEqual(seen[0], [{ n: 1 }, { n: 2 }]);
   });
 
+  test("flushOutbox sends x-zevet-team when a team is known, omits it when not, and sanitises it", async () => {
+    const run = async (team) => {
+      push.removeFromOutbox(push.readOutbox().length);
+      push.appendOutbox([{ n: 1 }]);
+      let headers;
+      await push.flushOutbox({
+        baseUrl: "https://m", token: "tok", team,
+        fetchImpl: async (_u, init) => { headers = init.headers; return { status: 202 }; },
+      });
+      return headers;
+    };
+    assert.equal((await run("Acme Clinic"))["x-zevet-team"], "Acme Clinic");
+    assert.equal((await run("  A\r\nB  "))["x-zevet-team"], "A B");
+    assert.equal((await run("x".repeat(300)))["x-zevet-team"].length, 200);
+    for (const none of [undefined, "", "  "]) assert.ok(!("x-zevet-team" in (await run(none))));
+  });
+
   test("a network error leaves the outbox untouched for the next cycle", async () => {
     push.removeFromOutbox(push.readOutbox().length);
     push.appendOutbox([{ n: "keep-me" }]);
