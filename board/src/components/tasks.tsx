@@ -83,7 +83,7 @@ export function TasksPanel() {
   return (
     <div className="tasks-panel" data-open={open}>
       <button type="button" className="tasks-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        Tasks{cards.length ? ` · ${cards.filter((c) => c.status !== "done").length}` : ""}
+        Team tasks{cards.length ? ` · ${cards.filter((c) => c.status !== "done").length}` : ""}
       </button>
       {open ? (
         <div className="tasks-body">

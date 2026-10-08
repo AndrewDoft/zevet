@@ -13,7 +13,7 @@
  * Collapsed to a small pill by default so it costs nothing when nobody is
  * watching; a running count is the only thing shown until it is opened.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { selectMyConsoles, serverNow, useBoard } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { ago, tokens } from "../lib/fmt";
@@ -47,26 +47,9 @@ export function SubagentsPanel() {
   const [now, setNow] = useState(() => serverNow());
   const [sure, setSure] = useState<string | null>(null);
 
-  const panel = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
-    // Sit above the composer, not over its Context and send buttons: lift by
-    // however much of the composer is on screen (it grows with the draft).
-    const lift = () => {
-      const c = document.querySelector<HTMLElement>("[data-slot=\"aui_composer-shell\"]");
-      const top = c ? c.getBoundingClientRect().top : window.innerHeight;
-      panel.current?.style.setProperty("--composer-lift", Math.max(0, window.innerHeight - top) + "px");
-    };
-    const t = setInterval(() => {
-      setNow(serverNow());
-      lift();
-    }, 1000);
-    lift();
-    window.addEventListener("resize", lift);
-    return () => {
-      clearInterval(t);
-      window.removeEventListener("resize", lift);
-    };
+    const t = setInterval(() => setNow(serverNow()), 1000);
+    return () => clearInterval(t);
   }, []);
 
   const visible = consoles.filter((c) => c.running || c.integration);
@@ -74,10 +57,10 @@ export function SubagentsPanel() {
   if (!visible.length) return null;
   const working = running.filter((c) => agentStateOf(c) === "working").length;
   const idle = running.length - working;
-  const summary = running.length ? (idle ? `${working} working · ${idle} idle` : `${working} working`) : "done";
+  const summary = [working ? `${working} working` : "", idle ? `${idle} idle` : ""].filter(Boolean).join(" · ") || "done";
 
   return (
-    <div className="subagents-panel" data-open={open} ref={panel}>
+    <div className="subagents-panel" data-open={open}>
       <button
         type="button"
         className="subagents-toggle"

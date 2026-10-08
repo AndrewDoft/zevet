@@ -106,12 +106,6 @@ export function Strip() {
   }
   if (lim.length) rest.push(<Seg key="limits">{lim}</Seg>);
 
-  const burn = machine && (machine.burn as { cost?: number } | undefined);
-  const cost = burn && typeof burn.cost === "number" && burn.cost > 0 ? burn.cost : live.cost;
-  if (typeof cost === "number" && cost > 0) {
-    rest.push(<Seg key="cost"><Sp cls="dim" text={"$" + cost.toFixed(2)} /></Seg>);
-  }
-
   if (conn) {
     const cls = conn === "live" ? "ok" : conn === "down" ? "bad" : "warn";
     where.push(

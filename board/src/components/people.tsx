@@ -78,7 +78,6 @@ import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
 import { InviteIntoSession, JoinSession } from "./sessionshare";
 import { SteerButton, TakeOverButton } from "./steer";
-import { TeamPayer } from "./payer";
 import { RunOnTheirs } from "./spawn";
 import { PromptGhost } from "./promptboxes";
 import { AgentPlan } from "./assistant-ui/elements/agent-plan";
@@ -214,7 +213,7 @@ export function consoleBlurb(c: ConsoleEntry): string {
 }
 
 function agentDetail(row: Row): string {
-  return [row.agent, row.model, row.effort, row.account].filter(Boolean).join(" · ");
+  return [row.agent, row.model, row.effort].filter(Boolean).join(" · ");
 }
 
 /** A run that ended badly: it never started, or its last message was cut off. */
@@ -401,7 +400,6 @@ function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; sessio
           <TakeOverButton a={a} />
         </RowMenu>
       </div>
-      <TeamPayer actor={a.actor} session={a.session} agent={a.agent} />
       {plan?.length ? <AgentPlan steps={plan.map((step) => step.text)} activeIndex={plan.filter((step) => step.status === "completed").length} owners={ownersOf(stepOwners, a.session, plan.map((step) => step.text))} className="agent-row-plan" /> : null}
     </div>
   );

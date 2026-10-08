@@ -52,7 +52,7 @@ export function TeamChatPanel() {
   return (
     <div className="tasks-panel chat-panel" data-open={open}>
       <button type="button" className="tasks-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        Chat{unread ? ` · ${unread}` : ""}
+        Team chat{unread ? ` · ${unread}` : ""}
       </button>
       {open ? (
         <div className="tasks-body">

@@ -271,7 +271,7 @@ function App() {
           <TreeFill blanked={blanked} />
           <div className="chatcol">
             <div className="pane-title row">
-              <span>Conversation</span>
+              <span />
               {bridge.local && localRoot ? (
                 <button type="button" className="rail-new rail-new-label" aria-label="New agent" title="New agent" onClick={openLauncher}>
                   New agent +
@@ -291,9 +291,12 @@ function App() {
       </div>
       <Palette />
       <VoiceDialog />
-      <SubagentsPanel />
-      <TasksPanel />
-      <TeamChatPanel />
+      {/* One row under the composer, never over it (Andrew, 2026-10-08). */}
+      <div className="corner-dock">
+        <SubagentsPanel />
+        <TeamChatPanel />
+        <TasksPanel />
+      </div>
     </ConsoleRuntimeProvider>
   );
 }
