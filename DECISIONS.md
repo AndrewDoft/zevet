@@ -2511,3 +2511,14 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 - **"+"** sits next to "Team" (`#teamInvite` in masora.css); Follow keeps the far edge.
 
 **Not verified.** hub/public bundle not rebuilt here; the release build does it.
+
+## D-109 — Shipped: 0.2.142, Team panel: no draft toggle, no session-share block, + beside Team (payload-only, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-09).** 4 commit(s) past v0.2.141.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.142 were built and published, and the stable `Zevet-Setup.exe` / `Zevet-Setup-arm64.exe` / `Zevet.dmg` / `Zevet.AppImage` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.142`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `0598f454…` (153151296 B), dmg `386b71fe…` (205319816 B), win-arm64 exe `4d2942ff…` (160419680 B), AppImage `3424e26e…` (387404500 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2142 on both platforms. Manifests win `79d10b4e…`, mac `a87d518e…`. Delta: 0 new blob(s) uploaded. 98 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `0b219ae3ff7c` -> `a6fb6d47a40f`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
