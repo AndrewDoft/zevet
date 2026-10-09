@@ -86,6 +86,7 @@
       "masora-connect.js",
       "masora-push.js",
       "masora-runs.js",
+      "masora-runs-wire.js",
       "credentials.js",
       "credential-ladder.js",
       "credential-usage.js",

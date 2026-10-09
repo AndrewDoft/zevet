@@ -1,8 +1,8 @@
 // Masora agent runs on this desktop (spec 06-agent-builder §3.6, contract C5, task T10).
 //
 // PULL model: with the person's Masora credential and the setting on, the poller asks Masora for one queued run,
-// starts it as an ordinary agent console (main.js hands in the SAME start/send path the board and schedules use --
-// there is no second spawner here), and reports the outcome back with the run-scoped token.
+// starts it as an ordinary agent console (masora-runs-wire.js hands in the SAME start/send path the board and
+// schedules use -- there is no second spawner here), and reports the outcome back with the run-scoped token.
 //
 // Wire shapes below are copied from the spec; Masora's endpoints (T9) did not exist when this was written, so
 // nothing here has met a real server:
@@ -15,12 +15,18 @@
 //     id is already in it is dropped.
 //   * An expired run_token is never presented: `tokenExpired` refuses locally, and a 401 from Masora counts as expiry.
 //   * Every outcome lands on the subagent row (`setOutcome`), including a report that could not be delivered.
+//   * A run claimed but never reported (the app restarted mid-run) is reported `failed` "desktop restarted" at the
+//     next start, from the ledger's `open` list, and cleared.
+//   * A corrupt ledger is copied aside and nothing is claimed until it is fixed: resetting it would void "never twice".
+//   * A run with `allowed_actions` is refused (failed, visibly): this desktop does not submit /actions yet.
+//   * Only one run at a time, and it stays ours until its console has finished or the run is reported terminal.
 "use strict";
 
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { zevetHome, atomicWriteJson } = require("./zevet-home.js");
+const { postJson } = require("./masora.js");
 
 const LEDGER_PATH = path.join(zevetHome(), "masora-runs.json");
 const API = "/api"; // the other Masora calls in this app (briefFor, pairing) sit under /api
@@ -51,39 +57,60 @@ function tokenExpired(token, claimedAt, now) {
   return (exp ?? claimedAt + TOKEN_TTL_MS) <= now;
 }
 
+/**
+ * {deviceId, ids, open, fresh, corrupt}. `open` = run_id -> {run_token, claimedAt}: claimed, not yet reported.
+ * A missing file is a first launch; an unreadable or malformed one is `corrupt` (copied aside, left in place).
+ */
 function readLedger(file = LEDGER_PATH) {
+  let text;
   try {
-    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
-    return {
-      deviceId: typeof raw.deviceId === "string" && raw.deviceId ? raw.deviceId : crypto.randomUUID(),
-      ids: Array.isArray(raw.ids) ? raw.ids.map(String) : [],
-    };
-  } catch {
-    return { deviceId: crypto.randomUUID(), ids: [] };
+    text = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if (err && err.code === "ENOENT") return { deviceId: crypto.randomUUID(), ids: [], open: {}, fresh: true, corrupt: false };
+    return corruptLedger(file, err);
   }
+  try {
+    const raw = JSON.parse(text);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not an object");
+    const open = {};
+    for (const [id, o] of Object.entries(raw.open && typeof raw.open === "object" ? raw.open : {})) {
+      if (o && typeof o.run_token === "string" && Number.isFinite(o.claimedAt)) open[id] = { run_token: o.run_token, claimedAt: o.claimedAt };
+    }
+    const hasId = typeof raw.deviceId === "string" && raw.deviceId;
+    return {
+      deviceId: hasId ? raw.deviceId : crypto.randomUUID(),
+      ids: Array.isArray(raw.ids) ? raw.ids.map(String) : [],
+      open,
+      fresh: !hasId,
+      corrupt: false,
+    };
+  } catch (err) {
+    try {
+      fs.copyFileSync(file, `${file}.corrupt-${Date.now()}`);
+    } catch {
+      /* the original stays in place regardless */
+    }
+    return corruptLedger(file, err);
+  }
+}
+
+function corruptLedger(file, err) {
+  console.error(`zevet: masora runs: ledger ${file} is unreadable (${err && err.message}); not claiming runs until it is fixed or removed`);
+  return { deviceId: "", ids: [], open: {}, fresh: false, corrupt: true };
 }
 
 function writeLedger(ledger, file = LEDGER_PATH) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  atomicWriteJson(file, { deviceId: ledger.deviceId, ids: ledger.ids.slice(-LEDGER_MAX) });
+  atomicWriteJson(file, { deviceId: ledger.deviceId, ids: ledger.ids.slice(-LEDGER_MAX), open: ledger.open });
 }
 
 function createClient({ baseUrl, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
-  const base = String(baseUrl || "").replace(/\/+$/, "");
-  const f = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
   async function post(route, token, body) {
-    let res;
     try {
-      res = await f(`${base}${API}${route}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      return await postJson(baseUrl, `${API}${route}`, token, body, timeoutMs, fetchImpl);
     } catch (err) {
       throw new MasoraRunsError(`could not reach Masora: ${err && err.message ? err.message : err}`);
     }
-    return res;
   }
   return {
     /** The next queued run, or null (204). */
@@ -91,7 +118,7 @@ function createClient({ baseUrl, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS } = {
       const res = await post("/v2/agent-runs/claim", credential, { device_id: deviceId });
       if (res.status === 204) return null;
       if (!res.ok) throw new MasoraRunsError(`claim refused: HTTP ${res.status}`);
-      const b = await res.json().catch(() => null);
+      const b = res.body;
       if (!b || typeof b.run_id !== "string" || !b.run_id || typeof b.run_token !== "string" || !b.run_token || typeof b.brief !== "string") {
         throw new MasoraRunsError("claim answered without run_id, run_token and brief");
       }
@@ -112,7 +139,7 @@ function createClient({ baseUrl, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS } = {
         usage: body.usage ?? null,
         cost_reported: body.cost_reported ?? null,
         elapsed_ms: body.elapsed_ms ?? 0,
-        payer: body.payer ?? "",
+        payer: body.payer || "unknown", // never "": a report that cannot name its payer says so
         result_text: body.result_text ?? "",
       });
       if (res.status === 401) throw new RunTokenExpired("Masora refused the run token");
@@ -121,15 +148,31 @@ function createClient({ baseUrl, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS } = {
   };
 }
 
-function deadlineMs(d) {
-  if (d == null) return null;
-  const n = typeof d === "number" ? (d < 1e12 ? d * 1000 : d) : Date.parse(d);
+/**
+ * A deadline as epoch ms, or null. ISO without a zone is UTC (Date.parse alone would read it as local time);
+ * numbers and digit strings are epoch seconds (milliseconds past 1e12).
+ */
+function parseDeadline(d) {
+  if (d == null || d === "") return null;
+  if (typeof d === "number" || /^\d+(\.\d+)?$/.test(String(d).trim())) {
+    const n = Number(d);
+    return Number.isFinite(n) ? (n < 1e12 ? n * 1000 : n) : null;
+  }
+  const t = String(d).trim();
+  const n = Date.parse(/^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?$/.test(t) ? `${t.replace(" ", "T")}Z` : t);
   return Number.isFinite(n) ? n : null;
 }
 
+/** When a run must end: the deadline it names if usable, else the earlier of the token's expiry and claim + 4 h. */
+function runBound(run, claimedAt) {
+  const named = parseDeadline(run.deadline);
+  if (named != null) return named;
+  return Math.min(tokenExp(run.run_token) ?? Infinity, claimedAt + TOKEN_TTL_MS);
+}
+
 /**
- * deps: enabled() credential() -> {baseUrl, token}|null, start(run) -> {ok,id,error},
- *       getConsole(id), stop(id), needsYou(id), summarize(entry), resultText(entry), payer(),
+ * deps: enabled() credential() -> {baseUrl, token}|null, start(run) -> {ok,id,error}, getConsole(id), stop(id),
+ *       needsYou(id), summarize(entry), resultText(entry), payer() -> label|"", isRelaunching(),
  *       setOutcome(id, text), fetchImpl, ledgerFile, now, sleep
  */
 class MasoraRunPoller {
@@ -138,14 +181,19 @@ class MasoraRunPoller {
     this.now = deps.now || Date.now;
     this.sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.ledger = readLedger(deps.ledgerFile);
-    this.busy = false; // one run at a time; a claim is only asked for when free
+    // The device id belongs to this install, not to its first claim.
+    if (this.ledger.fresh && !this.ledger.corrupt) writeLedger(this.ledger, deps.ledgerFile);
+    this.busy = false; // one run at a time, until its console has finished or the run is reported terminal
+    this.claiming = false; // set at the top of tick: overlapping ticks must not both reach the claim
     this.timer = null;
   }
 
   start() {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.tick().catch((e) => console.error(`zevet: masora runs: ${e.message}`)), this.d.pollMs || POLL_MS);
+    const tick = () => void this.tick().catch((e) => console.error(`zevet: masora runs: ${e.message}`));
+    this.timer = setInterval(tick, this.d.pollMs || POLL_MS);
     if (typeof this.timer.unref === "function") this.timer.unref();
+    tick(); // startup: report whatever the last process left unreported
   }
 
   stop() {
@@ -155,18 +203,42 @@ class MasoraRunPoller {
 
   /** One poll. Returns {run, id, done} when a run was started (done settles when its report was attempted), else null. */
   async tick() {
+    if (this.busy || this.claiming || this.ledger.corrupt) return null;
+    this.claiming = true;
+    try {
+      return await this.#claimOne();
+    } finally {
+      this.claiming = false;
+    }
+  }
+
+  async #claimOne() {
     const d = this.d;
-    if (this.busy || !d.enabled()) return null;
     const cred = d.credential();
     if (!cred) return null;
     const client = createClient({ baseUrl: cred.baseUrl, fetchImpl: d.fetchImpl });
+    // Before the enabled check: an unreported run is owed its report even if polling was switched off since.
+    for (const [id, o] of Object.entries(this.ledger.open)) await this.#abandon(client, id, o.run_token, o.claimedAt);
+    if (!d.enabled()) return null;
     const claimedAt = this.now();
     const run = await client.claim(cred.token, this.ledger.deviceId);
     if (!run) return null;
-    if (this.ledger.ids.includes(run.run_id)) return null; // already claimed here: never twice
+    if (this.ledger.ids.includes(run.run_id)) {
+      // Offered again: if we never reported it, the process that held it is gone.
+      const o = this.ledger.open[run.run_id];
+      if (o) await this.#abandon(client, run.run_id, run.run_token, o.claimedAt);
+      return null; // already claimed here: never twice
+    }
     this.ledger.ids.push(run.run_id);
+    this.ledger.open[run.run_id] = { run_token: run.run_token, claimedAt };
     writeLedger(this.ledger, d.ledgerFile);
-    if (tokenExpired(run.run_token, claimedAt, this.now())) return null; // dead on arrival: nothing may use it
+    if (tokenExpired(run.run_token, claimedAt, this.now())) {
+      this.#close(run.run_id); // dead on arrival: nothing may use it
+      return null;
+    }
+    const refuse = this.#refusal(run);
+    if (refuse) return { run, id: null, done: this.#report(client, run, claimedAt, null, { status: "failed", result_text: refuse }) };
+    const payer = d.payer();
     this.busy = true;
     const started = await d.start(run).catch((e) => ({ ok: false, error: e.message }));
     if (!started || !started.ok) {
@@ -175,45 +247,82 @@ class MasoraRunPoller {
       return { run, id: null, done };
     }
     d.setOutcome(started.id, "running");
-    const done = this.#watch(client, run, claimedAt, started.id).finally(() => { this.busy = false; });
+    const done = this.#watch(client, run, claimedAt, started.id, payer).finally(() => {
+      this.busy = false;
+    });
     return { run, id: started.id, done };
   }
 
-  async #watch(client, run, claimedAt, id) {
+  /** Why this run must not start here, or "". */
+  #refusal(run) {
+    // ponytail: /actions submission is not built; a run that may act would silently not, so it is refused until it is.
+    if (run.allowed_actions.length) return "actions not supported by this Zevet";
+    if (!this.d.payer()) return "could not tell who pays for this run (no Claude account label)";
+    return "";
+  }
+
+  /** Report a claimed-but-unreported run `failed` ("desktop restarted"), then forget it. */
+  async #abandon(client, id, token, claimedAt) {
+    try {
+      await client.report({ run_id: id, run_token: token }, claimedAt, { status: "failed", result_text: "desktop restarted", payer: this.d.payer() }, this.now());
+    } catch (err) {
+      if (!(err instanceof RunTokenExpired)) {
+        console.error(`zevet: masora run ${id}: could not report the restart (${err.message}); will retry`);
+        return; // stays open; the token's own expiry ends the retries
+      }
+    }
+    this.#close(id);
+  }
+
+  #close(id) {
+    delete this.ledger.open[id];
+    writeLedger(this.ledger, this.d.ledgerFile);
+  }
+
+  async #watch(client, run, claimedAt, id, payer) {
     const d = this.d;
-    const end = deadlineMs(run.deadline);
+    const end = runBound(run, claimedAt);
+    let needsReported = false;
+    const finish = async (status, entry, text) => {
+      await this.#report(client, run, claimedAt, id, { status, ...this.#facts(entry, payer), ...(text ? { result_text: text } : {}) });
+      d.stop(id); // a finished run's console has nothing left to say (needs_you is the one that stays up)
+    };
     for (;;) {
       const entry = d.getConsole(id);
-      if (!entry) return this.#report(client, run, claimedAt, id, { status: "failed", result_text: "console vanished" });
-      if (!entry.running || entry.state === "idle") {
-        const s = d.summarize(entry);
-        const status = entry.isError ? "failed" : "done";
-        return this.#report(client, run, claimedAt, id, { status, ...this.#facts(s, entry) });
+      if (!entry) return this.#report(client, run, claimedAt, id, { status: "failed", result_text: "console vanished", payer });
+      // Not while the app is relaunching: its consoles are stopped and restored under the same id, so that exit is not the run's end.
+      if (!(d.isRelaunching && d.isRelaunching())) {
+        const waiting = d.needsYou(id);
+        if (!entry.running) return finish(entry.isError || !entry.turns ? "failed" : "done", entry, entry.turns ? "" : "agent exited before answering");
+        // A new console starts idle, before its brief is even sent: idle only means finished once a turn has happened.
+        if (entry.state === "idle" && entry.turns > 0 && !waiting) return finish(entry.isError ? "failed" : "done", entry);
+        if (waiting && !needsReported) {
+          needsReported = true; // reported once; the console stays up for the answer and the run stays ours until it ends
+          await this.#report(client, run, claimedAt, id, { status: "needs_you", ...this.#facts(entry, payer), result_text: "waiting on a permission prompt" });
+        } else if (!waiting) needsReported = false;
+        if (this.now() >= end) {
+          d.stop(id);
+          return this.#report(client, run, claimedAt, id, { status: "failed", ...this.#facts(entry, payer), result_text: "deadline passed" });
+        }
       }
-      if (d.needsYou(id)) {
-        return this.#report(client, run, claimedAt, id, { status: "needs_you", ...this.#facts(d.summarize(entry), entry), result_text: "waiting on a permission prompt" });
-      }
-      if (end != null && this.now() >= end) {
-        d.stop(id);
-        return this.#report(client, run, claimedAt, id, { status: "failed", ...this.#facts(d.summarize(entry), entry), result_text: "deadline passed" });
-      }
-      await this.sleep(this.d.watchMs || WATCH_MS);
+      await this.sleep(d.watchMs || WATCH_MS);
     }
   }
 
-  #facts(s, entry) {
+  #facts(entry, payer) {
+    const s = this.d.summarize(entry);
     return {
       session_id: s.sessionId,
       usage: s.usage,
       cost_reported: s.costUsd,
       elapsed_ms: s.elapsedMs,
-      payer: this.d.payer(),
+      payer,
       result_text: this.d.resultText(entry),
     };
   }
 
   async #report(client, run, claimedAt, id, body) {
-    const label = { done: "done", failed: "failed", needs_you: "needs you" }[body.status];
+    const label = { done: "done", failed: "failed", needs_you: "needs you" }[body.status] || String(body.status);
     try {
       await client.report(run, claimedAt, body, this.now());
       if (id) this.d.setOutcome(id, `${label} · reported`);
@@ -222,7 +331,8 @@ class MasoraRunPoller {
       if (id) this.d.setOutcome(id, `${label} · ${why}`);
       else console.error(`zevet: masora run ${run.run_id}: ${why}`);
     }
+    if (body.status !== "needs_you") this.#close(run.run_id);
   }
 }
 
-module.exports = { createClient, MasoraRunPoller, tokenExpired, tokenExp, RunTokenExpired, MasoraRunsError, LEDGER_PATH, readLedger };
+module.exports = { createClient, MasoraRunPoller, tokenExpired, tokenExp, parseDeadline, runBound, RunTokenExpired, MasoraRunsError, LEDGER_PATH, readLedger };

@@ -3107,49 +3107,6 @@ function startMasoraPush() {
   if (typeof masoraPushTimer.unref === "function") masoraPushTimer.unref();
 }
 
-/**
- * Masora agent runs (masora-runs.js, spec 06 C5): claim a queued run, start it through startAgentCore like any
- * other console, report back. Off unless `runs` is set in masora.json. The folder comes from the person's OPENED
- * workspaces only (matched on repo_hint's last segment) -- Masora never names a path.
- */
-const masoraRuns = require("./masora-runs.js");
-function workspaceForHint(hint) {
-  const want = String(hint || "").split(/[\/:]/).filter(Boolean).pop()?.replace(/\.git$/, "").toLowerCase();
-  if (!want) return null;
-  const hits = readWorkspaces().filter((dir) => path.basename(dir).toLowerCase() === want);
-  return hits.length === 1 ? hits[0] : null; // none or ambiguous: the run fails, visibly
-}
-const masoraRunPoller = new masoraRuns.MasoraRunPoller({
-  enabled: () => masora.readConfig().runs,
-  credential: () => {
-    const cfg = masora.readConfig();
-    if (!cfg.paired || !safeStorage.isEncryptionAvailable()) return null;
-    const token = masora.loadToken((buf) => safeStorage.decryptString(buf));
-    return token ? { baseUrl: cfg.url, token } : null;
-  },
-  start: async (run) => {
-    const dir = workspaceForHint(run.repo_hint);
-    if (!dir) return { ok: false, error: `no single opened workspace matches "${run.repo_hint}"` };
-    const r = await startAgentCore({ agent: "claude", cwd: dir, opts: { mode: agentSpawn.safeMode(storedMode()), label: `Masora run ${run.run_id.slice(0, 8)}` } });
-    if (!r.ok) return r;
-    const sent = sendToAgentCore(r.id, run.brief);
-    announceConsole(r.id);
-    return sent && sent.ok !== false ? r : { ok: false, error: (sent && sent.error) || "the brief could not be sent" };
-  },
-  getConsole: (id) => consoleLog.get(id),
-  stop: (id) => stopAgentCore(id),
-  // ponytail: permits are not keyed by console, so any open prompt while a run works counts; key them if runs overlap.
-  needsYou: () => pendingPermits.size > 0,
-  summarize: agentApi._internals.summarize,
-  resultText: (entry) => entry.lastResult || agentApi._internals.resultTextFrom(entry.events),
-  payer: () => payerOf("claude").label,
-  setOutcome: (id, outcome) => {
-    consoleLog.updateMeta(id, { masoraRun: outcome });
-    toBoard("local:masoraRun", { id, outcome });
-  },
-});
-bridge.handle("zevet:masoraRunsPoll", (_e, arg) => masora.setRunsPoll(Boolean(arg && arg.on)));
-
 bridge.handle("local:schedules", () => ({ ok: true, schedules: readSchedules() }));
 
 bridge.handle("local:scheduleSave", (_e, arg) => {
@@ -3800,6 +3757,9 @@ const MCP_SERVER = path.join(__dirname, "zevet-mcp.js");
 
 /** Requests waiting on a person, by id. */
 const pendingPermits = new Map();
+/** Which console's MCP run asked each open permit, and which console each MCP run belongs to (masora-runs-wire.js needsYouFor). */
+const permitRuns = new Map();
+const runConsoles = new Map();
 /** Questions waiting on a person, by id — same idea as pendingPermits, one
  *  map per ask-server route because a permit id and an ask id share no
  *  namespace and must never be answerable through the other's channel. */
@@ -3809,6 +3769,20 @@ const permitGrantsModule = require("./permit-grants.js");
 const permitGrants = { ...permitGrantsModule.createGrants(), ruleKey: permitGrantsModule.ruleKey };
 let permitSeq = 0;
 let askServerPromise = null;
+
+const masoraRunsWire = require("./masora-runs-wire.js");
+/** Masora agent runs (masora-runs.js, spec 06 C5), off unless `runs` is set in masora.json. Called once from whenReady. */
+bridge.handle("zevet:masoraRunsPoll", (_e, arg) => masora.setRunsPoll(Boolean(arg && arg.on)));
+function startMasoraRuns() {
+  return masoraRunsWire.startMasoraRuns({
+    masora, safeStorage, consoleLog, agentApi, payerOf,
+    announceOutcome: (id, outcome) => toBoard("local:masoraRun", { id, outcome }),
+    readWorkspaces, storedMode, startAndBrief,
+    stopAgentCore: (id) => stopAgentCore(id),
+    permits: { pendingPermits, permitRuns, runConsoles },
+    isRelaunching: () => relaunching,
+  });
+}
 /** MCP run id -> the folder that run was started in (agent-tools.js record_memory). */
 const runRoots = new Map();
 
@@ -3824,6 +3798,7 @@ function ensureAskServer() {
             return;
           }
           const id = `p${++permitSeq}`;
+          if (run) permitRuns.set(id, run);
           // A teammate may answer this too (D-086) when the team allows it.
           // The card id is separate from the local id, and unique across restarts.
           const cardId = approvalCanShare() ? crypto.randomUUID() : "";
@@ -3880,6 +3855,7 @@ bridge.handle("local:permitAnswer", (_e, arg) => {
   const resolve = pendingPermits.get(id);
   if (!resolve) return { ok: false, error: "no such request" };
   pendingPermits.delete(id);
+  permitRuns.delete(id);
   resolve({ ok: arg && arg.allow === true, reason: (arg && arg.reason) || "refused", always: Boolean(arg && arg.always) });
   return { ok: true };
 });
@@ -3912,6 +3888,7 @@ bridge.handle("local:askAnswer", (_e, arg) => {
  */
 async function mcpConfigFor(dir, mode) {
   const servers = {};
+  let mcpRun = "";
   const computerUse = Boolean(agentSettingsFor(dir).computerUse);
   /* The zevet server also carries `permission_prompt`, which is how a headless
      claude asks the person instead of silently denying what would prompt. Every
@@ -3923,6 +3900,7 @@ async function mcpConfigFor(dir, mode) {
     const { url, token } = await ensureAskServer();
     const run = `r${process.pid}-${++permitSeq}`;
     runRoots.set(run, dir);
+    mcpRun = run;
     servers.zevet = {
       command: process.execPath,
       args: [MCP_SERVER],
@@ -3945,7 +3923,7 @@ async function mcpConfigFor(dir, mode) {
   // `permissions` says whether the `zevet` tool server (and so its permission
   // tool) is actually in this file -- a masora-only config must not claim a
   // permission tool that config does not register.
-  return { file, computerUse, permissions: Boolean(servers.zevet) && (computerUse || gate) };
+  return { file, computerUse, permissions: Boolean(servers.zevet) && (computerUse || gate), run: mcpRun };
 }
 
 /**
@@ -4132,6 +4110,7 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
       toBoard("local:agentEvent", consoleLog.record(handle.id, evt));
       // The session is over: what it claimed goes, for teammates too.
       if (evt && evt.type === "exit") {
+        if (mcpConfig && mcpConfig.run) runConsoles.delete(mcpConfig.run);
         const c = consoleLog.snapshot().consoles.find((x) => x.id === handle.id);
         if (c && c.sessionId) {
           myClaims.endSession(c.sessionId);
@@ -4147,6 +4126,7 @@ async function startAgentCore({ agent, cwd, opts, trusted, resumeFrom, forcedId,
   }
 
   handle.id = started.id;
+  if (mcpConfig && mcpConfig.run) runConsoles.set(mcpConfig.run, started.id);
   trackPlacement(place, started.id);
   consoles.set(started.id, started);
   consoleLog.open(started.id, consoleMeta(agent, dir, opts, place, resolved.engine));
@@ -5118,16 +5098,20 @@ function runningRemote() {
   return remoteStarted.size;
 }
 
-async function startRemoteSpawn({ agent, dir, model, prompt, from }) {
-  const who = String(from || "a teammate").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 40);
-  const r = await startAgentCore({ agent, cwd: dir, opts: { model, mode: agentSpawn.safeMode(storedMode()), label: `started by ${who}` } });
+/** Start a console, send it its first prompt, show it on the board. After the prompt, so the board's re-attach replays it. */
+async function startAndBrief({ agent, dir, label, prompt, mode, model, onStarted }) {
+  const r = await startAgentCore({ agent, cwd: dir, opts: { model, mode, label } });
   if (!r.ok) return r;
-  remoteStarted.add(r.id);
+  if (onStarted) onStarted(r.id);
   const sent = sendToAgentCore(r.id, prompt);
-  // After the prompt, so the board's re-attach replays it in the transcript.
   announceConsole(r.id);
   if (!sent || sent.ok === false) return { ok: false, error: (sent && sent.error) || "the prompt could not be sent" };
   return { ok: true, id: r.id };
+}
+
+async function startRemoteSpawn({ agent, dir, model, prompt, from }) {
+  const who = String(from || "a teammate").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 40);
+  return startAndBrief({ agent, dir, model, prompt, label: `started by ${who}`, mode: agentSpawn.safeMode(storedMode()), onStarted: (id) => remoteStarted.add(id) });
 }
 
 const spawnInbox = agentSpawn.createSpawnInbox({
@@ -5213,14 +5197,9 @@ const batonInbox = agentTakeover.createBatonInbox({
   open: (msg) => agentTakeover._internals.openJson(agentSteer.loadDocCrypto(), steerAuth(readConfig()).key, agentTakeover._internals.batonAad(msg), msg.sealed),
   requested: (id) => takeoversAsked.get(id) || "",
   resolveRepo: (name) => agentTakeover.resolveRepo(name, readWorkspaces()),
-  start: async ({ agent, dir, from, prompt }) => {
+  start: ({ agent, dir, from, prompt }) => {
     const who = String(from || "a teammate").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 40);
-    const r = await startAgentCore({ agent, cwd: dir, opts: { mode: agentTakeover.safeMode(storedMode()), label: `taken over from ${who}` } });
-    if (!r.ok) return r;
-    const sent = sendToAgentCore(r.id, prompt);
-    announceConsole(r.id);
-    if (!sent || sent.ok === false) return { ok: false, error: (sent && sent.error) || "the prompt could not be sent" };
-    return { ok: true, id: r.id };
+    return startAndBrief({ agent, dir, prompt, label: `taken over from ${who}`, mode: agentTakeover.safeMode(storedMode()) });
   },
   sessionOf: (id) => {
     const c = consoleLog.get(id);
@@ -5517,7 +5496,7 @@ app.whenReady().then(async () => {
   );
   startScheduler();
   startMasoraPush();
-  masoraRunPoller.start();
+  startMasoraRuns();
   startReportingHealth();
   // After the window, never before it: an update check that delayed the
   // board would be a worse app for a feature nobody asked to wait on.

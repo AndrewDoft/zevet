@@ -248,45 +248,59 @@ class MasoraPair {
 }
 
 /**
+ * The one POST to Masora (briefFor, the agent-run client). https only, except loopback; no redirects (a Bearer
+ * token must not follow one); its own ref'd timer, not AbortSignal.timeout: that one's internal timer is unref'd
+ * by design, so it never fires in an otherwise-idle process -- reproduced on Node 22 (what CI runs) with
+ * `node --test` on this file alone (a still-pending promise reported as cancelled, every run, at 2000ms and
+ * 50ms alike). Node 24 does not show it, which is why it was invisible locally. The timer also covers the body
+ * read. Resolves {status, ok, body} (body = parsed JSON or null); rejects on network error, timeout, bad base.
+ */
+async function postJson(base, route, token, body, timeoutMs, fetchImpl) {
+  const root = String(base || "").replace(/\/+$/, "");
+  let u;
+  try {
+    u = new URL(root);
+  } catch {
+    throw new Error("the Masora address is not a URL");
+  }
+  const loopback = u.hostname === "localhost" || u.hostname === "[::1]" || /^127\./.test(u.hostname);
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && loopback)) throw new Error("the Masora address must be https");
+  const f = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), typeof timeoutMs === "number" ? timeoutMs : BRIEF_TIMEOUT_MS);
+  try {
+    const res = await f(`${root}${route}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+      redirect: "error",
+      signal: controller.signal,
+    });
+    const parsed = res.status !== 204 && typeof res.json === "function" ? await res.json().catch(() => null) : null;
+    return { status: res.status, ok: res.ok, body: parsed };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * C2/C4: the deterministic, no-LLM brief. Fails open on any error or on the
  * 2s timeout the contract specifies -- a brief that cannot be fetched is no
  * brief, never a blocked agent start.
  */
 async function briefFor({ baseUrl, token, prompt, repository, fetchImpl, timeoutMs } = {}) {
   if (!baseUrl || !token) return null;
-  const f = typeof fetchImpl === "function" ? fetchImpl : (...a) => fetch(...a);
-  // Not AbortSignal.timeout(): its internal timer is unref'd by design, so it
-  // never fires in an otherwise-idle process -- reproduced on Node 22 (what
-  // CI runs; the workflow asked for 20, GitHub forced 22) with `node --test`
-  // on this file alone: the timer simply never elapses and node --test
-  // reports the still-pending promise as a cancelled/dangling test, on EVERY
-  // run, regardless of the timeout value (proved at both 2000ms and 50ms).
-  // Node 24 (this dev machine) does not show it, which is why it was invisible
-  // locally. A manual, ref'd timer fires reliably either way, which is also
-  // the more honest implementation of "fails open on ITS OWN timeout" --
-  // production never depended on the process going idle to fire it, but
-  // nothing was actually holding it to that promise before.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), typeof timeoutMs === "number" ? timeoutMs : BRIEF_TIMEOUT_MS);
   try {
-    const res = await f(`${String(baseUrl).replace(/\/+$/, "")}/api/v2/context/brief`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        prompt: String(prompt || "").slice(0, 8000),
-        surface: "zevet",
-        ...(repository ? { repository } : {}),
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    const body = await res.json();
-    if (!body || typeof body.brief !== "string" || !body.brief.trim()) return null;
+    const res = await postJson(baseUrl, "/api/v2/context/brief", token, {
+      prompt: String(prompt || "").slice(0, 8000),
+      surface: "zevet",
+      ...(repository ? { repository } : {}),
+    }, timeoutMs, fetchImpl);
+    const body = res.body;
+    if (!res.ok || !body || typeof body.brief !== "string" || !body.brief.trim()) return null;
     return body;
   } catch {
     return null; // timeout, network error, bad JSON -- all the same: no brief.
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -321,6 +335,7 @@ module.exports = {
   setRunsPoll,
   MasoraPair,
   MasoraPairError,
+  postJson,
   briefFor,
   withBrief,
   BRIEF_SYSTEM_PROMPT_MAX,
