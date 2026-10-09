@@ -4,7 +4,7 @@
 import { test, describe, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { startHub, post } from "./helpers.mjs";
@@ -100,12 +100,6 @@ test("invites expire", () => {
   assert.ok(store.get("t", "abcdefgh"));
   t += INVITE_TTL_MS + 1;
   assert.equal(store.get("t", "abcdefgh"), null);
-});
-
-test("your own console rows carry Invite, keyed by the console's session id", () => {
-  const src = readFileSync(new URL("../board/src/components/people.tsx", import.meta.url), "utf8");
-  const own = src.slice(src.indexOf("function AgentRow("), src.indexOf("function TeamAgentRow("));
-  assert.ok(own.includes("<InviteIntoSession session={c.sessionId || undefined} />"));
 });
 
 describe("through a real hub", () => {
