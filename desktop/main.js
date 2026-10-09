@@ -5488,6 +5488,15 @@ async function startAgentApi() {
 
 app.whenReady().then(async () => {
   buildMenu();
+  // The window first: its renderer boots in another process while the starters below run, so everything
+  // after this line is off the path to the first board paint.
+  session.defaultSession.webRequest.onHeadersReceived({ urls: FRAME_URLS, types: ["subFrame"] }, (d, cb) => cb({ responseHeaders: frameable(d.responseHeaders) }));
+  const cfg = readConfig();
+  // A windowless payload swap relaunches with this flag (macOS dock-only app): no window until the dock is clicked.
+  if (process.platform === "darwin" && process.argv.includes(WINDOWLESS_ARG)) {
+    // nothing: the activate handler opens a window on demand
+  } else if (cfg) openBoard(cfg);
+  else openSetup(null);
   void startAgentApi();
   // No console outlives the app, so neither does a worktree made for one —
   // except those a payload swap is handing back, restored first.
@@ -5509,13 +5518,6 @@ app.whenReady().then(async () => {
   startIdleInstall();
   // Only reliable after 'ready'; see the module's own docs.
   powerMonitor.on("resume", () => appUpdater.maybeCheck(UPDATE_RECHECK_MIN_GAP_MS));
-  session.defaultSession.webRequest.onHeadersReceived({ urls: FRAME_URLS, types: ["subFrame"] }, (d, cb) => cb({ responseHeaders: frameable(d.responseHeaders) }));
-  const cfg = readConfig();
-  // A windowless payload swap relaunches with this flag (macOS dock-only app): no window until the dock is clicked.
-  if (process.platform === "darwin" && process.argv.includes(WINDOWLESS_ARG)) {
-    // nothing: the activate handler opens a window on demand
-  } else if (cfg) openBoard(cfg);
-  else openSetup(null);
   // Same reasoning as the updater above: never delay the board for this.
   // The probe is quick (2s, bounded), but "quick" is still slower than a
   // window that could have opened already — this runs alongside it.
