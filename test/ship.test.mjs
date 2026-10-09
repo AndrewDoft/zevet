@@ -319,9 +319,10 @@ describe("step checks decide 'already done'", () => {
   const raw = publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64");
   const signer = { pem: privateKey.export({ format: "pem", type: "pkcs8" }), keyId: "zevet-test" };
 
-  function world(t, { tagged = true, files = new Set(), ssh = () => "", build = { conclusion: "success" }, decisions = "", feedVersion = "0.2.93", pay, kind = "payload", hub = true } = {}) {
+  function world(t, { tagged = true, files = new Set(), ssh = () => "", build = { conclusion: "success" }, decisions = "", feedVersion = "0.2.93", pay, payCanary, kind = "payload", hub = true } = {}) {
     const d = tempDir("zevet-ship-w-"); t.after(() => d.cleanup());
     if (pay) publish(t, ...pay.slice(0, 3), d.dir, signer);
+    if (payCanary) publish(t, ...payCanary.slice(0, 3), d.dir, signer);
     const sshCalls = [];
     const inner = host(d.dir);
     const io = {
@@ -466,14 +467,24 @@ ${blk("Zevet.dmg", "zevet-0.2.93-macos-arm64.dmg")}${blk("Zevet-Setup.exe", "zev
     assert.equal(await world(t, { ssh: () => "0.2.93\n" }).check("hub"), false);
     assert.equal(await world(t, { ssh: () => "" }).check("hub"), false);
   });
-  test("payload: done when BOTH platforms' verified stable pulse carries the build", async (t) => {
-    assert.equal(await world(t, { pay: ["stable", "0.2.94", 2094] }).check("payload"), true);
-    assert.equal(await world(t, { pay: ["stable", "0.2.93", 2093] }).check("payload"), false); // an older build
+  test("payload: done when BOTH platforms' verified stable AND canary pulses carry the build", async (t) => {
+    const st = ["stable", "0.2.94", 2094], ca = ["canary", "0.2.94", 2094];
+    assert.equal(await world(t, { pay: st, payCanary: ca }).check("payload"), true);
+    assert.equal(await world(t, { pay: ["stable", "0.2.93", 2093], payCanary: ca }).check("payload"), false); // an older build
+    assert.equal(await world(t, { pay: st }).check("payload"), false); // canary pulse missing: orphaned installs stay stranded
+    assert.equal(await world(t, { pay: st, payCanary: ["canary", "0.2.93", 2093] }).check("payload"), false);
     assert.equal(await world(t).check("payload"), false); // nothing published
   });
-  test("there is no canary, soak or promote step or flag in ship", () => {
+  test("ship writes the canary pulses for orphaned canary installs, from the same manifests as stable", () => {
+    const src = readFileSync(new URL("../scripts/ship.mjs", import.meta.url), "utf8");
+    assert.ok(src.includes('"--channel", "canary"'), "ship must stage canary pulses");
+    assert.ok(src.includes("p/zevet/canary/${p}/pulse.json"), "ship must upload the canary pulses");
+    assert.ok(src.includes('verifyPayload(io, "canary"'), "ship must read the canary pulses back");
+    assert.ok(/differs from stable/.test(src), "canary must be refused unless it names stable's manifest");
+  });
+  test("there is no soak or promote step or flag in ship (canary exists only as a pulse alias)", () => {
     const src = readFileSync(new URL("../scripts/ship.mjs", import.meta.url), "utf8").replace(/^\s*\/\/.*$/gm, "");
-    assert.ok(!/canary|soak|--promote|--skip-soak/i.test(src));
+    assert.ok(!/soak|--promote|--skip-soak/i.test(src));
   });
   test("installer feed: shell releases only, done when the live feed names the version", async (t) => {
     assert.equal(world(t).steps.some((s) => s.name === "installer feed"), false);

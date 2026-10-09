@@ -61,7 +61,7 @@ const { AppUpdater, loopbackProofKeys, INSTALL_ARGS, winInstallArgs } = bootShel
 const { createRollback } = bootShell.require("./update-rollback.js");
 const { familyIndexKeys } = bootShell.require("./update-signing.js");
 const runtime = require("./runtime.js");
-const { createSwapper, confirmWhenHealthy, awaitHealthy, WINDOWLESS_ARG } = require("./payload-swap.js");
+const { observePayload, settleChannel, createSwapper, confirmWhenHealthy, awaitHealthy, WINDOWLESS_ARG } = require("./payload-swap.js");
 const { createIdleInstaller, CHECK_MS: IDLE_CHECK_MS } = require("./idle-install.js");
 const askServer = require("./ask-server.js");
 const agentApi = require("./agent-api.js");
@@ -4473,6 +4473,13 @@ function agentApiAnswers() {
   });
 }
 if (bootShell.payload) {
+  try {
+    if (settleChannel(bootShell.require("./payload-config.js").payloadRoot())) bootShell.log("payload channel was not stable: moved to stable (canary is retired)");
+  } catch (err) { bootShell.log(`payload channel check failed: ${err && err.message || err}`); }
+  observePayload(bootShell.payload, {
+    log: (m) => bootShell.log(m),
+    report: (extra) => Sentry.captureMessage("payload stuck: a newer build has not staged for 24h", { level: "warning", tags: { channel: String(extra.channel) }, extra }),
+  });
   const swapper = createSwapper({
     payload: bootShell.payload,
     app,
