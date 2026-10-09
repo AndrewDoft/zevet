@@ -3107,6 +3107,49 @@ function startMasoraPush() {
   if (typeof masoraPushTimer.unref === "function") masoraPushTimer.unref();
 }
 
+/**
+ * Masora agent runs (masora-runs.js, spec 06 C5): claim a queued run, start it through startAgentCore like any
+ * other console, report back. Off unless `runs` is set in masora.json. The folder comes from the person's OPENED
+ * workspaces only (matched on repo_hint's last segment) -- Masora never names a path.
+ */
+const masoraRuns = require("./masora-runs.js");
+function workspaceForHint(hint) {
+  const want = String(hint || "").split(/[\/:]/).filter(Boolean).pop()?.replace(/\.git$/, "").toLowerCase();
+  if (!want) return null;
+  const hits = readWorkspaces().filter((dir) => path.basename(dir).toLowerCase() === want);
+  return hits.length === 1 ? hits[0] : null; // none or ambiguous: the run fails, visibly
+}
+const masoraRunPoller = new masoraRuns.MasoraRunPoller({
+  enabled: () => masora.readConfig().runs,
+  credential: () => {
+    const cfg = masora.readConfig();
+    if (!cfg.paired || !safeStorage.isEncryptionAvailable()) return null;
+    const token = masora.loadToken((buf) => safeStorage.decryptString(buf));
+    return token ? { baseUrl: cfg.url, token } : null;
+  },
+  start: async (run) => {
+    const dir = workspaceForHint(run.repo_hint);
+    if (!dir) return { ok: false, error: `no single opened workspace matches "${run.repo_hint}"` };
+    const r = await startAgentCore({ agent: "claude", cwd: dir, opts: { mode: agentSpawn.safeMode(storedMode()), label: `Masora run ${run.run_id.slice(0, 8)}` } });
+    if (!r.ok) return r;
+    const sent = sendToAgentCore(r.id, run.brief);
+    announceConsole(r.id);
+    return sent && sent.ok !== false ? r : { ok: false, error: (sent && sent.error) || "the brief could not be sent" };
+  },
+  getConsole: (id) => consoleLog.get(id),
+  stop: (id) => stopAgentCore(id),
+  // ponytail: permits are not keyed by console, so any open prompt while a run works counts; key them if runs overlap.
+  needsYou: () => pendingPermits.size > 0,
+  summarize: agentApi._internals.summarize,
+  resultText: (entry) => entry.lastResult || agentApi._internals.resultTextFrom(entry.events),
+  payer: () => payerOf("claude").label,
+  setOutcome: (id, outcome) => {
+    consoleLog.updateMeta(id, { masoraRun: outcome });
+    toBoard("local:masoraRun", { id, outcome });
+  },
+});
+bridge.handle("zevet:masoraRunsPoll", (_e, arg) => masora.setRunsPoll(Boolean(arg && arg.on)));
+
 bridge.handle("local:schedules", () => ({ ok: true, schedules: readSchedules() }));
 
 bridge.handle("local:scheduleSave", (_e, arg) => {
@@ -5472,6 +5515,7 @@ app.whenReady().then(async () => {
   );
   startScheduler();
   startMasoraPush();
+  masoraRunPoller.start();
   startReportingHealth();
   // After the window, never before it: an update check that delayed the
   // board would be a worse app for a feature nobody asked to wait on.

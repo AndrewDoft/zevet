@@ -193,7 +193,7 @@ Neither call returns the secret or the session.` },
 
 Leave the team on this machine — drops session, secret and hub from
  config.json (backed up first) and returns to first-run setup.` },
-    masoraConfig: { channel: "zevet:masoraConfig", params: [], type: `() => Promise<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean }>`, optional: true, doc: `Linking with Masora (T5, docs/contracts/cross_app_context.md). The link
+    masoraConfig: { channel: "zevet:masoraConfig", params: [], type: `() => Promise<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean; runs?: boolean }>`, optional: true, doc: `Linking with Masora (T5, docs/contracts/cross_app_context.md). The link
 runs in the main process in the background; the renderer reads its status
 and can retry or open the approval page. The token is written straight to
 the OS keychain there and this bridge has no call that reads it back.
@@ -212,6 +212,7 @@ returns a token -- it is written straight to the OS keychain there.` },
 Family panel (desktop/family.js).` },
     familyAct: { channel: "zevet:familyAct", params: ["app","action"], pack: "object", type: `(app: string, action: string) => Promise<{ ok?: boolean; download?: string | null; requested?: boolean; pairing?: string } | undefined>`, optional: true },
     masoraChatPush: { channel: "zevet:masoraChatPush", params: ["on"], pack: "object", type: `(on: boolean) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean }>`, optional: true, doc: `Zevet Chat push to Masora (C1 \`zevet_chat\`), off by default.` },
+    masoraRunsPoll: { channel: "zevet:masoraRunsPoll", params: ["on"], pack: "object", type: `(on: boolean) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean; runs?: boolean }>`, optional: true, doc: `Run Masora's queued agent runs on this machine (masora-runs.js), off by default.` },
     masoraSources: { channel: "masora:sources", params: [], type: `() => Promise<{ sources?: { kind: string; status: string }[]; error?: string }>`, optional: true, doc: `Connections panel: which sources are linked, and connecting a new one.
 Channel names have no "zevet:" prefix -- they are \`masora:sources\` /
 \`masora:connect\`, matching main.js's own registration.
@@ -509,6 +510,7 @@ otherwise only refreshed after a save/toggle/remove round-trip.` },
     onChatEvent: { channel: "chat:event", payload: "unknown", type: `(cb: (p: { id: string; evt: { type: string; [k: string]: unknown } }) => void) => () => void`, optional: true },
     onAgentEvent: { channel: "local:agentEvent", payload: "unknown", type: `(cb: (evt: AgentEvent) => void) => () => void`, doc: `Stream of console events; returns an unsubscribe function.` },
     onAgentIntegration: { channel: "local:agentIntegration", payload: "unknown", type: `(cb: (r: AgentIntegration & { id: string }) => void) => () => void`, optional: true, doc: `A subagent run's integration outcome changed.` },
+    onMasoraRun: { channel: "local:masoraRun", payload: "unknown", type: `(cb: (r: { id: string; outcome: string }) => void) => () => void`, optional: true, doc: `The outcome of a Masora agent run changed (masora-runs.js).` },
     onAgentAttached: { channel: "local:agentAttached", payload: "unknown", type: `(cb: (c: HeldConsole) => void) => () => void`, optional: true, doc: `A console the board did not start itself (the loopback agent API, a schedule)
 just opened. Without it such an agent only reached the board on a page reload.` },
     onBoardRequest: { channel: "local:boardRequest", payload: "unknown", type: `(cb: (req: { reqId: string; kind: string; [k: string]: unknown }) => void) => () => void`, optional: true, doc: `The loopback agent API asks the board to start or message an agent through

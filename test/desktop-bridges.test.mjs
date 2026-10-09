@@ -157,6 +157,8 @@ describe("the bridge surface the renderer is written against", () => {
       //   The words are the person's own conversation, which the page already
       //   holds because it sent them; it is a separate channel only so a chat
       //   is never drawn as a console in Code.
+      //   local:masoraRun — the outcome text of a Masora agent run, for its subagent
+      //   row (desktop/masora-runs.js); the console id plus a short status.
       //   local:memoryEvent — pinned notes changed (a teammate's arrived, or one
       //   was edited); carries only the repo name, the board re-lists over invoke.
       //   local:schedulesChanged — a due schedule just ran (or was skipped);
@@ -175,7 +177,7 @@ describe("the bridge surface the renderer is written against", () => {
       //   the answer goes back as an invoke (steerAnswer). `done`/`status`:
       //   how a steer ended, so a sender is never left guessing. Silence
       //   declines (10 minutes), never injects.
-      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentAttached", "local:agentEvent", "local:agentIntegration", "local:askRequest", "local:boardRequest", "local:claimsEvent", "local:fileChanged", "local:indexEvent", "local:memoryEvent", "local:notifyClick", "local:permitRequest", "local:schedulesChanged", "local:steerEvent"],
+      ["app:update", "chat:event", "doc:message", "doc:status", "local:agentAttached", "local:agentEvent", "local:agentIntegration", "local:askRequest", "local:boardRequest", "local:claimsEvent", "local:fileChanged", "local:indexEvent", "local:masoraRun", "local:memoryEvent", "local:notifyClick", "local:permitRequest", "local:schedulesChanged", "local:steerEvent"],
       "the set of pushed channels changed",
     );
     for (const channel of new Set(listened)) {

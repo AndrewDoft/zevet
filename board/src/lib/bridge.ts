@@ -206,6 +206,8 @@ export interface HeldConsole {
    *  agent-api.js), never for one the board's own UI started. */
   label?: string;
   integration?: AgentIntegration;
+  /** Outcome of a Masora agent run (desktop/masora-runs.js), when this console is one. */
+  masoraRun?: string;
 }
 
 export interface ChatSummary {

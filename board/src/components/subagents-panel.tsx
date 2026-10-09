@@ -52,7 +52,7 @@ export function SubagentsPanel() {
     return () => clearInterval(t);
   }, []);
 
-  const visible = consoles.filter((c) => c.running || c.integration);
+  const visible = consoles.filter((c) => c.running || c.integration || c.masoraRun);
   const running = visible.filter((c) => c.running);
   if (!visible.length) return null;
   const working = running.filter((c) => agentStateOf(c) === "working").length;
@@ -77,7 +77,7 @@ export function SubagentsPanel() {
             const integration = c.integration;
             const id = c.id;
             const held = integration && integration.status !== "integrated" && integration.status !== "discarded" && id && !c.running;
-            const outcome = !integration ? null : integration.status === "waiting" || integration.status === "failed" ? `${integration.status}: ${integration.why}` : integration.status;
+            const outcome = c.masoraRun ?? (!integration ? null : integration.status === "waiting" || integration.status === "failed" ? `${integration.status}: ${integration.why}` : integration.status);
             return (
               <div className="subagents-row" role="listitem" key={c.key} data-state={agentStateOf(c)}>
                 <span className="subagents-name">{c.label || c.title || c.autoTitle || c.agent}</span>

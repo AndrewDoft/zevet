@@ -883,7 +883,7 @@ const LINK_SUMMARY: Record<string, string> = {
 
 function MasoraSection() {
   const localWorkspaces = useBoard((s) => s.localWorkspaces);
-  const [cfg, setCfg] = useState<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean } | null>(null);
+  const [cfg, setCfg] = useState<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean; runs?: boolean } | null>(null);
   const [link, setLink] = useState<MasoraLinkState | null>(null);
 
   function refresh() {
@@ -958,6 +958,21 @@ function MasoraSection() {
                   onClick={() => window.zevet?.masoraChatPush?.(!cfg.chat).then((c) => c && setCfg(c))}
                 >
                   {cfg.chat ? "Syncing" : "Off"}
+                </button>
+              </span>
+            </div>
+          ) : null}
+          {window.zevet?.masoraRunsPoll ? (
+            <div className="srow" id="settingsRunsPoll">
+              <span className="k">Agent runs</span>
+              <span className="v">
+                <button
+                  className={MAKE_BTN}
+                  type="button"
+                  aria-pressed={Boolean(cfg.runs)}
+                  onClick={() => window.zevet?.masoraRunsPoll?.(!cfg.runs).then((c) => c && setCfg(c))}
+                >
+                  {cfg.runs ? "Running" : "Off"}
                 </button>
               </span>
             </div>

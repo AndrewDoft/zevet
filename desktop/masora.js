@@ -98,6 +98,8 @@ function readConfig() {
     // Zevet Chat push (C1 `zevet_chat`). Off unless the person turned it on:
     // the per-repo opt-in above says nothing about chats, which have no repo.
     chat: raw.chat === true,
+    // Claim and run Masora's queued agent runs here (masora-runs.js). Off until the person turns it on.
+    runs: raw.runs === true,
     member: canonicalName || canonicalEmail || legacyMember,
     // The true account email of the stored credential (heartbeat `masora.account_email`).
     account_email: canonicalEmail || (legacyMember.includes("@") ? legacyMember : ""),
@@ -106,6 +108,11 @@ function readConfig() {
 
 function setChatPush(on) {
   writeRaw({ ...readRaw(), chat: on === true });
+  return readConfig();
+}
+
+function setRunsPoll(on) {
+  writeRaw({ ...readRaw(), runs: on === true });
   return readConfig();
 }
 
@@ -311,6 +318,7 @@ module.exports = {
   reposFor,
   setRepoOpted,
   setChatPush,
+  setRunsPoll,
   MasoraPair,
   MasoraPairError,
   briefFor,

@@ -1841,6 +1841,7 @@ function reattachConsoles(held: HeldConsole[]): void {
       ...(h.engine ? { engine: h.engine } : {}),
       ...(h.label ? { label: h.label } : {}),
       ...(h.integration ? { integration: h.integration } : {}),
+      ...(h.masoraRun ? { masoraRun: h.masoraRun } : {}),
     };
     useBoard.setState((g) => ({ myConsoles: [...g.myConsoles, c] }));
     for (const evt of h.events) ingressAgentEvent(evt);
@@ -3211,6 +3212,11 @@ export function boot(): void {
   if (bridge.local && typeof bridge.local.onAgentIntegration === "function") {
     bridge.local.onAgentIntegration(({ id, ...integration }) =>
       useBoard.setState((g) => ({ myConsoles: g.myConsoles.map((x) => (x.id === id ? { ...x, integration } : x)) })),
+    );
+  }
+  if (bridge.local && typeof bridge.local.onMasoraRun === "function") {
+    bridge.local.onMasoraRun(({ id, outcome }) =>
+      useBoard.setState((g) => ({ myConsoles: g.myConsoles.map((x) => (x.id === id ? { ...x, masoraRun: outcome } : x)) })),
     );
   }
   if (bridge.local && typeof bridge.local.onAgentAttached === "function") {

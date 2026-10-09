@@ -69,6 +69,8 @@ export interface ConsoleLine {
 export interface ConsoleEntry {
   /** Set once a subagent run's work was integrated, held, or thrown away. */
   integration?: import("./bridge").AgentIntegration;
+  /** Outcome of a Masora agent run, when this console is one. */
+  masoraRun?: string;
   key: number;
   id: string | null;
   agent: string;

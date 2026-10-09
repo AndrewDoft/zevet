@@ -236,6 +236,8 @@ contextBridge.exposeInMainWorld("zevet", {
   familyAct: (app, action) => ipcRenderer.invoke("zevet:familyAct", { app, action }),
   /** Zevet Chat push to Masora (C1 `zevet_chat`), off by default. */
   masoraChatPush: (on) => ipcRenderer.invoke("zevet:masoraChatPush", { on }),
+  /** Run Masora's queued agent runs on this machine (masora-runs.js), off by default. */
+  masoraRunsPoll: (on) => ipcRenderer.invoke("zevet:masoraRunsPoll", { on }),
   /**
    * Connections panel: which sources are linked, and connecting a new one.
    * Channel names have no "zevet:" prefix -- they are `masora:sources` /
@@ -598,6 +600,8 @@ contextBridge.exposeInMainWorld("zevetLocal", {
   onAgentEvent: (fn) => subscribe("local:agentEvent", fn),
   /** A subagent run's integration outcome changed. */
   onAgentIntegration: (fn) => subscribe("local:agentIntegration", fn),
+  /** The outcome of a Masora agent run changed (masora-runs.js). */
+  onMasoraRun: (fn) => subscribe("local:masoraRun", fn),
   /**
    * A console the board did not start itself (the loopback agent API, a schedule)
    * just opened. Without it such an agent only reached the board on a page reload.

@@ -108,7 +108,7 @@ export interface ZevetBridge {
    * runs in the background in the main process; this reads its status. No call
    * returns a token -- it is written straight to the OS keychain there.
    */
-  masoraConfig?: () => Promise<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean }>;
+  masoraConfig?: () => Promise<{ url: string; paired: boolean; member?: string; repos: Record<string, boolean>; chat?: boolean; runs?: boolean }>;
   masoraSaveUrl?: (url: string) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean> }>;
   masoraLinkStatus?: () => Promise<{ phase: string; paired?: boolean; code?: string; error?: string }>;
   masoraLinkStart?: () => Promise<{ phase: string; paired?: boolean; code?: string; error?: string }>;
@@ -125,6 +125,8 @@ export interface ZevetBridge {
   familyAct?: (app: string, action: string) => Promise<{ ok?: boolean; download?: string | null; requested?: boolean; pairing?: string } | undefined>;
   /** Zevet Chat push to Masora (C1 `zevet_chat`), off by default. */
   masoraChatPush?: (on: boolean) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean }>;
+  /** Run Masora's queued agent runs on this machine (masora-runs.js), off by default. */
+  masoraRunsPoll?: (on: boolean) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean; runs?: boolean }>;
   /**
    * Connections panel: which sources are linked, and connecting a new one.
    * Channel names have no "zevet:" prefix -- they are `masora:sources` /
@@ -520,6 +522,8 @@ export interface LocalBridge {
   onAgentEvent: (cb: (evt: AgentEvent) => void) => () => void;
   /** A subagent run's integration outcome changed. */
   onAgentIntegration?: (cb: (r: AgentIntegration & { id: string }) => void) => () => void;
+  /** The outcome of a Masora agent run changed (masora-runs.js). */
+  onMasoraRun?: (cb: (r: { id: string; outcome: string }) => void) => () => void;
   /**
    * A console the board did not start itself (the loopback agent API, a schedule)
    * just opened. Without it such an agent only reached the board on a page reload.

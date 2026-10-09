@@ -85,6 +85,7 @@
       "idle-install.js",
       "masora-connect.js",
       "masora-push.js",
+      "masora-runs.js",
       "credentials.js",
       "credential-ladder.js",
       "credential-usage.js",
