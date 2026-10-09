@@ -153,7 +153,39 @@ const QUIT_INSTALL_ARGS = ["--updated", "/S"];
  * HKCU uninstall entry for this app's own GUID if that combination is ever
  * actually seen in the wild.
  */
+/**
+ * Why this executable is NOT a place an installer may write to, or null if it is
+ * a real install. A dev Electron (`...\node_modules\electron\dist\electron.exe`) or anything inside a
+ * git checkout/worktree is somebody's working tree: an update "installed" there
+ * turns the tree into the app (2026-10-08: a harness-launched dev Electron
+ * installed 0.2.13x into C:\dev\...\electron\dist, rewrote the HKLM uninstall entry and
+ * both Start Menu shortcuts, and every update since landed there).
+ */
+function misplacedReason(execPath) {
+  const w = path.win32;
+  const dir = w.dirname(execPath);
+  if (w.normalize(dir).toLowerCase().split(w.sep).includes("node_modules")) return `${dir} is inside node_modules`;
+  for (let d = dir, i = 0; i < 12; i++) {
+    try {
+      if (fs.existsSync(w.join(d, ".git"))) return `${dir} is inside a git checkout (${d})`;
+    } catch {
+      // unreadable ancestor: treat as not a checkout
+    }
+    const up = w.dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return null;
+}
+
+/** Where a misplaced copy's update goes instead: the installer's own default, per-machine. */
+function defaultInstallDir(env = process.env) {
+  return path.win32.join(env.ProgramFiles || "C:\Program Files", "zevet");
+}
+
 function winInstallLocation(execPath) {
+  const bad = misplacedReason(execPath);
+  if (bad) return { dir: defaultInstallDir(), scope: "/allusers", misplaced: bad };
   // path.win32, not the ambient `path`: this logic is Windows-only by
   // definition (NSIS, %LOCALAPPDATA%, backslashes), but the SAME test file
   // that exercises it runs on both the Windows and the macOS CI leg (see
@@ -311,6 +343,8 @@ class AppUpdater extends UpdaterCore {
      *  update", independent of whatever the registry claims. See
      *  winInstallLocation()'s header. */
     this.execPath = o.execPath || process.execPath;
+    /** app.isPackaged. An unpackaged run (`electron .`, every test harness) is a dev copy: it never installs. */
+    this.isPackaged = o.isPackaged !== false;
     /** The running AppImage file ($APPIMAGE); only meaningful on linux. */
     this.appImagePath = o.appImagePath !== undefined ? o.appImagePath : process.env.APPIMAGE || null;
     this.openImpl = o.openImpl || null; // set by main.js to shell.openPath
@@ -323,6 +357,14 @@ class AppUpdater extends UpdaterCore {
     this.inspectImpl = o.inspectImpl || inspectSignature;
   }
 
+  /** winInstallArgs for this process, or a throw when it must not install at all (an unpackaged dev run). */
+  _installArgs(base) {
+    if (!this.isPackaged) throw new Error("this is an unpackaged dev run; it never installs an update");
+    const loc = winInstallLocation(this.execPath);
+    if (loc.misplaced) this.log(`running from a non-install location (${loc.misplaced}); installing to ${loc.dir} instead and relaunching from there`);
+    return winInstallArgs(base, this.execPath);
+  }
+
   /**
    * Is this installer from the publisher the running app came from? Returns a
    * message when it is not, null when it is or when the check is log-only.
@@ -333,6 +375,10 @@ class AppUpdater extends UpdaterCore {
    * pinned in PUBLISHER, not read from the running app.
    */
   async _publisherProblem(file) {
+    if (this.platform === "win32" && !this.isPackaged) {
+      this.log("update skipped: unpackaged dev run");
+      return "an unpackaged dev run never installs an update";
+    }
     const want = PUBLISHER[this.platform];
     const selfPath = this.platform === "win32" ? this.execPath : this.bundlePath;
     if (!want || !selfPath) {
@@ -438,7 +484,7 @@ class AppUpdater extends UpdaterCore {
       let child;
       try {
         this._beginInstall();
-        child = this.spawnImpl(this.state.file, winInstallArgs(INSTALL_ARGS, this.execPath), {
+        child = this.spawnImpl(this.state.file, this._installArgs(INSTALL_ARGS), {
           detached: true,
           stdio: "ignore",
           windowsHide: true,
@@ -569,7 +615,7 @@ class AppUpdater extends UpdaterCore {
     try {
       if (this.platform === "win32") {
         this._beginInstall();
-        const child = this.spawnImpl(this.state.file, winInstallArgs(QUIT_INSTALL_ARGS, this.execPath), {
+        const child = this.spawnImpl(this.state.file, this._installArgs(QUIT_INSTALL_ARGS), {
           detached: true,
           stdio: "ignore",
           windowsHide: true,
@@ -664,6 +710,8 @@ class AppUpdater extends UpdaterCore {
 }
 
 module.exports = {
+  misplacedReason,
+  defaultInstallDir,
   AppUpdater,
   INSTALL_ARGS,
   QUIT_INSTALL_ARGS,
