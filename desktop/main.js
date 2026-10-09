@@ -2205,12 +2205,12 @@ bridge.handle("local:masoraRepoToggle", (_e, { root, on } = {}) => {
   return { ok: true, repos: masora.setRepoOpted(dir, Boolean(on)) };
 });
 
-bridge.handle("local:tree", (_e, root) => {
+bridge.handle("local:tree", async (_e, root) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   // `origin`: a worktree's events are filed under its origin repo (hook.mjs),
   // so the tree matches them by the origin's name and fingerprint.
-  const r = localFs.listTree(dir, {});
+  const r = await localFs.listTreeAsync(dir, {});
   return r && r.ok ? { ...r, origin: agentSessions.originOf(dir) || dir } : r;
 });
 

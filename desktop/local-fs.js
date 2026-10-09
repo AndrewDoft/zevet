@@ -29,7 +29,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
 // Only for the temp-file suffix in `writeTextFile`. `node:crypto` is a builtin,
 // so the "no dependencies" rule above is intact; `Math.random` would also have
 // been fine for uniqueness, but a collision here would overwrite somebody's
@@ -132,23 +132,36 @@ function skipSet(opts) {
  * often intentionally tracked, and a file tree must not hide source merely
  * because a rule would ignore a new copy of it.
  */
+const IGNORED_ARGS = ["--others", "--ignored", "--exclude-standard", "--directory"];
+const ignoredSet = (out) =>
+  new Set(
+    String(out)
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((p) => p.replace(/\\/g, "/").replace(/\/+$/, "")),
+  );
+
 function ignoredByGit(root) {
   try {
-    return new Set(
-      execFileSync(
-        "git",
-        ["-C", root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
-      )
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map((p) => p.replace(/\\/g, "/").replace(/\/+$/, "")),
+    return ignoredSet(
+      execFileSync("git", ["-C", root, "ls-files", ...IGNORED_ARGS], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true }),
     );
   } catch {
     // A plain folder, a missing git executable, or a broken repository still
     // deserves a tree. Only a repository that answers gets Git filtering.
     return new Set();
   }
+}
+
+/** Same answer without parking the main process on the git child for the
+ *  hundreds of ms a big checkout takes: every window and agent event waits on
+ *  a sync call. */
+function ignoredByGitAsync(root) {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", root, "ls-files", ...IGNORED_ARGS], { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (err, out) =>
+      resolve(err ? new Set() : ignoredSet(out)),
+    );
+  });
 }
 
 function positiveInt(value, fallback) {
@@ -232,6 +245,19 @@ function byKindThenName(a, b) {
  * @returns {{ok:true,root:string,entries:object[],truncated:boolean}|{ok:false,error:string}}
  */
 function listTree(rootDir, opts = {}) {
+  return walkTree(rootDir, opts, ignoredByGit);
+}
+
+/** listTree with git's answer awaited rather than blocked on; the walk itself
+ *  is the same bounded lstat pass. */
+async function listTreeAsync(rootDir, opts = {}) {
+  const rooted = realRoot(rootDir);
+  if (!rooted.ok) return rooted;
+  const ignored = await ignoredByGitAsync(rooted.root);
+  return walkTree(rootDir, opts, () => ignored);
+}
+
+function walkTree(rootDir, opts, ignoredOf) {
   const options = opts || {};
   const maxEntries = positiveInt(options.maxEntries, DEFAULT_MAX_ENTRIES);
   const maxDepth = positiveInt(options.maxDepth, DEFAULT_MAX_DEPTH);
@@ -240,7 +266,7 @@ function listTree(rootDir, opts = {}) {
   const rooted = realRoot(rootDir);
   if (!rooted.ok) return rooted;
   const root = rooted.root;
-  const ignored = ignoredByGit(root);
+  const ignored = ignoredOf(root);
 
   const entries = [];
   let truncated = false;
@@ -271,7 +297,8 @@ function listTree(rootDir, opts = {}) {
 
       const abs = path.join(absDir, name);
       const rel = relDir ? `${relDir}/${name}` : name;
-      if (ignored.has(rel) || Array.from(ignored).some((ignoredPath) => rel.startsWith(ignoredPath + "/"))) continue;
+      // An ignored directory is skipped whole, so its children are never reached.
+      if (ignored.has(rel)) continue;
       let st;
       try {
         // lstat, NEVER stat. `stat` follows the link, so a symlink pointing at
@@ -789,6 +816,7 @@ function isProbablyRepo(dir) {
 
 module.exports = {
   listTree,
+  listTreeAsync,
   readTextFile,
   writeTextFile,
   isProbablyRepo,
