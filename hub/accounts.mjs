@@ -1206,6 +1206,22 @@ export class Accounts {
     return { ok: true, person: this.profile(r) };
   }
 
+  /** The signed-in person whose PROVEN emails include `email`, as a session-shaped ref ({provider, login, id}) that
+   *  `can`, `profile` and `namesOfSession` accept, or null. Creates and stores nothing (Masora's Forum acts as a person
+   *  without opening a session for every request). */
+  refByEmail(email) {
+    const r = this.#byEmail([String(email || "").trim().toLowerCase()])[0];
+    const i = r && idents(r).find((x) => x.id);
+    return i ? { provider: i.provider, login: i.login, id: i.id } : null;
+  }
+
+  /** `{emails, logins}` of the ONE person a board actor name belongs to; null when nobody, or more than one, goes by it. */
+  identityOfName(name) {
+    const n = String(name || "").toLowerCase().replace(/^@/, "");
+    const hits = this.#people().filter((r) => this.#namesOf(r).includes(n));
+    return hits.length === 1 ? { emails: [...emailsOf(hits[0])], logins: idents(hits[0]).map((i) => i.login) } : null;
+  }
+
   /** The one person a name (display, any login, any alias) belongs to. */
   #claimedBy(name) {
     const n = String(name).toLowerCase().replace(/^@/, "");
