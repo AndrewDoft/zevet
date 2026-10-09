@@ -23,8 +23,8 @@ import { sendInviteEmail, inviteMessage } from "./mailer.mjs";
 import { checkJoin, createInviteStore, MODES, INVITE_ID_RE, INVITE_SEALED_MAX } from "./session-share.mjs";
 import { initSentry } from "./sentry.mjs";
 import { agentsOf } from "../board/src/lib/agents.mjs";
-import { verifyAssertion, replayGuard, parseTeamMap, masoraAssertKey, mintMasoraAssertion } from "./masora-auth.mjs";
-import { docKeyOf, seal as sealFrame, open as openFrame, steerAad, cardAad, answerAad, cardText } from "./masora-bridge.mjs";
+import { verifyAssertion, replayGuard, parseTeamMap, masoraAssertKey, mintMasoraAssertion, bridgePublicKey, verifyBridge } from "./masora-auth.mjs";
+import { docKeyOf, seal as sealFrame, open as openFrame, steerAad, cardAad, answerAad, cardText, cardHashOf } from "./masora-bridge.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1041,7 +1041,12 @@ function createTeam(name) {
 /* ── Sign in with Masora (hub/masora-auth.mjs) ───────────────────────────── */
 const MASORA_SECRET = process.env.ZEVET_MASORA_SECRET || "";
 const MASORA_TEAMS = parseTeamMap(process.env.ZEVET_MASORA_TEAMS);
-const masoraJti = replayGuard();
+// Persisted next to the accounts so a restart does not reopen the replay window (single-use survives a crash).
+const masoraJti = replayGuard(() => Date.now(), path.join(TEAMS_DIR, "masora-signin-jti.json"));
+const bridgeJti = replayGuard(() => Date.now(), path.join(TEAMS_DIR, "masora-bridge-jti.json"));
+/** Masora -> hub bridge verification key (Ed25519, raw 32 bytes, base64). Masora holds the private half. */
+const BRIDGE_PUBLIC_KEY = bridgePublicKey(process.env.ZEVET_BRIDGE_PUBLIC_KEY);
+if (process.env.ZEVET_BRIDGE_PUBLIC_KEY && !BRIDGE_PUBLIC_KEY) console.error("zevet: ZEVET_BRIDGE_PUBLIC_KEY is not a base64 32-byte Ed25519 public key; the Masora bridge is off");
 /** Signs hub -> Masora assertions (POST /auth/masora/assertion). A separate Ed25519 key, never ZEVET_MASORA_SECRET. */
 const MASORA_ASSERT_KEY = masoraAssertKey(process.env.ZEVET_MASORA_ASSERT_KEY);
 if (process.env.ZEVET_MASORA_ASSERT_KEY && !MASORA_ASSERT_KEY) console.error("zevet: ZEVET_MASORA_ASSERT_KEY is not a base64 32-byte Ed25519 seed; sign-in to Masora is off");
@@ -1515,7 +1520,7 @@ function steerChannelsFor(team, acc, name) {
 }
 
 /** The body of POST /api/steer once the caller is known, shared with the Masora bridge. `[status, payload]`. */
-function steerCore(auth, body) {
+function steerCore(auth, body, via = "") {
   const acc = auth.accounts;
   const sess = auth.session;
     if (!body || typeof body !== "object" || Array.isArray(body)) return [400, { error: "expected a JSON object" }];
@@ -1533,7 +1538,7 @@ function steerCore(auth, body) {
     const from = (acc.profile(sess) || {}).name || sess.login;
     const policy = acc.policy.steer;
     const rec = { id, at: Date.now(), from, fromKey, to, session, repo: typeof body.repo === "string" ? body.repo.slice(0, 120) : "", status: "", reason: "" };
-    const tag = `${from} -> ${to}${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}`;
+    const tag = `${from} -> ${to}${auth.team === DEFAULT_TEAM ? "" : ` (team ${auth.team})`}${via ? ` via:${via}` : ""}`;
     if (policy === "off") {
       steerRemember(auth.team, { ...rec, status: "refused-by-policy" });
       console.log(`zevet: steer ${id} ${tag} refused: policy is off`);
@@ -1561,7 +1566,7 @@ function steerCore(auth, body) {
 }
 
 /** The body of POST /api/approval/answer once the caller is known and allowed. `[status, payload]`. */
-function approvalAnswerCore(auth, body) {
+function approvalAnswerCore(auth, body, via = "") {
   const acc = auth.accounts;
     if (!body || typeof body !== "object" || Array.isArray(body)) return [400, { error: "expected a JSON object" }];
     const sealed = typeof body.sealed === "string" ? body.sealed : "";
@@ -1582,7 +1587,7 @@ function approvalAnswerCore(auth, body) {
     approvalSet(auth.team, rec, { status: "answered", decision, by, via: "remote" });
     const msg = { id: rec.id, decision, by, sealed, confirm: acc.policy.approve !== "on" };
     for (const ch of channels) steerFrame(ch, "approval-answer", msg);
-    console.log(`zevet: approval ${rec.id} ${rec.from} <- ${by} ${decision}`);
+    console.log(`zevet: approval ${rec.id} ${rec.from} <- ${by} ${decision}${via ? ` via:${via}` : ""}`);
     return [200, { ok: true, id: rec.id, status: "answered", by }];
 }
 
@@ -1596,88 +1601,98 @@ function approvalAnswerCore(auth, body) {
  * seals on the member's behalf; the text is plaintext here only for that call.
  */
 async function masoraBridge(req, res, url) {
-  if (!MASORA_SECRET) return json(res, 503, { error: "Masora bridge is not configured" });
-  if (rateLimited(req)) return json(res, 429, { error: "too many attempts" });
-  const v = verifyAssertion(req.headers["x-masora-assertion"], MASORA_SECRET);
-  if (!v.claims || !masoraJti.take(v.claims.jti, v.claims.exp)) {
+  if (!BRIDGE_PUBLIC_KEY) return json(res, 503, { error: "bridge_unconfigured" });
+  const rawBody = req.method === "POST" ? await readBody(req, 16 * 1024).catch(() => null) : "";
+  if (rawBody === null) return json(res, 400, { error: "unreadable body" });
+  // The failure path alone is rate limited (like refuse()): a valid token is never blocked by earlier failures.
+  const fail = (error) => {
     authFailed(req, url);
-    return json(res, 401, { error: v.claims ? "already used" : v.error });
-  }
+    return rateLimited(req) ? json(res, 429, { error: "too many failed attempts from this address; try again in a few minutes" }) : json(res, 401, { error });
+  };
+  const v = verifyBridge(req.headers["x-masora-assertion"], BRIDGE_PUBLIC_KEY, { method: req.method, path: req.url, body: rawBody });
+  if (!v.claims) return fail(v.error);
+  if (!bridgeJti.take(v.claims.jti, v.claims.exp)) return fail("already used");
+  const emailHash = createHash("sha256").update(v.claims.email.toLowerCase()).digest("hex").slice(0, 12);
+  let teamSlug = "-";
+  // Every 403 / 404 is logged (never the token): team, email hash, reason.
+  const out = (status, payload) => {
+    if (status === 403 || status === 404) console.error(`zevet: masora bridge refused ${status} team=${teamSlug} email=${emailHash} ${req.method} ${url.pathname} reason=${payload.error || payload.status || ""}`);
+    return json(res, status, payload);
+  };
   const found = teamForMasoraWorkspace(v.claims.wid);
-  if (!found.team) return json(res, 404, { error: found.error || "this workspace has no team" });
+  if (!found.team) return out(404, { error: found.error || "this workspace has no team" });
+  teamSlug = found.team;
   const acc = teamAccounts.get(found.team);
+  if (acc.policy.masoraBridge !== "on") return out(403, { error: "bridge_off" }); // before the member is resolved
   const ref = acc.refByEmail(v.claims.email);
-  if (!ref) return json(res, 403, { error: "you are not a signed-in member of this team" });
+  if (!ref) return out(403, { error: "you are not a signed-in member of this team" });
   const auth = { team: found.team, accounts: acc, session: ref };
+  const parse = () => { try { return JSON.parse(rawBody); } catch { return null; } };
 
   if (url.pathname === "/masora/board" && req.method === "GET") {
     approvalSweep(auth.team);
+    // Card text is a remote-approval surface: only for a member who could answer it, on a team that allows answering.
+    const showCards = acc.policy.approve !== "off" && acc.can(ref, "approve");
     const open = new Map();
-    for (const rec of approvalMap(auth.team).values()) {
+    const key = showCards ? docKeyOf(acc.secret) : null;
+    for (const rec of showCards ? approvalMap(auth.team).values() : []) {
       if (rec.status !== "open" || open.has(rec.session)) continue;
-      const key = docKeyOf(acc.secret);
       let text = "";
       try {
         text = cardText(JSON.parse(openFrame(key, cardAad(rec), rec.sealed)));
       } catch (err) {
         console.error(`zevet: masora board: approval ${rec.id} card did not open (${err.message})`);
       }
-      open.set(rec.session, { id: rec.id, text });
+      open.set(rec.session, { id: rec.id, text, cardHash: cardHashOf(rec.id, text) });
     }
     const snap = boards.get(auth.team).snapshot(acc.actorResolver());
-    const agents = snap.agents.map((a) => ({ ...a, ...(acc.identityOfName(a.actor) || { emails: [], logins: [] }), approval: open.get(a.session) || null }));
-    return json(res, 200, { now: snap.now, agents, events: snap.events });
+    const agents = snap.agents.map((a) => ({ ...a, approval: open.get(a.session) || null }));
+    return out(200, { now: snap.now, agents, events: snap.events });
   }
 
   if (url.pathname === "/masora/steer" && req.method === "POST") {
     const denied = roleRefusal(auth, "steer");
-    if (denied) return json(res, 403, denied);
-    let body = null;
-    try {
-      body = JSON.parse(await readBody(req, 16 * 1024));
-    } catch {
-      return json(res, 400, { error: "expected JSON" });
-    }
-    const text = body && typeof body.text === "string" ? body.text : "";
-    const to = body && typeof body.actor === "string" ? body.actor.trim().slice(0, 40) : "";
-    const session = body && typeof body.session === "string" ? body.session.slice(0, 64) : "";
+    if (denied) return out(403, denied);
+    const body = parse();
+    if (!body) return out(400, { error: "expected JSON" });
+    const text = typeof body.text === "string" ? body.text : "";
+    const to = typeof body.actor === "string" ? body.actor.trim().slice(0, 40) : "";
+    const session = typeof body.session === "string" ? body.session.slice(0, 64) : "";
     const key = docKeyOf(acc.secret);
-    if (!text || text.length > 4000 || !to || !session) return json(res, 400, { error: "a steer needs actor, session and text (at most 4000 characters)" });
-    if (!key) return json(res, 503, { error: "this team has no usable secret" });
+    if (!text || text.length > 4000 || !to || !session) return out(400, { error: "a steer needs actor, session and text (at most 4000 characters)" });
+    if (!key) return out(503, { error: "this team has no usable secret" });
     const id = randomUUID();
-    const [status, payload] = steerCore(auth, { id, to, session, repo: typeof body.repo === "string" ? body.repo : "", sealed: sealFrame(key, steerAad({ id, to, session }), text) });
-    return json(res, status, payload);
+    const [status, payload] = steerCore(auth, { id, to, session, repo: typeof body.repo === "string" ? body.repo : "", sealed: sealFrame(key, steerAad({ id, to, session }), text) }, "masora-bridge");
+    return out(status, payload);
   }
 
   if (url.pathname === "/masora/approval" && req.method === "POST") {
     const denied = roleRefusal(auth, "approve");
-    if (denied) return json(res, 403, denied);
-    if (acc.policy.approve === "off") return json(res, 403, { ok: false, status: "refused-by-policy", error: "answering teammates' approvals is turned off for this team" });
-    let body = null;
-    try {
-      body = JSON.parse(await readBody(req, 4 * 1024));
-    } catch {
-      return json(res, 400, { error: "expected JSON" });
-    }
-    const decision = body && (body.decision === "allow" || body.decision === "deny") ? body.decision : "";
+    if (denied) return out(403, denied);
+    if (acc.policy.approve === "off") return out(403, { ok: false, status: "refused-by-policy", error: "answering teammates' approvals is turned off for this team" });
+    const body = parse();
+    if (!body) return out(400, { error: "expected JSON" });
+    const decision = body.decision === "allow" || body.decision === "deny" ? body.decision : "";
     approvalSweep(auth.team);
-    const rec = body && typeof body.id === "string" ? approvalMap(auth.team).get(body.id) : null;
-    if (!decision) return json(res, 400, { error: "decision must be allow or deny" });
-    if (!rec) return json(res, 404, { error: "no such approval" });
+    const rec = typeof body.id === "string" ? approvalMap(auth.team).get(body.id) : null;
+    if (!decision) return out(400, { error: "decision must be allow or deny" });
+    if (!rec) return out(404, { error: "no such approval" });
     const key = docKeyOf(acc.secret);
     let sealed;
     try {
       const card = JSON.parse(openFrame(key, cardAad(rec), rec.sealed));
+      // The human approved the card Masora showed; refuse unless it is byte-for-byte the one on the hub now.
+      if (typeof body.cardHash !== "string" || body.cardHash !== cardHashOf(rec.id, cardText(card))) return out(409, { error: "card_changed" });
       sealed = sealFrame(key, answerAad({ id: rec.id, session: rec.session, hash: card.hash }), JSON.stringify({ nonce: card.nonce, hash: card.hash, decision }));
     } catch (err) {
       console.error(`zevet: masora approval ${rec.id}: card did not open (${err.message})`);
-      return json(res, 409, { error: "that approval card cannot be answered from here" });
+      return out(409, { error: "that approval card cannot be answered from here" });
     }
-    const [status, payload] = approvalAnswerCore(auth, { id: rec.id, decision, sealed });
-    return json(res, status, payload);
+    const [status, payload] = approvalAnswerCore(auth, { id: rec.id, decision, sealed }, "masora-bridge");
+    return out(status, payload);
   }
 
-  return json(res, 404, { error: "no such bridge route" });
+  return out(404, { error: "no such bridge route" });
 }
 
 /** Open steer channels of the person `fromKey` (their primary login). */
