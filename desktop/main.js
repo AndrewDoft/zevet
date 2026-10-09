@@ -3786,6 +3786,15 @@ function startMasoraRuns() {
     isRelaunching: () => relaunching,
   });
 }
+const masoraBrowserTasks = require("./masora-browser-tasks.js");
+/** Masora `browser.task` (masora-browser-tasks.js), off unless `browserTasks` is set in masora.json. Called once from whenReady. */
+bridge.handle("zevet:masoraBrowserTasksPoll", (_e, arg) => masora.setBrowserTasksPoll(Boolean(arg && arg.on)));
+function startMasoraBrowserTasks() {
+  return masoraBrowserTasks.startMasoraBrowserTasks({
+    masora, safeStorage,
+    setOutcome: (id, outcome) => toBoard("local:masoraBrowserTask", { id, outcome }),
+  });
+}
 /** MCP run id -> the folder that run was started in (agent-tools.js record_memory). */
 const runRoots = new Map();
 
@@ -5518,6 +5527,7 @@ app.whenReady().then(async () => {
   startScheduler();
   startMasoraPush();
   startMasoraRuns();
+  startMasoraBrowserTasks();
   startReportingHealth();
   // After the window, never before it: an update check that delayed the
   // board would be a worse app for a feature nobody asked to wait on.

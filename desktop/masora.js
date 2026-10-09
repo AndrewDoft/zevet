@@ -100,6 +100,8 @@ function readConfig() {
     chat: raw.chat === true,
     // Claim and run Masora's queued agent runs here (masora-runs.js). Off until the person turns it on.
     runs: raw.runs === true,
+    // Run Masora's approved `browser.task` in a dedicated headless browser profile (masora-browser-tasks.js). Off until the person turns it on.
+    browserTasks: raw.browserTasks === true,
     member: canonicalName || canonicalEmail || legacyMember,
     // The true account email of the stored credential (heartbeat `masora.account_email`).
     account_email: canonicalEmail || (legacyMember.includes("@") ? legacyMember : ""),
@@ -113,6 +115,11 @@ function setChatPush(on) {
 
 function setRunsPoll(on) {
   writeRaw({ ...readRaw(), runs: on === true });
+  return readConfig();
+}
+
+function setBrowserTasksPoll(on) {
+  writeRaw({ ...readRaw(), browserTasks: on === true });
   return readConfig();
 }
 
@@ -333,6 +340,7 @@ module.exports = {
   setRepoOpted,
   setChatPush,
   setRunsPoll,
+  setBrowserTasksPoll,
   MasoraPair,
   MasoraPairError,
   postJson,
