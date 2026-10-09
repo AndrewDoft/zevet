@@ -2470,3 +2470,14 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 - **Hub** redeployed from the tag in place; `BUILD_ID` `b35d91fac7b2` -> `fa532dd78407`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-105 — Shipped: 0.2.140, Faster board, real taskbar icon, model labels, update self-repair (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-09).** 17 commit(s) past v0.2.139.
+
+- **Shell release.** desktop/app-update.js, desktop/package.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.140) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.140`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `cc640c81…` (153150584 B), dmg `3f781c74…` (205327127 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2140 on both platforms. Manifests win `7ec249c4…`, mac `49f92574…`. Delta: 4 new blob(s) uploaded. 98 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `fa532dd78407` -> `0b219ae3ff7c`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
