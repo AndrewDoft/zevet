@@ -67,7 +67,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn, execFile } = require("node:child_process");
+const { spawn, execFile, execFileSync } = require("node:child_process");
 const kit = require("@masora/desktop-kit");
 const { UPDATE_DOMAIN, PINNED_KEYS } = require("./update-signing.js");
 const { STATE_FILE: ROLLBACK_FILE } = require("./update-rollback.js");
@@ -165,27 +165,42 @@ function misplacedReason(execPath) {
   const w = path.win32;
   const dir = w.dirname(execPath);
   if (w.normalize(dir).toLowerCase().split(w.sep).includes("node_modules")) return `${dir} is inside node_modules`;
-  for (let d = dir, i = 0; i < 12; i++) {
-    try {
-      if (fs.existsSync(w.join(d, ".git"))) return `${dir} is inside a git checkout (${d})`;
-    } catch {
-      // unreadable ancestor: treat as not a checkout
-    }
-    const up = w.dirname(d);
-    if (up === d) break;
-    d = up;
-  }
   return null;
 }
 
 /** Where a misplaced copy's update goes instead: the installer's own default, per-machine. */
 function defaultInstallDir(env = process.env) {
-  return path.win32.join(env.ProgramFiles || "C:\Program Files", "zevet");
+  return path.win32.join(env.ProgramFiles || "C:\\Program Files", "zevet");
 }
 
-function winInstallLocation(execPath) {
+/** electron-builder's uninstall key for zevet (same GUID under HKLM and HKCU). */
+const UNINSTALL_GUID = "3e51149f-9c15-5e34-ad48-d31d2859aef2";
+
+/**
+ * The scope zevet is REGISTERED under: "/currentuser" only when there is a per-user entry and no per-machine
+ * one; otherwise "/allusers" (Andrew's real install is HKLM, Program Files). A misplaced copy must fall back
+ * to the install it replaces, or per-user people get UAC / a silent failure and never update.
+ */
+function registeredScope(run = execFileSync) {
+  const has = (hive) => {
+    try {
+      run("reg", ["query", `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${UNINSTALL_GUID}`], { stdio: "ignore", windowsHide: true, timeout: 5000 });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (has("HKLM")) return "/allusers";
+  return has("HKCU") ? "/currentuser" : "/allusers";
+}
+
+function winInstallLocation(execPath, opts = {}) {
   const bad = misplacedReason(execPath);
-  if (bad) return { dir: defaultInstallDir(), scope: "/allusers", misplaced: bad };
+  if (bad) {
+    const scope = (opts.registeredScope || registeredScope)();
+    const dir = scope === "/currentuser" && process.env.LOCALAPPDATA ? path.win32.join(process.env.LOCALAPPDATA, "Programs", "zevet") : defaultInstallDir();
+    return { dir, scope, misplaced: bad };
+  }
   // path.win32, not the ambient `path`: this logic is Windows-only by
   // definition (NSIS, %LOCALAPPDATA%, backslashes), but the SAME test file
   // that exercises it runs on both the Windows and the macOS CI leg (see
@@ -212,8 +227,8 @@ function winInstallLocation(execPath) {
  * this codebase that needs `/D=` avoids it for exactly this reason; this one
  * cannot, so it takes the verbatim-arguments route instead).
  */
-function winInstallArgs(baseArgs, execPath) {
-  const { scope, dir } = winInstallLocation(execPath);
+function winInstallArgs(baseArgs, execPath, opts) {
+  const { scope, dir } = winInstallLocation(execPath, opts);
   return [...baseArgs, scope, `/D=${dir}`];
 }
 
@@ -345,6 +360,7 @@ class AppUpdater extends UpdaterCore {
     this.execPath = o.execPath || process.execPath;
     /** app.isPackaged. An unpackaged run (`electron .`, every test harness) is a dev copy: it never installs. */
     this.isPackaged = o.isPackaged !== false;
+    this.registeredScope = o.registeredScope; // injectable for tests; defaults to reading the registry
     /** The running AppImage file ($APPIMAGE); only meaningful on linux. */
     this.appImagePath = o.appImagePath !== undefined ? o.appImagePath : process.env.APPIMAGE || null;
     this.openImpl = o.openImpl || null; // set by main.js to shell.openPath
@@ -360,9 +376,10 @@ class AppUpdater extends UpdaterCore {
   /** winInstallArgs for this process, or a throw when it must not install at all (an unpackaged dev run). */
   _installArgs(base) {
     if (!this.isPackaged) throw new Error("this is an unpackaged dev run; it never installs an update");
-    const loc = winInstallLocation(this.execPath);
-    if (loc.misplaced) this.log(`running from a non-install location (${loc.misplaced}); installing to ${loc.dir} instead and relaunching from there`);
-    return winInstallArgs(base, this.execPath);
+    const opts = { registeredScope: this.registeredScope };
+    const loc = winInstallLocation(this.execPath, opts);
+    if (loc.misplaced) this.log(`running from a non-install location (${loc.misplaced}); installing to ${loc.dir} (${loc.scope}) instead and relaunching from there`);
+    return winInstallArgs(base, this.execPath, opts);
   }
 
   /**
@@ -710,6 +727,7 @@ class AppUpdater extends UpdaterCore {
 }
 
 module.exports = {
+  registeredScope,
   misplacedReason,
   defaultInstallDir,
   AppUpdater,

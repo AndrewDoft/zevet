@@ -515,3 +515,52 @@ test("ship finds its own worktree however git spelled the path (Windows is case-
   assert.equal(samePath("C:/dev/Github/zevet-ship", "C:/dev/GitHub/zevet-ship", "win32"), true);
   assert.equal(samePath("/srv/Zevet", "/srv/zevet", "linux"), false);
 });
+
+// ── the payload step's run(): icons first, canary failure non-fatal ──────────────────────────────────
+describe("payload step run()", () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const raw = publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64");
+  const signer = { pem: privateKey.export({ format: "pem", type: "pkcs8" }), keyId: "zevet-test" };
+
+  function rig(t, { canaryFails }) {
+    const d = tempDir("zevet-ship-run-"); t.after(() => d.cleanup());
+    publish(t, "stable", "0.2.94", 2094, d.dir, signer); // what the (fake) stable upload "put on the host"
+    const inner = host(d.dir);
+    const runs = [], logs = [];
+    const wt = path.join(d.dir, "wt");
+    const io = {
+      log: (m) => logs.push(m),
+      key: () => "k",
+      git(args) { if (args[0] === "ls-remote") return "sha	refs/tags/v0.2.94"; if (args[0] === "worktree" && args[1] === "add") mkdirSync(path.join(wt, "desktop", "node_modules"), { recursive: true }), mkdirSync(path.join(wt, "node_modules"), { recursive: true }); return ""; },
+      run(cmd, args, o = {}) {
+        runs.push({ cmd, args, cwd: o.cwd });
+        if (args.includes("--channel") && args.includes("canary") && canaryFails) throw new Error("make-feed exploded");
+        if (args.includes("--channel") && args.includes("stable")) mkdirSync(path.join(args[args.indexOf("--out") + 1], "p", "b"), { recursive: true }), mkdirSync(path.join(args[args.indexOf("--out") + 1], "p", "m"), { recursive: true });
+        return { stdout: "" };
+      },
+      scp() {}, ssh: () => "",
+      https: (url, o) => inner.https(url, o),
+    };
+    const ctx = { io, root: ROOT, keys: { "zevet-test": raw }, version: "0.2.94", tag: "v0.2.94", d: { kind: "payload", hub: false, base: "0.2.93", shell: [], hubFiles: [] }, facts: {}, work: d.dir, wt };
+    const step = buildSteps(ctx).find((s) => s.name === "payload");
+    return { ctx, step, runs, logs };
+  }
+
+  test("make-icon runs in desktop/ in the ship worktree before the first make-feed", async (t) => {
+    const r = rig(t, { canaryFails: true });
+    await r.step.run(r.ctx);
+    const icon = r.runs.findIndex((c) => c.args.includes("make-icon.mjs"));
+    const feed = r.runs.findIndex((c) => c.args.some((a) => String(a).endsWith("make-feed.mjs")));
+    assert.ok(icon >= 0 && icon < feed, JSON.stringify(r.runs.map((c) => c.args[0])));
+    assert.equal(r.runs[icon].cwd, path.join(r.ctx.wt, "desktop"));
+  });
+  test("a canary failure after stable is live logs loudly, does not throw, and the step still reads done", async (t) => {
+    const r = rig(t, { canaryFails: true });
+    await r.step.run(r.ctx);
+    assert.ok(r.logs.some((l) => /CANARY PULSES NOT PUBLISHED/.test(l) && /make-feed exploded/.test(l)), r.logs.join("\n"));
+    assert.equal(r.ctx.canarySkipped, true);
+    assert.equal(await r.step.done(r.ctx), true);
+    // a fresh process (no in-memory skip) must see the step as NOT done, so a re-run retries the canary
+    assert.equal(await buildSteps({ ...r.ctx, canarySkipped: undefined }).find((s) => s.name === "payload").done(), false);
+  });
+});

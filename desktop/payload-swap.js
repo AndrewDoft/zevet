@@ -131,13 +131,13 @@ function confirmWhenHealthy({ payload, loaded, apiAnswers, app, log, timeoutMs, 
 
 /**
  * The canary channel was retired 2026-09-30; one channel exists. An install whose payload `channel` file
- * says anything else (orphaned canary installs) is moved to stable, so the next launch reads the stable
+ * says canary (orphaned canary installs) is moved to stable, so the next launch reads the stable
  * pulse. Returns true when it rewrote the file. Never throws: a read-only profile just stays where it is.
  */
 function settleChannel(root, fs = require("node:fs"), path = require("node:path")) {
   const file = path.join(root, "channel");
   try {
-    if (fs.readFileSync(file, "utf8").trim() === "stable") return false;
+    if (fs.readFileSync(file, "utf8").trim() !== "canary") return false; // only the retired channel; other files are left alone
     fs.writeFileSync(file, "stable" + String.fromCharCode(10));
     return true;
   } catch {
@@ -151,10 +151,17 @@ function settleChannel(root, fs = require("node:fs"), path = require("node:path"
  * (channel, high_seq, running build, last status). Errors pass through untouched.
  * ponytail: a "none" result carries no build, so a pulse ignored for a low seq is logged but cannot start the stuck clock.
  */
-function observePayload(payload, { log, report, now = Date.now, stuckMs = 24 * 60 * 60 * 1000 }) {
+function observePayload(payload, { log, report, now = Date.now, stuckMs = 24 * 60 * 60 * 1000, statePath = null, fs = require("node:fs") }) {
   const orig = payload.check.bind(payload);
   const newer = (a, b) => { const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
-  let lastKey = null, since = null, reported = false;
+  // Only a pulse that is broken for this client is a report: `refused` at once, `needs-shell` once it outlasts
+  // stuckMs. `paused` and `not-in-rollout` are the operator's choices and never report.
+  const reportable = (status) => status === "refused" || status === "needs-shell";
+  // The reported build survives a relaunch, or every restart of a stuck client would fire again.
+  let mem = null;
+  const reportedBuild = () => { try { return (statePath && JSON.parse(fs.readFileSync(statePath, "utf8")).reported) || mem; } catch { return mem; } };
+  const markReported = (build) => { mem = build; try { if (statePath) fs.writeFileSync(statePath, JSON.stringify({ reported: build })); } catch { /* read-only profile: may re-fire next launch */ } };
+  let lastKey = null, since = null;
   payload.check = async (...a) => {
     const r = await orig(...a);
     const key = r.status === "staged" ? null : `${r.status}|${r.build || ""}|${r.reason || ""}`;
@@ -164,15 +171,16 @@ function observePayload(payload, { log, report, now = Date.now, stuckMs = 24 * 6
     }
     let running = null;
     try { running = payload.resolve().build; } catch { /* no resolvable build: no stuck clock */ }
-    if (r.status !== "staged" && r.build && running && newer(r.build, running)) {
+    if (reportable(r.status) && r.build && running && newer(r.build, running)) {
       since = since ?? now();
-      if (!reported && now() - since > stuckMs) {
-        reported = true;
+      const due = r.status === "refused" || now() - since > stuckMs;
+      if (due && reportedBuild() !== r.build) {
+        markReported(r.build);
         let highSeq = null;
         try { highSeq = payload._highSeqInfo().seq; } catch { /* private to the kit; absent is fine */ }
         report({ channel: payload.channel, high_seq: highSeq, running, pulse_build: r.build, last_status: r.status });
       }
-    } else { since = null; reported = false; }
+    } else since = null;
     return r;
   };
 }

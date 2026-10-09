@@ -324,11 +324,19 @@ describe("settleChannel: orphaned canary installs move to stable", () => {
     if (content !== null) fs.writeFileSync(path.join(root, "channel"), content);
     return root;
   };
-  test("canary (or anything not stable) is rewritten to stable", () => {
-    for (const c of ["canary\n", "canary", "beta", ""]) {
+  test("canary is rewritten to stable", () => {
+    for (const c of ["canary\n", "canary"]) {
       const root = mk(c);
       assert.equal(settleChannel(root), true);
       assert.equal(fs.readFileSync(path.join(root, "channel"), "utf8").trim(), "stable");
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test("any other channel file (a dev channel) is left alone", () => {
+    for (const c of ["beta\n", "dev-andrew", ""]) {
+      const root = mk(c);
+      assert.equal(settleChannel(root), false);
+      assert.equal(fs.readFileSync(path.join(root, "channel"), "utf8"), c);
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -364,8 +372,33 @@ describe("observePayload: ignored pulses are loud", () => {
     r.at(1500); await r.payload.check(); r.at(2500); await r.payload.check();
     assert.deepEqual(r.reports, [{ channel: "stable", high_seq: 2100, running: "0.2.100", pulse_build: "0.2.139", last_status: "needs-shell" }]);
   });
+  test("paused and not-in-rollout are the operator's choice: never reported, however long", async () => {
+    const r = rig([{ status: "paused", build: "0.2.139" }, { status: "not-in-rollout", build: "0.2.139" }, { status: "paused", build: "0.2.139" }, { status: "not-in-rollout", build: "0.2.139" }]);
+    for (const at of [0, 5000, 10000, 20000]) { r.at(at); await r.payload.check(); }
+    assert.deepEqual(r.reports, []);
+  });
+  test("refused reports at once, once; the reported build survives a relaunch", async () => {
+    const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "zevet-stuck-")), "stuck-reported.json");
+    const mkRig = () => {
+      const reports = [];
+      const payload = { channel: "stable", check: async () => ({ status: "refused", build: "0.2.139", reason: "bad sig" }), resolve: () => ({ build: "0.2.100" }), _highSeqInfo: () => ({ seq: 1 }) };
+      observePayload(payload, { log() {}, report: (x) => reports.push(x), now: () => 0, stuckMs: 1000, statePath: f });
+      return { payload, reports };
+    };
+    const a = mkRig();
+    await a.payload.check(); await a.payload.check();
+    assert.equal(a.reports.length, 1);
+    const b = mkRig(); // a relaunch: fresh closure, same file
+    await b.payload.check();
+    assert.deepEqual(b.reports, []);
+  });
+  test("main.js reports with a fingerprint and a state file", () => {
+    const main = fs.readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
+    assert.ok(main.includes('fingerprint: ["payload-stuck"'));
+    assert.ok(main.includes("stuck-reported.json"));
+  });
   test("staging resets the clock; errors pass through", async () => {
-    const r = rig([{ status: "paused", build: "0.2.139" }, { status: "staged", build: "0.2.139" }, { status: "paused", build: "0.2.139" }, new Error("down")]);
+    const r = rig([{ status: "needs-shell", build: "0.2.139" }, { status: "staged", build: "0.2.139" }, { status: "needs-shell", build: "0.2.139" }, new Error("down")]);
     await r.payload.check(); r.at(900); await r.payload.check(); r.at(1500); await r.payload.check();
     assert.equal(r.reports.length, 0);
     await assert.rejects(r.payload.check(), /down/);

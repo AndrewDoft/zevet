@@ -4481,7 +4481,8 @@ if (bootShell.payload) {
   } catch (err) { bootShell.log(`payload channel check failed: ${err && err.message || err}`); }
   observePayload(bootShell.payload, {
     log: (m) => bootShell.log(m),
-    report: (extra) => Sentry.captureMessage("payload stuck: a newer build has not staged for 24h", { level: "warning", tags: { channel: String(extra.channel) }, extra }),
+    statePath: path.join(bootShell.require("./payload-config.js").payloadRoot(), "stuck-reported.json"),
+    report: (extra) => Sentry.captureMessage("payload stuck: a newer build has not staged", { level: "warning", tags: { channel: String(extra.channel), status: String(extra.last_status) }, fingerprint: ["payload-stuck", String(extra.channel), String(extra.last_status)], extra }),
   });
   const swapper = createSwapper({
     payload: bootShell.payload,

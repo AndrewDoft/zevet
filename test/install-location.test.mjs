@@ -11,7 +11,7 @@ import { createRequire } from "node:module";
 import { tempDir, ROOT } from "./helpers.mjs";
 
 const require = createRequire(import.meta.url);
-const { AppUpdater, winInstallLocation, winInstallArgs, misplacedReason, defaultInstallDir, INSTALL_ARGS } = require(path.join(ROOT, "desktop", "app-update.js"));
+const { AppUpdater, winInstallLocation, winInstallArgs, misplacedReason, defaultInstallDir, registeredScope, INSTALL_ARGS } = require(path.join(ROOT, "desktop", "app-update.js"));
 const win = (...p) => path.win32.join(...p);
 
 describe("a copy running from a non-install location installs to the default dir", () => {
@@ -22,19 +22,43 @@ describe("a copy running from a non-install location installs to the default dir
     assert.equal(misplacedReason(win("C:", "Program Files", "zevet", "zevet.exe")), null);
   });
 
-  test("winInstallArgs sends it to <ProgramFiles>\zevet, /allusers, /D= last", () => {
-    const args = winInstallArgs(INSTALL_ARGS, devExe);
-    assert.deepEqual(args, [...INSTALL_ARGS, "/allusers", `/D=${defaultInstallDir()}`]);
-    assert.ok(!args.at(-1).includes("node_modules"));
-    assert.equal(winInstallLocation(devExe).dir, defaultInstallDir());
+  test("defaultInstallDir is the literal C:-Program Files-zevet when ProgramFiles is unset", () => {
+    assert.equal(defaultInstallDir({}), "C:\\Program Files\\zevet");
+    assert.equal(defaultInstallDir({ ProgramFiles: "D:\\PF" }), "D:\\PF\\zevet");
   });
 
-  test("a git checkout or worktree is misplaced", { skip: process.platform !== "win32" && "win32 paths" }, (t) => {
-    const d = tempDir("zevet checkout ");
-    t.after(d.cleanup);
-    mkdirSync(path.join(d.dir, "dist"), { recursive: true });
-    writeFileSync(path.join(d.dir, ".git"), "gitdir: elsewhere\n"); // a worktree's .git is a file
-    assert.match(misplacedReason(path.join(d.dir, "dist", "zevet.exe")), /git checkout/);
+  test("registered per-machine (Andrew's HKLM install): /allusers, Program Files, /D= last", () => {
+    const args = winInstallArgs(INSTALL_ARGS, devExe, { registeredScope: () => "/allusers" });
+    assert.deepEqual(args, [...INSTALL_ARGS, "/allusers", `/D=${defaultInstallDir()}`]);
+    assert.ok(!args.at(-1).includes("node_modules"));
+  });
+
+  test("registered per-user: a misplaced copy stays /currentuser in %LOCALAPPDATA%-Programs-zevet", (t) => {
+    const lad = process.env.LOCALAPPDATA;
+    process.env.LOCALAPPDATA = win("C:", "Users", "kai", "AppData", "Local");
+    t.after(() => { process.env.LOCALAPPDATA = lad; });
+    const args = winInstallArgs(INSTALL_ARGS, devExe, { registeredScope: () => "/currentuser" });
+    assert.deepEqual(args, [...INSTALL_ARGS, "/currentuser", `/D=${win("C:", "Users", "kai", "AppData", "Local", "Programs", "zevet")}`]);
+  });
+
+  test("registeredScope reads HKLM first, then HKCU, else /allusers", () => {
+    const only = (hive) => (cmd, args) => { if (!args[1].startsWith(hive)) throw new Error("not found"); };
+    assert.equal(registeredScope(only("HKLM")), "/allusers");
+    assert.equal(registeredScope(only("HKCU")), "/currentuser");
+    assert.equal(registeredScope(only("none")), "/allusers");
+  });
+
+  test("a normal per-user install under a home dir with `git init` (dotfiles) is NOT misplaced", { skip: process.platform !== "win32" && "win32 paths" }, (t) => {
+    const home = tempDir("zevet home ");
+    t.after(home.cleanup);
+    writeFileSync(path.join(home.dir, ".git"), "gitdir: elsewhere");
+    const lad = process.env.LOCALAPPDATA;
+    process.env.LOCALAPPDATA = path.join(home.dir, "AppData", "Local");
+    t.after(() => { process.env.LOCALAPPDATA = lad; });
+    const exe = path.join(process.env.LOCALAPPDATA, "Programs", "zevet", "zevet.exe");
+    assert.equal(misplacedReason(exe), null);
+    const loc = winInstallLocation(exe, { registeredScope: () => { throw new Error("must not be consulted"); } });
+    assert.deepEqual([loc.scope, loc.dir, loc.misplaced], ["/currentuser", path.win32.dirname(exe), undefined]);
   });
 
   test("the updater logs why and spawns the installer at the default dir", async (t) => {
@@ -45,7 +69,7 @@ describe("a copy running from a non-install location installs to the default dir
     const calls = [];
     const logs = [];
     const u = new AppUpdater({
-      currentVersion: "0.1.2", platform: "win32", dir: d.dir, execPath: devExe, log: (m) => logs.push(m),
+      currentVersion: "0.1.2", platform: "win32", dir: d.dir, execPath: devExe, registeredScope: () => "/allusers", log: (m) => logs.push(m),
       spawnImpl: (...a) => (calls.push(a), { unref() {} }), quitImpl() {},
     });
     u.state.phase = "ready";
