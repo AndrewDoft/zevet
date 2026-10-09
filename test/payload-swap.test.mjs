@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { createSwapper, confirmWhenHealthy, awaitHealthy, busyReason, AGENT_QUIET_MS, INPUT_QUIET_MS } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "payload-swap.js"));
+const { createSwapper, confirmWhenHealthy, awaitHealthy, busyReason, WINDOWLESS_ARG, AGENT_QUIET_MS, INPUT_QUIET_MS } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "payload-swap.js"));
 
 const NOW = 10_000_000;
 const MIN = 60_000;
@@ -53,8 +53,13 @@ describe("busyReason: a swap never happens under work", () => {
     assert.equal(busyReason(idle({ lastInputAt: () => NOW, inputQuietMs: 0 })), null);
     assert.match(busyReason(idle({ lastInputAt: () => NOW - 1000, inputQuietMs: 5000 })), /last 2 minutes/);
   });
-  test("no window (a macOS app in the dock) blocks it: a relaunch would open one", () => {
+  test("no window blocks it off macOS", () => {
     assert.match(busyReason(idle({ windows: () => 0 })), /no window/);
+  });
+  test("no window on macOS (windowless) does not block, but agents and chat still do", () => {
+    assert.equal(busyReason(idle({ windows: () => 0, windowless: true })), null);
+    assert.match(busyReason(idle({ windows: () => 0, windowless: true, working: () => 1 })), /mid-turn/);
+    assert.match(busyReason(idle({ windows: () => 0, windowless: true, chatBusy: () => true })), /chat turn/);
   });
 });
 
@@ -87,6 +92,30 @@ describe("createSwapper", () => {
     assert.equal(await swapper.tick(), "swapped");
     assert.equal(seen[1], null, "the update UI is told the wait is over");
     assert.deepEqual(calls, ["activate", "release", "relaunch", "exit 0"]);
+  });
+  test("macOS, zero windows, idle: swaps, and the relaunch carries the windowless flag so no window opens", async () => {
+    let args = "unset";
+    const { swapper, calls } = fakes({ windows: () => 0, windowless: true });
+    swapper.tick; // fakes() owns the app; rebuild with a capturing one
+    const calls2 = [];
+    const s = createSwapper({
+      payload: { staged: () => ({ build: "0.2.90" }), activate: async () => { calls2.push("activate"); return { build: "0.2.90" }; }, on() {} },
+      app: { relaunch: (o) => { args = o && o.args; calls2.push("relaunch"); }, exit: () => calls2.push("exit") },
+      release() {}, log: () => {}, ...idle({ windows: () => 0 }), windowless: true, now: () => NOW, setIntervalImpl: () => ({}), clearIntervalImpl() {},
+    });
+    assert.equal(await s.tick(), "swapped");
+    assert.deepEqual(calls2, ["activate", "relaunch", "exit"]);
+    assert.ok(args.includes(WINDOWLESS_ARG));
+    assert.equal(calls.length, 0);
+  });
+  test("macOS, zero windows, agent mid-turn: waits", async () => {
+    const { swapper, calls } = fakes({ windows: () => 0, windowless: true, working: () => 1 });
+    assert.match(await swapper.tick(), /mid-turn/);
+    assert.deepEqual(calls, []);
+  });
+  test("off macOS, zero windows: still waits", async () => {
+    const { swapper } = fakes({ windows: () => 0 });
+    assert.match(await swapper.tick(), /no window/);
   });
   test("idle and staged: activate, release the app's children, relaunch, exit 0 — in that order", async () => {
     const { swapper, calls } = fakes();

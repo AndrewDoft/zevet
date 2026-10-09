@@ -61,7 +61,7 @@ const { AppUpdater, loopbackProofKeys, INSTALL_ARGS, winInstallArgs } = bootShel
 const { createRollback } = bootShell.require("./update-rollback.js");
 const { familyIndexKeys } = bootShell.require("./update-signing.js");
 const runtime = require("./runtime.js");
-const { createSwapper, confirmWhenHealthy, awaitHealthy } = require("./payload-swap.js");
+const { createSwapper, confirmWhenHealthy, awaitHealthy, WINDOWLESS_ARG } = require("./payload-swap.js");
 const { createIdleInstaller, CHECK_MS: IDLE_CHECK_MS } = require("./idle-install.js");
 const askServer = require("./ask-server.js");
 const agentApi = require("./agent-api.js");
@@ -4418,6 +4418,7 @@ const useGate = {
 };
 /** Resolves when any window has finished a load attempt (load OR fail: an unreachable hub is not the build's fault). */
 const firstWindowLoaded = new Promise((resolve) => {
+  if (process.argv.includes(WINDOWLESS_ARG)) resolve(); // no window on a macOS swap boot
   app.on("browser-window-created", (_e, w) => w.webContents.once("did-stop-loading", resolve));
 });
 function releaseForRelaunch() {
@@ -4453,6 +4454,7 @@ if (bootShell.payload) {
     payload: bootShell.payload,
     app,
     ...useGate,
+    windowless: process.platform === "darwin",
     inputQuietMs: process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS ? Number(process.env.ZEVET_PAYLOAD_INPUT_QUIET_MS) : undefined, // the packaged proof only
     release: releaseForRelaunch,
     onWaiting: (why) => { payloadWaiting = why; pushUpdateStatus(); },
@@ -5486,7 +5488,10 @@ app.whenReady().then(async () => {
   powerMonitor.on("resume", () => appUpdater.maybeCheck(UPDATE_RECHECK_MIN_GAP_MS));
   session.defaultSession.webRequest.onHeadersReceived({ urls: FRAME_URLS, types: ["subFrame"] }, (d, cb) => cb({ responseHeaders: frameable(d.responseHeaders) }));
   const cfg = readConfig();
-  if (cfg) openBoard(cfg);
+  // A windowless payload swap relaunches with this flag (macOS dock-only app): no window until the dock is clicked.
+  if (process.platform === "darwin" && process.argv.includes(WINDOWLESS_ARG)) {
+    // nothing: the activate handler opens a window on demand
+  } else if (cfg) openBoard(cfg);
   else openSetup(null);
   // Same reasoning as the updater above: never delay the board for this.
   // The probe is quick (2s, bounded), but "quick" is still slower than a
