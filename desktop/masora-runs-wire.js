@@ -34,8 +34,18 @@ function needsYouFor(consoleId, { pendingPermits, permitRuns, runConsoles }) {
  *      permits {pendingPermits, permitRuns, runConsoles}, isRelaunching()
  */
 function startMasoraRuns(ctx) {
+  try {
+    return startPoller(ctx);
+  } catch (err) {
+    console.error(`zevet: masora runs did not start: ${err.message}`); // never stops the window or the updater
+    return null;
+  }
+}
+
+function startPoller(ctx) {
   const { masora, safeStorage, consoleLog } = ctx;
   const poller = new masoraRuns.MasoraRunPoller({
+    ledgerFile: ctx.ledgerFile,
     enabled: () => masora.readConfig().runs,
     credential: () => {
       const cfg = masora.readConfig();

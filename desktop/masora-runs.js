@@ -101,7 +101,8 @@ function corruptLedger(file, err) {
 
 function writeLedger(ledger, file = LEDGER_PATH) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  atomicWriteJson(file, { deviceId: ledger.deviceId, ids: ledger.ids.slice(-LEDGER_MAX), open: ledger.open });
+  // 0600: `open` holds run tokens
+  atomicWriteJson(file, { deviceId: ledger.deviceId, ids: ledger.ids.slice(-LEDGER_MAX), open: ledger.open }, { mode: 0o600 });
 }
 
 function createClient({ baseUrl, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
@@ -163,11 +164,11 @@ function parseDeadline(d) {
   return Number.isFinite(n) ? n : null;
 }
 
-/** When a run must end: the deadline it names if usable, else the earlier of the token's expiry and claim + 4 h. */
+/** When a run must end: the earliest of the deadline it names (if usable), the token's expiry and claim + 4 h. */
 function runBound(run, claimedAt) {
   const named = parseDeadline(run.deadline);
-  if (named != null) return named;
-  return Math.min(tokenExp(run.run_token) ?? Infinity, claimedAt + TOKEN_TTL_MS);
+  // A far-future deadline cannot outlive the token or the 4 h TTL.
+  return Math.min(named ?? Infinity, tokenExp(run.run_token) ?? Infinity, claimedAt + TOKEN_TTL_MS);
 }
 
 /**
@@ -181,8 +182,7 @@ class MasoraRunPoller {
     this.now = deps.now || Date.now;
     this.sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.ledger = readLedger(deps.ledgerFile);
-    // The device id belongs to this install, not to its first claim.
-    if (this.ledger.fresh && !this.ledger.corrupt) writeLedger(this.ledger, deps.ledgerFile);
+    // Nothing is written here: this runs in whenReady for every user, runs on or off, and a failed write must not stop the app opening.
     this.busy = false; // one run at a time, until its console has finished or the run is reported terminal
     this.claiming = false; // set at the top of tick: overlapping ticks must not both reach the claim
     this.timer = null;
@@ -220,6 +220,10 @@ class MasoraRunPoller {
     // Before the enabled check: an unreported run is owed its report even if polling was switched off since.
     for (const [id, o] of Object.entries(this.ledger.open)) await this.#abandon(client, id, o.run_token, o.claimedAt);
     if (!d.enabled()) return null;
+    if (this.ledger.fresh) { // the device id is persisted before the first claim, once runs are on
+      writeLedger(this.ledger, d.ledgerFile);
+      this.ledger.fresh = false;
+    }
     const claimedAt = this.now();
     const run = await client.claim(cred.token, this.ledger.deviceId);
     if (!run) return null;
@@ -247,7 +251,7 @@ class MasoraRunPoller {
       return { run, id: null, done };
     }
     d.setOutcome(started.id, "running");
-    const done = this.#watch(client, run, claimedAt, started.id, payer).finally(() => {
+    const done = this.#watch(client, run, claimedAt, started.id, payer).catch((e) => console.error(`zevet: masora run ${run.run_id}: ${e.message}`)).finally(() => {
       this.busy = false;
     });
     return { run, id: started.id, done };
@@ -331,7 +335,13 @@ class MasoraRunPoller {
       if (id) this.d.setOutcome(id, `${label} · ${why}`);
       else console.error(`zevet: masora run ${run.run_id}: ${why}`);
     }
-    if (body.status !== "needs_you") this.#close(run.run_id);
+    if (body.status !== "needs_you") {
+      try {
+        this.#close(run.run_id);
+      } catch (err) {
+        console.error(`zevet: masora run ${run.run_id}: ledger not updated (${err.message})`);
+      }
+    }
   }
 }
 

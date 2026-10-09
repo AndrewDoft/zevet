@@ -358,10 +358,40 @@ describe("4. one postJson", () => {
 });
 
 describe("5. restart safety", () => {
-  test("a first launch persists its device id before any claim", () => {
+  test("the device id is persisted before the first claim, once runs are on; never at construction", async () => {
     const ledgerFile = path.join(home.dir, `fresh-${++n}.json`);
+    const r = rig({ ledgerFile });
+    assert.equal(fs.existsSync(ledgerFile), false, "construction writes nothing");
+    await r.poller.tick();
+    assert.equal(JSON.parse(fs.readFileSync(ledgerFile, "utf8")).deviceId, r.poller.ledger.deviceId);
+    assert.equal(seen[0].body.device_id, r.poller.ledger.deviceId);
+  });
+
+  test("an unwritable ledger cannot stop the app: construction and startMasoraRuns do not throw", async () => {
+    const blocker = path.join(home.dir, `blocker-${++n}`);
+    fs.writeFileSync(blocker, "a file, so nothing can be created beneath it");
+    const ledgerFile = path.join(blocker, "masora-runs.json");
     const p = new runs.MasoraRunPoller({ ledgerFile, enabled: () => false, credential: () => null });
-    assert.equal(JSON.parse(fs.readFileSync(ledgerFile, "utf8")).deviceId, p.ledger.deviceId);
+    assert.ok(p);
+    const masoraStub = { readConfig: () => ({ runs: false, paired: false }) };
+    const ctx = {
+      masora: masoraStub, safeStorage: {}, consoleLog: {}, agentApi: agentApi, payerOf: () => ({ label: "" }),
+      announceOutcome() {}, readWorkspaces: () => [], storedMode: () => "ask", startAndBrief() {},
+      stopAgentCore() {}, permits: {}, isRelaunching: () => false, ledgerFile,
+    };
+    const started = wire.startMasoraRuns(ctx);
+    started.stop();
+    // and a failure inside setup is logged and swallowed, not thrown out of whenReady
+    assert.equal(wire.startMasoraRuns({ ...ctx, agentApi: null }), null);
+  });
+
+  test("a ledger that cannot be written on a claim does not make done reject", async () => {
+    const blocker = path.join(home.dir, `blocker-${++n}`);
+    fs.writeFileSync(blocker, "x");
+    const r = rig({ ledgerFile: path.join(blocker, "l.json") });
+    queue.push(mkRun({ run_id: "nowrite" }));
+    await assert.rejects(r.poller.tick()); // the claim itself refuses: nothing started without a ledger entry
+    assert.equal(r.started.length, 0);
   });
 
   test("a claimed-but-unreported run is reported failed 'desktop restarted' at the next start, then cleared", async () => {
@@ -423,6 +453,13 @@ describe("6. deadlines", () => {
     assert.equal(runs.runBound({ deadline: null, run_token: jwt(t0 / 1000 + 60) }, t0), t0 + 60_000);
     assert.equal(runs.runBound({ deadline: null, run_token: jwt(t0 / 1000 + 99999) }, t0), t0 + 4 * 3600_000);
     assert.equal(runs.runBound({ deadline: "junk", run_token: "opaque" }, t0), t0 + 4 * 3600_000);
+  });
+
+  test("a far-future deadline cannot outlive the token", () => {
+    const t0 = 1_000_000_000_000;
+    assert.equal(runs.runBound({ deadline: new Date(t0 + 99 * 3600_000).toISOString(), run_token: jwt(t0 / 1000 + 60) }, t0), t0 + 60_000);
+    assert.equal(runs.runBound({ deadline: new Date(t0 + 99 * 3600_000).toISOString(), run_token: "opaque" }, t0), t0 + 4 * 3600_000);
+    assert.equal(runs.runBound({ deadline: new Date(t0 + 1000).toISOString(), run_token: jwt(t0 / 1000 + 60) }, t0), t0 + 1000);
   });
 
   test("a still-working run with a null deadline is stopped once its bound passes", async () => {
