@@ -44,19 +44,52 @@ const SHA256 = /^[0-9a-f]{64}$/;
 class TaskTokenExpired extends Error {}
 class BrowserTasksError extends Error {}
 
-/** host == domain or a subdomain of it on a label boundary; https only (plain http for the 127.0.0.1 test fixture). */
-function inFence(url, domains) {
-  let u;
-  try {
-    u = new URL(String(url));
-  } catch {
-    return false;
-  }
-  if (u.username || u.password) return false;
-  const host = u.hostname.toLowerCase();
-  if (u.protocol !== "https:" && !(u.protocol === "http:" && host === "127.0.0.1")) return false;
-  return domains.some((d) => host === d || host.endsWith(`.${d}`));
+const UNSAFE = /[\x00-\x20\x7f\x5c]/; // control chars, space, tab/newline/CR and backslash (\x5c): WHATWG reads a backslash as "/", the runner parser does not
+const DNS_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+const NUMBER_LABEL = /^(?:\d+|0x[0-9a-f]*)$/; // WHATWG "ends in a number"
+
+/** A plain DNS name: ASCII labels, not a number or IP literal, not localhost. Same rules as runner.py `clean_host`. */
+function cleanHost(host) {
+  if (!host || host.length > 253 || !DNS_NAME.test(host) || NUMBER_LABEL.test(host.slice(host.lastIndexOf(".") + 1))) return false;
+  return host !== "localhost" && !host.endsWith(".localhost");
 }
+
+/** The lowercase host of a URL we are willing to judge, else null. Same rules as runner.py `judge_url` (fail closed); the
+ *  authority is read from the raw string because `new URL` rewrites exactly what must be refused (backslash, %, 127.1, IDNA). */
+function judgeUrl(url) {
+  if (typeof url !== "string" || UNSAFE.test(url)) return null;
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^/?#]*)/.exec(url);
+  if (!m) return null;
+  const a = /^([^:]*)(?::(\d{0,5}))?$/.exec(m[2]);
+  if (!a || /[^\x00-\x7f]|[@%]/.test(m[2])) return null;
+  try {
+    new URL(url);
+  } catch {
+    return null;
+  }
+  const host = a[1].toLowerCase().replace(/\.+$/, "");
+  return cleanHost(host) ? { scheme: m[1].toLowerCase(), host } : null;
+}
+
+const normDomain = (d) => String(d).toLowerCase().replace(/^\.+|\.+$/g, "");
+const cleanDomains = (domains) => Array.isArray(domains) && domains.length > 0 && domains.every((d) => cleanHost(normDomain(d)));
+
+/** host == domain or a subdomain of it on a label boundary; https only; no userinfo, backslash, numeric host. */
+function inFence(url, domains) {
+  const j = judgeUrl(url);
+  if (!j || j.scheme !== "https" || !cleanDomains(domains)) return false;
+  return domains.map(normDomain).some((d) => j.host === d || j.host.endsWith(`.${d}`));
+}
+
+/** sha256 hex of canonical JSON: sorted keys, no whitespace, non-ASCII raw (= Python json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)). */
+function canonical(v) {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
+  return JSON.stringify(v);
+}
+const payloadHash = (b) => crypto.createHash("sha256").update(canonical({
+  start_url: b.start_url, instruction: b.instruction, allowed_domains: b.allowed_domains, max_steps: b.max_steps,
+}), "utf8").digest("hex");
 
 /** scheme://host/path -- no query, no fragment. */
 function stripUrl(url) {
@@ -106,8 +139,12 @@ function buildReport(raw, task) {
     finalUrl = (steps.length && steps[steps.length - 1].url) || startUrl;
   }
 
-  let cost = r && Number.isFinite(r.cost_usd) && r.cost_usd >= 0 ? r.cost_usd : 0;
-  if (cost > task.max_usd) {
+  const measured = r && Number.isFinite(r.cost_usd) && r.cost_usd >= 0; // the cap is only as good as the number: no number = failed
+  let cost = measured ? r.cost_usd : 0;
+  if (!measured) {
+    status = "failed";
+    reason = "error";
+  } else if (cost > task.max_usd) {
     status = "failed";
     reason = "cost_cap";
   }
@@ -186,12 +223,14 @@ function createClient({ baseUrl, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS } = {
       return {
         task_id: b.task_id, action_id: typeof b.action_id === "string" ? b.action_id : "", start_url: b.start_url, instruction: b.instruction,
         allowed_domains: b.allowed_domains.map((d) => d.toLowerCase()), max_steps: b.max_steps, max_usd: b.max_usd,
+        payload_ok: b.payload_sha256 === payloadHash(b), // what we run is what Masora approved; a mismatch is refused in #execute
         allowed_providers: Array.isArray(b.allowed_providers) ? b.allowed_providers.map(String) : null,
         deadline: b.deadline ?? null, task_token: b.task_token,
       };
     },
     async report(taskId, token, claimedAt, body, now = Date.now()) {
       if (tokenExpired(token, claimedAt, now)) throw new TaskTokenExpired("task token expired");
+      if (!Number.isFinite(body.cost_usd) || body.cost_usd < 0) throw new BrowserTasksError("report has no numeric cost_usd"); // Masora answers 422 to null
       const res = await post(`/v2/browser-tasks/${encodeURIComponent(taskId)}/report`, token, {
         status: body.status, steps: body.steps, final_url: body.final_url,
         screenshot_sha256: body.screenshot_sha256, reason: body.reason, cost_usd: body.cost_usd,
@@ -326,7 +365,16 @@ class BrowserTaskPoller {
     const out = (text) => d.setOutcome && d.setOutcome(task.task_id, text);
     let body;
     const cfg = d.runnerConfig();
-    if (!cfg) {
+    if (!task.payload_ok) {
+      body = failedReport(task.start_url);
+      out("failed · claim does not match its payload_sha256, not run");
+    } else if (!cleanDomains(task.allowed_domains)) {
+      body = failedReport(task.start_url);
+      out("failed · allowed_domains has an entry that is not a plain domain name, not run");
+    } else if (!inFence(task.start_url, task.allowed_domains)) {
+      body = failedReport(task.start_url, "off_domain");
+      out("failed · start_url is outside allowed_domains, not run");
+    } else if (!cfg) {
       body = failedReport(task.start_url);
       out("failed · browser runner not set up");
     } else {
@@ -440,5 +488,5 @@ function startMasoraBrowserTasks(ctx) {
 
 module.exports = {
   BrowserTaskPoller, createClient, buildReport, failedReport, inFence, stripUrl, spawnRunner, startMasoraBrowserTasks,
-  readLedger, LEDGER_PATH, TaskTokenExpired, BrowserTasksError, EMPTY_SHA256,
+  judgeUrl, cleanHost, payloadHash, readLedger, LEDGER_PATH, TaskTokenExpired, BrowserTasksError, EMPTY_SHA256,
 };

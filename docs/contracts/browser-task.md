@@ -51,26 +51,59 @@ installed source (paths relative to `site-packages/`), read, not assumed:
 ## What the runner does with them
 
 - **Fence, two layers.** (1) Browser Use's own `allowed_domains` (`https://d`, `https://*.d`). (2) Ours, authoritative:
-  `Fence.allows` (host == domain or subdomain on a label boundary; https only; no credentials in the URL; plain
-  http only for host `127.0.0.1`, the test fixture). It is fed by tapping `EventRegistry.handle_event` so it sees
+  `Fence.allows` in `runner.py`, mirrored by `inFence` in `masora-browser-tasks.js`. A URL is judged **off-domain (fail
+  closed)** if it contains a backslash, a space, tab/CR/LF or any control character; has userinfo (`@`) or a `%` in the
+  authority; has a non-ASCII or non-`host[:port]` authority (IP literals in brackets included); fails to parse; is not
+  `https` (plain `http` only for host `127.0.0.1` behind the runner's `fixture_loopback` switch, which only the tests set --
+  the Node side never passes it). The host is lowercased with trailing dots dropped and must equal an allowed domain or be a
+  subdomain of it on a label boundary. Why the strictness: `urlsplit("https://evil.com\.good.com/")` reports host
+  `evil.com\.good.com` (passes a suffix check) while Chrome goes to `evil.com`. Allowed-domain entries and URL hosts
+  must be plain DNS names: ASCII labels, and NOT a number or ending in one per WHATWG (`127.1`, `2130706433`, `0x7f.1`,
+  `0177.0.0.1`, `1.0x7f`), not an IP literal, not `localhost`/`*.localhost`. One bad entry means the task is refused
+  (`failed`/`error`, no page opened). The Node side runs the same rules on `start_url` and `allowed_domains` before the
+  runner is launched: `start_url` off the fence -> `failed`/`off_domain`; a bad domain entry -> `failed`/`error`; neither
+  launches anything. The runner's fence is fed by tapping `EventRegistry.handle_event` so it sees
   every `Network.requestWillBeSent` of type Document (redirects included), `Page.frameNavigated`,
   `Target.targetCreated`/`targetInfoChanged` for pages (popups, new tabs). **Why a tap, not `register`**: cdp-use keeps
   one callback per event, so `register.Target.targetInfoChanged(...)` unseats Browser Use's session manager
   (observed: the agent's tab stayed `about:blank`). The tap uses the private `_event_registry`; a Browser Use upgrade
-  must re-run the runner tests. First violation -> reason `off_domain`, the run is cancelled and the browser killed.
+  must re-run the runner tests -- `fence_tap_sees_real_cdp_events` fails if the tap stops receiving real CDP events
+  from a live headless page. First violation -> reason `off_domain`; **the browser is killed at once**
+  (`BrowserSession.kill()`, `browser_use/browser/session.py:734`: `BrowserStopEvent(force=True)`, the browser process goes)
+  and only then is the agent task cancelled, because that task may ignore or delay the cancel
+  (test `abort_kills_the_browser_before_the_agent_cancels`: no request reaches the fixture after the trip).
   A tap that cannot read an event also aborts (`error`).
+- **What is NOT fenced.** Only top-level and frame **navigations** and the new tabs/popups the tap observes. `fetch`/XHR,
+  WebSocket, EventSource, `sendBeacon`, images, scripts and other sub-resource requests are not inspected: a page we are
+  allowed on can still send data to any origin with a script it already contains, and an in-page request is not an
+  agent navigation. The fence limits *where the agent goes*, not *what an allowed page's own code talks to*; do not
+  allow-list a domain whose pages you do not trust to talk only to friends.
 - **Limit of "fail closed".** Navigation is observed and aborted, not intercepted: a click that goes off-domain has
   its first request issued before the abort lands. Browser Use's own pre-check blocks agent-initiated `navigate`
-  before it starts. Sub-resources (images, scripts) are not fenced; third-party *documents* (an embedded iframe) are,
-  so a page that embeds one aborts the task.
+  before it starts. Third-party *documents* (an embedded iframe) are fenced, so a page that embeds one aborts the task.
 - **`max_steps`.** `agent.run(max_steps=N)` with `max_actions_per_step=1`, so a step is one action and the step log
   cannot exceed N. Not done by then -> `max_steps`. Masora re-checks.
 - **Cost.** `MeteredLLM` wraps the model: tokens from `ChatInvokeUsage` x `usd_per_mtok_in/out` from the model's
-  config entry (default 0: free models). Over `max_usd` -> `cost_cap`; no further call is made.
-- **Secrets.** Values live in a local file (`secrets_file`, default `<zevetHome>/browser-secrets.json`,
-  `{"placeholder": "value"}`); the instruction names the placeholder. They go to `sensitive_data` scoped per allowed
-  domain, `use_vision=False`. `MeteredLLM` additionally refuses any message list containing a secret value
-  (task fails `error`). Test: the page echoes the submitted value back and no prompt contains it.
+  config entry. **Both prices are required** (`0` for a free model); an entry missing either, or with a negative or
+  non-number price, is refused before any page opens (`failed`/`error`) -- a cap that cannot be measured is no cap.
+  Over `max_usd` -> `cost_cap`; no further call is made. The report **always** carries a numeric `cost_usd`: the runner
+  emits it on every path (0 for a refusal) and the Node side reports `failed`/`error` (cost 0) for a runner result
+  without a numeric `cost_usd`, and its client refuses to send one (Masora answers 422 to null).
+- **`payload_sha256`.** On claim the Node client recomputes sha256 of the canonical JSON of
+  `{start_url, instruction, allowed_domains, max_steps}` (sorted keys, separators `,` `:`, non-ASCII raw -- Python
+  `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`) and compares with the claim's
+  `payload_sha256`. Missing or different -> the task is ledgered and reported `failed`/`error`, never launched.
+- **Secrets.** Values live in a local file (`secrets_file`, default `<zevetHome>/browser-secrets.json`) **keyed by domain**:
+  `{"example.com": {"x_user": "...", "x_pass": "..."}, "other.org": {"token": "..."}}`. A key serves an allowed domain only
+  if it covers all of it (key == domain, or the domain is a subdomain of the key; `example.com` serves `example.com` and
+  `app.example.com`, a key `app.example.com` does NOT serve an allowed `example.com`). Only the matching entries go to
+  `sensitive_data` (per-domain form `{"https://d": {...}, "https://*.d": {...}}`); a credential for another domain is
+  never passed to Browser Use, so it cannot be typed, and the instruction names only placeholders. **Migration:** the
+  old flat `{"placeholder": "value"}` file is refused (`failed`/`error`, stderr says why) rather than applied to every
+  domain -- nest each entry under the domain it belongs to. A corrupt file is refused too; no file = no secrets.
+  `use_vision=False`. `MeteredLLM` additionally refuses any message list containing ANY secret value from the file
+  (task fails `error`). Tests: the page echoes the submitted value back and no prompt contains it; a secret for
+  another domain is unavailable; flat file refused; matching-domain secret works.
 - **Excluded actions** (not part of a fenced task): `search`, `upload_file`, `save_as_pdf`, `write_file`,
   `replace_file`, `read_file`, `evaluate`. Added action `needs_login` -> reason `login_required`.
 - **Disk.** `BROWSER_USE_CONFIG_DIR`, downloads and the agent file system point into one temp dir removed on exit;

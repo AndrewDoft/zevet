@@ -43,11 +43,14 @@ before(async () => {
 });
 after(() => new Promise((r) => server.close(r)));
 
-const mkTask = (over = {}) => ({
-  task_id: "task-1", action_id: "act-1", start_url: "https://app.example.com/start?q=secret#frag", instruction: "do the thing",
-  allowed_domains: ["app.example.com"], max_steps: 5, max_usd: 2, payload_sha256: "f".repeat(64), allowed_providers: null,
-  deadline: new Date(Date.now() + 3600_000).toISOString(), task_token: jwt(inFuture()), ...over,
-});
+const mkTask = (over = {}) => {
+  const t = {
+    task_id: "task-1", action_id: "act-1", start_url: "https://app.example.com/start?q=secret#frag", instruction: "do the thing",
+    allowed_domains: ["app.example.com"], max_steps: 5, max_usd: 2, allowed_providers: null,
+    deadline: new Date(Date.now() + 3600_000).toISOString(), task_token: jwt(inFuture()), ...over,
+  };
+  return { ...t, payload_sha256: bt.payloadHash(t) }; // the hash Masora would send for exactly this payload
+};
 const goodResult = (over = {}) => ({
   status: "done", steps: [{ verb: "navigate", url: "https://app.example.com/start", ok: true }, { verb: "click", url: "https://app.example.com/x", ok: true }],
   final_url: "https://app.example.com/done", screenshot_sha256: SHA, reason: null, cost_usd: 0.31, ...over,
@@ -325,5 +328,110 @@ describe("spawnRunner (a real child process)", () => {
     const t0 = Date.now();
     await assert.rejects(go(script("hang.js", `setInterval(()=>{},1000)`), 600), /timed out/);
     assert.ok(Date.now() - t0 < 4000);
+  });
+});
+
+const BS = String.fromCharCode(92);
+
+describe("claim: payload_sha256 binds what we run to what Masora approved", () => {
+  test("the canonical hash equals Python's json.dumps(sort_keys, (',',':'), ensure_ascii=False) of the same object", () => {
+    const o = { start_url: "https://app.example.com/start?q=é#frag", instruction: 'do the thing — "quoted"\n日本', allowed_domains: ["app.example.com", "b.example.org"], max_steps: 5 };
+    assert.equal(bt.payloadHash(o), "d578917cc36aba985553113cd8c8a0991494e36a60953f9b97fbb361b89be97a");
+    assert.equal(bt.payloadHash({ max_steps: 5, allowed_domains: o.allowed_domains, instruction: o.instruction, start_url: o.start_url }), bt.payloadHash(o), "key order is irrelevant");
+  });
+
+  test("a matching hash runs", async () => {
+    const r = rig();
+    queue.push(mkTask());
+    await (await r.poller.tick()).done;
+    assert.equal(r.ran.length, 1);
+    assert.equal(reports()[0].body.status, "done");
+  });
+
+  for (const [name, change] of [
+    ["a wrong hash", (t) => ({ ...t, payload_sha256: "0".repeat(64) })],
+    ["a missing hash", ({ payload_sha256, ...t }) => t],
+    ["an instruction changed after the hash", (t) => ({ ...t, instruction: "do something else" })],
+    ["a start_url changed after the hash", (t) => ({ ...t, start_url: "https://app.example.com/other" })],
+    ["max_steps changed after the hash", (t) => ({ ...t, max_steps: 50 })],
+    ["allowed_domains widened after the hash", (t) => ({ ...t, allowed_domains: ["app.example.com", "evil.example.net"] })],
+  ]) {
+    test(`${name}: never launched, reported failed/error`, async () => {
+      const r = rig();
+      queue.push(change(mkTask()));
+      await (await r.poller.tick()).done;
+      assert.equal(r.ran.length, 0, "the runner must not start");
+      const b = reports()[0].body;
+      assert.equal(b.status, "failed");
+      assert.equal(b.reason, "error");
+      assert.equal(b.cost_usd, 0);
+    });
+  }
+});
+
+describe("the same fence rules, checked before the runner is launched", () => {
+  const f = ["good.com"];
+  test("URL-confusion shapes are off-domain; the plain shapes are in", () => {
+    for (const ok of ["https://good.com/x", "https://GOOD.com./x?a=1#f", "https://a.good.com:8443/"]) assert.equal(bt.inFence(ok, f), true, ok);
+    for (const bad of [
+      `https://evil.com${BS}.good.com/`, `https://good.com${BS}@evil.com/`, `https://evil.com${BS}@good.com/`, `https://good.com/a${BS}b`,
+      "https://good.com/a\tb", "https://good.com/a\nb", "https://good.com/a\rb", "https://good.com/a b", "https://good.com/a\x00b", " https://good.com/",
+      "https://evil.com\t.good.com/", "https://evil.com\n.good.com/", "https://user@good.com/", "https://good.com@evil.com/", "https://user:pw@good.com/",
+      "https://%65vil.com/", "https://good.com%2eevil.com/", "https://good.com%40evil.com/", "https://ｇood.com/", "https://göod.com/",
+      "https://[::1]/", "https://good.com:99999/", "https://good.com:80:90/", "https://good.com:abc/", "https:///good.com/",
+      "http://good.com/", "ftp://good.com/", "good.com/x", "", null, 5, "https://good.com.evil.io/", "https://evilgood.com/",
+    ]) assert.equal(bt.inFence(bad, f), false, JSON.stringify(bad));
+  });
+
+  test("numeric hosts, IP literals and localhost are never a host or an allowed-domain entry", () => {
+    for (const u of ["https://127.1/", "https://0x7f.1/", "https://2130706433/", "https://0177.0.0.1/", "https://127.0.0.1/", "https://[::1]/", "https://localhost/", "https://good.com.1/", "https://good.com.0x7f/", "https://a.localhost/"]) {
+      assert.equal(bt.judgeUrl(u), null, u);
+      assert.equal(bt.inFence(u, f), false, u);
+    }
+    for (const entry of ["127.1", "0x7f.1", "1.0x7f", "2130706433", "0177.0.0.1", "127.0.0.1", "[::1]", "::1", "localhost", "app.localhost", "good.com.1", "*.good.com", "good.com/x", "gööd.com", ""]) {
+      assert.equal(bt.cleanHost(entry), false, entry);
+      assert.equal(bt.inFence("https://good.com/", ["good.com", entry]), false, `a bad entry poisons the fence: ${entry}`);
+    }
+    assert.equal(bt.cleanHost("x-y.example.co.uk"), true);
+  });
+
+  test("a start_url outside the fence is reported failed/off_domain and the runner is never launched", async () => {
+    for (const start_url of [`https://evil.com${BS}.app.example.com/`, "https://evil.example.net/", "https://user@app.example.com/", "https://%61pp.example.com/", "http://app.example.com/"]) {
+      const r = rig();
+      queue.push(mkTask({ start_url }));
+      await (await r.poller.tick()).done;
+      assert.equal(r.ran.length, 0, start_url);
+      assert.equal(reports()[0].body.reason, "off_domain", start_url);
+      assert.equal(reports()[0].body.status, "failed");
+    }
+  });
+
+  test("an allowed_domains entry that is numeric or localhost is reported failed/error and never launched", async () => {
+    const r = rig();
+    queue.push(mkTask({ allowed_domains: ["app.example.com", "127.1"] }));
+    await (await r.poller.tick()).done;
+    assert.equal(r.ran.length, 0);
+    assert.equal(reports()[0].body.reason, "error");
+  });
+});
+
+describe("cost_usd is always a number", () => {
+  for (const [name, bad] of [["absent", undefined], ["null", null], ["a string", "0.3"], ["negative", -1], ["NaN", NaN]]) {
+    test(`a runner result with cost_usd ${name} is reported failed/error with cost_usd 0, never null`, async () => {
+      const r = rig({ run: async () => { const g = goodResult(); if (bad === undefined) delete g.cost_usd; else g.cost_usd = bad; return g; } });
+      queue.push(mkTask());
+      await (await r.poller.tick()).done;
+      const b = reports()[0].body;
+      assert.equal(b.status, "failed");
+      assert.equal(b.reason, "error");
+      assert.equal(b.cost_usd, 0);
+    });
+  }
+  test("the client refuses to send a report without a numeric cost_usd", async () => {
+    rig();
+    for (const bad of [null, undefined, "1", NaN]) {
+      await assert.rejects(bt.createClient({ baseUrl: base }).report("t8", jwt(inFuture()), Date.now(), { ...goodResult(), cost_usd: bad }), bt.BrowserTasksError);
+    }
+    assert.equal(reports().length, 0);
   });
 });

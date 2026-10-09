@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -21,7 +22,11 @@ os.environ.update(ANONYMIZED_TELEMETRY="false", BROWSER_USE_CLOUD_SYNC="false", 
 import runner  # noqa: E402
 
 SECRET = "hunter2-Zq9"
+SECRET2 = "other-Wx7-private"
+BS = chr(92)  # a backslash
 HITS = []
+STAMPS = []  # (monotonic time, server port, path) of every request
+FREE = {"usd_per_mtok_in": 0.0, "usd_per_mtok_out": 0.0}
 
 
 class Site(BaseHTTPRequestHandler):
@@ -46,7 +51,13 @@ class Site(BaseHTTPRequestHandler):
 
     def do_GET(self):
         HITS.append(self.path)
+        STAMPS.append((time.monotonic(), self.server.server_port, self.path))
         o = f"http://localhost:{self.other_port}/"
+        if self.server.server_port == self.other_port:  # the off-limits origin keeps navigating by itself
+            return self._send("<script>setInterval(()=>{location.href='/?'+Math.random()},50)</script>")
+        if self.path == "/hub":  # keeps talking to its own origin; the link opens the off-limits one in a new tab
+            return self._send("<script>setInterval(()=>fetch('/tick?'+Math.random()),50)</script>"
+                              f'<a href="{o}" target="_blank">elsewhere</a>')
         if self.path == "/redir":
             return self._send("", 302, [("location", o)])
         if self.path == "/form":
@@ -117,14 +128,14 @@ def task_for(port, **over):
     return t
 
 
-def run(task, llm, **cfg):
+def run(task, llm, secrets=None, on_observe=None, **cfg):
     d = tempfile.mkdtemp(prefix="zevet-bt-test-")
     try:
         sec = os.path.join(d, "secrets.json")
-        json.dump({"pw": SECRET}, open(sec, "w"))
+        json.dump({"127.0.0.1": {"pw": SECRET}} if secrets is None else secrets, open(sec, "w"))
         c = {"profile_dir": os.path.join(d, "profile"), "chrome_path": chrome(), "temp_dir": d, "secrets_file": sec,
-             "timeout_s": 120, **cfg}
-        return runner.run_sync(task, c, llm)
+             "timeout_s": 120, "fixture_loopback": True, "price": FREE, **cfg}
+        return asyncio.new_event_loop().run_until_complete(runner.run_task(task, c, llm, on_observe))
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -133,6 +144,7 @@ def with_sites(fn):
     other, main = serve(), serve()
     Site.other_port = other.server_address[1]
     HITS.clear()
+    STAMPS.clear()
     try:
         return fn(main.server_address[1])
     finally:
@@ -268,6 +280,213 @@ def test_secret_in_a_prompt_is_refused_by_the_meter():
     assert guard.reason == "error"
 
 
+def test_fence_url_confusion():
+    f = runner.Fence(["good.com"])
+    assert f.allows("https://good.com/x") and f.allows("https://GOOD.com./x?a=1#f") and f.allows("https://a.good.com:8443/")
+    for bad in [
+        f"https://evil.com{BS}.good.com/",  # urlsplit: host `evil.com\.good.com` (suffix check passes); Chrome goes to evil.com
+        f"https://good.com{BS}@evil.com/", f"https://evil.com{BS}@good.com/", f"https://good.com/a{BS}b",
+        "https://good.com/a\tb", "https://good.com/a\nb", "https://good.com/a\rb", "https://good.com/a b", "https://good.com/a\x00b",
+        "https://evil.com\t.good.com/", "https://evil.com\n.good.com/", " https://good.com/", "https://good.com/\x7f",
+        "https://user@good.com/", "https://good.com@evil.com/", "https://user:pw@good.com/", "https://evil.com@good.com/",
+        "https://%65vil.com/", "https://good.com%2eevil.com/", "https://good.com%40evil.com/",
+        "https://ｇood.com/", "https://göod.com/", "https://ɡood.com/",  # fullwidth g, o-umlaut, latin script g
+        "https://[::1]/", "https://good.com:99999/", "https://good.com:80:90/", "https://good.com:abc/", "https:///good.com/",
+        "http://good.com/", "ftp://good.com/", "good.com/x", "", None, 5,
+    ]:
+        assert not f.allows(bad), f"must be off-domain: {bad!r}"
+    assert not f.allows("https://good.com.evil.io/") and not f.allows("https://evilgood.com/")
+
+
+def test_fence_numeric_hosts():
+    for entry in ["127.1", "0x7f.1", "1.0x7f", "2130706433", "0177.0.0.1", "127.0.0.1", "10.0.0.1", "[::1]", "::1", "localhost",
+                  "app.localhost", "good.com.1", "good.com.0x10", "*.good.com", "good .com", "good.com/x", "gööd.com"]:
+        assert runner.Fence([entry]).bad, f"entry must be rejected: {entry!r}"
+        assert not runner.Fence(["good.com", entry]).allows("https://good.com/"), f"a fence with a bad entry allows nothing: {entry!r}"
+    ok = runner.Fence(["good.com", "a1.good.org", "x-y.example.co.uk", "GOOD.net."])
+    assert ok.bad == [] and ok.domains[-1] == "good.net"
+    f = runner.Fence(["good.com"])
+    for u in ["https://127.1/", "https://0x7f.1/", "https://2130706433/", "https://0177.0.0.1/", "https://127.0.0.1/", "https://[::1]/",
+              "https://localhost/", "https://good.com.1/", "https://good.com.0x7f/", "https://a.localhost/"]:
+        assert runner.judge_url(u) is None and not f.allows(u), u
+    assert runner.Fence(["127.0.0.1"], loopback=True).allows("http://127.0.0.1:5/"), "the test fixture's own switch"
+    assert not runner.Fence(["127.0.0.1"], loopback=True).allows("http://127.1/")
+    assert not runner.Fence(["127.0.0.1"]).allows("http://127.0.0.1:5/")
+
+
+def test_invalid_allowed_domain_never_opens():
+    def go(port):
+        r = run(task_for(port, allowed_domains=["127.0.0.1", "localhost"]), FakeLLM(lambda n, t: {"wait": {"seconds": 1}}))
+        assert r["status"] == "failed" and r["reason"] == "error" and HITS == [], (r, HITS)
+        r = run(task_for(port), FakeLLM(lambda n, t: {"wait": {"seconds": 1}}), fixture_loopback=False)  # a numeric entry outside the test switch
+        assert r["reason"] == "error" and HITS == [], (r, HITS)
+
+    with_sites(go)
+
+
+def test_scope_secrets_by_domain():
+    secrets = {"example.com": {"a": "1"}, "other.org": {"b": "2"}, "sub.example.com": {"c": "3"}, "127.0.0.1": {"d": "4"}, "localhost": {"e": "5"}}
+    got = runner.scope_secrets(secrets, runner.Fence(["app.example.com"]))
+    assert got == {"https://app.example.com": {"a": "1"}, "https://*.app.example.com": {"a": "1"}}, got
+    got = runner.scope_secrets(secrets, runner.Fence(["example.com"]))  # sub.example.com's key does not cover all of example.com
+    assert set(got) == {"https://example.com", "https://*.example.com"} and got["https://example.com"] == {"a": "1"}, got
+    got = runner.scope_secrets(secrets, runner.Fence(["sub.example.com", "other.org"]))
+    assert got["https://sub.example.com"] == {"a": "1", "c": "3"} and got["https://other.org"] == {"b": "2"}, got
+    assert "https://example.com" not in got
+    for elsewhere in ["elsewhere.net", "notexample.com", "evil.com", "example.com.evil.io"]:
+        assert runner.scope_secrets(secrets, runner.Fence([elsewhere])) == {}, elsewhere
+    assert runner.scope_secrets(secrets, runner.Fence(["localhost"])) == {}
+    both = runner.scope_secrets({"127.0.0.1": {"d": "4"}}, runner.Fence(["127.0.0.1"], loopback=True))
+    assert both == {"http*://127.0.0.1": {"d": "4"}, "http*://*.127.0.0.1": {"d": "4"}}, both
+
+
+def test_secrets_file_format():
+    d = tempfile.mkdtemp(prefix="zevet-bt-sec-")
+    p = os.path.join(d, "s.json")
+    try:
+        def load(text):
+            open(p, "w").write(text)
+            return runner.load_secrets(p)
+
+        assert runner.load_secrets(None) == {} and runner.load_secrets(os.path.join(d, "missing.json")) == {}
+        assert load('{"Example.COM.": {"pw": "x"}}') == {"example.com": {"pw": "x"}}
+        for legacy in ['{"pw": "x"}', '{"pw": "x", "example.com": {"a": "b"}}', '{"example.com": {"a": 1}}', "[]", '{"example.com": "x"}', "{not json"]:
+            try:
+                load(legacy)
+            except runner.SecretsError:
+                pass
+            else:
+                raise AssertionError(f"accepted: {legacy}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_legacy_flat_secrets_file_refuses_the_task():
+    def go(port):
+        r = run(task_for(port), FakeLLM(lambda n, t: {"wait": {"seconds": 1}}), secrets={"pw": SECRET})
+        assert r["status"] == "failed" and r["reason"] == "error" and HITS == [], (r, HITS)
+
+    with_sites(go)
+
+
+def test_secret_for_another_domain_is_unavailable():
+    def go(port):
+        base = f"http://127.0.0.1:{port}/"
+
+        def plan(n, text):
+            if n == 1:
+                return {"navigate": {"url": base + "form"}}
+            if n == 2:
+                return {"input": {"index": index_of(text, r"placeholder=Pass"), "text": "<secret>pw2</secret>"}}
+            if n == 3:
+                return {"click": {"index": index_of(text, r"(?:button|submit)")}}
+            return {"done": {"text": "saved", "success": True}}
+
+        llm = FakeLLM(plan)
+        run(task_for(port, max_steps=8), llm, secrets={"127.0.0.1": {"pw": SECRET}, "elsewhere.example": {"pw2": SECRET2}})
+        assert any("POST /result" in h for h in HITS), f"the form was never submitted: {HITS}"
+        assert not any(SECRET2 in h for h in HITS), f"the other domain's credential reached the page: {HITS}"
+        assert not any(SECRET2 in c for c in llm.calls), "the other domain's credential reached a prompt"
+
+    with_sites(go)
+
+
+def test_missing_price_refuses_before_any_page():
+    def go(port):
+        llm = FakeLLM(lambda n, t: {"wait": {"seconds": 1}})
+        base = {"provider": "openai", "client": "openai", "model": "x"}
+        for models in [[base], [{**base, "usd_per_mtok_in": 1.0}], [{**base, "usd_per_mtok_out": 1.0}],
+                       [{**base, "usd_per_mtok_in": -1, "usd_per_mtok_out": 1}], [{**base, "usd_per_mtok_in": True, "usd_per_mtok_out": 1}],
+                       [{**base, "usd_per_mtok_in": "1", "usd_per_mtok_out": 1}]]:
+            r = run(task_for(port), None, models=models)
+            assert r["status"] == "failed" and r["reason"] == "error" and HITS == [], (models, r, HITS)
+            assert isinstance(r["cost_usd"], float) and r["cost_usd"] == 0.0, r
+        r = run(task_for(port), llm, price={})  # the test seam is held to the same rule
+        assert r["reason"] == "error" and HITS == [] and llm.calls == [], r
+        assert runner.prices({"usd_per_mtok_in": 0, "usd_per_mtok_out": 0}) == (0.0, 0.0)
+
+    with_sites(go)
+
+
+def test_every_report_carries_a_numeric_cost():
+    def go(port):
+        for r in [run(task_for(port, start_url=f"http://localhost:{port}/"), FakeLLM(lambda n, t: {})),
+                  run(task_for(port, allowed_providers=["claude"]), None, models=[{"provider": "openai", "client": "openai", "model": "x"}]),
+                  run(task_for(port), FakeLLM(lambda n, t: {"done": {"text": "ok", "success": True}}))]:
+            assert isinstance(r["cost_usd"], float) and r["cost_usd"] >= 0, r
+
+    with_sites(go)
+
+
+def test_abort_kills_the_browser_before_the_agent_cancels():
+    import browser_use
+    from browser_use.browser.session import BrowserSession
+    killed, cancelled, tripped = [], [], []
+    orig_run, orig_kill, orig_trip = browser_use.Agent.run, BrowserSession.kill, runner.Guard.trip
+
+    async def lingering_run(self, *a, **k):
+        try:
+            res = await orig_run(self, *a, **k)
+        except asyncio.CancelledError:
+            cancelled.append(time.monotonic())
+            await asyncio.sleep(4)  # ignores the cancel for a while
+            raise
+        except Exception:
+            res = None  # the run ends; the lingering task below does not
+        try:
+            await asyncio.sleep(4)  # a Browser Use background task that outlives the run and takes its time to cancel
+        except asyncio.CancelledError:
+            cancelled.append(time.monotonic())
+            await asyncio.sleep(4)
+            raise
+        return res
+
+    async def timed_kill(self):
+        killed.append(time.monotonic())
+        return await orig_kill(self)
+
+    def timed_trip(self, reason):
+        if self.reason is None:
+            tripped.append(time.monotonic())
+        return orig_trip(self, reason)
+
+    browser_use.Agent.run, BrowserSession.kill, runner.Guard.trip = lingering_run, timed_kill, timed_trip
+    try:
+        def go(port):
+            r = run(task_for(port, start_url=f"http://127.0.0.1:{port}/hub"), FakeLLM(lambda n, t: {"click": {"index": link_index(t, "elsewhere")}}))
+            assert r["status"] == "failed" and r["reason"] == "off_domain", r
+            assert tripped and killed and cancelled, (tripped, killed, cancelled)
+            assert killed[0] < cancelled[0], "the browser must be killed before the agent task is asked to cancel"
+            t0 = tripped[0]
+            late = [(round(t - t0, 2), p, path) for t, p, path in STAMPS if t > t0 + 1.5]
+            assert not late, f"requests kept arriving after the trip (secs after, port, path): {late[:5]}"
+            assert any(p == Site.other_port for _, p, _ in STAMPS), "the off-limits origin was never reached; the test proves nothing"
+            assert any(path.startswith("/tick") for _, _, path in STAMPS), "the allowed origin never ticked; the test proves nothing"
+
+        with_sites(go)
+    finally:
+        browser_use.Agent.run, BrowserSession.kill, runner.Guard.trip = orig_run, orig_kill, orig_trip
+
+
+def test_fence_tap_sees_real_cdp_events():
+    def go(port):
+        base = f"http://127.0.0.1:{port}/"
+        seen = []
+        llm = FakeLLM(lambda n, t: {"navigate": {"url": base + "form"}} if n == 1 else {"done": {"text": "ok", "success": True}})
+        r = run(task_for(port, max_steps=4), llm, on_observe=lambda m, u: seen.append((m, u)))
+        assert r["status"] == "done", r
+        assert seen, "the tap received nothing: the fence is blind"
+        assert {"Network.requestWillBeSent", "Page.frameNavigated"} <= {m for m, _ in seen}, seen
+        assert ("Network.requestWillBeSent", base + "form") in seen, seen
+        assert ("Page.frameNavigated", base + "form") in seen, seen
+        assert all(u in runner.INTERNAL_URLS or u.startswith(base) for _, u in seen), seen
+
+    with_sites(go)
+
+
+NO_BROWSER = {"fence_boundaries", "fence_url_confusion", "fence_numeric_hosts", "scope_secrets_by_domain", "secrets_file_format",
+              "secret_in_a_prompt_is_refused_by_the_meter", "invalid_allowed_domain_never_opens", "legacy_flat_secrets_file_refuses_the_task",
+              "missing_price_refuses_before_any_page"}  # these refuse before a browser would start
 TESTS = {k[5:]: v for k, v in globals().items() if k.startswith("test_")}
 
 if __name__ == "__main__":
@@ -276,7 +495,7 @@ if __name__ == "__main__":
         sys.exit(0)
     name = sys.argv[1]
     faulthandler.dump_traceback_later(100, exit=True)  # a hung test fails with every thread's stack, it never hangs the suite
-    if name not in ("fence_boundaries", "secret_in_a_prompt_is_refused_by_the_meter") and not chrome():
+    if name not in NO_BROWSER and not chrome():
         print("NO CHROMIUM FOUND", file=sys.stderr)
         sys.exit(77)
     TESTS[name]()
