@@ -102,6 +102,8 @@ async function cmdLaunch() {
         APPDATA: path.join(base, "appdata"),
         LOCALAPPDATA: path.join(base, "localappdata"),
         ZEVET_TEST_HOOKS: "1",
+        // A harness Electron must never run a real installer: it would land in this checkout (2026-10-08).
+        ZEVET_NO_AUTOUPDATE: "1",
         ZEVET_ALLOW_MULTI: "1",
         // No window may appear on a person's screen from automated work (D-NEXT-NOPOPUP). Opt in with ZEVET_TEST_VISIBLE=1.
         ZEVET_TEST_HEADLESS: process.env.ZEVET_TEST_VISIBLE === "1" ? "" : "1",

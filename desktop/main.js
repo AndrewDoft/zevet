@@ -4795,6 +4795,7 @@ const appUpdater = new AppUpdater({
   currentVersion: app.getVersion(),
   feedUrl: process.env.ZEVET_APP_FEED || undefined,
   trustedKeys: loopbackProofKeys(process.env.ZEVET_APP_FEED),
+  isPackaged: app.isPackaged,
   dir: updatesDir,
   // Only meaningful on darwin; see canSelfReplaceMac() in app-update.js.
   // /Applications/zevet.app from .../zevet.app/Contents/MacOS/zevet.
@@ -5519,7 +5520,9 @@ app.whenReady().then(async () => {
   startReportingHealth();
   // After the window, never before it: an update check that delayed the
   // board would be a worse app for a feature nobody asked to wait on.
-  appUpdater.start();
+  // An unpackaged run (`electron .`, the drive harness) or ZEVET_NO_AUTOUPDATE=1 never self-updates: an installer
+  // it ran would land in the working tree (2026-10-08). ZEVET_APP_FEED is the loopback-proof opt-in.
+  if (process.env.ZEVET_APP_FEED || (app.isPackaged && process.env.ZEVET_NO_AUTOUPDATE !== "1")) appUpdater.start();
   family.start();
   void sso.sync();
   ssoTimer = setInterval(() => void sso.sync(), SSO_POLL_MS);
