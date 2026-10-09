@@ -2491,3 +2491,13 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 - **codex:** id_token login -> plan, stored key -> byok. **opencode:** `:free` model -> open.
 - **Undeterminable route:** the run is refused before it starts (`console.error`, reported `failed`); the report omits `payer` rather than send `"unknown"`. Masora will 422 that report, so the run ends at its token expiry.
 - **Not verified:** a live Masora; engine2/auto launches (unrouted); interactive-mode API-key approval (docs: `-p` always uses the key, interactive asks once); `payerOf`'s Electron path (safeStorage) has no unit test, only `payerFor` given the env it builds.
+
+## D-107 — Shipped: 0.2.141, Agent runs report the plan that paid (payload-only)
+
+**Decided (automatic, `npm run ship`, 2026-10-09).** 3 commit(s) past v0.2.140.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.141 were built and published, and the stable `Zevet-Setup.exe` / `Zevet-Setup-arm64.exe` / `Zevet.dmg` / `Zevet.AppImage` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.141`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `8d35596a…` (153151256 B), dmg `5e0d571a…` (205333799 B), win-arm64 exe `2097f63b…` (160419752 B), AppImage `53a703f0…` (387404504 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2141 on both platforms. Manifests win `f4f41275…`, mac `a280070d…`. Delta: 4 new blob(s) uploaded. 98 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
