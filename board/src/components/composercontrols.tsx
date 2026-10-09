@@ -19,7 +19,7 @@
  * Renders nothing when it has nothing honest to say: no usable agents and no
  * run running.
  */
-import { useContext } from "react";
+import { useContext, useMemo } from "react";
 import { FolderIcon, SlidersHorizontalIcon } from "lucide-react";
 import { bridge } from "../lib/bridge";
 import { ChatSurface } from "../lib/surface";
@@ -104,6 +104,10 @@ function useComposerSource(): ComposerSource {
   const launchMode = useBoard((s) => s.launchMode);
   const setLaunchMode = useBoard((s) => s.setLaunchMode);
   const localAgents = useBoard((s) => s.localAgents);
+  /* Stable identity: ModelChoice rebuilds its whole model list (a storage read per
+     model) whenever `agents` changes, and this hook re-runs on every console publish. */
+  const codeAgents = useMemo(() => localAgents.filter((a) => a.ok), [localAgents]);
+  const chatAgents = useMemo(() => localAgents.filter((a) => a.ok && (CHAT_AGENTS as readonly string[]).includes(a.name)), [localAgents]);
 
   if (isChat) {
     const activeId = useChat((s) => s.activeId);
@@ -122,7 +126,7 @@ function useComposerSource(): ComposerSource {
           : undefined;
     // The rows Code offers, less the agents Chat has no adapter for (gemini,
     // meta): a row that would run as another agent is not a choice.
-    const usable = localAgents.filter((a) => a.ok && (CHAT_AGENTS as readonly string[]).includes(a.name));
+    const usable = chatAgents;
     return {
       usage,
       model,
@@ -139,7 +143,7 @@ function useComposerSource(): ComposerSource {
   const active = useBoard(selectActiveConsole);
   useBoard((s) => s.myConsoles);
   const setConsoleMode = useBoard((s) => s.setConsoleMode);
-  const usable = localAgents.filter((a) => a.ok);
+  const usable = codeAgents;
   const model = active ? runningModelName(active.usage.model, active.model) : "";
   const runningModel = active
     ? active.nextModel

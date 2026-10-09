@@ -21,7 +21,7 @@
  */
 import { makeAssistantToolUI } from "@assistant-ui/react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { myAuthorStyle } from "../lib/board";
 import { CodeDiff, type DiffLine } from "./assistant-ui/elements/code-diff";
 import { FileTree, type FileTreeNode } from "./assistant-ui/elements/file-tree";
@@ -481,7 +481,7 @@ const ALL: ToolUI[] = [
  * Mounting a component is how assistant-ui registers a tool UI, so they have
  * to be rendered somewhere inside the provider. They draw nothing themselves.
  */
-export function ToolUIs() {
+export const ToolUIs = memo(function ToolUIs() {
   return (
     <>
       {ALL.map((Registered, i) => (
@@ -489,4 +489,4 @@ export function ToolUIs() {
       ))}
     </>
   );
-}
+});

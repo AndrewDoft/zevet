@@ -24,7 +24,11 @@ function localDayKey(ms: number) {
 
 export function RepoTimeline() {
   const commits = useBoard((s) => s.repoCommits);
-  const consoles = useBoard((s) => s.myConsoles);
+  /* Only what the timeline prints, as a string: a console publishes on every agent
+     event, and this must not redraw for any of them. */
+  const running = useBoard((s) =>
+    s.myConsoles.filter((c) => c.running).map((c) => [c.key, c.agent, c.mode, c.startedAt].join("|")).join(";"),
+  );
   const schedules = useBoard((s) => s.schedules);
 
   const past: TimelineEvent[] = commits
@@ -40,9 +44,11 @@ export function RepoTimeline() {
       detail: fileCount(c.files),
     }));
 
-  const now: TimelineEvent[] = consoles
-    .filter((c) => c.running)
-    .slice()
+  const now: TimelineEvent[] = running
+    .split(";")
+    .filter(Boolean)
+    .map((r) => r.split("|"))
+    .map(([key, agent, mode, startedAt]) => ({ key, agent, mode: mode as keyof typeof MODE_LABEL, startedAt: Number(startedAt) }))
     .sort((a, b) => a.startedAt - b.startedAt)
     .map((c) => ({
       id: `console-${c.key}`,
