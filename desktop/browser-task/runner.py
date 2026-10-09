@@ -9,10 +9,11 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 PINNED_BROWSER_USE = "0.13.10"
 # Actions that read/write local files, run page JS, open a search engine or upload: not part of a fenced task.
@@ -31,23 +32,55 @@ def strip_url(url):
     return f"{p.scheme}://{p.netloc}{p.path}"[:2000]
 
 
-class Fence:
-    """host == domain, or a subdomain of it on a label boundary. https only (plain http for the 127.0.0.1 test fixture)."""
+_UNSAFE = re.compile(r"[\x00-\x20\x7f\x5c]")  # control chars, space, tab/newline/CR and backslash (\x5c): Chrome and urlsplit disagree on these
+_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+_HOST = re.compile(rf"{_LABEL}(?:\.{_LABEL})*")
+_NUMBER = re.compile(r"\d+|0x[0-9a-f]*")  # WHATWG "ends in a number": the last label is decimal or 0x-hex
+_AUTHORITY = re.compile(r"([^:]*)(?::\d{0,5})?")
 
-    def __init__(self, domains):
-        self.domains = [d.lower().strip(".") for d in domains]
+
+def clean_host(host, loopback=False):
+    """A plain DNS name: ASCII labels, not a number or IP literal, not localhost. `loopback` admits exactly 127.0.0.1 (test fixture)."""
+    if loopback and host == "127.0.0.1":
+        return True
+    if not host or len(host) > 253 or not _HOST.fullmatch(host) or _NUMBER.fullmatch(host.rsplit(".", 1)[-1]):
+        return False
+    return host != "localhost" and not host.endswith(".localhost")
+
+
+def judge_url(url, loopback=False):
+    """(scheme, host) of a URL we are willing to judge, else None. Fail closed: anything odd is None."""
+    if not isinstance(url, str) or _UNSAFE.search(url):
+        return None
+    try:
+        p = urlsplit(url)
+        p.port  # raises on a bad port
+    except ValueError:
+        return None
+    m = _AUTHORITY.fullmatch(p.netloc)
+    if not m or not p.netloc.isascii() or "@" in p.netloc or "%" in p.netloc:  # userinfo, percent-encoded host, IPv6 literal ([ has no match above)
+        return None
+    host = m.group(1).lower().rstrip(".")
+    return (p.scheme.lower(), host) if clean_host(host, loopback) else None
+
+
+class Fence:
+    """host == domain, or a subdomain of it on a label boundary. https only (plain http for the 127.0.0.1 test fixture, `loopback`).
+    `bad` lists the allowed-domain entries that are not plain DNS names; a fence with any is never used."""
+
+    def __init__(self, domains, loopback=False):
+        self.loopback = loopback
+        self.domains = [str(d).lower().strip(".") for d in domains]
+        self.bad = [d for d in self.domains if not clean_host(d, loopback)]
 
     def allows(self, url):
         if url in INTERNAL_URLS:
             return True
-        try:
-            p = urlparse(url)
-            host = (p.hostname or "").lower()
-            if p.username or p.password or not host:
-                return False
-            if p.scheme != "https" and not (p.scheme == "http" and host == "127.0.0.1"):
-                return False
-        except ValueError:
+        j = judge_url(url, self.loopback)
+        if not j or self.bad:
+            return False
+        scheme, host = j
+        if scheme != "https" and not (self.loopback and scheme == "http" and host == "127.0.0.1"):
             return False
         return any(host == d or host.endswith("." + d) for d in self.domains)
 
@@ -107,31 +140,66 @@ class MeteredLLM:
         return res
 
 
-def build_model(cfg, allowed_providers):
-    """First configured model whose `provider` the claim allows (null = any), or None. Keys come from env vars the Node side sets."""
+CLIENTS = {"openai": "ChatOpenAI", "anthropic": "ChatAnthropic", "openrouter": "ChatOpenRouter", "google": "ChatGoogle", "ollama": "ChatOllama"}
+
+
+def pick_model(cfg, allowed_providers):
+    """First configured model entry whose `provider` the claim allows (null = any) and whose client we know, or None."""
     for m in cfg.get("models") or []:
-        if allowed_providers is not None and m.get("provider") not in allowed_providers:
-            continue
-        import browser_use as bu
-        cls = {"openai": bu.ChatOpenAI, "anthropic": bu.ChatAnthropic, "openrouter": bu.ChatOpenRouter,
-               "google": bu.ChatGoogle, "ollama": bu.ChatOllama}.get(m.get("client"))
-        if cls is None:
-            continue
-        kw = {"model": m["model"]}
-        if m.get("base_url"):
-            kw["base_url"] = m["base_url"]
-        if m.get("api_key_env"):
-            kw["api_key"] = os.environ.get(m["api_key_env"]) or None
-        return cls(**kw), m
+        if (allowed_providers is None or m.get("provider") in allowed_providers) and m.get("client") in CLIENTS:
+            return m
     return None
 
 
+def prices(entry):
+    """(usd_per_mtok_in, usd_per_mtok_out) or None. BOTH must be stated (0 for a free model): a cap we cannot measure is no cap."""
+    vals = [(entry or {}).get("usd_per_mtok_in"), (entry or {}).get("usd_per_mtok_out")]
+    ok = all(isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 for v in vals)
+    return tuple(float(v) for v in vals) if ok else None
+
+
+def make_llm(m):
+    """The Browser Use chat model for a config entry. Keys come from env vars the Node side sets."""
+    import browser_use as bu
+    kw = {"model": m["model"]}
+    if m.get("base_url"):
+        kw["base_url"] = m["base_url"]
+    if m.get("api_key_env"):
+        kw["api_key"] = os.environ.get(m["api_key_env"]) or None
+    return getattr(bu, CLIENTS[m["client"]])(**kw)
+
+
+class SecretsError(Exception):
+    pass
+
+
 def load_secrets(path):
-    try:
-        raw = json.load(open(path, encoding="utf-8")) if path else {}
-    except (OSError, ValueError):
+    """{domain: {placeholder: value}}. No file = no secrets. A legacy flat {placeholder: value} file is refused, never applied to every domain."""
+    if not path or not os.path.exists(path):
         return {}
-    return {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(raw, dict) else {}
+    try:
+        raw = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise SecretsError(f"secrets file unreadable: {type(e).__name__}")
+    ok = isinstance(raw, dict) and all(isinstance(d, str) and isinstance(v, dict) and all(isinstance(k, str) and isinstance(x, str) for k, x in v.items()) for d, v in raw.items())
+    if not ok:
+        raise SecretsError('secrets file must be {"<domain>": {"<placeholder>": "<value>"}}; a flat {"<placeholder>": "<value>"} file is no longer accepted -- nest each entry under the domain it belongs to')
+    return {d.lower().strip("."): dict(v) for d, v in raw.items()}
+
+
+def scope_secrets(secrets, fence):
+    """{url pattern: {placeholder: value}} for sensitive_data. A key serves an allowed domain only if it covers ALL of it
+    (key == domain or the domain is a subdomain of the key); a credential for any other domain is not passed on at all."""
+    scheme = "http*" if fence.loopback else "https"
+    scoped = {}
+    for d in fence.domains:
+        mine = {}
+        for key, entries in secrets.items():
+            if clean_host(key, fence.loopback) and (d == key or d.endswith("." + key)):
+                mine.update(entries)
+        if mine:
+            scoped[f"{scheme}://{d}"] = scoped[f"{scheme}://*.{d}"] = mine
+    return scoped
 
 
 def steps_from(history, fence):
@@ -170,32 +238,40 @@ def report(status, steps, final_url, sha, reason, cost):
             "reason": reason, "cost_usd": round(cost, 6)}
 
 
-async def run_task(task, cfg, llm=None):
-    """Returns the report dict. `llm` is a test seam: a ready model that skips build_model."""
+async def run_task(task, cfg, llm=None, on_observe=None):
+    """Returns the report dict. `llm` and `on_observe(method, url)` are test seams: a ready model that skips make_llm; a view of the fence tap.
+    Every refusal below happens before a page opens."""
     start_url = strip_url(task["start_url"])
-    fence = Fence(task["allowed_domains"])
-    picked = None
-    if llm is None:
-        picked = build_model(cfg, task.get("allowed_providers"))
-        if picked is None:
-            return report("failed", [], start_url, EMPTY_SHA256, "model_not_allowed", 0.0)  # before any page opens
-        llm, price = picked
-    else:
-        price = cfg.get("price") or {}
+    fence = Fence(task["allowed_domains"], loopback=bool(cfg.get("fixture_loopback")))  # the Node side never sets fixture_loopback
+    refuse = lambda reason: report("failed", [], start_url, EMPTY_SHA256, reason, 0.0)
+    if fence.bad:
+        print(f"runner: allowed_domains entries that are not plain DNS names: {fence.bad}", file=sys.stderr)
+        return refuse("error")
     if not fence.allows(task["start_url"]):
-        return report("failed", [], start_url, EMPTY_SHA256, "off_domain", 0.0)
+        return refuse("off_domain")
+    entry = None
+    if llm is None:
+        entry = pick_model(cfg, task.get("allowed_providers"))
+        if entry is None:
+            return refuse("model_not_allowed")
+    price = prices(entry if entry else cfg.get("price"))
+    if price is None:
+        print("runner: the model entry needs usd_per_mtok_in and usd_per_mtok_out (0 for a free model): the cost cap cannot be measured", file=sys.stderr)
+        return refuse("error")
+    try:
+        secrets = load_secrets(cfg.get("secrets_file"))
+    except SecretsError as e:
+        print(f"runner: {e}", file=sys.stderr)
+        return refuse("error")
+    llm = llm or make_llm(entry)
 
     from browser_use import Agent, ActionResult, BrowserProfile, BrowserSession, Tools
 
     guard = Guard()
-    secrets = load_secrets(cfg.get("secrets_file"))
-    scoped = {}  # a secret can only be typed on the task's own domains
-    scheme = "http*" if any(d == "127.0.0.1" for d in fence.domains) else "https"
-    for d in fence.domains:
-        scoped[f"{scheme}://{d}"] = dict(secrets)
-        scoped[f"{scheme}://*.{d}"] = dict(secrets)
-    meter = MeteredLLM(llm, guard, task.get("max_usd"), price.get("usd_per_mtok_in", 0.0), price.get("usd_per_mtok_out", 0.0),
-                       secrets.values())
+    scoped = scope_secrets(secrets, fence)
+    scheme = "http*" if fence.loopback else "https"
+    meter = MeteredLLM(llm, guard, task.get("max_usd"), price[0], price[1],
+                       [v for entries in secrets.values() for v in entries.values()])  # every value, in scope or not
 
     tools = Tools(exclude_actions=EXCLUDED_ACTIONS)
 
@@ -211,7 +287,7 @@ async def run_task(task, cfg, llm=None):
         allowed_domains=[p for d in fence.domains for p in (f"{scheme}://{d}", f"{scheme}://*.{d}")]))
     agent = Agent(
         task=task["instruction"], llm=meter, browser_session=session, tools=tools,
-        sensitive_data=scoped if secrets else None, use_vision=False, use_judge=False, enable_planning=False,
+        sensitive_data=scoped or None, use_vision=False, use_judge=False, enable_planning=False,
         directly_open_url=False, max_actions_per_step=1, max_failures=3, file_system_path=cfg["temp_dir"],
         initial_actions=[{"navigate": {"url": task["start_url"], "new_tab": False}}],
         register_should_stop_callback=lambda: _async_value(guard.reason is not None),
@@ -219,6 +295,17 @@ async def run_task(task, cfg, llm=None):
     )
     history = None
     sha, final = EMPTY_SHA256, None
+    killed = False
+
+    async def kill():
+        nonlocal killed
+        if killed:
+            return
+        killed = True
+        try:
+            await asyncio.wait_for(session.kill(), 20)  # browser_use/browser/session.py:734, BrowserStopEvent(force=True): the browser process goes
+        except Exception:
+            pass
 
     def observe(url):
         if not fence.allows(url) and guard.off_url is None:
@@ -234,6 +321,8 @@ async def run_task(task, cfg, llm=None):
             try:
                 url = navigation_url(method, params)
                 if url is not None:
+                    if on_observe:
+                        on_observe(method, url)
                     observe(url)
             except Exception:
                 guard.trip("error")  # an event we cannot read is not one we can vouch for
@@ -243,9 +332,12 @@ async def run_task(task, cfg, llm=None):
         work = asyncio.ensure_future(agent.run(max_steps=task["max_steps"]))
         trip = asyncio.ensure_future(guard.event.wait())
         await asyncio.wait({work, trip}, timeout=cfg.get("timeout_s", 1800), return_when=asyncio.FIRST_COMPLETED)
+        if guard.reason and guard.reason != "login_required":
+            await kill()  # the page must stop NOW; the agent task may take (or refuse) its time to cancel
         if not work.done():
             if guard.reason is None:
                 guard.trip("error")  # wall-clock timeout
+                await kill()
             work.cancel()
             await asyncio.wait({work}, timeout=10)
         else:
@@ -262,10 +354,7 @@ async def run_task(task, cfg, llm=None):
         print(f"runner: {type(e).__name__}: {e}", file=sys.stderr)
         guard.trip("error")
     finally:
-        try:
-            await asyncio.wait_for(session.kill(), 20)
-        except Exception:
-            pass
+        await kill()
 
     steps = steps_from(history, fence) if history else []
     if guard.reason is None:
