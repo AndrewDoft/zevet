@@ -126,9 +126,6 @@ export function Launcher() {
   if (!localRoot) {
     return (
       <div className={cn(paper, "mx-auto flex w-full max-w-sm flex-col items-center gap-3 rounded-2xl p-4 text-center")}>
-        <p className="text-[13px] text-muted-foreground">
-          No folder open. An agent runs in a repo, on this machine.
-        </p>
         <button
           type="button"
           onClick={() => addWorkspace()}

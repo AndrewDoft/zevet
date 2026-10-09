@@ -722,19 +722,29 @@ function ModelsSection() {
     window.zevet?.credentialLadder?.().then((l) => setLadder(l || []), () => {});
   }, []);
   const rows = buildCatalogue({ agents, credentials: creds, ladder, consoles });
+  const row = (r: (typeof rows)[number]) => (
+    <div className="srow" key={r.engine + ":" + r.id} data-model-row={r.id}>
+      <span className="k">
+        {r.name} <span className="mono">{r.engine}</span>
+      </span>
+      <span className="v mono">
+        {r.available ? "ready" : "unavailable"} · {r.payers.join(", ") || "no credential"} · {formatPair(r.price)} · run {formatCost(r.runMedian)}
+      </span>
+    </div>
+  );
+  /* What needs attention is shown; the rest is one click away. A page of
+     twenty-nine "ready" rows is a scroll and nothing to act on. */
+  const ready = rows.filter((r) => r.available);
   return (
-    <SSection title="Models" summary={`${rows.filter((r) => r.available).length} of ${rows.length} ready`}>
-      {rows.map((r) => (
-        <div className="srow" key={r.engine + ":" + r.id} data-model-row={r.id}>
-          <span className="k">
-            {r.name} <span className="mono">{r.engine}</span>
-          </span>
-          <span className="v mono">
-            {r.available ? "ready" : "unavailable"} · {r.payers.join(", ") || "no credential"} · {formatPair(r.price)} · run {formatCost(r.runMedian)}
-          </span>
-        </div>
-      ))}
-      <SNote>$ per MTok in / out</SNote>
+    <SSection title="Models" summary={`${ready.length} of ${rows.length} ready`}>
+      {rows.filter((r) => !r.available).map(row)}
+      {ready.length ? (
+        <details>
+          <summary>All</summary>
+          {ready.map(row)}
+          <SNote>$ per MTok in / out</SNote>
+        </details>
+      ) : null}
     </SSection>
   );
 }
