@@ -386,9 +386,13 @@ describe("5. restart safety", () => {
   });
 
   test("a ledger that cannot be written on a claim does not make done reject", async () => {
+    // Read fine at start, then the directory turns into a file: a write fails the same way on every OS.
+    // (A path under a file from the start reads ENOTDIR on macOS, which is a corrupt ledger, not this case.)
     const blocker = path.join(home.dir, `blocker-${++n}`);
-    fs.writeFileSync(blocker, "x");
+    fs.mkdirSync(blocker);
     const r = rig({ ledgerFile: path.join(blocker, "l.json") });
+    fs.rmSync(blocker, { recursive: true, force: true });
+    fs.writeFileSync(blocker, "x");
     queue.push(mkRun({ run_id: "nowrite" }));
     await assert.rejects(r.poller.tick()); // the claim itself refuses: nothing started without a ledger entry
     assert.equal(r.started.length, 0);
