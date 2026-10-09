@@ -24,13 +24,22 @@ function readJson(file) {
   }
 }
 
-/** The credential this machine runs claude with, as Masora's payer route: a login is a plan, an API key is the user's own. */
-function claudeRoute({ home, env }, credentialKind) {
-  if (credentialKind === "subscription_token") return "plan";
-  if (credentialKind === "api_key") return "byok";
+/**
+ * The route of the credential Claude Code will actually use, from the env it is spawned with. Order per
+ * https://code.claude.com/docs/en/authentication#authentication-precedence (fetched 2026-10-09): cloud-provider flags,
+ * ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, apiKeyHelper (a settings file, not read here), CLAUDE_CODE_OAUTH_TOKEN, then the
+ * /login subscription (a file, or the macOS Keychain, whose only trace here is oauthAccount in ~/.claude.json).
+ * "" when it cannot be told, including cloud providers, which are neither a plan nor the user's own key.
+ */
+function claudeRoute({ home, env }) {
+  const on = (v) => text(v) && !/^(0|false)$/i.test(text(v));
+  if (on(env.CLAUDE_CODE_USE_BEDROCK) || on(env.CLAUDE_CODE_USE_VERTEX) || on(env.CLAUDE_CODE_USE_FOUNDRY)) return "";
+  if (text(env.ANTHROPIC_AUTH_TOKEN) || text(env.ANTHROPIC_API_KEY)) return "byok";
+  if (text(env.CLAUDE_CODE_OAUTH_TOKEN)) return "plan";
   const dir = env.CLAUDE_CONFIG_DIR || path.join(home, ".claude");
   if (readJson(path.join(dir, ".credentials.json"))?.claudeAiOauth) return "plan";
-  return text(env.ANTHROPIC_API_KEY) ? "byok" : "";
+  const state = readJson(env.CLAUDE_CONFIG_DIR ? path.join(dir, ".claude.json") : path.join(home, ".claude.json"));
+  return state?.oauthAccount ? "plan" : "";
 }
 
 /** codex: an id_token login is the ChatGPT plan, a stored key is the user's own. */
@@ -81,13 +90,13 @@ function opencodeAccount(model) {
  * `engine` "engine2"/"auto" is the second Max account, whose identity is not
  * readable here, so it is unknown.
  */
-function payerFor(agent, { model = "", credential = "", credentialKind = "", engine = "", home = os.homedir(), env = process.env } = {}) {
+function payerFor(agent, { model = "", credential = "", engine = "", home = os.homedir(), env = process.env } = {}) {
   const key = agent === "claude-code" ? "claude" : String(agent || "").toLowerCase();
   const name = ENGINE[key];
   if (!name) return { engine: "", account: "", label: "", route: "", payer: "" };
   let account = "";
   let route = "";
-  if (key === "claude") route = engine === "engine2" || engine === "auto" ? "" : claudeRoute({ home, env }, credential ? credentialKind : "");
+  if (key === "claude") route = engine === "engine2" || engine === "auto" ? "" : claudeRoute({ home, env });
   else if (key === "codex") route = codexRoute({ home, env });
   else if (key === "opencode") route = /(:|-)free$/.test(text(model)) ? "open" : "";
   if (key === "claude") account = credential ? text(credential) : engine === "engine2" || engine === "auto" ? "" : claudeAccount({ home, env });

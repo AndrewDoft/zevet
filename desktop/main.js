@@ -2594,15 +2594,21 @@ const myPayers = new Map();
 function payerOf(agent, { model = "", engine = "" } = {}) {
   const def = readConfig()?.defaultCredential;
   let credential = "";
-  let credentialKind = "";
+  let spawnEnv = process.env; // credentialEnvFor() returns undefined (child inherits process.env) whenever it finds nothing usable
   if (def && (agent === "claude" || agent === "claude-code")) {
-    // A saved credential overrides the login. Only a personal one is named; a team or auto-ladder pick is not knowable here.
-    const found = def.scope === "personal" && def.id ? credentials.listCredentials().find((c) => c.id === def.id) : null;
-    if (!found || !found.label) return { engine: "Claude", account: "", label: "" };
-    credential = found.label;
-    credentialKind = found.kind;
+    // Only a personal credential is knowable here; a team or auto-ladder pick resolves over the network at spawn.
+    if (def.scope !== "personal") return { engine: "Claude", account: "", label: "", route: "", payer: "" };
+    const found = def.id ? credentials.listCredentials().find((c) => c.id === def.id) : null;
+    const envVar = found && safeStorage.isEncryptionAvailable() && credentials.credentialKey(found.id, (b) => safeStorage.decryptString(b)) ? CREDENTIAL_ENV[`${found.provider}:${found.kind}`] : "";
+    if (envVar) {
+      // Mirror credentialEnvFor: every credential var stripped, the saved one set. Presence only, never the key.
+      spawnEnv = { ...process.env };
+      for (const v of ALL_CREDENTIAL_ENV_VARS) delete spawnEnv[v];
+      spawnEnv[envVar] = "set";
+      credential = found.label || "";
+    }
   }
-  return payerLib.payerFor(agent, { model, engine, credential, credentialKind });
+  return payerLib.payerFor(agent, { model, engine, credential, env: spawnEnv });
 }
 function allPayers() {
   return [...teamPayers.values()];

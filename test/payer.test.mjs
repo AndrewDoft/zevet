@@ -252,3 +252,53 @@ describe("cards and wiring", () => {
     assert.match(main, /payerLib\.payerBody\(docCrypto, a\.key, actor, session, p\)/);
   });
 });
+
+describe("Masora payer route (D-106)", () => {
+  const login = { ".claude/.credentials.json": { claudeAiOauth: { subscriptionType: "max" } } };
+  const macLogin = { ".claude.json": { oauthAccount: { emailAddress: "a@example.com" } } }; // Keychain holds the token; this is the only file trace
+  const route = (agent, files, env = {}, extra = {}) => payerFor(agent, { home: home(files), env, ...extra });
+
+  test("claude follows Claude Code's own precedence over the spawn env", () => {
+    assert.equal(route("claude", login).payer, "plan:claude");
+    assert.equal(route("claude", login, { ANTHROPIC_API_KEY: "k" }).payer, "byok:claude", "login plus env key: the key wins");
+    assert.equal(route("claude", login, { ANTHROPIC_AUTH_TOKEN: "t" }).payer, "byok:claude");
+    assert.equal(route("claude", login, { ANTHROPIC_AUTH_TOKEN: "t", CLAUDE_CODE_OAUTH_TOKEN: "o" }).payer, "byok:claude");
+    assert.equal(route("claude", {}, { CLAUDE_CODE_OAUTH_TOKEN: "o" }).payer, "plan:claude");
+    assert.equal(route("claude", {}, { CLAUDE_CODE_OAUTH_TOKEN: "o", ANTHROPIC_API_KEY: "k" }).payer, "byok:claude", "API key outranks the oauth token");
+  });
+
+  test("a cloud provider is refused, whatever else is present", () => {
+    for (const flag of ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"]) {
+      assert.equal(route("claude", login, { [flag]: "1", ANTHROPIC_API_KEY: "k" }).payer, "");
+    }
+    assert.equal(route("claude", login, { CLAUDE_CODE_USE_BEDROCK: "0" }).payer, "plan:claude");
+  });
+
+  test("a mac login with only oauthAccount is a plan; nothing at all is unrouted", () => {
+    assert.equal(route("claude", macLogin).payer, "plan:claude");
+    assert.equal(route("claude", {}).payer, "");
+    assert.equal(route("claude", {}).route, "");
+  });
+
+  test("the env the spawn gets decides it: a stripped env falls back to the login, a saved openai key never gives byok:claude", () => {
+    // main.js strips every credential var and sets only the saved one; openai:api_key sets OPENAI_API_KEY, so claude runs on its login.
+    assert.equal(route("claude", login, { OPENAI_API_KEY: "set" }).payer, "plan:claude");
+    // a decryption failure leaves process.env as is: the env-derived route.
+    assert.equal(route("claude", login, { ANTHROPIC_API_KEY: "k" }).payer, "byok:claude");
+    assert.equal(route("claude", macLogin, { OPENAI_API_KEY: "set" }).payer, "plan:claude");
+  });
+
+  test("the payer is route:engine only, never an account", () => {
+    const p = route("claude", { ...login, ...macLogin });
+    assert.match(p.payer, /^(plan|byok|open):[a-z0-9]+$/);
+    assert.match(p.label, /a@example\.com/);
+    assert.ok(!p.payer.includes("@"));
+  });
+
+  test("codex: login is plan, stored key is byok; opencode :free is open", () => {
+    assert.equal(route("codex", { ".codex/auth.json": { tokens: { id_token: jwt({ "https://api.openai.com/auth": { chatgpt_plan_type: "plus" } }) } } }).payer, "plan:codex");
+    assert.equal(route("codex", { ".codex/auth.json": { OPENAI_API_KEY: "sk-FIXTURE" } }).payer, "byok:codex");
+    assert.equal(route("opencode", {}, {}, { model: "openrouter/foo:free" }).payer, "open:opencode");
+    assert.equal(route("opencode", {}, {}, { model: "anthropic/claude" }).payer, "");
+  });
+});
