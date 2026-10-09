@@ -12,6 +12,7 @@ import {
   plainError,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
+import { throttle } from "./throttle.mjs";
 import { foldAgent } from "./agents.mjs";
 import { latestPlan } from "./plan-progress.mjs";
 import type { AgentRow } from "./agents.d.mts";
@@ -1742,11 +1743,14 @@ function pushConsoleLine(c: ConsoleEntry, kind: ConsoleLine["kind"], text: strin
   if (c.lines.length > 400) c.lines.splice(0, c.lines.length - 400);
 }
 
-function signalConsolesChanged(): void {
-  const cur = useBoard.getState();
-  const c = cur.myConsoles;
-  useBoard.setState({ myConsoles: [...c] });
-}
+/* Publishes in-place console mutations. Agent events arrive hundreds a second
+   across consoles and every publish re-renders the runtime, thread list and
+   composer; throttled to one per 50ms (20/s), measured in test/throttle.test.mjs
+   and scripts/measure-friction. State is mutated in place, so a reader never
+   sees stale data; only subscribers wait for the window to close. */
+const signalConsolesChanged = throttle(() => {
+  useBoard.setState({ myConsoles: [...useBoard.getState().myConsoles] });
+}, 50);
 
 /** Storage key for a console's model: agent-qualified, so opencode's dozen
  *  provider-prefixed ids and claude/codex's short ones can never collide on
