@@ -238,6 +238,8 @@ contextBridge.exposeInMainWorld("zevet", {
   masoraChatPush: (on) => ipcRenderer.invoke("zevet:masoraChatPush", { on }),
   /** Run Masora's queued agent runs on this machine (masora-runs.js), off by default. */
   masoraRunsPoll: (on) => ipcRenderer.invoke("zevet:masoraRunsPoll", { on }),
+  /** Run Masora's approved browser tasks in a dedicated headless profile (masora-browser-tasks.js), off by default. */
+  masoraBrowserTasksPoll: (on) => ipcRenderer.invoke("zevet:masoraBrowserTasksPoll", { on }),
   /**
    * Connections panel: which sources are linked, and connecting a new one.
    * Channel names have no "zevet:" prefix -- they are `masora:sources` /
