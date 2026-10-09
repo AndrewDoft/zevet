@@ -171,6 +171,16 @@ function captureUpdateFailure(sentryMain, { stage, error } = {}) {
   return sentryMain.captureException(err, { tags: { kind: "update_failure", stage: String(stage || "") } });
 }
 
+/** Only updater diagnostics; the shared beforeSend hook still scrubs every string. */
+function capturePayloadStuck(sentryMain, { channel, high_seq, running_build, stable_build, last_status } = {}) {
+  return sentryMain.captureMessage("payload update stuck for more than 24 hours", {
+    level: "warning",
+    tags: { kind: "payload_stuck", channel: String(channel) },
+    fingerprint: ["payload-update-stuck"],
+    extra: { channel, high_seq, running_build, stable_build, last_status },
+  });
+}
+
 /** ZEVET_SENTRY_TEST=1 verification: one deliberate event, unmistakable in
  *  the Sentry project as a test rather than a real failure. */
 function sendTestMessage(sentryMain) {
@@ -235,6 +245,7 @@ module.exports = {
   lastLines,
   captureAgentFailure,
   captureUpdateFailure,
+  capturePayloadStuck,
   sendTestMessage,
   withAgentFailureCapture,
 };

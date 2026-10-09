@@ -22,8 +22,12 @@ shell only), repoints the Caddy links in place, publishes the payload to the one
 reads it back over HTTPS, deploys the hub and checks `/healthz` + `/version`, hashes the served installers, and
 appends the D-record to `DECISIONS.md`. Docs, tests and scripts alone are not a release.
 
-**One channel.** There is no canary, no soak and no promote step: a release goes straight to the feed every install
-reads, Andrew's included, so the gate in the release step is the only check before everyone gets it.
+**Stable release channel.** Releases go straight to stable, Andrew's included. Until every old shell has received
+the stable-only bootstrap, ship also signs and publishes an identical-build compatibility pulse for `canary`.
+Both channels and both payload platforms must pass signed read-back before the payload step is complete. There
+is no separate canary rollout, soak or promotion step. Do not remove the compatibility mirror without evidence
+that retired-channel installs have migrated. Channel repair and the shell diagnostics require a new installer;
+changing `bootstrap.js` cannot reach an old shell through a payload-only release.
 
 **Resumable.** Every step asks "is this already done?" first (tag on origin, run green, installers on the host,
 Caddyfile names the version, pulse carries the build on both platforms, hub marker, D-record on main) and skips.
@@ -353,7 +357,9 @@ export ZEVET_UPDATE_SIGNING_KEY=...              # the same key as the feed (ste
 node scripts/make-feed.mjs payload --out ./payload-0.2.89 [--channel stable] [--have hashes.txt]
 ```
 
-There is one channel, `stable`, which every install follows. `npm run ship` runs this itself. The command stages the tree,
+`stable` is the default channel; `npm run ship` also mirrors it to `canary` for old shells as described above.
+For manual recovery publication, run the same command again with `--channel canary` before uploading pulses.
+The command stages the tree,
 publishes it for `win-x64` and `mac-arm64` with desktop-kit's `bin/publish-payload.mjs`, and writes the
 `p/` layout: `p/b/<aa>/<sha>` (brotli blobs), `p/m/<sha>.json` (manifests), and one
 `p/zevet/<channel>/<platform>/pulse.json` per platform. `--have` lists blob hashes already on the host

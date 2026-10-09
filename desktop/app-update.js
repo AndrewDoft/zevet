@@ -614,10 +614,12 @@ class AppUpdater extends UpdaterCore {
    *  stage the new bundle beside the old one and then swap it in, so no file
    *  from the old version survives and a failed copy leaves the old app
    *  intact. Returned as data so a test can pin them without a Mac. */
-  _macReplaceSteps(dmgFile, bundlePath, pid = process.pid) {
+  _macReplaceSteps(dmgFile, bundlePath, pid = process.pid, cleanupRoots = null) {
     const appName = path.basename(bundlePath);
     const mount = path.join(os.tmpdir(), `zevet-update-${pid}-${Date.now()}`);
     const staged = `${bundlePath}.update`;
+    // Tests that execute the cleanup command must supply only disposable roots.
+    const roots = cleanupRoots || [path.dirname(bundlePath), path.join(os.homedir(), "Applications"), "/Applications"];
     return [
       `while kill -0 ${Number(pid)} 2>/dev/null; do sleep 0.2; done`,
       `rm -rf ${shQuote(staged)}`,
@@ -640,7 +642,7 @@ class AppUpdater extends UpdaterCore {
       // when there is nothing stray to sweep, the trailing `[ -e "$f" ]`
       // test is false and the loop "fails", silently cancelling the `open`
       // (relaunch) chained after it. `true` pins this step's exit to 0.
-      `for d in ${shQuote(path.dirname(bundlePath))} ${shQuote(path.join(os.homedir(), "Applications"))} /Applications; do ` +
+      `for d in ${roots.map(shQuote).join(" ")}; do ` +
         `for f in "$d"/zevet*.app "$d"/zevet*.app.update; do ` +
         `[ -e "$f" ] && [ "$f" != ${shQuote(bundlePath)} ] && rm -rf "$f"; done; done; true`,
     ];

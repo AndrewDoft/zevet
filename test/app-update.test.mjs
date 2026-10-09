@@ -928,7 +928,7 @@ describe("self-replacing a Mac bundle", () => {
       // version it keeps the old"): the final step sweeps sibling
       // zevet*.app / zevet*.app.update in the bundle's own folder plus both
       // Applications directories, but never the bundle just installed.
-      assert.match(steps[7], /for d in .*Applications.* \/Applications; do/);
+      assert.match(steps[7], /for d in .*Applications.* '\/Applications'; do/);
       assert.match(steps[7], /zevet\*\.app.*zevet\*\.app\.update/);
       assert.match(steps[7], new RegExp(`!= '${bundle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`), "must never delete the bundle it just installed");
     } finally {
@@ -947,9 +947,11 @@ describe("self-replacing a Mac bundle", () => {
         platformKey: MAC_KEY,
         bundlePath: bundle,
       });
-      const cleanup = u._macReplaceSteps(path.join(t.dir, MAC_FILE), bundle, process.pid)[7];
-      // The bundle's own dir, ~/Applications, and /Applications have nothing
-      // named zevet* to sweep here, so the loop's last `[ -e "$f" ]` is false.
+      const cleanup = u._macReplaceSteps(path.join(t.dir, MAC_FILE), bundle, process.pid, [t.dir])[7];
+      // Fail BEFORE executing if the sandbox is ever ignored: this previously
+      // deleted the developer's real installed app during a Mac gate run.
+      assert.doesNotMatch(cleanup, /\/Applications/);
+      // Only this disposable directory is empty, so the last existence check is false.
       // Every step is joined with `&&` (_spawnMacReplace), so a step that
       // exits non-zero on the harmless "nothing to clean up" case would
       // silently cancel the `open` (relaunch) chained after it.

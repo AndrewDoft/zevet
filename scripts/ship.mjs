@@ -4,8 +4,8 @@
 //
 //   node scripts/ship.mjs [--dry-run] [--notes "one short sentence"]
 //
-// One channel: a release goes straight to the feed every install reads. There is no canary, no soak and no
-// promote step; the gate in the release step is the only check before everyone gets it.
+// Stable is the release channel. Canary mirrors it only to recover old channel files until the
+// stable-only bootstrap reaches every shell; it is not a separate rollout or promotion step.
 //
 // It decides everything itself: shell vs payload from the diff since the last release tag (ship-lib
 // classify), the next version, whether the hub needs a deploy. Then, each step skipping what is already
@@ -43,6 +43,7 @@ export const REPO = "AndrewDoft/zevet";
 export const BASE = "https://usemasora.com/download";
 export const HUB = "https://hub.usemasora.com";
 export const PLATFORMS = ["win-x64", "mac-arm64"];
+export const PAYLOAD_CHANNELS = ["stable", "canary"];
 const BOX = ["compute", "ssh", "masora-app", "--project", "masora-production", "--tunnel-through-iap", "--zone", "us-east1-b"];
 const DL = "/srv/masora/downloads";
 export const LOCK = path.join(tmpdir(), "zevet-ship.lock");
@@ -451,14 +452,19 @@ docker restart masora-zevet-hub-1
     }] : []),
     {
       name: "payload",
-      plan: () => "stage the payload tree, upload new blobs, manifests, then the stable pulses; read back over HTTPS",
-      done: () => channelDone("stable"),
+      plan: () => "stage the payload tree, upload new blobs, manifests, then stable and compatibility canary pulses; read back over HTTPS",
+      done: async () => {
+        for (const channel of PAYLOAD_CHANNELS) if (!(await channelDone(channel))) return false;
+        return true;
+      },
       async run() {
         const wt = at(tag);
         const out = stage();
         rmSync(out, { recursive: true, force: true });
         mkdirSync(out, { recursive: true });
-        io.run("node", ["scripts/make-feed.mjs", "payload", "--out", out, "--channel", "stable"], { cwd: wt, env: keyEnv(io), stream: true });
+        for (const channel of PAYLOAD_CHANNELS) {
+          io.run("node", ["scripts/make-feed.mjs", "payload", "--out", out, "--channel", channel], { cwd: wt, env: keyEnv(io), stream: true });
+        }
         const blobs = walk(path.join(out, "p", "b")).map((f) => `p/b/${f}`);
         const have = await pool(blobs, 8, (f) => okHead(`${BASE}/${f}`));
         const fresh = blobs.filter((_, i) => !have[i]);
@@ -466,8 +472,8 @@ docker restart masora-zevet-hub-1
         ctx.facts.newBytes = fresh.reduce((n, f) => n + statSync(path.join(out, f)).size, 0);
         // bytes before pointer: blobs and manifests, then the pulses (RELEASING.md §7)
         upload("ship-bytes.tgz", out, [...fresh, ...walk(path.join(out, "p", "m")).map((f) => `p/m/${f}`)]);
-        upload("ship-pulses.tgz", out, PLATFORMS.map((p) => `p/zevet/stable/${p}/pulse.json`));
-        ctx.facts.stable = await verifyPayload(io, "stable", { expectBuild: v, verify: verifyPulse });
+        upload("ship-pulses.tgz", out, PAYLOAD_CHANNELS.flatMap((c) => PLATFORMS.map((p) => `p/zevet/${c}/${p}/pulse.json`)));
+        for (const channel of PAYLOAD_CHANNELS) ctx.facts[channel] = await verifyPayload(io, channel, { expectBuild: v, verify: verifyPulse });
       },
     },
     {
@@ -489,7 +495,7 @@ docker restart masora-zevet-hub-1
         }
         ctx.facts.authenticode = authenticode(path.join(scratch, "Zevet-Setup.exe"));
         authenticode(path.join(scratch, "Zevet-Setup-arm64.exe"));
-        ctx.facts.stable = await verifyPayload(io, "stable", { expectBuild: v, verify: verifyPulse });
+        for (const channel of PAYLOAD_CHANNELS) ctx.facts[channel] = await verifyPayload(io, channel, { expectBuild: v, verify: verifyPulse });
         const feed = JSON.parse((await io.https(`${BASE}/zevet-latest.json`)).body.toString("utf8"));
         if (shell) {
           const { UPDATE_DOMAIN, PINNED_KEYS, verifySigned } = signing();
