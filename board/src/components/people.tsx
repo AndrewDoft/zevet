@@ -47,6 +47,7 @@
  * which is a column built for a long list rather than a 250px rail. The plus
  * is in this pane's own title row (App.tsx).
  */
+import { agentModelLabel } from "../lib/models.mjs";
 import { SessionClaimChip } from "./claimviews";
 import { ownersOf, useStepOwners } from "../lib/claimstore";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
@@ -214,7 +215,7 @@ export function consoleBlurb(c: ConsoleEntry): string {
 }
 
 function agentDetail(row: Row): string {
-  return [row.agent, row.model, row.effort].filter(Boolean).join(" · ");
+  return [agentModelLabel(row.agent, row.model), row.effort].filter(Boolean).join(" · ");
 }
 
 /** A run that ended badly: it never started, or its last message was cut off. */

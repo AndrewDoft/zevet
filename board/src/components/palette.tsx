@@ -2,6 +2,7 @@
  * A Ctrl/Cmd+K command palette over real store state — no separate "palette
  * data" to keep in sync, so a new console or workspace shows up for free.
  */
+import { agentModelLabel } from "../lib/models.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { zStorage } from "../lib/bridge";
 import { matches } from "../lib/keybindings.mjs";
@@ -72,7 +73,7 @@ export function Palette() {
         id: `thread:${c.key}`,
         // An empty model is the common case ("whatever the CLI picks"), and
         // `claude — ` with nothing after the dash reads as a truncation.
-        label: c.model ? `${c.agent} — ${c.model}` : c.agent,
+        label: agentModelLabel(c.agent, c.model, " — "),
         group: "Threads",
         keys: NO_KEYS,
       },

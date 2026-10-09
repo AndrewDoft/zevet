@@ -97,3 +97,34 @@ export function describeModel(alias) {
     trains: /-contributor(-|$)/.test(alias),
   };
 }
+
+const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+
+/** A model id the way a person says it: "claude-sonnet-5.5" and "claude-sonnet-5-5" are "Sonnet 5.5". */
+export function friendlyModel(raw) {
+  if (!raw) return "";
+  const known = describeModel(raw).label;
+  if (known && known !== raw) return known;
+  const m = /^claude-(sonnet|opus|haiku|fable)-(\d+(?:[.-]\d+)*?)(?:-\d{8})?$/i.exec(raw);
+  if (m) return `${cap(m[1])} ${m[2].replace(/-/g, ".")}`;
+  if (/^(sonnet|opus|haiku|fable)$/i.test(raw)) return cap(raw);
+  return raw;
+}
+
+// A model id that already names its CLI's family: the CLI's own name beside it says nothing twice.
+const FAMILY = {
+  claude: /claude|sonnet|opus|haiku|fable/i,
+  codex: /gpt|codex|^o\d/i,
+  gemini: /gemini/i,
+};
+
+/** One label for an agent and its model, everywhere an agent is listed. "claude" + "claude-sonnet-5.5" is
+ *  "Sonnet 5.5", not "claude · claude-sonnet-5.5"; "opencode" + "Muse Spark" keeps its prefix, since the
+ *  model says nothing about the CLI. No model: the agent's name. */
+export function agentModelLabel(agent, model, sep = " · ") {
+  const name = String(agent || "");
+  if (!model) return name;
+  const shown = friendlyModel(model);
+  const family = FAMILY[name];
+  return family && family.test(model) ? shown : name ? `${name}${sep}${shown}` : shown;
+}
