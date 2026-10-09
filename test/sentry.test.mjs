@@ -14,6 +14,18 @@ const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sentry = require(path.join(ROOT, "desktop", "sentry.js"));
 
+test("stuck payload capture sends only update diagnostics through the existing Sentry path", () => {
+  const s = fakeSentry();
+  const details = { channel: "stable", high_seq: 2131, running_build: "0.2.131", stable_build: "0.2.139", last_status: { status: "none" }, secret: "must-not-be-sent" };
+  assert.equal(sentry.capturePayloadStuck(s, details), "fake-event-id");
+  assert.equal(s.calls.captureMessage.length, 1);
+  const { message, opts } = s.calls.captureMessage[0];
+  assert.match(message, /24 hours/);
+  assert.equal(opts.tags.kind, "payload_stuck");
+  assert.deepEqual(opts.extra, { channel: "stable", high_seq: 2131, running_build: "0.2.131", stable_build: "0.2.139", last_status: { status: "none" } });
+  assert.deepEqual(opts.fingerprint, ["payload-update-stuck"]);
+});
+
 function fakeSentry() {
   const calls = { captureMessage: [], captureException: [] };
   return {

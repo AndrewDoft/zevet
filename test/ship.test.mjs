@@ -466,14 +466,48 @@ ${blk("Zevet.dmg", "zevet-0.2.93-macos-arm64.dmg")}${blk("Zevet-Setup.exe", "zev
     assert.equal(await world(t, { ssh: () => "0.2.93\n" }).check("hub"), false);
     assert.equal(await world(t, { ssh: () => "" }).check("hub"), false);
   });
-  test("payload: done when BOTH platforms' verified stable pulse carries the build", async (t) => {
-    assert.equal(await world(t, { pay: ["stable", "0.2.94", 2094] }).check("payload"), true);
+  test("payload: a stale or missing compatibility channel cannot be considered released", async (t) => {
+    const w = world(t, { pay: ["stable", "0.2.94", 2094] });
+    assert.equal(await w.check("payload"), false);
+    publish(t, "canary", "0.2.93", 2093, w.ctx.work, signer);
+    assert.equal(await w.check("payload"), false);
+    publish(t, "canary", "0.2.94", 2094, w.ctx.work, signer);
+    assert.equal(await w.check("payload"), true);
     assert.equal(await world(t, { pay: ["stable", "0.2.93", 2093] }).check("payload"), false); // an older build
     assert.equal(await world(t).check("payload"), false); // nothing published
   });
-  test("there is no canary, soak or promote step or flag in ship", () => {
+  test("payload run signs both channels and uploads all four pulses after their bytes", async (t) => {
+    const w = world(t), commands = [], channels = [];
+    const wt = w.ctx.wt;
+    mkdirSync(path.join(wt, "node_modules"), { recursive: true });
+    mkdirSync(path.join(wt, "desktop", "node_modules"), { recursive: true });
+    const git = w.ctx.io.git;
+    w.ctx.io.git = (args) => args[0] === "worktree" ? `worktree ${wt}` : ["reset", "clean", "checkout"].includes(args[0]) ? "" : git(args);
+    w.ctx.io.key = () => signer.pem;
+    w.ctx.io.scp = () => {};
+    w.ctx.io.https = host(path.join(w.ctx.work, "payload")).https;
+    w.ctx.io.run = (cmd, args) => {
+      commands.push([cmd, ...args]);
+      if (cmd === "node" && args[0] === "scripts/make-feed.mjs") {
+        const channel = args[args.indexOf("--channel") + 1], out = args[args.indexOf("--out") + 1];
+        channels.push(channel);
+        publish(t, channel, "0.2.94", 2094, out, signer);
+      }
+      return { stdout: "" };
+    };
+    await w.steps.find((s) => s.name === "payload").run();
+    assert.deepEqual(channels, ["stable", "canary"]);
+    const archives = commands.filter(([cmd]) => cmd === "tar");
+    assert.match(archives[0][2], /ship-bytes/);
+    assert.match(archives[1][2], /ship-pulses/);
+    assert.deepEqual(archives[1].slice(3).sort(), ["p/zevet/canary/mac-arm64/pulse.json", "p/zevet/canary/win-x64/pulse.json", "p/zevet/stable/mac-arm64/pulse.json", "p/zevet/stable/win-x64/pulse.json"]);
+    assert.equal(w.ctx.facts.canary["mac-arm64"].build, "0.2.94");
+    assert.equal(w.ctx.facts.canary["mac-arm64"].manifest, w.ctx.facts.stable["mac-arm64"].manifest);
+  });
+  test("compatibility mirroring adds no soak or promotion step or flag", (t) => {
     const src = readFileSync(new URL("../scripts/ship.mjs", import.meta.url), "utf8").replace(/^\s*\/\/.*$/gm, "");
-    assert.ok(!/canary|soak|--promote|--skip-soak/i.test(src));
+    assert.ok(!/--promote|--skip-soak/i.test(src));
+    assert.ok(!world(t).steps.some((s) => /canary|soak|promote/i.test(s.name)));
   });
   test("installer feed: shell releases only, done when the live feed names the version", async (t) => {
     assert.equal(world(t).steps.some((s) => s.name === "installer feed"), false);

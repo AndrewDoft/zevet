@@ -37,6 +37,11 @@ describe("the dependency electron-builder must package", () => {
 });
 
 describe("main.js: init before any window, tagged from the start", () => {
+  test("the shell's stuck-payload reporter uses initialized and scrubbed Sentry", () => {
+    const reporter = main.indexOf("bootShell.reportPayloadStuck =");
+    assert.ok(reporter > main.indexOf("sentry.initMain("));
+    assert.match(main.slice(reporter, reporter + 140), /sentry\.capturePayloadStuck\(Sentry, details\)/);
+  });
   test("Sentry.init runs before app.whenReady, not inside it", () => {
     const initIdx = main.indexOf("sentry.initMain(");
     const readyIdx = main.indexOf("app.whenReady()");

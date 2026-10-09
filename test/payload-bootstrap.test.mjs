@@ -104,7 +104,7 @@ describe("the shell/payload split", () => {
 });
 
 /** Load bootstrap.js fresh with a fake Electron app and a fake payload client. */
-async function boot({ packaged = true, lock = true, resolved = {}, verifyThrows = false, mainSrc, multi = false } = {}) {
+async function boot({ packaged = true, lock = true, resolved = {}, verifyThrows = false, mainSrc, multi = false, channelFile, channelEnv } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-boot-"));
   const payloadDir = path.join(dir, "versions", "0.2.90");
   fs.mkdirSync(payloadDir, { recursive: true });
@@ -124,6 +124,7 @@ async function boot({ packaged = true, lock = true, resolved = {}, verifyThrows 
     },
     confirm: () => log.push("confirm"),
     start: () => log.push("start"),
+    check: async () => ({ status: "none" }),
     on: () => {},
   };
   const app = {
@@ -142,11 +143,17 @@ async function boot({ packaged = true, lock = true, resolved = {}, verifyThrows 
   Module._load = function (request, ...rest) {
     if (request === "electron") return { app };
     if (!packaged && request === path.join(DESKTOP, "main.js")) return log.push("dev main.js") && {};
-    if (request === "@masora/desktop-kit/lib/payload") return { createPayloadClient: () => client };
+    if (request === "@masora/desktop-kit/lib/payload") return { createPayloadClient: (options) => { globalThis.__bootTest.clientOptions = options; globalThis.__bootTest.originalCheck = client.check; return client; } };
     return load.call(this, request, ...rest);
   };
   const env = { ...process.env };
   process.env.ZEVET_PAYLOAD_ROOT = path.join(dir, "payload-root");
+  if (channelEnv) process.env.ZEVET_PAYLOAD_CHANNEL = channelEnv;
+  else delete process.env.ZEVET_PAYLOAD_CHANNEL;
+  if (channelFile !== undefined) {
+    fs.mkdirSync(process.env.ZEVET_PAYLOAD_ROOT, { recursive: true });
+    fs.writeFileSync(path.join(process.env.ZEVET_PAYLOAD_ROOT, "channel"), channelFile);
+  }
   if (multi) process.env.ZEVET_ALLOW_MULTI = "1";
   else delete process.env.ZEVET_ALLOW_MULTI;
   const file = path.join(DESKTOP, "bootstrap.js");
@@ -194,6 +201,21 @@ describe("bootstrap.js", () => {
     assert.equal(r.shell.build, "0.2.90", "the build main.js sees is the payload's, not the installer's");
     await new Promise((res) => setImmediate(res));
     assert.ok(r.log.includes("start"), "the client never started checking");
+  });
+  test("a retired channel file boots stable and is rewritten; checks use the observed fetch", async () => {
+    r = await boot({ channelFile: "canary\n" });
+    assert.equal(r.threw, null);
+    const opts = r.state.clientOptions;
+    assert.equal(opts.channel, "stable");
+    assert.match(opts.pulseUrl, /\/stable\/win-x64\/pulse.json$/);
+    assert.equal(fs.readFileSync(path.join(opts.root, "channel"), "utf8"), "stable");
+    assert.equal(typeof opts.fetch, "function");
+    assert.notEqual(r.shell.payload.check, r.state.originalCheck, "bootstrap never instrumented the check");
+  });
+  test("an explicit channel override is preserved without rewriting the saved file", async () => {
+    r = await boot({ channelFile: "canary", channelEnv: "preview" });
+    assert.equal(r.state.clientOptions.channel, "preview");
+    assert.equal(fs.readFileSync(path.join(r.state.clientOptions.root, "channel"), "utf8"), "canary");
   });
   test("NODE_PATH is used to reach the shell's node_modules, and is gone again while main.js runs", async () => {
     delete process.env.NODE_PATH;

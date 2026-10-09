@@ -122,6 +122,7 @@
     },
     "files": [
       "bootstrap.js",
+      "payload-health.js",
       "payload-config.js",
       "update-signing.js",
       "app-update.js",

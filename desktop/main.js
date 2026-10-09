@@ -173,6 +173,7 @@ function trackWindow(kind, win) {
 // ZEVET_SENTRY_TEST=1: one deliberate event proving the pipe works, distinct
 // from a real failure by its exact, unmistakable text.
 if (process.env.ZEVET_SENTRY_TEST === "1") sentry.sendTestMessage(Sentry);
+bootShell.reportPayloadStuck = (details) => sentry.capturePayloadStuck(Sentry, details);
 
 /**
  * Every agent launch, Code's and Chat's alike, reports a failed run to Sentry

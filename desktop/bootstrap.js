@@ -18,6 +18,7 @@ const crypto = require("node:crypto");
 const Module = require("node:module");
 const { singleInstance, createLog } = require("@masora/desktop-kit");
 const cfg = require("./payload-config.js");
+const { resolveChannel, createPayloadHealth } = require("./payload-health.js");
 
 const bootLog = createLog({ dir: app.getPath("logs"), name: "zevet-boot" });
 const log = (m) => { console.log(`[zevet-payload] ${m}`); bootLog.info(m); };
@@ -63,23 +64,32 @@ async function run() {
 /** Resolve the build to run, check its entry points, arm the trial crash guard. Returns its dir. */
 async function startPayload(platform) {
   const root = cfg.payloadRoot();
-  const channel = process.env.ZEVET_PAYLOAD_CHANNEL || readTrim(path.join(root, "channel")) || "stable";
+  const channel = resolveChannel(root, process.env, log);
   const pulse = cfg.pulseUrl(channel, platform);
-  const { PINNED_KEYS } = require("./update-signing.js");
+  const { PINNED_KEYS, verifySigned } = require("./update-signing.js");
   const { loopbackProofKeys } = require("./app-update.js");
-  const { createPayloadClient } = require("@masora/desktop-kit/lib/payload");
+  const { createPayloadClient, PULSE_DOMAIN } = require("@masora/desktop-kit/lib/payload");
+  const keys = loopbackProofKeys(pulse) || PINNED_KEYS;
+  const health = createPayloadHealth({
+    root, channel, platform, pulseUrl: pulse, stableUrl: cfg.pulseUrl("stable", platform), log,
+    runningBuild: () => shell.build,
+    verify: (doc, signature) => verifySigned(PULSE_DOMAIN, doc, signature, keys),
+    report: (details) => shell.reportPayloadStuck && shell.reportPayloadStuck(details),
+  });
   const payload = createPayloadClient({
     app: "zevet", channel, platform, root,
     seedDir: path.join(process.resourcesPath, "app-core"),
     seedBuild: app.getVersion(), seedSeq: cfg.seqOf(app.getVersion()),
     pulseUrl: pulse,
-    keys: loopbackProofKeys(pulse) || PINNED_KEYS,
+    keys,
+    fetch: health.fetch,
     shellVersion: cfg.SHELL_VERSION,
     schemaHead: async () => null,
     installId: installId(root),
     log,
   });
   shell.payload = payload;
+  health.instrument(payload);
   // A cold launch is the safest moment to apply a staged build: nothing is running yet. The idle swapper and
   // will-quit never fire after a kill, crash, reboot or logoff. activate() writes current.json as a trial, so
   // resolve() returns it with trial:true and the confirm / 3-strike revert covers a bad build.

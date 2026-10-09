@@ -22,7 +22,7 @@ async function boot({ staged, activate }) {
       current = { build: staged.build, dir: "new", source: "store", trial: true };
     },
     resolve: () => { calls.push("resolve"); return current; },
-    verifyEntry: async () => {}, revert: () => {}, confirm: () => {}, bootFailed: () => {}, start: () => {},
+    verifyEntry: async () => {}, revert: () => {}, confirm: () => {}, bootFailed: () => {}, start: () => {}, check: async () => ({ status: "none" }),
   };
   const stubs = {
     electron: { app: { isPackaged: true, getVersion: () => "0.2.89", getPath: () => ROOT, whenReady: () => Promise.resolve(), relaunch() {}, exit() {} } },
