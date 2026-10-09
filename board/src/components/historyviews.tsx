@@ -6,6 +6,7 @@
  * timeline that runs past -> now -> future, and one heat map of when commits
  * actually land.
  */
+import { useShallow } from "zustand/react/shallow";
 import { Timeline, type TimelineEvent } from "./assistant-ui/elements/timeline";
 import { ActivityGraph } from "./assistant-ui/elements/activity-graph";
 import type { DataPoint } from "heat-graph";
@@ -24,10 +25,10 @@ function localDayKey(ms: number) {
 
 export function RepoTimeline() {
   const commits = useBoard((s) => s.repoCommits);
-  /* Only what the timeline prints, as a string: a console publishes on every agent
-     event, and this must not redraw for any of them. */
-  const running = useBoard((s) =>
-    s.myConsoles.filter((c) => c.running).map((c) => [c.key, c.agent, c.mode, c.startedAt].join("|")).join(";"),
+  /* Primitives only, shallow-compared: a console publishes on every agent event
+     and this must not redraw for any of them. Four values per running console. */
+  const flat = useBoard(
+    useShallow((s) => s.myConsoles.filter((c) => c.running).flatMap((c) => [c.key, c.agent, c.mode, c.startedAt])),
   );
   const schedules = useBoard((s) => s.schedules);
 
@@ -44,11 +45,13 @@ export function RepoTimeline() {
       detail: fileCount(c.files),
     }));
 
+  const running = Array.from({ length: flat.length / 4 }, (_, i) => ({
+    key: flat[i * 4] as number,
+    agent: flat[i * 4 + 1] as string,
+    mode: flat[i * 4 + 2] as keyof typeof MODE_LABEL,
+    startedAt: flat[i * 4 + 3] as number,
+  }));
   const now: TimelineEvent[] = running
-    .split(";")
-    .filter(Boolean)
-    .map((r) => r.split("|"))
-    .map(([key, agent, mode, startedAt]) => ({ key, agent, mode: mode as keyof typeof MODE_LABEL, startedAt: Number(startedAt) }))
     .sort((a, b) => a.startedAt - b.startedAt)
     .map((c) => ({
       id: `console-${c.key}`,

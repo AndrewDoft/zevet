@@ -52,13 +52,20 @@ const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"].map((id) => ({ 
 /** `running`: the console in front, whose model the trigger shows instead of
  *  the launch default — "Opus 5.5" over a Sonnet 5 run read as the wrong model.
  *  Picking still only sets the next start. */
-function ModelChoiceImpl({
+/* Props are primitives and `agents` is a stable list, so the default memo skips the
+   re-render the composer would otherwise force on every console publish. */
+export const ModelChoice = memo(function ModelChoice({
   agents,
-  running,
+  runningId,
+  runningName,
+  runningTitle,
 }: {
   agents: UsableAgent[];
-  running?: { id: string; name: string; title?: string };
+  runningId?: string | undefined;
+  runningName?: string | undefined;
+  runningTitle?: string | undefined;
 }) {
+  const running = runningId !== undefined && runningName !== undefined ? { id: runningId, name: runningName, title: runningTitle } : undefined;
   const launchModel = useBoard((s) => s.launchModel);
   const active = useBoard(selectActiveConsole);
   const setConsoleModel = useBoard((s) => s.setConsoleModel);
@@ -251,9 +258,4 @@ function ModelChoiceImpl({
       </ModelSelectorContent>
     </ModelSelectorRoot>
   );
-}
-
-/* The composer re-renders on every console publish and hands this a fresh `running`
-   object each time; compare by value so the picker (and its list) is left alone. */
-export const ModelChoice = memo(ModelChoiceImpl, (a, b) =>
-  a.agents === b.agents && a.running?.id === b.running?.id && a.running?.name === b.running?.name && a.running?.title === b.running?.title);
+});

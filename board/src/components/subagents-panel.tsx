@@ -13,8 +13,9 @@
  * Collapsed to a small pill by default so it costs nothing when nobody is
  * watching; a running count is the only thing shown until it is opened.
  */
-import { useEffect, useState } from "react";
-import { selectMyConsoles, serverNow, useBoard } from "../lib/board";
+import { useState } from "react";
+import { useVisibleNow } from "../lib/usevisiblenow";
+import { selectMyConsoles, useBoard } from "../lib/board";
 import { bridge } from "../lib/bridge";
 import { ago, tokens } from "../lib/fmt";
 import { turnInFlight } from "../lib/transcript.mjs";
@@ -44,13 +45,8 @@ export function agentStateOf(entry: ConsoleEntry): "working" | "idle" {
 export function SubagentsPanel() {
   const consoles = useBoard(selectMyConsoles);
   const [open, setOpen] = useState(false);
-  const [now, setNow] = useState(() => serverNow());
+  const now = useVisibleNow();
   const [sure, setSure] = useState<string | null>(null);
-
-  useEffect(() => {
-    const t = setInterval(() => { if (!document.hidden) setNow(serverNow()); }, 1000);
-    return () => clearInterval(t);
-  }, []);
 
   const visible = consoles.filter((c) => c.running || c.integration || c.masoraRun);
   const running = visible.filter((c) => c.running);

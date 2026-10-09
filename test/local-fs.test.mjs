@@ -196,13 +196,16 @@ describe("listTree", () => {
     const t = tempRoot();
     try {
       execFileSync("git", ["init", "-q"], { cwd: t.dir, windowsHide: true });
-      build(t.dir, { ".gitignore": "out/\n", "out/x.js": "x", "src/app.ts": "x" });
+      build(t.dir, { ".gitignore": "gen/\n", "gen/x.js": "x", "src/app.ts": "x", "pkg/deep/gen/y.js": "y", "pkg/deep/keep.js": "k" });
       let ticks = 0;
       const iv = setInterval(() => ticks++, 1);
       const r = await listTreeAsync(t.dir);
       clearInterval(iv);
       assert.deepEqual(r, listTree(t.dir));
-      assert.ok(!r.entries.some((e) => e.path.startsWith("out")), "ignored dir leaked");
+      assert.ok(!r.entries.some((e) => e.path.startsWith("gen")), "ignored dir leaked");
+      const paths = r.entries.map((e) => e.path);
+      assert.ok(paths.includes("pkg/deep/keep.js"), "a sibling of a nested ignored dir must stay");
+      assert.ok(!paths.some((p) => p.includes("/gen")), "a nested ignored dir (pkg/deep/gen) leaked");
       assert.ok(ticks > 0, "the loop was blocked for the whole git call");
     } finally {
       t.cleanup();

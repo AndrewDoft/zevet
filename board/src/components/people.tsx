@@ -74,6 +74,7 @@ import { foldRepoGroups, sessionBlurb, sessionProject } from "../lib/sessions.mj
 import { plainError } from "../lib/transcript.mjs";
 import { AgentLogo } from "./brand";
 import { SquareIcon, XIcon } from "lucide-react";
+import { useVisibleNow } from "../lib/usevisiblenow";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
 import { InviteIntoSession, JoinSession } from "./sessionshare";
@@ -534,12 +535,7 @@ export function PeoplePane({
   const [shut, setShut] = useState<Record<string, boolean>>({});
   const teamAgents = useBoard((s) => s.teamAgents);
   const idleAfterMs = useBoard((s) => s.idleAfterMs);
-  const [now, setNow] = useState(() => serverNow());
-
-  useEffect(() => {
-    const t = setInterval(() => { if (!document.hidden) setNow(serverNow()); }, 1000);
-    return () => clearInterval(t);
-  }, []);
+  const now = useVisibleNow();
 
   /* A running console's title is whatever its CLI has written to its session
      file by now — claude rewrites its `ai-title` as the work goes. */

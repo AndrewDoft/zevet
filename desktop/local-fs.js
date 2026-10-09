@@ -132,6 +132,8 @@ function skipSet(opts) {
  * often intentionally tracked, and a file tree must not hide source merely
  * because a rule would ignore a new copy of it.
  */
+// A checkout with a lot of ignored directories lists them all; far past anything real.
+const IGNORED_MAX_BUFFER = 64 * 1024 * 1024;
 const IGNORED_ARGS = ["--others", "--ignored", "--exclude-standard", "--directory"];
 const ignoredSet = (out) =>
   new Set(
@@ -158,7 +160,8 @@ function ignoredByGit(root) {
  *  a sync call. */
 function ignoredByGitAsync(root) {
   return new Promise((resolve) => {
-    execFile("git", ["-C", root, "ls-files", ...IGNORED_ARGS], { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (err, out) =>
+    execFile("git", ["-C", root, "ls-files", ...IGNORED_ARGS], { encoding: "utf8", windowsHide: true, maxBuffer: IGNORED_MAX_BUFFER }, (err, out) =>
+      // Same degrade as the sync path: a plain folder, no git, or an overflow still gets a tree, unfiltered.
       resolve(err ? new Set() : ignoredSet(out)),
     );
   });
@@ -245,7 +248,9 @@ function byKindThenName(a, b) {
  * @returns {{ok:true,root:string,entries:object[],truncated:boolean}|{ok:false,error:string}}
  */
 function listTree(rootDir, opts = {}) {
-  return walkTree(rootDir, opts, ignoredByGit);
+  const rooted = realRoot(rootDir);
+  if (!rooted.ok) return rooted;
+  return walkTree(rooted.root, opts, ignoredByGit(rooted.root));
 }
 
 /** listTree with git's answer awaited rather than blocked on; the walk itself
@@ -253,20 +258,15 @@ function listTree(rootDir, opts = {}) {
 async function listTreeAsync(rootDir, opts = {}) {
   const rooted = realRoot(rootDir);
   if (!rooted.ok) return rooted;
-  const ignored = await ignoredByGitAsync(rooted.root);
-  return walkTree(rootDir, opts, () => ignored);
+  return walkTree(rooted.root, opts, await ignoredByGitAsync(rooted.root));
 }
 
-function walkTree(rootDir, opts, ignoredOf) {
+/** `root` is already resolved (realRoot); `ignored` is git's ignored-path set. */
+function walkTree(root, opts, ignored) {
   const options = opts || {};
   const maxEntries = positiveInt(options.maxEntries, DEFAULT_MAX_ENTRIES);
   const maxDepth = positiveInt(options.maxDepth, DEFAULT_MAX_DEPTH);
   const skip = skipSet(options);
-
-  const rooted = realRoot(rootDir);
-  if (!rooted.ok) return rooted;
-  const root = rooted.root;
-  const ignored = ignoredOf(root);
 
   const entries = [];
   let truncated = false;

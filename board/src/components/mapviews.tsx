@@ -15,6 +15,7 @@ import {
 } from "./assistant-ui/elements/conversation-map";
 import { ContextDisplay, type TokenUsage } from "./assistant-ui/elements/context-display";
 import { selectActiveConsole, useBoard } from "../lib/board";
+import { useEarlier } from "../lib/earlier";
 import { windowFor } from "../lib/meter.mjs";
 
 /* ---------------------------------------------------------------------------
@@ -72,7 +73,12 @@ export function ThreadMap({
   className?: string | undefined;
 }) {
   const active = useBoard(selectActiveConsole);
-  const messages = active?.transcript.messages ?? [];
+  /* Only what the thread draws: a tick for a message above the window would
+     point at nothing (lib/window.mjs). */
+  const { firstId } = useEarlier();
+  const all = active?.transcript.messages ?? [];
+  const from = firstId ? all.findIndex((m) => m.id === firstId) : 0;
+  const messages = from > 0 ? all.slice(from) : all;
 
   const entries = messages
     .filter((m): m is ThreadMessageLike & { id: string } => Boolean(m.id))
@@ -83,7 +89,7 @@ export function ThreadMap({
   // (transcript.mjs's `openIndex`), not a guess at what the user is reading.
   const openIndex = active?.transcript.openIndex ?? -1;
   const activeEntry =
-    openIndex >= 0 ? messages[openIndex] : messages[messages.length - 1];
+    openIndex >= 0 ? all[openIndex] : all[all.length - 1];
   const activeId = activeEntry?.id;
 
   const idsKey = entries.map((e) => e.id).join(",");

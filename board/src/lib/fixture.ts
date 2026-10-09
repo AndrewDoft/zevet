@@ -355,7 +355,7 @@ export function installFixtureBridge(): boolean {
   let seq = 0;
 
   const emit = (e: AgentEvent) => listeners.forEach((cb) => cb(e));
-  // Lets a driving script stream arbitrary events (scripts/measure-friction.mjs).
+  // Lets a driving script stream arbitrary events. Fixture-only: this module is dropped from the production bundle.
   (window as unknown as Record<string, unknown>).__zevetEmit = emit;
 
   /** Replay a script at a pace you can actually read, so streaming, the

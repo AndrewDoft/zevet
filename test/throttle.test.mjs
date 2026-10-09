@@ -1,79 +1,80 @@
-// The console publish throttle (board/src/lib/throttle.mjs): agent events arrive
-// by the hundred a second and each publish re-renders the thread, rail and
-// composer. A burst must cost two publishes, not a thousand, and nothing may be lost.
-import { test } from "node:test";
+// Console publishes (board/src/lib/publish.mjs over throttle.mjs): agent events arrive by the
+// hundred a second and each publish re-renders thread, rail and composer. A burst costs two
+// publishes, not a thousand, and the last state always lands.
+import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ROOT } from "./helpers.mjs";
 
-const { throttle } = await import(pathToFileURL(path.join(ROOT, "board", "src", "lib", "throttle.mjs")).href);
+const lib = (f) => import(pathToFileURL(path.join(ROOT, "board", "src", "lib", f)).href);
+const { throttle } = await lib("throttle.mjs");
+const { consolePublisher } = await lib("publish.mjs");
 
-function clock() {
-  let now = 0;
-  const q = [];
-  return {
-    set: (f, ms) => { const t = { f, at: now + ms }; q.push(t); return t; },
-    clear: (t) => { const i = q.indexOf(t); if (i >= 0) q.splice(i, 1); },
-    advance(ms) {
-      const end = now + ms;
-      for (;;) {
-        q.sort((a, b) => a.at - b.at);
-        if (!q.length || q[0].at > end) break;
-        const t = q.shift();
-        now = t.at;
-        t.f();
-      }
-      now = end;
-    },
-  };
-}
-
-test("first call runs now; a burst collapses to one trailing run", () => {
-  const c = clock();
+test("first call runs now; a burst collapses to one trailing run", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let n = 0;
-  const f = throttle(() => n++, 50, c);
+  const f = throttle(() => n++, 50);
   f();
   assert.equal(n, 1);
   for (let i = 0; i < 1000; i++) f();
   assert.equal(n, 1);
-  c.advance(50);
+  t.mock.timers.tick(50);
   assert.equal(n, 2);
-  c.advance(500);
+  t.mock.timers.tick(500);
   assert.equal(n, 2, "no run without a call");
 });
 
-test("a lone call after quiet runs at once again", () => {
-  const c = clock();
+test("a lone call after quiet runs at once again", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let n = 0;
-  const f = throttle(() => n++, 50, c);
+  const f = throttle(() => n++, 50);
   f();
-  c.advance(200);
+  t.mock.timers.tick(200);
   f();
   assert.equal(n, 2);
 });
 
-test("a steady stream publishes at most once per window", () => {
-  const c = clock();
+test("a steady stream publishes at most once per window", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let n = 0;
-  const f = throttle(() => n++, 50, c);
-  for (let t = 0; t < 1000; t++) { f(); c.advance(1); }
-  assert.ok(n <= 21 && n >= 19, `got ${n}`);
+  const f = throttle(() => n++, 50);
+  for (let i = 0; i < 1000; i++) { f(); t.mock.timers.tick(1); }
+  assert.ok(n >= 19 && n <= 21, `got ${n}`);
 });
 
-test("flush runs a pending call immediately and not twice", () => {
-  const c = clock();
+test("flush runs a pending call immediately and not twice", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let n = 0;
-  const f = throttle(() => n++, 50, c);
+  const f = throttle(() => n++, 50);
   f(); f();
   f.flush();
   assert.equal(n, 2);
-  c.advance(100);
+  t.mock.timers.tick(100);
   assert.equal(n, 2);
 });
 
-test("board.ts publishes console changes through it", () => {
-  const src = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
-  assert.match(src, /const signalConsolesChanged = throttle\(/);
+test("the publisher hands subscribers a fresh array holding the latest in-place state", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const list = [{ lines: 0 }];
+  const seen = [];
+  const publish = consolePublisher(() => list, (next) => seen.push(next));
+  for (let i = 1; i <= 500; i++) { list[0].lines = i; publish(); }
+  t.mock.timers.tick(50);
+  assert.equal(seen.length, 2, "one leading, one trailing");
+  assert.notEqual(seen[1], list, "a new array, so subscribers re-render");
+  assert.equal(seen[1][0].lines, 500);
+});
+
+test("a run that ends flushes the pending publish", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const list = [{ running: true }];
+  const seen = [];
+  const publish = consolePublisher(() => list, (next) => seen.push(next.map((c) => c.running)));
+  publish();
+  list[0].running = false;
+  publish();
+  publish.flush();
+  assert.deepEqual(seen[seen.length - 1], [false]);
+  assert.equal(seen.length, 2);
 });

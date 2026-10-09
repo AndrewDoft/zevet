@@ -239,7 +239,7 @@ describe("the rail is Code's rail", () => {
 describe("every provider is offered", () => {
   test("Chat offers the rows Code does — the agents it can run, and Zevet — with no Connect-chip branch", () => {
     const c = src("board", "src", "components", "composercontrols.tsx");
-    assert.match(c, /a\.ok && \(CHAT_AGENTS as readonly string\[\]\)\.includes\(a\.name\)/);
+    assert.match(c, /a\.ok && \(!isChat \|\| \(CHAT_AGENTS as readonly string\[\]\)\.includes\(a\.name\)\)/);
     assert.ok(!/name: "gemini", ok: false/.test(c), "the synthetic gemini row is back");
     const m = src("board", "src", "components", "model-choice.tsx");
     assert.ok(!/connect-chip|PROVIDER_LABEL/.test(m), "Chat's divergent group heading / chip is back");

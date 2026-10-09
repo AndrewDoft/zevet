@@ -12,7 +12,8 @@ import {
   plainError,
 } from "./transcript.mjs";
 import { sessionTranscript } from "./sessions.mjs";
-import { throttle } from "./throttle.mjs";
+import { consolePublisher } from "./publish.mjs";
+import { whileOpen } from "./whileopen.mjs";
 import { foldAgent } from "./agents.mjs";
 import { latestPlan } from "./plan-progress.mjs";
 import type { AgentRow } from "./agents.d.mts";
@@ -1056,7 +1057,8 @@ export const useBoard = create<BoardState>((set, get) => ({
       const o = get().localOrigin;
       if (get().localRoot === dir && (!o || o === dir)) set({ localCheckout: id });
     }).catch(() => {}); // Same-machine checkout events wait for a matching fingerprint.
-    bridge.local?.tree(dir).then((r) => {
+    const still = <A extends unknown[], R>(fn: (...a: A) => R) => whileOpen(() => get().localRoot, dir, fn);
+    bridge.local?.tree(dir).then(still((r) => {
       if (r && r.ok) {
         /* A CUT-SHORT TREE IS NOT A FAILED ONE. This wrote the truncation
            notice into `localError`, and the rail renders localError as a row
@@ -1090,7 +1092,7 @@ export const useBoard = create<BoardState>((set, get) => ({
            remembered one) is not a fault to print: fall back to the no-folder
            state. Main now accepts worktrees and subfolders of an opened
            workspace, so this is only a folder the person really has not opened. */
-        if (get().localRoot === dir) get().unsetLocalRoot();
+        get().unsetLocalRoot();
       } else {
         set({
           localEntries: [],
@@ -1099,11 +1101,11 @@ export const useBoard = create<BoardState>((set, get) => ({
         });
       }
       get().refreshStats(true);
-    }).catch(() => {
+    })).catch(still(() => {
       // A rejected IPC call left `localEntries: null` forever, i.e. the tree
       // stuck on "loading" -- same failure shape as the `!r.ok` branch above.
       set({ localEntries: [], localError: "could not read that folder", localTruncated: null });
-    });
+    }));
   },
 
   unsetLocalRoot: () => {
@@ -1743,14 +1745,12 @@ function pushConsoleLine(c: ConsoleEntry, kind: ConsoleLine["kind"], text: strin
   if (c.lines.length > 400) c.lines.splice(0, c.lines.length - 400);
 }
 
-/* Publishes in-place console mutations. Agent events arrive hundreds a second
-   across consoles and every publish re-renders the runtime, thread list and
-   composer; throttled to one per 50ms (20/s), measured in test/throttle.test.mjs
-   and scripts/measure-friction. State is mutated in place, so a reader never
-   sees stale data; only subscribers wait for the window to close. */
-const signalConsolesChanged = throttle(() => {
-  useBoard.setState({ myConsoles: [...useBoard.getState().myConsoles] });
-}, 50);
+/* Publishes in-place console mutations at most 20/s (lib/publish.mjs). State is
+   mutated in place, so a reader never sees stale data; only subscribers wait. */
+const signalConsolesChanged = consolePublisher(
+  () => useBoard.getState().myConsoles,
+  (myConsoles) => useBoard.setState({ myConsoles }),
+);
 
 /** Storage key for a console's model: agent-qualified, so opencode's dozen
  *  provider-prefixed ids and claude/codex's short ones can never collide on
@@ -2054,6 +2054,8 @@ function ingressAgentEvent(evt: AgentEvent): void {
     pushConsoleLine(c, "out", evt.text || "");
   }
   signalConsolesChanged();
+  // A run that just ended shows it now, not when the window closes.
+  if (evt.type === "exit") signalConsolesChanged.flush();
 }
 
 function classifyAgent(
@@ -3258,7 +3260,9 @@ export function boot(): void {
   }
 
   // Cheap each second: refresh the relative "ago" labels that opt in.
-  window.setInterval(() => { if (!document.hidden) useBoard.getState().bumpTick(); }, 1000); // nobody reads a clock in a hidden window
+  const tick = () => { if (!document.hidden) useBoard.getState().bumpTick(); }; // nobody reads a clock in a hidden window
+  window.setInterval(tick, 1000);
+  document.addEventListener("visibilitychange", tick);
 }
 
 interface ZevetConfigLike {

@@ -271,7 +271,7 @@ function ChatRuntime({ children }: PropsWithChildren) {
 }
 const EMPTY = emptyChatThread();
 // Tool activity inline and compact, the way Code draws it.
-const CHAT_COMPONENTS = { Welcome: () => null, ToolGroup: TurnToolGroup };
+const CHAT_COMPONENTS = { ToolGroup: TurnToolGroup };
 
 export function ChatMain() {
   const mode = useChat((s) => s.mode);

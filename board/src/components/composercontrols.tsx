@@ -106,8 +106,10 @@ function useComposerSource(): ComposerSource {
   const localAgents = useBoard((s) => s.localAgents);
   /* Stable identity: ModelChoice rebuilds its whole model list (a storage read per
      model) whenever `agents` changes, and this hook re-runs on every console publish. */
-  const codeAgents = useMemo(() => localAgents.filter((a) => a.ok), [localAgents]);
-  const chatAgents = useMemo(() => localAgents.filter((a) => a.ok && (CHAT_AGENTS as readonly string[]).includes(a.name)), [localAgents]);
+  const usable = useMemo(
+    () => localAgents.filter((a) => a.ok && (!isChat || (CHAT_AGENTS as readonly string[]).includes(a.name))),
+    [localAgents, isChat],
+  );
 
   if (isChat) {
     const activeId = useChat((s) => s.activeId);
@@ -126,7 +128,6 @@ function useComposerSource(): ComposerSource {
           : undefined;
     // The rows Code offers, less the agents Chat has no adapter for (gemini,
     // meta): a row that would run as another agent is not a choice.
-    const usable = chatAgents;
     return {
       usage,
       model,
@@ -143,7 +144,6 @@ function useComposerSource(): ComposerSource {
   const active = useBoard(selectActiveConsole);
   useBoard((s) => s.myConsoles);
   const setConsoleMode = useBoard((s) => s.setConsoleMode);
-  const usable = codeAgents;
   const model = active ? runningModelName(active.usage.model, active.model) : "";
   const runningModel = active
     ? active.nextModel
@@ -310,7 +310,7 @@ export function ComposerControls() {
         <PromptLibraryPanel />
       </PastPromptsButton>
       <div className={compactModelChoice}>
-        <ModelChoice agents={agents} running={runningModel} />
+        <ModelChoice agents={agents} runningId={runningModel?.id} runningName={runningModel?.name} runningTitle={runningModel?.title} />
       </div>
 
       {/* The run in front takes the pick on its next turn
