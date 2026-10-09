@@ -2501,3 +2501,13 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 - **Payload:** stable, verified over HTTPS; seq 2141 on both platforms. Manifests win `f4f41275…`, mac `a280070d…`. Delta: 4 new blob(s) uploaded. 98 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-108 — Team panel decluttered: no draft toggle, no session-share UI, "+" beside the label
+
+**Decided (2026-10-09, Andrew).** Removed the "draft shared · hide" toggle, the Join-a-session box with its Watch/Comment/Edit picker, and the per-row Invite button (same picker).
+
+- **Drafts are always shared** (the old default); the hide flag, its localStorage key `zevet.hide-draft.v1`, and `setHideMyDraft` are gone. A stale key is ignored. `draftField`'s `hidden` parameter stays (pure, tested).
+- **UI only.** `components/sessionshare.tsx` and `lib/sessionshare.ts` deleted. The hub (`/api/session-invite`, `/join`), `desktop/session-share.js` and the bridge `sessionInvite`/`sessionJoin` methods are untouched, so sharing can come back as UI without backend work.
+- **"+"** sits next to "Team" (`#teamInvite` in masora.css); Follow keeps the far edge.
+
+**Not verified.** hub/public bundle not rebuilt here; the release build does it.

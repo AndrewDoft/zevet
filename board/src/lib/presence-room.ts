@@ -4,9 +4,8 @@
  * transport, so frames are sealed in the main process (desktop/doc-sync.js,
  * AES-256-GCM with the room name as AAD) and the hub relays ciphertext.
  *
- * The draft is shared by default; `hideMyDraft` clears it from the channel.
- * Both are module state with a tiny store so the composer, the people pane and
- * the toggle stay in step without touching the big board store.
+ * The draft is always shared. Module state with a tiny store so the composer
+ * and the people pane stay in step without touching the big board store.
  */
 import { useSyncExternalStore } from "react";
 import { bridge } from "./bridge";
@@ -16,22 +15,12 @@ import { hueOf, useBoard } from "./board";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const MSG_AWARENESS = 1;
-const HIDE_KEY = "zevet.hide-draft.v1";
 
 interface Store {
   drafts: Record<string, DraftField>;
-  hidden: boolean;
 }
 
-function readHidden(): boolean {
-  try {
-    return window.localStorage.getItem(HIDE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-let store: Store = { drafts: {}, hidden: readHidden() };
+let store: Store = { drafts: {} };
 const listeners = new Set<() => void>();
 const emit = (next: Store) => {
   store = next;
@@ -47,17 +36,6 @@ export function usePresenceStore(): Store {
     () => store,
   );
 }
-
-export function setHideMyDraft(hidden: boolean): void {
-  try {
-    window.localStorage.setItem(HIDE_KEY, hidden ? "1" : "0");
-  } catch { /* per-session only */ }
-  emit({ ...store, hidden });
-  // Both directions take effect at once, not at the next keystroke.
-  if (current) publish(current, draftField({ ...last, hidden }));
-}
-
-let last = { text: "", target: null as string | null };
 
 interface Room {
   repo: string;
@@ -147,12 +125,11 @@ export function leavePresenceRoom(): void {
 
 /** The composer calls this on every change; the wire is hit at most once per DRAFT_DEBOUNCE_MS. */
 export function setMyDraft(text: string, target: string | null): void {
-  last = { text, target };
   const r = current;
   if (!r) return;
   if (timer) window.clearTimeout(timer);
   timer = window.setTimeout(() => {
     timer = null;
-    if (current === r) publish(r, draftField({ text, target, hidden: store.hidden }));
+    if (current === r) publish(r, draftField({ text, target, hidden: false }));
   }, DRAFT_DEBOUNCE_MS);
 }

@@ -78,7 +78,6 @@ import { SquareIcon, XIcon } from "lucide-react";
 import { useVisibleNow } from "../lib/usevisiblenow";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
-import { InviteIntoSession, JoinSession } from "./sessionshare";
 import { SteerButton, TakeOverButton } from "./steer";
 import { RunOnTheirs } from "./spawn";
 import { PromptGhost } from "./promptboxes";
@@ -307,10 +306,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
         {/* A sibling, not inside `agent-row-pick`: a <button> cannot nest in a
             <button>. Only a console row has one — a disk session already
             finished writing and cannot be stopped. */}
-        {/* A console's sessionId is the CLI's own session_id; the hook posts the
-            same id to the hub, so it names this session there (D-090). */}
-        {c ? <RowMenu><InviteIntoSession session={c.sessionId || undefined} /></RowMenu> : null}
-        {c ? (
+                {c ? (
           <button
             type="button"
             className="agent-row-stop"
@@ -397,7 +393,6 @@ function TeamAgentRow({ a, hue, now }: { a: { key: string; actor: string; sessio
           )}
         </div>
         <RowMenu>
-          <InviteIntoSession session={a.session} />
           <SteerButton a={a} />
           <TakeOverButton a={a} />
         </RowMenu>
@@ -689,7 +684,6 @@ export function PeoplePane({
 
   return (
     <>
-      <JoinSession />
       {[...roster].sort((a, b) => b.lastTs - a.lastTs).map((r) => {
         const idle = isIdle(r, now);
         const open = expanded.indexOf(r.actor) >= 0;
@@ -726,7 +720,7 @@ export function PeoplePane({
             </button>
             )}
             {open ? <PersonDetail r={r} /> : null}
-            <PromptGhost actor={r.actor} me={me} />
+            {me ? null : <PromptGhost actor={r.actor} />}
             {me ? myRepos(r.hue) : withState(teamAgents.filter((a) => a.actor === r.actor), now, idleAfterMs).slice(0, 12).map((a) => (
               <TeamAgentRow key={a.key} a={a} hue={r.hue} now={now} />
             ))}
@@ -746,7 +740,6 @@ export function PeoplePane({
             <span className="person-row-name">{who?.me?.name || myActor}</span>
             <span className="person-row-state">you</span>
           </div>
-          <PromptGhost actor={myActor} me />
           {myRepos(0)}
         </div>
       ) : null}

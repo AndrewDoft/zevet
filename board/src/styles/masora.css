@@ -392,6 +392,10 @@
   .rail-new.rail-new-label { width: auto; padding: 0 6px; font-size: 12px; white-space: nowrap; }
   .rail-new:hover { color: var(--ink); background: var(--raise-soft); }
   .pane-title.row > .rail-new + .follow { margin-left: 0; }
+  /* Team: the plus hugs the label; Follow stays at the far edge. */
+  .pane-title.row:has(> #teamInvite) { justify-content: flex-start; }
+  #teamInvite { margin-left: 0; margin-right: 0; }
+  .pane-title.row > #teamInvite + .follow { margin-left: auto; }
 
   /* ---- a teammate who is not live ---------------------------------------
      On the allowlist, no events yet. Two states and they are not the same
