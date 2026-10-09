@@ -1,6 +1,6 @@
 {
   "name": "zevet-desktop",
-  "version": "0.2.141",
+  "version": "0.2.142",
   "private": true,
   "description": "zevet — watch your team's coding agents",
   "main": "bootstrap.js",
