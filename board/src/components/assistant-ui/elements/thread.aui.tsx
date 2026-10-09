@@ -1,5 +1,6 @@
 "use client";
 
+import { useEarlier } from "@/lib/earlier";
 import {
   ComposerAddAttachment,
   ComposerAttachments,
@@ -221,6 +222,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
             <ThreadHistorySkeleton />
           </AuiIf>
 
+          <EarlierButton />
           <div
             data-slot="aui_message-group"
             className="mb-14 flex flex-col gap-y-8 empty:hidden"
@@ -247,6 +249,18 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
         </div>
       </ThreadPrimitive.Viewport>
     </ThreadPrimitive.Root>
+  );
+};
+
+/** Messages above the drawn window (lib/window.mjs): one tap for more. */
+const EarlierButton: FC = () => {
+  const hidden = useEarlier((s) => s.hidden);
+  const more = useEarlier((s) => s.more);
+  if (!hidden) return null;
+  return (
+    <button type="button" onClick={more} className="text-muted-foreground hover:text-foreground mb-4 self-center text-xs">
+      Earlier ({hidden})
+    </button>
   );
 };
 
@@ -365,15 +379,8 @@ const ThreadScrollToBottom: FC = () => {
   );
 };
 
-const ThreadWelcome: FC = () => {
-  return (
-    <div className="aui-thread-welcome-root mb-6 flex flex-col px-2">
-      <p className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-medium tracking-tight duration-200">
-        How can I help you today?
-      </p>
-    </div>
-  );
-};
+// An empty thread says nothing: the composer below is the whole invitation.
+const ThreadWelcome: FC = () => null;
 
 const ThreadSuggestions: FC = () => {
   return (
