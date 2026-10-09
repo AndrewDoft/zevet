@@ -2438,3 +2438,24 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 - **Hub** redeployed from the tag in place; `BUILD_ID` `1ada26774643` -> `b35d91fac7b2`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-102 — Shipped: 0.2.136, Hardened Masora Forum bridge, off per team by default (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-09).** 5 commit(s) past v0.2.134.
+
+- **Shell release.** desktop/package-lock.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.136) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.136`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `3b33ae93…` (153162696 B), dmg `46003f43…` (205315748 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2136 on both platforms. Manifests win `d76449a9…`, mac `7b6b4140…`. Delta: 0 new blob(s) uploaded. 95 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `b35d91fac7b2` -> `b35d91fac7b2`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-103 — Shipped: 0.2.137, Mac applies updates while idle with no window open (payload-only)
+
+**Decided (automatic, `npm run ship`, 2026-10-09).** 3 commit(s) past v0.2.136.
+
+- **Payload-only, not a shell release.** No shell file changed; `zevet-latest.json` untouched. Installers for 0.2.137 were built and published, and the stable `Zevet-Setup.exe` / `Zevet.dmg` links repointed, for new downloads.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.137`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `f6bbdf80…` (153162856 B), dmg `2231dcfc…` (205316881 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2137 on both platforms. Manifests win `f96436c5…`, mac `c8908513…`. Delta: 2 new blob(s) uploaded. 95 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).

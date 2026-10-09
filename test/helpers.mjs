@@ -139,6 +139,7 @@ export async function startHub(env = {}) {
     port,
     sessionToken: ownerSession,
     stderr: () => stderr.join(""),
+    stdout: () => stdout,
     async stop() {
       child.kill();
       await new Promise((r) => child.once("exit", r));

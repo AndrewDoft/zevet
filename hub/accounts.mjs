@@ -117,13 +117,15 @@ const EMPTY = () => ({ version: 1, secret: "", name: "", domain: "", masoraWorks
  *  `approve` (D-086): may a teammate answer somebody else's agent's
  *  permission prompt — `on` the answer is applied, `ask` it is shown to the
  *  agent's owner who still clicks, `off` never (the default: it lets a remote
- *  person authorise a tool call on another machine). */
+ *  person authorise a tool call on another machine).
+ *  `masoraBridge`: may Masora's Forum act on this team through /masora/* (default `off`; owner-only like the rest). */
 export const POLICY_VALUES = Object.freeze({
   steer: Object.freeze(["on", "ask", "off"]),
   approve: Object.freeze(["on", "ask", "off"]),
   retention: Object.freeze(["forever", "90d", "30d", "7d", "1d"]),
+  masoraBridge: Object.freeze(["off", "on"]),
 });
-export const DEFAULT_POLICY = Object.freeze({ steer: "ask", approve: "off", retention: "forever" });
+export const DEFAULT_POLICY = Object.freeze({ steer: "ask", approve: "off", retention: "forever", masoraBridge: "off" });
 /** `retention`: how long the hub keeps prompt and command text (`detail`) on
  *  the board and in the event log. Who/tool/file/repo is never trimmed. */
 export const RETENTION_MS = Object.freeze({ forever: 0, "90d": 90 * 864e5, "30d": 30 * 864e5, "7d": 7 * 864e5, "1d": 864e5 });
@@ -1204,6 +1206,22 @@ export class Accounts {
     if (!r.aliases.length) delete r.aliases;
     this.#save();
     return { ok: true, person: this.profile(r) };
+  }
+
+  /** The signed-in person whose PROVEN emails include `email`, as a session-shaped ref ({provider, login, id}) that
+   *  `can`, `profile` and `namesOfSession` accept, or null. Creates and stores nothing (Masora's Forum acts as a person
+   *  without opening a session for every request). */
+  refByEmail(email) {
+    const r = this.#byEmail([String(email || "").trim().toLowerCase()])[0];
+    const i = r && idents(r).find((x) => x.id);
+    return i ? { provider: i.provider, login: i.login, id: i.id } : null;
+  }
+
+  /** `{emails, logins}` of the ONE person a board actor name belongs to; null when nobody, or more than one, goes by it. */
+  identityOfName(name) {
+    const n = String(name || "").toLowerCase().replace(/^@/, "");
+    const hits = this.#people().filter((r) => this.#namesOf(r).includes(n));
+    return hits.length === 1 ? { emails: [...emailsOf(hits[0])], logins: idents(hits[0]).map((i) => i.login) } : null;
   }
 
   /** The one person a name (display, any login, any alias) belongs to. */
