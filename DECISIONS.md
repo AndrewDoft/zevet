@@ -2459,3 +2459,14 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 - **Payload:** stable, verified over HTTPS; seq 2137 on both platforms. Manifests win `f96436c5…`, mac `c8908513…`. Delta: 2 new blob(s) uploaded. 95 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-104 — Shipped: 0.2.139, Masora agent runs (off until enabled) (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-09).** 7 commit(s) past v0.2.137.
+
+- **Shell release.** desktop/package-lock.json changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.139) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.139`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `d0527fb0…` (153170456 B), dmg `4100ada2…` (205311184 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2139 on both platforms. Manifests win `43fd38f1…`, mac `27a2953e…`. Delta: 6 new blob(s) uploaded. 97 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `b35d91fac7b2` -> `fa532dd78407`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
