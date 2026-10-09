@@ -229,8 +229,11 @@ if (process.env.ZEVET_TEST_HOOKS === "1") {
 const APP_ID = "com.andrewdoft.zevet";
 app.setAppUserModelId(APP_ID);
 
-/** The icon, for the dev run and for Linux; a packaged .exe carries its own. */
-const ICON = path.join(__dirname, "build", "icon.png");
+/** The window icon (taskbar, title bar, Alt-Tab). Windows gets the multi-size .ico, whose 16/24/32 frames are
+ *  drawn for those sizes (desktop/make-icon.mjs); a 512px PNG would be shrunk on the fly. Both ship in the payload
+ *  (package.json payload.files), so a payload-only release carries the current mark even though the installed
+ *  exe's own embedded icon only changes with a new installer. */
+const ICON = path.join(__dirname, "build", process.platform === "win32" ? "icon.ico" : "icon.png");
 /** The preload lives in the payload, outside the asar: it finds @sentry/electron from the shell's directory (see ipc-table.js). */
 const SHELL_DIR_ARG = `--zevet-shell-dir=${bootShell.dir}`;
 const iconOption = fs.existsSync(ICON) ? { icon: ICON } : {};
