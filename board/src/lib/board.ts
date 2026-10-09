@@ -3258,7 +3258,7 @@ export function boot(): void {
   }
 
   // Cheap each second: refresh the relative "ago" labels that opt in.
-  window.setInterval(() => useBoard.getState().bumpTick(), 1000);
+  window.setInterval(() => { if (!document.hidden) useBoard.getState().bumpTick(); }, 1000); // nobody reads a clock in a hidden window
 }
 
 interface ZevetConfigLike {

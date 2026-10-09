@@ -48,7 +48,7 @@ export function SubagentsPanel() {
   const [sure, setSure] = useState<string | null>(null);
 
   useEffect(() => {
-    const t = setInterval(() => setNow(serverNow()), 1000);
+    const t = setInterval(() => { if (!document.hidden) setNow(serverNow()); }, 1000);
     return () => clearInterval(t);
   }, []);
 

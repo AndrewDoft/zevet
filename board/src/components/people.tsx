@@ -537,7 +537,7 @@ export function PeoplePane({
   const [now, setNow] = useState(() => serverNow());
 
   useEffect(() => {
-    const t = setInterval(() => setNow(serverNow()), 1000);
+    const t = setInterval(() => { if (!document.hidden) setNow(serverNow()); }, 1000);
     return () => clearInterval(t);
   }, []);
 
