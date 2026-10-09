@@ -140,7 +140,7 @@ function createClient({ baseUrl, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS } = {
         usage: body.usage ?? null,
         cost_reported: body.cost_reported ?? null,
         elapsed_ms: body.elapsed_ms ?? 0,
-        payer: body.payer || "unknown", // never "": a report that cannot name its payer says so
+        ...(body.payer ? { payer: body.payer } : {}), // never invented: Masora refuses a report whose payer is not <route>:<provider>
         result_text: body.result_text ?? "",
       });
       if (res.status === 401) throw new RunTokenExpired("Masora refused the run token");
@@ -261,7 +261,10 @@ class MasoraRunPoller {
   #refusal(run) {
     // ponytail: /actions submission is not built; a run that may act would silently not, so it is refused until it is.
     if (run.allowed_actions.length) return "actions not supported by this Zevet";
-    if (!this.d.payer()) return "could not tell who pays for this run (no Claude account label)";
+    if (!this.d.payer()) {
+      console.error(`zevet: masora run ${run.run_id}: no plan or API-key route for Claude on this machine; the run is refused`);
+      return "could not tell who pays for this run (no plan or API-key route for Claude)";
+    }
     return "";
   }
 

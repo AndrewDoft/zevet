@@ -2594,13 +2594,15 @@ const myPayers = new Map();
 function payerOf(agent, { model = "", engine = "" } = {}) {
   const def = readConfig()?.defaultCredential;
   let credential = "";
+  let credentialKind = "";
   if (def && (agent === "claude" || agent === "claude-code")) {
     // A saved credential overrides the login. Only a personal one is named; a team or auto-ladder pick is not knowable here.
     const found = def.scope === "personal" && def.id ? credentials.listCredentials().find((c) => c.id === def.id) : null;
     if (!found || !found.label) return { engine: "Claude", account: "", label: "" };
     credential = found.label;
+    credentialKind = found.kind;
   }
-  return payerLib.payerFor(agent, { model, engine, credential });
+  return payerLib.payerFor(agent, { model, engine, credential, credentialKind });
 }
 function allPayers() {
   return [...teamPayers.values()];

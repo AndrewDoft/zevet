@@ -65,7 +65,7 @@ function startPoller(ctx) {
     isRelaunching: ctx.isRelaunching,
     summarize: ctx.agentApi._internals.summarize,
     resultText: (entry) => entry.lastResult || ctx.agentApi._internals.resultTextFrom(entry.events),
-    payer: () => ctx.payerOf("claude").label,
+    payer: () => ctx.payerOf("claude").payer || "", // the route Masora validates, never the display label
     setOutcome: (id, outcome) => {
       consoleLog.updateMeta(id, { masoraRun: outcome });
       ctx.announceOutcome(id, outcome);

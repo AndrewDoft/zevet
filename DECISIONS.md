@@ -2481,3 +2481,9 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 - **Hub** redeployed from the tag in place; `BUILD_ID` `fa532dd78407` -> `0b219ae3ff7c`; `/healthz` ok.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
+
+## D-106 — Masora run reports send a payer route, never a label
+
+**Decided (2026-10-09).** `payerFor` now also returns `route` (`plan` | `byok` | `open` | "") and `payer` (`<route>:<engine>`, e.g. `plan:claude`), derived from the credential that runs the session: a saved credential's kind (`subscription_token` -> plan, `api_key` -> byok), else the Claude login file (-> plan), else `ANTHROPIC_API_KEY` (-> byok); codex id_token -> plan, stored key -> byok; opencode `:free` -> open. `masora-runs-wire.js` sends `payer`; the `label` ("Claude · andrew@…") stays display-only. Masora's `checked_payer` 422s anything else.
+- **Undeterminable route:** the run is refused before it starts (logged with `console.error`, reported `failed`), and the report omits `payer` instead of sending `"unknown"`. Masora will 422 that report; the run then ends at its token expiry rather than carrying an invented payer.
+- **Not verified:** against a live Masora; engine2/auto launches are unknowable here and stay unrouted.

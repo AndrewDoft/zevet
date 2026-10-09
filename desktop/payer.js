@@ -24,6 +24,23 @@ function readJson(file) {
   }
 }
 
+/** The credential this machine runs claude with, as Masora's payer route: a login is a plan, an API key is the user's own. */
+function claudeRoute({ home, env }, credentialKind) {
+  if (credentialKind === "subscription_token") return "plan";
+  if (credentialKind === "api_key") return "byok";
+  const dir = env.CLAUDE_CONFIG_DIR || path.join(home, ".claude");
+  if (readJson(path.join(dir, ".credentials.json"))?.claudeAiOauth) return "plan";
+  return text(env.ANTHROPIC_API_KEY) ? "byok" : "";
+}
+
+/** codex: an id_token login is the ChatGPT plan, a stored key is the user's own. */
+function codexRoute({ home, env }) {
+  const auth = readJson(path.join(env.CODEX_HOME || path.join(home, ".codex"), "auth.json"));
+  if (!auth) return "";
+  if (text(auth.tokens?.id_token)) return "plan";
+  return text(auth.OPENAI_API_KEY) ? "byok" : "";
+}
+
 /** claude: `email (Max)` from ~/.claude.json's oauthAccount and the credentials file's subscriptionType. */
 function claudeAccount({ home, env }) {
   const dir = env.CLAUDE_CONFIG_DIR || path.join(home, ".claude");
@@ -64,16 +81,21 @@ function opencodeAccount(model) {
  * `engine` "engine2"/"auto" is the second Max account, whose identity is not
  * readable here, so it is unknown.
  */
-function payerFor(agent, { model = "", credential = "", engine = "", home = os.homedir(), env = process.env } = {}) {
+function payerFor(agent, { model = "", credential = "", credentialKind = "", engine = "", home = os.homedir(), env = process.env } = {}) {
   const key = agent === "claude-code" ? "claude" : String(agent || "").toLowerCase();
   const name = ENGINE[key];
-  if (!name) return { engine: "", account: "", label: "" };
+  if (!name) return { engine: "", account: "", label: "", route: "", payer: "" };
   let account = "";
+  let route = "";
+  if (key === "claude") route = engine === "engine2" || engine === "auto" ? "" : claudeRoute({ home, env }, credential ? credentialKind : "");
+  else if (key === "codex") route = codexRoute({ home, env });
+  else if (key === "opencode") route = /(:|-)free$/.test(text(model)) ? "open" : "";
   if (key === "claude") account = credential ? text(credential) : engine === "engine2" || engine === "auto" ? "" : claudeAccount({ home, env });
   else if (key === "codex") account = codexAccount({ home, env });
   else if (key === "opencode") account = opencodeAccount(model);
   const label = key === "zevet" ? name : account ? `${name} · ${account}` : "";
-  return { engine: name, account, label };
+  // payer is what Masora is told (`<route>:<provider>`); label is display only and never leaves the machine.
+  return { engine: name, account, label, route, payer: route ? `${route}:${key}` : "" };
 }
 
 /** GCM additional data: a sealed payer opens only for the session it names. */

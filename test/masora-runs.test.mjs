@@ -60,7 +60,7 @@ function rig(over = {}) {
     needsYou: () => false,
     summarize: () => ({ sessionId: "sess-1", usage: { input_tokens: 3 }, costUsd: 0.5, elapsedMs: 1234 }),
     resultText: (e) => e.lastResult,
-    payer: () => "Claude · andrew@example.com (Max)",
+    payer: () => "plan:claude",
     isRelaunching: () => false,
     setOutcome: (id, text) => outcomes.push([id, text]),
     ledgerFile: path.join(home.dir, `ledger-${++n}.json`),
@@ -94,7 +94,7 @@ describe("claim and report: the spec's wire shapes", () => {
     assert.equal(report.auth, `Bearer ${run.run_token}`);
     assert.deepEqual(report.body, {
       status: "done", session_id: "sess-1", usage: { input_tokens: 3 }, cost_reported: 0.5,
-      elapsed_ms: 1234, payer: "Claude · andrew@example.com (Max)", result_text: "all done",
+      elapsed_ms: 1234, payer: "plan:claude", result_text: "all done",
     });
     assert.deepEqual(outcomes, [["c1", "running"], ["c1", "done · reported"]]);
   });
@@ -224,6 +224,7 @@ describe("the setting", () => {
 
 // ---- review fixes (thermos, d783f000) ----
 import fs from "node:fs";
+import os from "node:os";
 const wire = require(path.join(ROOT, "desktop", "masora-runs-wire.js"));
 const masoraMod = require(path.join(ROOT, "desktop", "masora.js"));
 const { createConsoleLog } = require(path.join(ROOT, "desktop", "console-log.js"));
@@ -498,14 +499,47 @@ describe("8. payer", () => {
     let r = rig();
     queue.push(mkRun({ run_id: "p1" }));
     await (await r.poller.tick()).done;
-    assert.equal(reports()[0].body.payer, "Claude · andrew@example.com (Max)");
+    assert.equal(reports()[0].body.payer, "plan:claude");
 
     r = rig({ payer: () => "" });
     queue.push(mkRun({ run_id: "p2" }));
     await (await r.poller.tick()).done;
     assert.equal(r.started.length, 0);
     assert.equal(reports()[0].body.status, "failed");
-    assert.notEqual(reports()[0].body.payer, "");
+    assert.ok(!("payer" in reports()[0].body), "no payer is invented: not 'unknown', not a label");
+  });
+
+  const PAYER_RE = /^(plan|byok|open):[a-z0-9][a-z0-9._-]*$/;
+  const payerThroughWire = (files, env = {}) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-wire-payer-"));
+    for (const [rel, body] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), JSON.stringify(body));
+    }
+    const payerOf = (agent) => require(path.join(ROOT, "desktop", "payer.js")).payerFor(agent, { home: dir, env });
+    const poller = wire.startMasoraRuns({
+      masora: { readConfig: () => ({ runs: false, paired: false }) }, safeStorage: {}, consoleLog: {}, agentApi,
+      payerOf, announceOutcome() {}, readWorkspaces: () => [], storedMode: () => "ask", startAndBrief() {},
+      stopAgentCore() {}, permits: {}, isRelaunching: () => false, ledgerFile: path.join(home.dir, `wire-${++n}.json`),
+    });
+    const sent = poller.d.payer();
+    poller.stop();
+    return sent;
+  };
+
+  test("the wire sends plan:claude for a subscription login and byok:claude for an API key", () => {
+    const login = { ".claude/.credentials.json": { claudeAiOauth: { subscriptionType: "max" } }, ".claude.json": { oauthAccount: { emailAddress: "andrew@example.com" } } };
+    assert.equal(payerThroughWire(login), "plan:claude");
+    assert.equal(payerThroughWire({}, { ANTHROPIC_API_KEY: "sk-ant-api03-FIXTURE" }), "byok:claude");
+    assert.equal(payerThroughWire({}), "", "no credential: unknown stays empty, not 'unknown'");
+  });
+
+  test("no email or display label ever reaches payer", () => {
+    const login = { ".claude/.credentials.json": { claudeAiOauth: { subscriptionType: "max" } }, ".claude.json": { oauthAccount: { emailAddress: "andrew@example.com" } } };
+    for (const sent of [payerThroughWire(login), payerThroughWire({}, { ANTHROPIC_API_KEY: "sk-ant-api03-FIXTURE" })]) {
+      assert.match(sent, PAYER_RE);
+      assert.ok(!/@|·|Max|\s/.test(sent));
+    }
   });
 });
 
