@@ -306,7 +306,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
         {/* A sibling, not inside `agent-row-pick`: a <button> cannot nest in a
             <button>. Only a console row has one — a disk session already
             finished writing and cannot be stopped. */}
-                {c ? (
+          {c ? (
           <button
             type="button"
             className="agent-row-stop"
@@ -333,7 +333,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
   );
 }
 
-/** Invite, Steer and Take over live on a right-click of the row, not as
+/** Steer and Take over live on a right-click of the row, not as
  *  always-visible pills — they overlapped agent names in a narrow rail
  *  (Andrew, 2026-10-08). Kept mounted while closed so their dialogs survive. */
 function RowMenu({ children }: { children: ReactNode }) {
