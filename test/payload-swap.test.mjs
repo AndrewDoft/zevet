@@ -4,10 +4,12 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { createSwapper, confirmWhenHealthy, awaitHealthy, busyReason, WINDOWLESS_ARG, AGENT_QUIET_MS, INPUT_QUIET_MS } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "payload-swap.js"));
+const { observePayload, settleChannel, createSwapper, confirmWhenHealthy, awaitHealthy, busyReason, WINDOWLESS_ARG, AGENT_QUIET_MS, INPUT_QUIET_MS } = createRequire(import.meta.url)(path.join(ROOT, "desktop", "payload-swap.js"));
 
 const NOW = 10_000_000;
 const MIN = 60_000;
@@ -315,3 +317,60 @@ test("busyReason refuses to judge without working(): a caller that forgot it wou
   assert.throws(() => busyReason(rest), /working\(\) is required/);
 });
 
+
+describe("settleChannel: orphaned canary installs move to stable", () => {
+  const mk = (content) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-chan-"));
+    if (content !== null) fs.writeFileSync(path.join(root, "channel"), content);
+    return root;
+  };
+  test("canary (or anything not stable) is rewritten to stable", () => {
+    for (const c of ["canary\n", "canary", "beta", ""]) {
+      const root = mk(c);
+      assert.equal(settleChannel(root), true);
+      assert.equal(fs.readFileSync(path.join(root, "channel"), "utf8").trim(), "stable");
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test("stable and a missing file are left alone", () => {
+    const s = mk("stable\n"), n = mk(null);
+    assert.equal(settleChannel(s), false);
+    assert.equal(settleChannel(n), false);
+    assert.equal(fs.existsSync(path.join(n, "channel")), false);
+    fs.rmSync(s, { recursive: true, force: true }); fs.rmSync(n, { recursive: true, force: true });
+  });
+  test("main.js runs it at startup", () => {
+    assert.ok(fs.readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8").includes('if (settleChannel(bootShell.require("./payload-config.js").payloadRoot())'));
+  });
+});
+
+describe("observePayload: ignored pulses are loud", () => {
+  const rig = (results, { running = "0.2.100" } = {}) => {
+    let t = 0;
+    const logs = [], reports = [];
+    const payload = { channel: "stable", check: async () => { const r = results.shift(); if (r instanceof Error) throw r; return r; }, resolve: () => ({ build: running }), _highSeqInfo: () => ({ seq: 2100 }) };
+    observePayload(payload, { log: (m) => logs.push(m), report: (x) => reports.push(x), now: () => t, stuckMs: 1000 });
+    return { payload, logs, reports, at: (ms) => { t = ms; } };
+  };
+  test("every non-staged status is logged once per change", async () => {
+    const r = rig([{ status: "none" }, { status: "none" }, { status: "paused", build: "0.2.100" }, { status: "paused", build: "0.2.100" }, { status: "staged", build: "0.2.101" }, { status: "none" }]);
+    for (let i = 0; i < 6; i++) await r.payload.check();
+    assert.deepEqual(r.logs, ["payload check: none", "payload check: paused 0.2.100", "payload check: none"]);
+  });
+  test("a newer build unstaged past the window reports once, with channel, high_seq, running and last status", async () => {
+    const r = rig([1, 2, 3, 4].map(() => ({ status: "needs-shell", build: "0.2.139", reason: "x" })));
+    await r.payload.check(); r.at(500); await r.payload.check();
+    assert.equal(r.reports.length, 0);
+    r.at(1500); await r.payload.check(); r.at(2500); await r.payload.check();
+    assert.deepEqual(r.reports, [{ channel: "stable", high_seq: 2100, running: "0.2.100", pulse_build: "0.2.139", last_status: "needs-shell" }]);
+  });
+  test("staging resets the clock; errors pass through", async () => {
+    const r = rig([{ status: "paused", build: "0.2.139" }, { status: "staged", build: "0.2.139" }, { status: "paused", build: "0.2.139" }, new Error("down")]);
+    await r.payload.check(); r.at(900); await r.payload.check(); r.at(1500); await r.payload.check();
+    assert.equal(r.reports.length, 0);
+    await assert.rejects(r.payload.check(), /down/);
+  });
+  test("main.js installs it", () => {
+    assert.ok(fs.readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8").includes("observePayload(bootShell.payload, {"));
+  });
+});

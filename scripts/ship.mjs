@@ -4,7 +4,7 @@
 //
 //   node scripts/ship.mjs [--dry-run] [--notes "one short sentence"]
 //
-// One channel: a release goes straight to the feed every install reads. There is no canary, no soak and no
+// One channel: a release goes straight to the feed every install reads. There is no soak and no
 // promote step; the gate in the release step is the only check before everyone gets it.
 //
 // It decides everything itself: shell vs payload from the diff since the last release tag (ship-lib
@@ -451,8 +451,8 @@ docker restart masora-zevet-hub-1
     }] : []),
     {
       name: "payload",
-      plan: () => "stage the payload tree, upload new blobs, manifests, then the stable pulses; read back over HTTPS",
-      done: () => channelDone("stable"),
+      plan: () => "stage the payload tree, upload new blobs, manifests, then the stable pulses and the canary pulses; read back over HTTPS",
+      done: async () => (await channelDone("stable")) && (await channelDone("canary")),
       async run() {
         const wt = at(tag);
         const out = stage();
@@ -468,6 +468,19 @@ docker restart masora-zevet-hub-1
         upload("ship-bytes.tgz", out, [...fresh, ...walk(path.join(out, "p", "m")).map((f) => `p/m/${f}`)]);
         upload("ship-pulses.tgz", out, PLATFORMS.map((p) => `p/zevet/stable/${p}/pulse.json`));
         ctx.facts.stable = await verifyPayload(io, "stable", { expectBuild: v, verify: verifyPulse });
+        // Orphaned canary installs: the canary channel was retired 2026-09-30, but installs whose payload
+        // `channel` file says canary still poll p/zevet/canary/ and ignore every newer stable update.
+        // Keep their pulses current, pointing at the SAME manifests as stable, until none remain.
+        const cOut = path.join(ctx.work, "payload-canary");
+        rmSync(cOut, { recursive: true, force: true });
+        mkdirSync(cOut, { recursive: true });
+        io.run("node", ["scripts/make-feed.mjs", "payload", "--out", cOut, "--channel", "canary"], { cwd: wt, env: keyEnv(io), stream: true });
+        for (const plat of PLATFORMS) {
+          const mine = JSON.parse(readFileSync(path.join(cOut, "p", "zevet", "canary", plat, "pulse.json"), "utf8")).signed.manifest;
+          if (mine !== ctx.facts.stable[plat].manifest) throw new Error(`canary/${plat}: manifest ${mine.slice(0, 8)} differs from stable ${ctx.facts.stable[plat].manifest.slice(0, 8)}`);
+        }
+        upload("ship-canary-pulses.tgz", cOut, PLATFORMS.map((p) => `p/zevet/canary/${p}/pulse.json`));
+        ctx.facts.canary = await verifyPayload(io, "canary", { expectBuild: v, verify: verifyPulse });
       },
     },
     {

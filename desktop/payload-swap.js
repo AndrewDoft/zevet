@@ -129,4 +129,52 @@ function confirmWhenHealthy({ payload, loaded, apiAnswers, app, log, timeoutMs, 
   })();
 }
 
-module.exports = { createSwapper, confirmWhenHealthy, awaitHealthy, busyReason, WINDOWLESS_ARG, AGENT_QUIET_MS, INPUT_QUIET_MS, POLL_MS, CONFIRM_TIMEOUT_MS };
+/**
+ * The canary channel was retired 2026-09-30; one channel exists. An install whose payload `channel` file
+ * says anything else (orphaned canary installs) is moved to stable, so the next launch reads the stable
+ * pulse. Returns true when it rewrote the file. Never throws: a read-only profile just stays where it is.
+ */
+function settleChannel(root, fs = require("node:fs"), path = require("node:path")) {
+  const file = path.join(root, "channel");
+  try {
+    if (fs.readFileSync(file, "utf8").trim() === "stable") return false;
+    fs.writeFileSync(file, "stable" + String.fromCharCode(10));
+    return true;
+  } catch {
+    return false; // no file means stable already
+  }
+}
+
+/**
+ * Wraps payload.check() so a pulse that is ignored is never silent: every status other than "staged" is
+ * logged once each time it changes, and a newer build that stays unstaged for stuckMs sends ONE report
+ * (channel, high_seq, running build, last status). Errors pass through untouched.
+ * ponytail: a "none" result carries no build, so a pulse ignored for a low seq is logged but cannot start the stuck clock.
+ */
+function observePayload(payload, { log, report, now = Date.now, stuckMs = 24 * 60 * 60 * 1000 }) {
+  const orig = payload.check.bind(payload);
+  const newer = (a, b) => { const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+  let lastKey = null, since = null, reported = false;
+  payload.check = async (...a) => {
+    const r = await orig(...a);
+    const key = r.status === "staged" ? null : `${r.status}|${r.build || ""}|${r.reason || ""}`;
+    if (key !== lastKey) {
+      lastKey = key;
+      if (key) log(`payload check: ${r.status}${r.build ? ` ${r.build}` : ""}${r.reason ? ` (${r.reason})` : ""}`);
+    }
+    let running = null;
+    try { running = payload.resolve().build; } catch { /* no resolvable build: no stuck clock */ }
+    if (r.status !== "staged" && r.build && running && newer(r.build, running)) {
+      since = since ?? now();
+      if (!reported && now() - since > stuckMs) {
+        reported = true;
+        let highSeq = null;
+        try { highSeq = payload._highSeqInfo().seq; } catch { /* private to the kit; absent is fine */ }
+        report({ channel: payload.channel, high_seq: highSeq, running, pulse_build: r.build, last_status: r.status });
+      }
+    } else { since = null; reported = false; }
+    return r;
+  };
+}
+
+module.exports = { observePayload, settleChannel, createSwapper, confirmWhenHealthy, awaitHealthy, busyReason, WINDOWLESS_ARG, AGENT_QUIET_MS, INPUT_QUIET_MS, POLL_MS, CONFIRM_TIMEOUT_MS };
