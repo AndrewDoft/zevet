@@ -11,4 +11,6 @@ export function learnModels(list: ReadonlyArray<{ id: string; name: string; note
 
 /** The name of the model a console is on: the one it reports, else the one it
  *  was started with; "" when neither is known. */
+export function friendlyModel(raw: string | null | undefined): string;
+export function agentModelLabel(agent: string | null | undefined, model: string | null | undefined, sep?: string): string;
 export function runningModelName(reported: string | null | undefined, started: string | null | undefined): string;

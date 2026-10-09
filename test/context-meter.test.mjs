@@ -75,7 +75,7 @@ describe("the composer shows one model label", () => {
     assert.equal(runningModelName(sonnet.usage.model, sonnet.model), "Sonnet 5");
     assert.match(controls, /const model = active \? runningModelName\(active\.usage\.model, active\.model\) : "";/);
     // Rendered unconditionally — not behind `active ?` — and handed the running model.
-    assert.match(controls, /<div className=\{compactModelChoice\}>\s*<ModelChoice\s+agents=\{agents\}\s+running=\{runningModel\}/);
+    assert.match(controls, /<div className=\{compactModelChoice\}>\s*<ModelChoice\s+agents=\{agents\}\s+runningId=\{runningModel\?\.id\}/);
     assert.ok(!/\{active \? \([\s\S]{0,80}<span[^>]*>\s*\{model\}/.test(controls), "the picker is swapped for a label again");
     // The trigger shows that name instead of the launch default.
     assert.match(choice, /\{running \? \([\s\S]*?\{running\.name\}[\s\S]*?\) : \(\s*<ModelSelectorValue \/>/);

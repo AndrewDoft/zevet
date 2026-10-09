@@ -11,6 +11,7 @@
  * rather than imported — that file does not export them, same reasoning as
  * moreviews.tsx gives for duplicating them from agentviews.tsx.
  */
+import { agentModelLabel } from "../lib/models.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
 import { useAui, useAuiState } from "@assistant-ui/react";
@@ -188,7 +189,7 @@ export function ConsoleFind() {
     if (!query.trim()) return [];
     const found: ConsoleHit[] = [];
     for (const c of consoles) {
-      const label = c.model ? `${c.agent} · ${c.model}` : c.agent;
+      const label = agentModelLabel(c.agent, c.model);
       c.transcript.messages.forEach((m, i) => {
         const hit = findHit(haystackOf(m), query);
         if (!hit) return;

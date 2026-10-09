@@ -13,11 +13,13 @@
 // are exactly the parts that silently regress.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DESKTOP = path.join(ROOT, "desktop");
@@ -151,8 +153,66 @@ describe("the icon is the current masora theme", () => {
   });
 
   test("both platforms are pointed at it, and it is packaged", () => {
-    assert.equal(pkg.build.win.icon, "build/icon.png");
+    assert.equal(pkg.build.win.icon, "build/icon.ico", "Windows takes the multi-size .ico, not a 512px PNG");
     assert.equal(pkg.build.mac.icon, "build/icon.png");
     assert.ok(pkg.payload.files.includes("build/icon.png"), "the icon is not in build.files");
+  });
+});
+
+describe("the Windows taskbar icon", () => {
+  const icoPath = path.join(DESKTOP, "build", "icon.ico");
+  if (!existsSync(icoPath)) execFileSync(process.execPath, ["make-icon.mjs"], { cwd: DESKTOP });
+  const ico = readFileSync(icoPath);
+  const frames = Array.from({ length: ico.readUInt16LE(4) }, (_, i) => {
+    const e = 6 + i * 16;
+    const size = ico[e] || 256;
+    const off = ico.readUInt32LE(e + 12);
+    return { size, h: ico[e + 1] || 256, bpp: ico.readUInt16LE(e + 6), png: ico.subarray(off, off + ico.readUInt32LE(e + 8)) };
+  });
+
+  test("build/icon.ico is an icon with a frame at every size Windows draws", () => {
+    assert.equal(ico.readUInt16LE(0), 0, "reserved");
+    assert.equal(ico.readUInt16LE(2), 1, "not an icon resource");
+    for (const need of [16, 24, 32, 48, 64, 128, 256]) assert.ok(frames.some((f) => f.size === need), `no ${need}px frame`);
+  });
+
+  test("every frame is a real PNG of the size it claims, with alpha", () => {
+    for (const f of frames) {
+      assert.deepEqual([...f.png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], `${f.size}px frame is not a PNG`);
+      assert.equal(f.png.readUInt32BE(16), f.size);
+      assert.equal(f.png.readUInt32BE(20), f.h);
+      assert.equal(f.png[25], 6, `${f.size}px frame has no alpha`);
+    }
+  });
+
+  test("the small frames are drawn for their size: the apex dot is ink at 16px", () => {
+    const f = frames.find((x) => x.size === 16);
+    const data = [];
+    let pos = 8;
+    while (pos < f.png.length) {
+      const len = f.png.readUInt32BE(pos);
+      if (f.png.subarray(pos + 4, pos + 8).toString("ascii") === "IDAT") data.push(f.png.subarray(pos + 8, pos + 8 + len));
+      pos += 12 + len;
+    }
+    const raw = inflateSync(Buffer.concat(data));
+    const at = (x, y) => raw.subarray(y * (16 * 4 + 1) + 1 + x * 4, y * (16 * 4 + 1) + 1 + x * 4 + 3);
+    assert.deepEqual([...at(8, 5)], [0x2c, 0x2f, 0x44], "no ink where the apex dot is");
+    assert.deepEqual([...at(8, 1)], [0xea, 0xe7, 0xe2], "no paper above it");
+  });
+
+  test("electron-builder is given the .ico, and the payload carries both icons to where main.js looks", () => {
+    assert.equal(pkg.build.win.icon, "build/icon.ico");
+    const stage = mkdtempSync(path.join(tmpdir(), "zevet-payload-"));
+    try {
+      // The packaged layout: main.js sits in resources/app-core and reads ./build/<icon> beside itself.
+      const { stage: stagePayload } = createRequire(import.meta.url)(path.join(DESKTOP, "payload-tree.cjs"));
+      stagePayload(stage);
+      for (const f of ["icon.ico", "icon.png"]) assert.ok(existsSync(path.join(stage, "build", f)), `payload is missing build/${f}`);
+      assert.ok(existsSync(path.join(stage, "main.js")));
+      assert.match(main, /path\.join\(__dirname, "build", process\.platform === "win32" \? "icon\.ico" : "icon\.png"\)/);
+      assert.match(main, /const iconOption = fs\.existsSync\(ICON\) \? \{ icon: ICON \} : \{\};/);
+    } finally {
+      rmSync(stage, { recursive: true, force: true });
+    }
   });
 });

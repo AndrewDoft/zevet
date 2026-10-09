@@ -1,5 +1,6 @@
 "use client";
 
+import { useEarlier } from "@/lib/earlier";
 import {
   ComposerAddAttachment,
   ComposerAttachments,
@@ -78,8 +79,8 @@ import {
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
 /**
- * Optional component overrides for the thread. `AssistantMessage` and
- * `Welcome` replace whole sections; the remaining slots override how the
+ * Optional component overrides for the thread. `AssistantMessage` replaces
+ * a whole section; the remaining slots override how the
  * assistant message renders tool calls and part groups. Tool UIs registered
  * by name (toolkit `render`, `useAssistantDataUI`) take precedence over
  * `ToolFallback`. When `TaskGroup` is set, tool calls that carry a nested
@@ -88,7 +89,6 @@ export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
  */
 export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
-  Welcome?: ComponentType | undefined;
   ToolFallback?: ToolCallMessagePartComponent | undefined;
   ToolGroup?:
     | ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>>
@@ -190,8 +190,6 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
   isEmpty,
   autoFocus,
 }) => {
-  const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
-
   return (
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
@@ -214,13 +212,11 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
             isEmpty && "justify-center",
           )}
         >
-          <AuiIf condition={isNewChatView}>
-            <Welcome />
-          </AuiIf>
           <AuiIf condition={isHistoryLoadingView}>
             <ThreadHistorySkeleton />
           </AuiIf>
 
+          <EarlierButton />
           <div
             data-slot="aui_message-group"
             className="mb-14 flex flex-col gap-y-8 empty:hidden"
@@ -247,6 +243,38 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
         </div>
       </ThreadPrimitive.Viewport>
     </ThreadPrimitive.Root>
+  );
+};
+
+/** Messages above the drawn window (lib/window.mjs): one tap for more. */
+const EarlierButton: FC = () => {
+  const { hidden, widen } = useEarlier();
+  if (!hidden) return null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        // Older messages go in ABOVE the reader, and the runtime mounts them a frame or
+        // two later. At scrollTop 0 the browser does not anchor, so the view would sit
+        // on the new top: once the content has grown, put the same message back under the eye.
+        const el = e.currentTarget.closest<HTMLElement>('[data-slot="aui_thread-viewport"]');
+        if (el) {
+          const { scrollHeight: height, scrollTop: top } = el;
+          let frames = 0;
+          const settle = () => {
+            if (el.scrollHeight === height && ++frames < 30) return void requestAnimationFrame(settle);
+            el.style.scrollBehavior = "auto";
+            el.scrollTop = top + (el.scrollHeight - height);
+            el.style.scrollBehavior = "";
+          };
+          requestAnimationFrame(settle);
+        }
+        widen();
+      }}
+      className="text-muted-foreground hover:text-foreground mb-4 self-center text-xs"
+    >
+      Earlier ({hidden})
+    </button>
   );
 };
 
@@ -362,16 +390,6 @@ const SpokenActionBar: FC = () => {
 const ThreadScrollToBottom: FC = () => {
   return (
     <ThreadPrimitive.ScrollToBottom render={<TooltipIconButton tooltip="Scroll to bottom" variant="outline" className="aui-thread-scroll-to-bottom dark:border-border dark:bg-background dark:hover:bg-accent absolute -top-12 z-10 self-center rounded-full p-4 disabled:invisible" />}><ArrowDownIcon /></ThreadPrimitive.ScrollToBottom>
-  );
-};
-
-const ThreadWelcome: FC = () => {
-  return (
-    <div className="aui-thread-welcome-root mb-6 flex flex-col px-2">
-      <p className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-medium tracking-tight duration-200">
-        How can I help you today?
-      </p>
-    </div>
   );
 };
 

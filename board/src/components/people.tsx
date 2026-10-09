@@ -47,6 +47,7 @@
  * which is a column built for a long list rather than a 250px rail. The plus
  * is in this pane's own title row (App.tsx).
  */
+import { agentModelLabel } from "../lib/models.mjs";
 import { SessionClaimChip } from "./claimviews";
 import { ownersOf, useStepOwners } from "../lib/claimstore";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
@@ -74,6 +75,7 @@ import { foldRepoGroups, sessionBlurb, sessionProject } from "../lib/sessions.mj
 import { plainError } from "../lib/transcript.mjs";
 import { AgentLogo } from "./brand";
 import { SquareIcon, XIcon } from "lucide-react";
+import { useVisibleNow } from "../lib/usevisiblenow";
 import { bridge, zStorage } from "../lib/bridge";
 import { HUES, LIVE_SESSION_MS } from "../lib/constants";
 import { InviteIntoSession, JoinSession } from "./sessionshare";
@@ -213,7 +215,7 @@ export function consoleBlurb(c: ConsoleEntry): string {
 }
 
 function agentDetail(row: Row): string {
-  return [row.agent, row.model, row.effort].filter(Boolean).join(" · ");
+  return [agentModelLabel(row.agent, row.model), row.effort].filter(Boolean).join(" · ");
 }
 
 /** A run that ended badly: it never started, or its last message was cut off. */
@@ -534,12 +536,7 @@ export function PeoplePane({
   const [shut, setShut] = useState<Record<string, boolean>>({});
   const teamAgents = useBoard((s) => s.teamAgents);
   const idleAfterMs = useBoard((s) => s.idleAfterMs);
-  const [now, setNow] = useState(() => serverNow());
-
-  useEffect(() => {
-    const t = setInterval(() => setNow(serverNow()), 1000);
-    return () => clearInterval(t);
-  }, []);
+  const now = useVisibleNow();
 
   /* A running console's title is whatever its CLI has written to its session
      file by now — claude rewrites its `ai-title` as the work goes. */

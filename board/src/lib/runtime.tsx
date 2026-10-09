@@ -18,7 +18,7 @@
  * The provider wraps the whole shell rather than just the chat column, because
  * the rail's agent cards and the strip's meters read thread state too.
  */
-import { type PropsWithChildren, useEffect, useMemo, useRef } from "react";
+import { type PropsWithChildren, useEffect, useMemo, useRef, useState } from "react";
 import {
   AssistantRuntimeProvider,
   CompositeAttachmentAdapter,
@@ -34,6 +34,8 @@ import { bridge } from "./bridge";
 import { MasoraVoiceDictationAdapter } from "./voice";
 import { MULTI_TURN } from "./constants";
 import { groupTurnTools } from "./turngroup.mjs";
+import { moreFor, tail, widen } from "./window.mjs";
+import { EarlierContext } from "./earlier";
 import { overlayDraft } from "./chat-stream.mjs";
 import { parseLocal } from "./slash.mjs";
 import { sendSpawn, sendSteer, useSteer } from "./steer";
@@ -182,6 +184,16 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
    * transform must not hand assistant-ui new message objects each time: it
    * memoises by reference, and re-mounting a dropdown closes it under you. */
   const messages = useMemo(() => groupTurnTools(raw) as ThreadMessageLike[], [raw]);
+  /* Only the tail is drawn; "Earlier" widens it by one window. Reset per thread. */
+  const threadKey = reading ? `s:${openSession}` : `c:${active?.key ?? ""}`;
+  const [wider, setWider] = useState({ key: "", n: 0 });
+  const more = moreFor(wider, threadKey);
+  const { shown, hidden } = useMemo(() => tail(messages, more), [messages, more]);
+  const firstId = shown[0]?.id;
+  const earlier = useMemo(
+    () => ({ hidden, firstId, widen: () => setWider((w) => widen(w, threadKey)) }),
+    [hidden, firstId, threadKey],
+  );
   /** An assistant message is open, so the agent is mid-answer. */
   const streaming = (active?.transcript.openIndex ?? -1) >= 0;
   const oneShot = Boolean(active) && !MULTI_TURN.has(active!.agent);
@@ -298,7 +310,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
   };
 
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
-    messages,
+    messages: shown as ThreadMessageLike[],
     // transcript.mjs already emits ThreadMessageLike, so the converter is
     // identity. It has to be present all the same: the adapter's type only
     // omits it when the messages are full ThreadMessages.
@@ -447,7 +459,7 @@ export function ConsoleRuntimeProvider({ children }: PropsWithChildren) {
       {/* Registers a rendering per tool name. Draws nothing itself, and has to
           be inside the provider to register at all. */}
       <ToolUIs />
-      {children}
+      <EarlierContext.Provider value={earlier}>{children}</EarlierContext.Provider>
     </AssistantRuntimeProvider>
   );
 }

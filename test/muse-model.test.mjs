@@ -46,7 +46,7 @@ describe("the picker offers Meta", () => {
 describe("Meta is offered exactly where Code offers it", () => {
   test("Chat lists only agents that can run (Meta has no adapter), so no synthetic meta row", () => {
     assert.doesNotMatch(composerControls, /name: "meta"/);
-    assert.match(composerControls, /localAgents\.filter\(\(a\) => a\.ok && \(CHAT_AGENTS/);
+    assert.match(composerControls, /localAgents\.filter\(\(a\) => a\.ok && \(!isChat \|\| \(CHAT_AGENTS/);
   });
 });
 

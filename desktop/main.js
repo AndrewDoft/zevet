@@ -229,8 +229,11 @@ if (process.env.ZEVET_TEST_HOOKS === "1") {
 const APP_ID = "com.andrewdoft.zevet";
 app.setAppUserModelId(APP_ID);
 
-/** The icon, for the dev run and for Linux; a packaged .exe carries its own. */
-const ICON = path.join(__dirname, "build", "icon.png");
+/** The window icon (taskbar, title bar, Alt-Tab). Windows gets the multi-size .ico, whose 16/24/32 frames are
+ *  drawn for those sizes (desktop/make-icon.mjs); a 512px PNG would be shrunk on the fly. Both ship in the payload
+ *  (package.json payload.files), so a payload-only release carries the current mark even though the installed
+ *  exe's own embedded icon only changes with a new installer. */
+const ICON = path.join(__dirname, "build", process.platform === "win32" ? "icon.ico" : "icon.png");
 /** The preload lives in the payload, outside the asar: it finds @sentry/electron from the shell's directory (see ipc-table.js). */
 const SHELL_DIR_ARG = `--zevet-shell-dir=${bootShell.dir}`;
 const iconOption = fs.existsSync(ICON) ? { icon: ICON } : {};
@@ -2205,12 +2208,12 @@ bridge.handle("local:masoraRepoToggle", (_e, { root, on } = {}) => {
   return { ok: true, repos: masora.setRepoOpted(dir, Boolean(on)) };
 });
 
-bridge.handle("local:tree", (_e, root) => {
+bridge.handle("local:tree", async (_e, root) => {
   const dir = knownRoot(root);
   if (!dir) return { ok: false, error: "not an opened workspace" };
   // `origin`: a worktree's events are filed under its origin repo (hook.mjs),
   // so the tree matches them by the origin's name and fingerprint.
-  const r = localFs.listTree(dir, {});
+  const r = await localFs.listTreeAsync(dir, {});
   return r && r.ok ? { ...r, origin: agentSessions.originOf(dir) || dir } : r;
 });
 
@@ -5488,6 +5491,15 @@ async function startAgentApi() {
 
 app.whenReady().then(async () => {
   buildMenu();
+  // The window first: its renderer boots in another process while the starters below run, so everything
+  // after this line is off the path to the first board paint.
+  session.defaultSession.webRequest.onHeadersReceived({ urls: FRAME_URLS, types: ["subFrame"] }, (d, cb) => cb({ responseHeaders: frameable(d.responseHeaders) }));
+  const cfg = readConfig();
+  // A windowless payload swap relaunches with this flag (macOS dock-only app): no window until the dock is clicked.
+  if (process.platform === "darwin" && process.argv.includes(WINDOWLESS_ARG)) {
+    // nothing: the activate handler opens a window on demand
+  } else if (cfg) openBoard(cfg);
+  else openSetup(null);
   void startAgentApi();
   // No console outlives the app, so neither does a worktree made for one —
   // except those a payload swap is handing back, restored first.
@@ -5509,13 +5521,6 @@ app.whenReady().then(async () => {
   startIdleInstall();
   // Only reliable after 'ready'; see the module's own docs.
   powerMonitor.on("resume", () => appUpdater.maybeCheck(UPDATE_RECHECK_MIN_GAP_MS));
-  session.defaultSession.webRequest.onHeadersReceived({ urls: FRAME_URLS, types: ["subFrame"] }, (d, cb) => cb({ responseHeaders: frameable(d.responseHeaders) }));
-  const cfg = readConfig();
-  // A windowless payload swap relaunches with this flag (macOS dock-only app): no window until the dock is clicked.
-  if (process.platform === "darwin" && process.argv.includes(WINDOWLESS_ARG)) {
-    // nothing: the activate handler opens a window on demand
-  } else if (cfg) openBoard(cfg);
-  else openSetup(null);
   // Same reasoning as the updater above: never delay the board for this.
   // The probe is quick (2s, bounded), but "quick" is still slower than a
   // window that could have opened already — this runs alongside it.

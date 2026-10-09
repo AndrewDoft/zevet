@@ -15,7 +15,7 @@
  * keywords, and has reasoning effort built in. Ten free opencode ids with
  * provider-qualified names are a list you search, not one you scroll.
  */
-import { useContext, useEffect, useMemo, useState } from "react";
+import { memo, useContext, useEffect, useMemo, useState } from "react";
 import {
   ModelSelectorContent,
   ModelSelectorEffort,
@@ -52,13 +52,20 @@ const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"].map((id) => ({ 
 /** `running`: the console in front, whose model the trigger shows instead of
  *  the launch default — "Opus 5.5" over a Sonnet 5 run read as the wrong model.
  *  Picking still only sets the next start. */
-export function ModelChoice({
+/* Props are primitives and `agents` is a stable list, so the default memo skips the
+   re-render the composer would otherwise force on every console publish. */
+export const ModelChoice = memo(function ModelChoice({
   agents,
-  running,
+  runningId,
+  runningName,
+  runningTitle,
 }: {
   agents: UsableAgent[];
-  running?: { id: string; name: string; title?: string };
+  runningId?: string | undefined;
+  runningName?: string | undefined;
+  runningTitle?: string | undefined;
 }) {
+  const running = runningId !== undefined && runningName !== undefined ? { id: runningId, name: runningName, title: runningTitle } : undefined;
   const launchModel = useBoard((s) => s.launchModel);
   const active = useBoard(selectActiveConsole);
   const setConsoleModel = useBoard((s) => s.setConsoleModel);
@@ -251,4 +258,4 @@ export function ModelChoice({
       </ModelSelectorContent>
     </ModelSelectorRoot>
   );
-}
+});

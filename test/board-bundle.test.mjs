@@ -82,7 +82,7 @@ describe("the dev fixture does not ship", () => {
   // can put ?dev=1 on the URL replace the desktop bridge.
   const bundle = readFileSync(BUNDLE, "utf8");
 
-  for (const symbol of ["installFixtureBridge", "__zevet_fixture_bridge__", "CLAUDE_SCRIPT", "some_future_event"]) {
+  for (const symbol of ["installFixtureBridge", "__zevet_fixture_bridge__", "CLAUDE_SCRIPT", "__zevetEmit", "some_future_event"]) {
     test(`${symbol} is absent from the shipped bundle`, () => {
       assert.ok(!bundle.includes(symbol), `${symbol} leaked into hub/public/board.js`);
     });

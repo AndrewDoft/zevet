@@ -38,7 +38,7 @@ import { execFileSync } from "node:child_process";
 // The module under test is CommonJS because the Electron main process is.
 const require = createRequire(import.meta.url);
 const localFs = require("../desktop/local-fs.js");
-const { listTree, readTextFile, writeTextFile, isProbablyRepo } = localFs;
+const { listTree, listTreeAsync, readTextFile, writeTextFile, isProbablyRepo } = localFs;
 
 const WIN = process.platform === "win32";
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -187,6 +187,26 @@ describe("listTree", () => {
         "src/app.ts",
         ".gitignore",
       ]);
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  test("listTreeAsync answers like listTree and leaves the event loop running while git works", async () => {
+    const t = tempRoot();
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: t.dir, windowsHide: true });
+      build(t.dir, { ".gitignore": "gen/\n", "gen/x.js": "x", "src/app.ts": "x", "pkg/deep/gen/y.js": "y", "pkg/deep/keep.js": "k" });
+      let ticks = 0;
+      const iv = setInterval(() => ticks++, 1);
+      const r = await listTreeAsync(t.dir);
+      clearInterval(iv);
+      assert.deepEqual(r, listTree(t.dir));
+      assert.ok(!r.entries.some((e) => e.path.startsWith("gen")), "ignored dir leaked");
+      const paths = r.entries.map((e) => e.path);
+      assert.ok(paths.includes("pkg/deep/keep.js"), "a sibling of a nested ignored dir must stay");
+      assert.ok(!paths.some((p) => p.includes("/gen")), "a nested ignored dir (pkg/deep/gen) leaked");
+      assert.ok(ticks > 0, "the loop was blocked for the whole git call");
     } finally {
       t.cleanup();
     }

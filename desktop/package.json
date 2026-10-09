@@ -106,7 +106,8 @@
       "user-report.js",
       "setup.html",
       "fonts/**",
-      "build/icon.png"
+      "build/icon.png",
+      "build/icon.ico"
     ]
   },
   "build": {
@@ -155,7 +156,7 @@
         }
       ],
       "artifactName": "zevet-${version}-windows-${arch}-setup.${ext}",
-      "icon": "build/icon.png"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
