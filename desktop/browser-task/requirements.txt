@@ -1,0 +1,3 @@
+# Pinned: the newest release at least 2 weeks old on 2026-10-09 (0.13.10 = 2026-09-04; 0.13.11 = 2026-10-07 is too new).
+# Verified: docs/contracts/browser-task.md. Install into a venv OUTSIDE the repo; this folder only holds the pin.
+browser-use==0.13.10
