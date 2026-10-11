@@ -51,7 +51,7 @@ function listCredentials() {
 /** `encrypt` is `string -> Buffer`, i.e. `safeStorage.encryptString` bound
  *  by the caller (main.js), or a reversible fake in tests. Returns the new
  *  record's id. */
-function addCredential({ label, provider, kind, key }, encrypt) {
+function addCredential({ label, provider, kind, key, source }, encrypt) {
   const raw = readRaw();
   const rec = {
     id: crypto.randomBytes(8).toString("hex"),
@@ -61,6 +61,7 @@ function addCredential({ label, provider, kind, key }, encrypt) {
     last4: String(key).slice(-4),
     keyEnc: encrypt(String(key)).toString("base64"),
     createdAt: new Date().toISOString(),
+    ...(source ? { source: String(source) } : {}),
   };
   raw.credentials.push(rec);
   writeRaw(raw);

@@ -85,9 +85,10 @@ const { Family, familyDir, frameable, FRAME_URLS } = require("./family.js");
 const { Sso } = require("./sso.js");
 const reportingHealth = require("./reporting-health.js");
 const credentials = require("./credentials.js");
-const credentialLadder = require("./credential-ladder.js");
-const credentialUsage = require("./credential-usage.js");
 const agentEngine = require("./agent-engine.js");
+const keyDetect = require("./key-detect.js");
+const { detectLocalModels } = require("./local-models.js");
+const { createCliStatus } = require("./cli-status.js");
 const masoraPush = require("./masora-push.js");
 const masoraConnect = require("./masora-connect.js");
 const chats = require("./chat.js");
@@ -510,6 +511,8 @@ const CREDENTIAL_ENV = {
   "anthropic:api_key": "ANTHROPIC_API_KEY",
   "anthropic:subscription_token": "CLAUDE_CODE_OAUTH_TOKEN",
   "openai:api_key": "OPENAI_API_KEY",
+  "gemini:api_key": "GEMINI_API_KEY",
+  "openrouter:api_key": "OPENROUTER_API_KEY",
   // Meta's Model API (Muse Spark) — docs/contracts/meta-model-api.md. Stored
   // the same as any other provider's key; nothing spawns using it yet, since
   // zevet has no execution adapter for it (see that note).
@@ -579,9 +582,7 @@ async function resolveCredential(id, cfg, scope) {
  * A team credential and an Auto probe are both fetched fresh on every call
  * rather than cached at this layer — the owner may have rotated or removed
  * a credential since the last agent started, and one extra request per
- * launch is nothing. (The Auto path's utilization READING is cached, for
- * 60s, but that is credential-usage.js's concern, not this function's.) A
- * personal credential never leaves this machine: it is decrypted locally via
+ * launch is nothing. A personal credential never leaves this machine: it is decrypted locally via
  * safeStorage, the same as masora.js's own token.
  *
  * Any failure (no config, no default set, the hub down, an older hub
@@ -599,18 +600,14 @@ async function credentialEnvFor() {
     const ladder = Array.isArray(cfg.credentialLadder) ? cfg.credentialLadder : [];
     if (!ladder.length) return undefined;
 
-    const usageById = {};
-    const probed = new Set();
+    // No plan-utilization reading exists to rotate on (reading it meant POSTing the
+    // Claude login's OAuth token to api.anthropic.com, which Anthropic's terms forbid
+    // for third-party apps), so Auto takes the first rung that resolves; a rung that
+    // hits its limit is the vendor CLI's to report.
     for (const step of ladder) {
-      if (probed.has(step.credentialId)) continue; // a rung can reuse an earlier id (Andrew's own ladder does)
-      probed.add(step.credentialId);
-      const c = await resolveCredential(step.credentialId, cfg);
-      if (!c) continue; // no such credential, or it could not be fetched — the choice below just skips this rung
-      const u = await credentialUsage.utilizationFor(step.credentialId, c, { fetchImpl: fetch });
-      if (u !== undefined) usageById[step.credentialId] = u;
+      cred = await resolveCredential(step.credentialId, cfg);
+      if (cred) break;
     }
-    const chosenId = credentialLadder.choose(ladder, usageById);
-    cred = chosenId ? await resolveCredential(chosenId, cfg) : null;
   } else if (def.scope === "personal" || def.scope === "team") {
     if (!def.id) return undefined;
     cred = await resolveCredential(def.id, cfg, def.scope);
@@ -2078,7 +2075,12 @@ bridge.handle("zevet:addCredential", async (_e, { scope, label, provider, kind, 
 });
 
 bridge.handle("zevet:removeCredential", async (_e, { scope, id } = {}) => {
-  if (scope === "personal") return { ok: credentials.removeCredential(id) };
+  if (scope === "personal") {
+    // A key that was found on this machine must not come back at the next scan.
+    const gone = credentials.listCredentials().find((c) => c.id === id);
+    if (gone && String(gone.source || "").startsWith("detected")) keyDetect.forgetKeys(gone.provider, { removedPath: REMOVED_KEYS });
+    return { ok: credentials.removeCredential(id) };
+  }
   if (scope === "team") {
     const cfg = readConfig() || {};
     const auth = authFor(cfg);
@@ -2608,7 +2610,7 @@ function payerOf(agent, { model = "", engine = "" } = {}) {
       credential = found.label || "";
     }
   }
-  return payerLib.payerFor(agent, { model, engine, credential, env: spawnEnv });
+  return payerLib.payerFor(agent, { model, engine, credential, env: spawnEnv, cli: { claude: cliStatus.peek("claude"), codex: cliStatus.peek("codex") } });
 }
 function allPayers() {
   return [...teamPayers.values()];
@@ -2825,9 +2827,6 @@ bridge.handle("local:status", async (_e, arg) => {
 
   const failedAgo = statusSources.hookFailure(STATUS_PATHS.errorLog);
 
-  // The 5h/7d windows from startup, before any agent has reported a
-  // rate_limit_event: this machine's own login, probed at most every 5 min.
-  const probed = await agentEngine.engine1Windows({ probeOpts: { fetchImpl: fetch } }).catch(() => undefined);
   return {
     ok: true,
     cindex,
@@ -2841,8 +2840,6 @@ bridge.handle("local:status", async (_e, arg) => {
     // deciding whether "2h" or "2 hours ago" reads better in a 10px strip.
     hook: { failedAgo },
     burn: burn.read(),
-    rateLimits: probed ? probed.windows : undefined,
-    rateLimitsAt: probed ? probed.at : 0,
   };
 });
 
@@ -3973,15 +3970,74 @@ function listOpenModels() {
       resolve(err ? null : String(out).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)));
   });
 }
+/** Runs a vendor CLI's own status command, hidden, bounded: {rc, out}, or null when it did not run or timed out. */
+function runCliStatus(name, args) {
+  const r = agentConsole.resolveAgent(name);
+  if (!r.ok) return Promise.resolve(null);
+  const inv = r.kind === "shim"
+    ? agentConsole._internals.buildShimInvocation(r.file, args)
+    : { command: r.file, args, options: {} };
+  return new Promise((resolve) => {
+    execFile(inv.command, inv.args, { ...inv.options, windowsHide: true, timeout: 8000, maxBuffer: 1024 * 1024 }, (err, out, errOut) => {
+      if (err && (err.killed || typeof err.code !== "number")) return resolve(null);
+      resolve({ rc: err ? err.code : 0, out: `${out || ""}${errOut || ""}` });
+    });
+  });
+}
+const cliStatus = createCliStatus({ run: runCliStatus });
+
+/* ---------------------------------------------------------------------------
+ * EVERY MODEL THIS PERSON ALREADY HAS, with no setup
+ *
+ * Subscriptions are used only through the vendor's own CLI (cliStatus asks it, nothing is read from
+ * its credential files). An API key found on the machine is validated with one GET and stored as a
+ * personal BYOK credential. Local model servers are probed on loopback only. All of it runs in the
+ * background, never ahead of a window.
+ * ------------------------------------------------------------------------- */
+const REMOVED_KEYS = path.join(HOME, "removed-keys.json");
+const PROVIDER_NAME = { anthropic: "Anthropic", openai: "OpenAI", gemini: "Gemini", openrouter: "OpenRouter" };
+async function adoptDetectedKeys() {
+  if (!safeStorage.isEncryptionAvailable()) return [];
+  return keyDetect.adoptKeys({
+    removedPath: REMOVED_KEYS,
+    list: () => credentials.listCredentials(),
+    add: ({ provider, key, from }) =>
+      credentials.addCredential(
+        { label: `${PROVIDER_NAME[provider] || provider} key (found: ${from})`, provider, kind: "api_key", key, source: `detected:${from}` },
+        (s) => safeStorage.encryptString(s),
+      ),
+  });
+}
+let accessCache = { at: 0, value: null };
+async function detectAccess() {
+  if (accessCache.value && Date.now() - accessCache.at < 30_000) return accessCache.value;
+  const cli = async (name) => {
+    const installed = agentConsole.resolveAgent(name).ok;
+    const v = installed ? await cliStatus.get(name) : null;
+    return { id: name, installed, loggedIn: v ? v.loggedIn : false, ...(v && v.loggedIn && v.method ? { method: v.method } : {}), ...(v && v.plan ? { plan: v.plan } : {}) };
+  };
+  const [claude, codex, local] = await Promise.all([cli("claude"), cli("codex"), detectLocalModels()]);
+  const stored = credentials.listCredentials().filter((c) => c.kind === "api_key").map((c) => c.provider);
+  const value = { clis: [claude, codex], keys: keyDetect.detectKeys().map((k) => ({ ...k, stored: stored.includes(k.provider) })), local };
+  accessCache = { at: Date.now(), value };
+  return value;
+}
+bridge.handle("zevet:detectAccess", async () => ({ ok: true, ...(await detectAccess()) }));
+function startAccessScan() {
+  const scan = () => void Promise.all([cliStatus.refresh("claude"), cliStatus.refresh("codex"), adoptDetectedKeys()]).catch(() => {});
+  setTimeout(scan, 4000).unref();
+  setInterval(scan, 30 * 60_000).unref();
+}
 let zevetLadderCache = { at: 0, ladder: null };
 async function zevetLadder() {
   if (zevetLadderCache.ladder && Date.now() - zevetLadderCache.at < 60_000) return zevetLadderCache.ladder;
-  const detect = await loadDetect();
-  const found = detect ? detect.detectAgents() : [];
-  const usable = (name, id) => agentConsole.resolveAgent(name).ok && Boolean((found.find((a) => a.id === id) || {}).signedIn);
+  // A rung exists only when the CLI itself says it is signed in; an auth file left behind by a
+  // revoked login does not count. Cached, so a turn does not wait on it after the first.
+  const signedIn = async (name) => agentConsole.resolveAgent(name).ok && (await cliStatus.get(name)).loggedIn === true;
+  const [claudeOk, codexOk] = await Promise.all([signedIn("claude"), signedIn("codex")]);
   if (Date.now() - openModelsCache.at > 10 * 60_000) openModelsCache = { at: Date.now(), list: await listOpenModels() };
   const ladder = zevetRouter.buildLadder({
-    has: { claude: usable("claude", "claude-code"), codex: usable("codex", "codex"), opencode: agentConsole.resolveAgent("opencode").ok },
+    has: { claude: claudeOk, codex: codexOk, opencode: agentConsole.resolveAgent("opencode").ok },
     claude: agentCatalogs.claudeModels(),
     codex: agentCatalogs.codexModels(),
     opencode: openModelsCache.list,
@@ -5524,6 +5580,7 @@ app.whenReady().then(async () => {
     worktrees.prune(new Set([...placements].filter((p) => p.worktree).map((p) => path.resolve(p.worktree.dir)))),
   );
   startScheduler();
+  startAccessScan();
   startMasoraPush();
   startMasoraRuns();
   startReportingHealth();

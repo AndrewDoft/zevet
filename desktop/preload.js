@@ -248,6 +248,11 @@ contextBridge.exposeInMainWorld("zevet", {
   masoraSources: () => ipcRenderer.invoke("masora:sources"),
   masoraConnect: (arg) => ipcRenderer.invoke("masora:connect", arg),
   /**
+   * Every model this machine already has, verified: each vendor CLI's own login status, API keys found
+   * on disk or in the environment (presence only, never the key), and local model servers on loopback.
+   */
+  detectAccess: () => ipcRenderer.invoke("zevet:detectAccess"),
+  /**
    * Model credentials (D-0NN). `listCredentials` merges team (fetched from
    * the hub) and personal (this machine's own safeStorage-encrypted store,
    * desktop/credentials.js) into one metadata-only list, plus the member's

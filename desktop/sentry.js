@@ -8,7 +8,7 @@
 // directory) must never reach Sentry's servers even by accident, from any of
 // main, preload, or an agent's stderr.
 //
-// DEPENDENCY INJECTION, same reasoning as credential-usage.js's `fetchImpl`:
+// DEPENDENCY INJECTION, same reasoning as agent-console.js's `spawn`:
 // a real Sentry client talks to the network and requires Electron's `app` to
 // exist, so a test suite that wants to prove the SCRUBBING rule and the
 // AGENT-FAILURE shape correct, without either of those, injects a fake

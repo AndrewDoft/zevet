@@ -1,4 +1,4 @@
-// Who pays (D-073): per-engine identity from fixture login files (never a real
+// Who pays (D-073): per-engine identity from the CLIs' own status (never a real
 // secret), the sealed per-session frame through a REAL hub, and the cards.
 import { test, describe, after } from "node:test";
 import assert from "node:assert/strict";
@@ -17,52 +17,39 @@ const { payerFor, payerBody, openPayer, applyPayerFrame } = require("../desktop/
 
 const key = randomBytes(32);
 const TOKEN = "sk-ant-oat01-FIXTURE-NOT-A-REAL-TOKEN";
-const jwt = (claims) => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
 const read = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 
-/** A fake home with whichever login files a case needs. */
-function home(files) {
-  const dir = mkdtempSync(path.join(tmpdir(), "zevet-payer-"));
-  for (const [rel, body] of Object.entries(files)) {
-    mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
-    writeFileSync(path.join(dir, rel), JSON.stringify(body));
-  }
-  return dir;
-}
-const CLAUDE = {
-  ".claude/.credentials.json": { claudeAiOauth: { accessToken: TOKEN, subscriptionType: "max" } },
-  ".claude.json": { oauthAccount: { emailAddress: "andrew@example.com" } },
-};
+/** What `claude auth status` / `codex login status` said (cli-status.js verdicts). */
+const CLAUDE = { claude: { loggedIn: true, method: "plan", plan: "max", email: "andrew@example.com" } };
 
-describe("identity per engine, from the engine's own login files", () => {
+describe("identity per engine, from the engine's own CLI status", () => {
   test("claude: email and tier, never the token", () => {
-    const p = payerFor("claude", { home: home(CLAUDE), env: {} });
+    const p = payerFor("claude", { cli: CLAUDE });
     assert.equal(p.label, "Claude · andrew@example.com (Max)");
     assert.equal(p.account, "andrew@example.com (Max)");
     assert.ok(!JSON.stringify(p).includes(TOKEN));
-    assert.equal(payerFor("claude-code", { home: home(CLAUDE), env: {} }).label, p.label);
+    assert.equal(payerFor("claude-code", { cli: CLAUDE }).label, p.label);
   });
-  test("claude: tier alone, email alone, neither (unknown shows nothing)", () => {
-    const tier = { ".claude/.credentials.json": CLAUDE[".claude/.credentials.json"] };
-    assert.equal(payerFor("claude", { home: home(tier), env: {} }).label, "Claude · Max");
-    const email = { ".claude.json": CLAUDE[".claude.json"] };
-    assert.equal(payerFor("claude", { home: home(email), env: {} }).label, "Claude · andrew@example.com");
-    assert.equal(payerFor("claude", { home: home({}), env: {} }).label, "");
-    assert.equal(payerFor("claude", { home: home({ ".claude.json": "not an object" }), env: {} }).label, "");
+  test("claude: tier alone, email alone, not signed in (unknown shows nothing)", () => {
+    assert.equal(payerFor("claude", { cli: { claude: { loggedIn: true, method: "plan", plan: "max" } } }).label, "Claude · Max");
+    assert.equal(payerFor("claude", { cli: { claude: { loggedIn: true, method: "key", email: "a@b.c" } } }).label, "Claude · a@b.c");
+    assert.equal(payerFor("claude", { cli: { claude: { loggedIn: false, plan: "max", email: "a@b.c" } } }).label, "");
+    assert.equal(payerFor("claude", { cli: { claude: undefined } }).label, "");
+    assert.equal(payerFor("claude", {}).label, "");
   });
   test("claude: a saved credential names itself; the second Max account is not guessed", () => {
-    assert.equal(payerFor("claude", { home: home(CLAUDE), env: {}, credential: "Team key" }).label, "Claude · Team key");
-    assert.equal(payerFor("claude", { home: home(CLAUDE), env: {}, engine: "engine2" }).label, "");
+    assert.equal(payerFor("claude", { cli: CLAUDE, credential: "Team key" }).label, "Claude · Team key");
+    assert.equal(payerFor("claude", { cli: CLAUDE, engine: "engine2" }).label, "");
   });
-  test("codex: plan from the id_token claims, API key login, garbage", () => {
-    const plus = home({ ".codex/auth.json": { tokens: { id_token: jwt({ email: "a@b.c", "https://api.openai.com/auth": { chatgpt_plan_type: "plus" } }), access_token: TOKEN } } });
-    const p = payerFor("codex", { home: plus, env: {} });
-    assert.equal(p.label, "Codex · ChatGPT Plus");
-    assert.ok(!JSON.stringify(p).includes(TOKEN) && !JSON.stringify(p).includes("a@b.c"));
-    assert.equal(payerFor("codex", { home: home({ ".codex/auth.json": { tokens: { id_token: jwt({}) } } }), env: {} }).label, "Codex · ChatGPT");
-    assert.equal(payerFor("codex", { home: home({ ".codex/auth.json": { OPENAI_API_KEY: "sk-fixture" } }), env: {} }).label, "Codex · API key");
-    assert.equal(payerFor("codex", { home: home({ ".codex/auth.json": { tokens: { id_token: "garbage" } } }), env: {} }).label, "");
-    assert.equal(payerFor("codex", { home: home({}), env: {} }).label, "");
+  test("codex: ChatGPT plan, API key login, not signed in", () => {
+    assert.equal(payerFor("codex", { cli: { codex: { loggedIn: true, method: "plan" } } }).label, "Codex · ChatGPT");
+    assert.equal(payerFor("codex", { cli: { codex: { loggedIn: true, method: "key" } } }).label, "Codex · API key");
+    assert.equal(payerFor("codex", { cli: { codex: { loggedIn: false } } }).label, "");
+    assert.equal(payerFor("codex", {}).label, "");
+  });
+  test("no login file is opened by the payer", () => {
+    const src = readFileSync(new URL("../desktop/payer.js", import.meta.url), "utf8").replace(/\/\/.*$/gm, "");
+    assert.ok(!/readFileSync|\.credentials\.json|id_token|claudeAiOauth/.test(src));
   });
   test("opencode: a free model, a provider, no model", () => {
     assert.equal(payerFor("opencode", { model: "openrouter/some-model:free" }).label, "OpenCode · free model");
@@ -254,9 +241,8 @@ describe("cards and wiring", () => {
 });
 
 describe("Masora payer route (D-106)", () => {
-  const login = { ".claude/.credentials.json": { claudeAiOauth: { subscriptionType: "max" } } };
-  const macLogin = { ".claude.json": { oauthAccount: { emailAddress: "a@example.com" } } }; // Keychain holds the token; this is the only file trace
-  const route = (agent, files, env = {}, extra = {}) => payerFor(agent, { home: home(files), env, ...extra });
+  const login = { claude: { loggedIn: true, method: "plan", plan: "max", email: "a@example.com" } }; // what `claude auth status` said
+  const route = (agent, cli, env = {}, extra = {}) => payerFor(agent, { cli, env, ...extra });
 
   test("claude follows Claude Code's own precedence over the spawn env", () => {
     assert.equal(route("claude", login).payer, "plan:claude");
@@ -274,8 +260,10 @@ describe("Masora payer route (D-106)", () => {
     assert.equal(route("claude", login, { CLAUDE_CODE_USE_BEDROCK: "0" }).payer, "plan:claude");
   });
 
-  test("a mac login with only oauthAccount is a plan; nothing at all is unrouted", () => {
-    assert.equal(route("claude", macLogin).payer, "plan:claude");
+  test("the CLI's verdict decides the login: plan, key, signed out, never asked", () => {
+    assert.equal(route("claude", { claude: { loggedIn: true, method: "key" } }).payer, "byok:claude");
+    assert.equal(route("claude", { claude: { loggedIn: false } }).payer, "");
+    assert.equal(route("claude", { claude: { loggedIn: null } }).payer, "");
     assert.equal(route("claude", {}).payer, "");
     assert.equal(route("claude", {}).route, "");
   });
@@ -285,19 +273,19 @@ describe("Masora payer route (D-106)", () => {
     assert.equal(route("claude", login, { OPENAI_API_KEY: "set" }).payer, "plan:claude");
     // a decryption failure leaves process.env as is: the env-derived route.
     assert.equal(route("claude", login, { ANTHROPIC_API_KEY: "k" }).payer, "byok:claude");
-    assert.equal(route("claude", macLogin, { OPENAI_API_KEY: "set" }).payer, "plan:claude");
   });
 
   test("the payer is route:engine only, never an account", () => {
-    const p = route("claude", { ...login, ...macLogin });
+    const p = route("claude", login);
     assert.match(p.payer, /^(plan|byok|open):[a-z0-9]+$/);
     assert.match(p.label, /a@example\.com/);
     assert.ok(!p.payer.includes("@"));
   });
 
   test("codex: login is plan, stored key is byok; opencode :free is open", () => {
-    assert.equal(route("codex", { ".codex/auth.json": { tokens: { id_token: jwt({ "https://api.openai.com/auth": { chatgpt_plan_type: "plus" } }) } } }).payer, "plan:codex");
-    assert.equal(route("codex", { ".codex/auth.json": { OPENAI_API_KEY: "sk-FIXTURE" } }).payer, "byok:codex");
+    assert.equal(route("codex", { codex: { loggedIn: true, method: "plan" } }).payer, "plan:codex");
+    assert.equal(route("codex", { codex: { loggedIn: true, method: "key" } }).payer, "byok:codex");
+    assert.equal(route("codex", { codex: { loggedIn: false } }).payer, "");
     assert.equal(route("opencode", {}, {}, { model: "openrouter/foo:free" }).payer, "open:opencode");
     assert.equal(route("opencode", {}, {}, { model: "anthropic/claude" }).payer, "");
   });

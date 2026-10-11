@@ -1,5 +1,5 @@
 // Updates while zevet is closed (Andrew, 2026-10-11): the decision, the OS job, the stale-tree sweep and the crash guard.
-// The real Electron run of `--background-update` against a throwaway profile is in DECISIONS (D-110); these are the
+// The real Electron run of `--background-update` against a throwaway profile is in DECISIONS (D-111); these are the
 // parts that must not regress without it.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";

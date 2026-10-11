@@ -1,34 +1,18 @@
 // Per-launch engine choice: which of Andrew's two Claude Max accounts an
-// agent spawns on. Separate concern from credential-ladder.js/
-// credential-usage.js's hub-shared "team credential" ladder — this is
-// specifically the local engine1/engine2 split ~/.claude/bin/engine-pick.ps1
-// already implements for terminal subagents. "auto" reuses that exact policy
-// (engine1 <50% -> engine2 <80% -> engine1 <99% -> engine2) by feeding the
-// same two-account usage into credential-ladder.js's own ladder walk, rather
-// than re-deriving the arithmetic a second time.
+// agent spawns on. "auto" no longer reads plan utilization: that needed the
+// login's OAuth token POSTed to api.anthropic.com, which Anthropic's terms
+// forbid for third-party apps (D-recorded, 2026-10-11). The only token this
+// module touches is engine2's own, handed to the unmodified claude binary as
+// CLAUDE_CODE_OAUTH_TOKEN (the setup-token flow).
 "use strict";
 
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
-const credentialLadder = require("./credential-ladder.js");
-const credentialUsage = require("./credential-usage.js");
 
 const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
-const CREDENTIALS_FILE = path.join(CLAUDE_HOME, ".credentials.json");
 const DPAPI_FILE = path.join(CLAUDE_HOME, "secrets", "engine2.dpapi");
-
-// The exact ladder ~/.claude/bin/engine-pick.ps1 encodes as an if/elif chain
-// (Pick $u1 $u2): each step's own usage against its own ceiling, in order.
-// credential-ladder.test.mjs already proves this shape against engine-pick's
-// worked cases — this module reuses it rather than re-testing the math.
-const AUTO_LADDER = [
-  { credentialId: "engine1", untilPct: 50 },
-  { credentialId: "engine2", untilPct: 80 },
-  { credentialId: "engine1", untilPct: 99 },
-  { credentialId: "engine2", untilPct: 100 },
-];
 
 const CREDENTIAL_ENV_VARS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
 
@@ -37,37 +21,10 @@ const CREDENTIAL_ENV_VARS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "AN
 function withDefaults(opts) {
   return {
     platform: process.platform,
-    credentialsFile: CREDENTIALS_FILE,
     dpapiFile: DPAPI_FILE,
     execFileImpl: execFile,
-    probeOpts: {},
     ...opts,
   };
-}
-
-/**
- * engine1's OAuth token, read from the default login's own credentials file
- * -- read-only, never logged, never returned to a caller outside this
- * module. Undefined if not signed in or the file is unreadable/malformed.
- */
-function engine1Token(opts) {
-  const { credentialsFile } = withDefaults(opts);
-  try {
-    const tok = JSON.parse(fs.readFileSync(credentialsFile, "utf8"))?.claudeAiOauth?.accessToken;
-    return typeof tok === "string" && tok ? tok : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The 5h/7d windows of this machine's own Claude login — what its agents
- *  spend against by default. Same cache id as pickAuto, so the strip and the
- *  ladder share one probe. */
-async function engine1Windows(opts) {
-  const o = withDefaults(opts);
-  const token = engine1Token(o);
-  if (!token) return undefined;
-  return credentialUsage.windowsFor("engine1", { provider: "anthropic", kind: "subscription_token", key: token }, o.probeOpts);
 }
 
 /** DPAPI is per-machine (see engine2.ps1's header), so "available" means
@@ -121,29 +78,6 @@ function envWithout(base) {
 }
 
 /**
- * "auto"'s pick: engine-pick.ps1's policy, but the ladder is trimmed to
- * engine1-only steps when engine2 is not set up on this machine at all --
- * mirrors engine-pick.ps1's own short-circuit (`if (-not (Test-Path
- * engine2.dpapi)) { 'engine1'; exit }`) rather than letting the ladder's
- * "last step wins regardless" fallback land on an account that cannot work.
- */
-async function pickAuto(opts) {
-  const o = withDefaults(opts);
-  const ladder = engine2Available(o) ? AUTO_LADDER : AUTO_LADDER.filter((s) => s.credentialId === "engine1");
-  const ids = [...new Set(ladder.map((s) => s.credentialId))];
-  const usageById = {};
-  await Promise.all(
-    ids.map(async (id) => {
-      const token = id === "engine1" ? engine1Token(o) : await engine2Token(o);
-      if (!token) return;
-      const u = await credentialUsage.utilizationFor(id, { provider: "anthropic", kind: "subscription_token", key: token }, o.probeOpts);
-      if (u !== undefined) usageById[id] = u;
-    }),
-  );
-  return credentialLadder.choose(ladder, usageById) || "engine1";
-}
-
-/**
  * Resolve a per-launch engine request to a concrete engine and the env to
  * spawn with. `requested` is "engine1" | "engine2" | "auto" | falsy (falsy
  * and anything unrecognized behave as "engine1" -- the machine's default
@@ -158,10 +92,9 @@ async function resolveEngine(requested, baseEnv, opts) {
   const o = withDefaults(opts);
   const want = requested === "engine2" || requested === "auto" ? requested : "engine1";
 
-  if (want === "auto") {
-    const chosen = await pickAuto(o);
-    return resolveEngine(chosen, baseEnv, o);
-  }
+  // "auto" has no usage reading to rotate on, so it is the machine's default
+  // login; the claude CLI reports its own limits and the router rolls on those.
+  if (want === "auto") return resolveEngine("engine1", baseEnv, o);
 
   if (want === "engine2") {
     if (o.platform !== "win32") {
@@ -181,10 +114,7 @@ async function resolveEngine(requested, baseEnv, opts) {
 
 module.exports = {
   resolveEngine,
-  engine1Token,
-  engine1Windows,
   engine2Token,
   engine2Available,
-  AUTO_LADDER,
-  _internals: { pickAuto, envWithout, CREDENTIAL_ENV_VARS },
+  _internals: { envWithout, CREDENTIAL_ENV_VARS },
 };

@@ -11,7 +11,6 @@ import { ROOT } from "./helpers.mjs";
 
 const require = createRequire(import.meta.url);
 const engine = require(path.join(ROOT, "desktop", "agent-engine.js"));
-const usage = require(path.join(ROOT, "desktop", "credential-usage.js"));
 
 const dir = mkdtempSync(path.join(tmpdir(), "zevet-agent-engine-"));
 const credentialsFile = path.join(dir, ".credentials.json");
@@ -32,37 +31,7 @@ function fakeExecFile(stdout, err) {
   return fn;
 }
 
-function headerFetch(h5, h7) {
-  return async () => ({
-    ok: true,
-    headers: {
-      get: (name) => {
-        if (name === "anthropic-ratelimit-unified-5h-utilization") return String(h5);
-        if (name === "anthropic-ratelimit-unified-7d-utilization") return String(h7);
-        return null;
-      },
-    },
-  });
-}
-
-beforeEach(() => usage._clearCache());
 after(() => rmSync(dir, { recursive: true, force: true }));
-
-describe("engine1Token", () => {
-  test("reads the access token out of the credentials file", () => {
-    writeCreds("sk-ant-oat01-e1");
-    assert.equal(engine.engine1Token({ credentialsFile }), "sk-ant-oat01-e1");
-  });
-
-  test("undefined when the file is missing", () => {
-    assert.equal(engine.engine1Token({ credentialsFile: missingDpapiFile }), undefined);
-  });
-
-  test("undefined when the file has no oauth token", () => {
-    writeFileSync(credentialsFile, JSON.stringify({}));
-    assert.equal(engine.engine1Token({ credentialsFile }), undefined);
-  });
-});
 
 describe("engine2Available", () => {
   test("false off Windows even when the file exists", () => {
@@ -147,53 +116,23 @@ describe("resolveEngine", () => {
     assert.equal(r.env.PATH, "/x");
   });
 
-  test("auto falls back to engine1 when engine2 is not set up on this machine, without probing engine2", async () => {
-    writeCreds("sk-ant-oat01-e1");
-    const execFileImpl = fakeExecFile("should not run");
-    const probeOpts = { fetchImpl: headerFetch(0.9, 0.9), now: () => 0 }; // e1 well over 50%, but there is no e2 to roll to
-    const r = await engine.resolveEngine("auto", {}, { platform: "win32", credentialsFile, dpapiFile: missingDpapiFile, execFileImpl, probeOpts });
-    assert.equal(r.engine, "engine1");
-    assert.equal(execFileImpl.calls.length, 0);
-  });
-
-  test("auto follows engine-pick.ps1's exact policy: engine1 under 50% wins", async () => {
-    writeCreds("sk-ant-oat01-e1");
+  test("auto is the default login: no usage probe, no credentials file read, no network", async () => {
     writeFileSync(dpapiFile, "x");
     const execFileImpl = fakeExecFile("sk-ant-oat01-e2");
-    const probeOpts = { fetchImpl: headerFetch(0.1, 0), now: () => 0 };
-    const r = await engine.resolveEngine("auto", {}, { platform: "win32", credentialsFile, dpapiFile, execFileImpl, probeOpts });
-    assert.equal(r.engine, "engine1");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = () => { throw new Error("auto must not touch the network"); };
+    try {
+      const r = await engine.resolveEngine("auto", { PATH: "/x" }, { platform: "win32", dpapiFile, execFileImpl });
+      assert.equal(r.engine, "engine1");
+      assert.equal(r.env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+      assert.equal(execFileImpl.calls.length, 0, "engine2 is not decrypted for auto");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
-  test("auto rolls to engine2 once engine1 is at/over 50%", async () => {
-    writeCreds("sk-ant-oat01-e1");
-    writeFileSync(dpapiFile, "x");
-    let call = 0;
-    const execFileImpl = fakeExecFile("sk-ant-oat01-e2");
-    const probeOpts = {
-      fetchImpl: async (_url, opts) => {
-        // engine1's probe carries the e1 token, engine2's the e2 token.
-        const isE1 = opts.headers.authorization.includes("e1");
-        return headerFetch(isE1 ? 0.6 : 0.2, 0)();
-      },
-      now: () => 0,
-    };
-    const r = await engine.resolveEngine("auto", {}, { platform: "win32", credentialsFile, dpapiFile, execFileImpl, probeOpts });
-    assert.equal(r.engine, "engine2");
-    assert.equal(r.env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat01-e2");
-  });
-
-  test("auto with neither account's usage known falls onto engine2 (the ladder's last rung), matching engine-pick's exhaustion case", async () => {
-    writeCreds("sk-ant-oat01-e1");
-    writeFileSync(dpapiFile, "x");
-    const execFileImpl = fakeExecFile("sk-ant-oat01-e2");
-    const probeOpts = {
-      fetchImpl: async () => {
-        throw new Error("ECONNRESET");
-      },
-      now: () => 0,
-    };
-    const r = await engine.resolveEngine("auto", {}, { platform: "win32", credentialsFile, dpapiFile, execFileImpl, probeOpts });
-    assert.equal(r.engine, "engine2");
+  test("the module no longer exposes a way to read the login's OAuth token or its usage", () => {
+    assert.equal(engine.engine1Token, undefined);
+    assert.equal(engine.engine1Windows, undefined);
   });
 });

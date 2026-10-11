@@ -1,79 +1,54 @@
 "use strict";
-// Who pays for a turn (D-073): engine + account, from what this machine already
-// knows about each engine's login. Identity only, never a token: claude's
-// subscription tier and email, codex's plan out of its id_token's CLAIMS (the
-// JWT payload is read, the token is not kept or returned). Unknown is "" and
-// the board shows nothing for it; nothing here guesses.
+// Who pays for a turn (D-073): engine + account, from what each engine's own CLI says about its
+// login (cli-status.js: `claude auth status`, `codex login status`). Identity only, never a token:
+// no credential file is opened here. Unknown is "" and the board shows nothing for it; nothing
+// here guesses.
 //
 // A teammate's card gets the same label as ONE sealed frame per session with the
 // document key (doc-crypto), exactly like a claim (claims.js): the hub relays a
 // base64 blob and sees only the actor and session it sees on every event.
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
 
 const ENGINE = { claude: "Claude", codex: "Codex", opencode: "OpenCode", zevet: "Zevet model" };
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
 const text = (v) => (typeof v === "string" && v.trim() ? v.trim() : "");
 
-function readJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
+/** claude: `email (Max)` from the CLI's own status (cli.claude). */
+function claudeAccount({ cli }) {
+  const v = cli && cli.claude;
+  if (!v || v.loggedIn !== true) return "";
+  const tier = v.method === "plan" ? cap(text(v.plan)) : "";
+  const email = text(v.email);
+  if (email) return tier ? `${email} (${tier})` : email;
+  return tier;
 }
 
 /**
- * The route of the credential Claude Code will actually use, from the env it is spawned with. Order per
+ * The route of the credential Claude Code will actually use. Order per
  * https://code.claude.com/docs/en/authentication#authentication-precedence (fetched 2026-10-09): cloud-provider flags,
  * ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, apiKeyHelper (a settings file, not read here), CLAUDE_CODE_OAUTH_TOKEN, then the
- * /login subscription (a file, or the macOS Keychain, whose only trace here is oauthAccount in ~/.claude.json).
+ * /login: whatever `claude auth status` (cli.claude) says it is, a plan or a key. No credential file is opened.
  * "" when it cannot be told, including cloud providers, which are neither a plan nor the user's own key.
  */
-function claudeRoute({ home, env }) {
+function claudeRoute({ env, cli }) {
   const on = (v) => text(v) && !/^(0|false)$/i.test(text(v));
   if (on(env.CLAUDE_CODE_USE_BEDROCK) || on(env.CLAUDE_CODE_USE_VERTEX) || on(env.CLAUDE_CODE_USE_FOUNDRY)) return "";
   if (text(env.ANTHROPIC_AUTH_TOKEN) || text(env.ANTHROPIC_API_KEY)) return "byok";
   if (text(env.CLAUDE_CODE_OAUTH_TOKEN)) return "plan";
-  const dir = env.CLAUDE_CONFIG_DIR || path.join(home, ".claude");
-  if (readJson(path.join(dir, ".credentials.json"))?.claudeAiOauth) return "plan";
-  const state = readJson(env.CLAUDE_CONFIG_DIR ? path.join(dir, ".claude.json") : path.join(home, ".claude.json"));
-  return state?.oauthAccount ? "plan" : "";
+  const v = cli && cli.claude;
+  return v && v.loggedIn === true ? (v.method === "plan" ? "plan" : "byok") : "";
 }
 
-/** codex: an id_token login is the ChatGPT plan, a stored key is the user's own. */
-function codexRoute({ home, env }) {
-  const auth = readJson(path.join(env.CODEX_HOME || path.join(home, ".codex"), "auth.json"));
-  if (!auth) return "";
-  if (text(auth.tokens?.id_token)) return "plan";
-  return text(auth.OPENAI_API_KEY) ? "byok" : "";
+/** codex: a ChatGPT login is the plan, a stored key is the user's own (cli.codex). */
+function codexRoute({ cli }) {
+  const v = cli && cli.codex;
+  return v && v.loggedIn === true ? (v.method === "plan" ? "plan" : "byok") : "";
 }
 
-/** claude: `email (Max)` from ~/.claude.json's oauthAccount and the credentials file's subscriptionType. */
-function claudeAccount({ home, env }) {
-  const dir = env.CLAUDE_CONFIG_DIR || path.join(home, ".claude");
-  const tier = text(readJson(path.join(dir, ".credentials.json"))?.claudeAiOauth?.subscriptionType);
-  const email = text((readJson(env.CLAUDE_CONFIG_DIR ? path.join(dir, ".claude.json") : path.join(home, ".claude.json")) || {}).oauthAccount?.emailAddress);
-  if (email) return tier ? `${email} (${cap(tier)})` : email;
-  return tier ? cap(tier) : "";
-}
-
-/** codex: `ChatGPT Plus` from auth.json's id_token claims, `API key` for a key login. */
-function codexAccount({ home, env }) {
-  const auth = readJson(path.join(env.CODEX_HOME || path.join(home, ".codex"), "auth.json"));
-  if (!auth) return "";
-  const idToken = text(auth.tokens?.id_token);
-  if (idToken) {
-    try {
-      const claims = JSON.parse(Buffer.from(idToken.split(".")[1] || "", "base64url").toString("utf8"));
-      const plan = text(claims["https://api.openai.com/auth"]?.chatgpt_plan_type);
-      return plan ? `ChatGPT ${cap(plan)}` : "ChatGPT";
-    } catch {
-      return "";
-    }
-  }
-  return text(auth.OPENAI_API_KEY) ? "API key" : "";
+/** codex: `ChatGPT` for a plan login, `API key` for a key login (cli.codex). */
+function codexAccount({ cli }) {
+  const v = cli && cli.codex;
+  if (!v || v.loggedIn !== true) return "";
+  return v.method === "plan" ? "ChatGPT" : "API key";
 }
 
 /** opencode: the account is the model's provider; a `:free` model costs nobody anything. */
@@ -90,17 +65,17 @@ function opencodeAccount(model) {
  * `engine` "engine2"/"auto" is the second Max account, whose identity is not
  * readable here, so it is unknown.
  */
-function payerFor(agent, { model = "", credential = "", engine = "", home = os.homedir(), env = process.env } = {}) {
+function payerFor(agent, { model = "", credential = "", engine = "", env = process.env, cli = {} } = {}) {
   const key = agent === "claude-code" ? "claude" : String(agent || "").toLowerCase();
   const name = ENGINE[key];
   if (!name) return { engine: "", account: "", label: "", route: "", payer: "" };
   let account = "";
   let route = "";
-  if (key === "claude") route = engine === "engine2" || engine === "auto" ? "" : claudeRoute({ home, env });
-  else if (key === "codex") route = codexRoute({ home, env });
+  if (key === "claude") route = engine === "engine2" || engine === "auto" ? "" : claudeRoute({ env, cli });
+  else if (key === "codex") route = codexRoute({ cli });
   else if (key === "opencode") route = /(:|-)free$/.test(text(model)) ? "open" : "";
-  if (key === "claude") account = credential ? text(credential) : engine === "engine2" || engine === "auto" ? "" : claudeAccount({ home, env });
-  else if (key === "codex") account = codexAccount({ home, env });
+  if (key === "claude") account = credential ? text(credential) : engine === "engine2" || engine === "auto" ? "" : claudeAccount({ cli });
+  else if (key === "codex") account = codexAccount({ cli });
   else if (key === "opencode") account = opencodeAccount(model);
   const label = key === "zevet" ? name : account ? `${name} · ${account}` : "";
   // payer is what Masora is told (`<route>:<provider>`); label is display only and never leaves the machine.

@@ -2523,7 +2523,19 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 
 **Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
 
-## D-110 — zevet updates while CLOSED: hourly per-user OS job runs `zevet --background-update` (shell release)
+## D-110 — A subscription is used only through the vendor's CLI; keys are BYOK; the OAuth usage probe is gone
+
+**Decided (2026-10-11, Andrew: "seamless for Tommaso", find every model the person already has).**
+
+- **Removed `desktop/credential-usage.js`.** It read the Claude OAuth token from `~/.claude/.credentials.json` and POSTed it to `api.anthropic.com/v1/messages` (`Bearer` + `anthropic-beta: oauth-2025-04-20`) to read the 5h/7d utilization headers. Anthropic's terms forbid third-party apps routing requests through Free/Pro/Max credentials. Gone with it: `engine1Token`/`engine1Windows`, the startup rate-limit strip reading, and "auto" rotation on utilization. `auto` engine is now the machine's default login; an Auto credential ladder takes its first rung that resolves. The strip still shows the CLI's own `rate_limit_event`s. `CLAUDE_CODE_OAUTH_TOKEN` handed to the unmodified `claude` (the setup-token flow, engine2) stays.
+- **The router verifies logins** (`desktop/cli-status.js`): `claude auth status` (JSON `loggedIn`) and `codex login status`, hidden, 8 s, cached 2 min, stale-while-revalidate, prewarmed 4 s after launch. A rung exists only when the CLI says logged in; "could not run" is unknown and never erases a known answer. `payer.js` takes plan/email/route from the same verdict and no longer opens any credential file (it used to read the `claudeAiOauth` block and the Codex `id_token` claims; the Codex tier, e.g. Plus, is no longer shown).
+- **Keys are BYOK** (`desktop/key-detect.js`): env allowlist (ANTHROPIC/OPENAI/GEMINI/GOOGLE/OPENROUTER), opencode `auth.json` entries of `type:"api"`, Codex `auth.json` `OPENAI_API_KEY` (`$CODEX_HOME`), `~/.gemini/.env`, `~/.env` (GEMINI_API_KEY, skipped for Vertex). Regular files <= 256 KB. An `sk-ant-oat` value is refused. One GET against the provider's model/key list validates; only a valid key is stored (personal credential, `source: detected:*`, `kind: api_key`); a network failure retries next scan (30 min). Removing a detected credential records a one-way fingerprint so it is not re-added. `gemini`/`openrouter` api keys join `CREDENTIAL_ENV`.
+- **Local models** (`desktop/local-models.js`): `127.0.0.1:11434/api/tags` and `127.0.0.1:1234/v1/models`, 2 s, no scan; reported by `zevet:detectAccess` as display-only state. No rung is built from them yet: opencode needs a provider config to use one, which is a separate decision.
+- **Never:** borrowed OAuth client ids, `chatgpt.com/backend-api`, `sk-ant-oat` bearer handling, Claude Code header spoofing, Gemini CLI OAuth, OAuth blocks from Claude/Codex credential files. `test/byok-policy.test.mjs` fails if one comes back.
+
+**Alternatives.** Keep the probe behind a setting (still the same terms problem); read plan tier from the credential file (a non-secret field, but the file is the OAuth block). **Reversibility.** High; one commit.
+
+## D-111 — zevet updates while CLOSED: hourly per-user OS job runs `zevet --background-update` (shell release)
 
 **Decided (2026-10-11, Andrew: "this stuff just needs to update in the background, no while running").** Mirrors masora2 D-794.
 

@@ -3,7 +3,7 @@
 // No real @sentry/electron here on purpose — this module never imports it
 // (see its own header comment), so every test drives it with a fake
 // recorder standing in for the real client, the same DI shape
-// credential-usage.js uses for `fetchImpl`.
+// agent-console.js uses for `spawn`.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
