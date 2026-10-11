@@ -12,15 +12,19 @@
  * Unpackaged (`electron .`), the payload is this directory and there is no client.
  */
 const { app } = require("electron");
-const fs = require("node:fs");
 const path = require("node:path");
-const crypto = require("node:crypto");
 const Module = require("node:module");
 const { singleInstance, createLog } = require("@masora/desktop-kit");
 const cfg = require("./payload-config.js");
+const { installCrashGuard } = require("./crash-guard.js");
+const { createClient } = require("./payload-client.js");
+const { sweepUntilClean } = require("./payload-sweep.js");
+const bg = require("./background-update.js");
 
 const bootLog = createLog({ dir: app.getPath("logs"), name: "zevet-boot" });
-const log = (m) => { console.log(`[zevet-payload] ${m}`); bootLog.info(m); };
+const log = (m) => { try { console.log(`[zevet-payload] ${m}`); } catch { /* a closed stdout */ } bootLog.info(m); };
+// First thing: no uncaught error or closed pipe may ever reach Electron's "A JavaScript error occurred" dialog.
+installCrashGuard({ log: (m) => bootLog.error(m) });
 
 /** What main.js (in the payload) may reach: the client, and things only the shell owns. */
 const shell = {
@@ -38,13 +42,19 @@ const shell = {
 globalThis.__zevetShell = shell;
 
 async function run() {
+  // `zevet --background-update` (the hourly OS job): no window, no payload, no main.js. It takes the lock itself.
+  if (bg.isBackgroundLaunch(process.argv) || bg.isRegisterLaunch(process.argv)) return require("./background-entry.js").main({ log });
+
   // One app per profile. ZEVET_ALLOW_MULTI=1 skips the lock — see the two-instance rig; it needs a separate ZEVET_HOME.
-  if (process.env.ZEVET_ALLOW_MULTI !== "1" && !singleInstance(app, () => shell.onSecondInstance && shell.onSecondInstance())) return;
+  // The OS job's own launch lands here as a second instance and must not raise or focus the window.
+  const onSecond = (_event, argv) => { if (!bg.isBackgroundLaunch(argv) && !bg.isRegisterLaunch(argv) && shell.onSecondInstance) shell.onSecondInstance(); };
+  if (process.env.ZEVET_ALLOW_MULTI !== "1" && !singleInstance(app, onSecond)) return;
 
   let dir = __dirname;
   const platform = cfg.platformKey();
   if (app.isPackaged && platform) dir = await startPayload(platform);
   if (!dir) return; // the entry check failed and a relaunch is under way
+  registerBackgroundJob();
 
   // The payload lives outside the asar, so it cannot see this node_modules by walking up. Point the
   // resolver at it once and put the env back: NODE_PATH must not leak into the agents main spawns.
@@ -62,23 +72,7 @@ async function run() {
 
 /** Resolve the build to run, check its entry points, arm the trial crash guard. Returns its dir. */
 async function startPayload(platform) {
-  const root = cfg.payloadRoot();
-  const channel = process.env.ZEVET_PAYLOAD_CHANNEL || readTrim(path.join(root, "channel")) || "stable";
-  const pulse = cfg.pulseUrl(channel, platform);
-  const { PINNED_KEYS } = require("./update-signing.js");
-  const { loopbackProofKeys } = require("./app-update.js");
-  const { createPayloadClient } = require("@masora/desktop-kit/lib/payload");
-  const payload = createPayloadClient({
-    app: "zevet", channel, platform, root,
-    seedDir: path.join(process.resourcesPath, "app-core"),
-    seedBuild: app.getVersion(), seedSeq: cfg.seqOf(app.getVersion()),
-    pulseUrl: pulse,
-    keys: loopbackProofKeys(pulse) || PINNED_KEYS,
-    shellVersion: cfg.SHELL_VERSION,
-    schemaHead: async () => null,
-    installId: installId(root),
-    log,
-  });
+  const { client: payload, root } = createClient({ app, platform, log });
   shell.payload = payload;
   // A cold launch is the safest moment to apply a staged build: nothing is running yet. The idle swapper and
   // will-quit never fire after a kill, crash, reboot or logoff. activate() writes current.json as a trial, so
@@ -117,8 +111,8 @@ async function startPayload(platform) {
           payload.confirm();
         } catch (err) {
           log(`payload confirmed; old-version cleanup failed (${err && err.message}); retrying in 10 minutes`);
-          const t = setTimeout(() => { try { payload.gc(); } catch (e) { log(`old-version cleanup still failing: ${e && e.message}`); } }, 10 * 60 * 1000);
-          if (t.unref) t.unref();
+          // Per tree, with retries, naming whatever holds one; gc() stops at the first tree Windows refuses.
+          sweepUntilClean({ root, log }).catch((e) => log(`old-version cleanup crashed: ${e && e.message}`));
         } finally {
           process.removeListener("uncaughtException", onCrash);
         }
@@ -144,20 +138,19 @@ function relaunch(code) {
   app.exit(code);
 }
 
-function readTrim(file) {
-  try { return fs.readFileSync(file, "utf8").trim(); } catch { return ""; }
-}
-
-/** Stable per install, for rollout bucketing. */
-function installId(root) {
-  const file = path.join(root, "install-id");
-  let id = readTrim(file);
-  if (!id) {
-    id = crypto.randomUUID();
-    fs.mkdirSync(root, { recursive: true });
-    fs.writeFileSync(file, id);
-  }
-  return id;
+/** The hourly OS job that updates zevet while it is closed (background-update.js). Every launch re-asserts it. */
+function registerBackgroundJob() {
+  const { misplacedReason } = require("./app-update.js");
+  if (!bg.mayRegister({ isPackaged: app.isPackaged, execPath: process.execPath, misplaced: process.platform === "win32" ? misplacedReason : () => null })) return;
+  const { execFile } = require("node:child_process");
+  const run = (cmd, args) => new Promise((resolve) => {
+    execFile(cmd, args, { windowsHide: true, timeout: 15000 }, (err, stdout, stderr) => resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, stdout, stderr }));
+  });
+  const dir = path.join(app.getPath("userData"), "updates");
+  app.whenReady()
+    .then(() => bg.ensureBackgroundJob({ dir, run, log: (m) => log(`[background-update] ${m}`) }))
+    .then((r) => { if (r !== "unchanged") log(`[background-update] job: ${r}`); })
+    .catch((err) => log(`[background-update] registration failed: ${err && err.message}`));
 }
 
 shell.booted = run().catch((err) => bootFailed(`bootstrap failed: ${err && err.stack || err}`));

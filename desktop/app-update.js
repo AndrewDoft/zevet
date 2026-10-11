@@ -651,6 +651,17 @@ class AppUpdater extends UpdaterCore {
   }
 
   /**
+   * background-update.js: apply the verified download silently with NO relaunch, while the app is closed. Same step
+   * as installOnQuit() but without its one-try marker: the job rate-limits itself (one attempt per version per day).
+   */
+  installQuiet() {
+    const v = this._verifyReady();
+    if (!v.ok) return v;
+    if (!this.steps.canOnQuit()) return { ok: false, error: `${this.platform} builds cannot install silently` };
+    return this._onQuit();
+  }
+
+  /**
    * Whether this build believes it can replace its own bundle in place:
    * darwin, a bundle path configured, and its parent directory writable.
    * False just means "keep the manual drag-to-Applications flow" — which is
