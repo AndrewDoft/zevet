@@ -371,3 +371,9 @@ model ("run"), "—" when there is none.
 **Unblocks.** Persist per-turn usage (model, tokens, cost) in console-log and read it back.
 **Also.** The OpenAI pricing page returned 403 to the first URL; prices came via developers.openai.com. GLM 5.2
 free is absent from OpenRouter's models API today, so it is not in the catalogue. Teammate payer is not shown.
+
+## INSUF-012 — Ship is blocked: the update-signing key helper is missing on this PC
+
+**Missing.** `C:/Users/andre/.claude/bin/update-signing-key.ps1` (called by `scripts/ship.mjs` `key()` as `pwsh -File ... zevet`) does not exist; `~/.claude/bin` has no signing helper and `~/.claude/secrets` holds no zevet update key. `npm run ship` dies at its first step (before any tag, push or upload), so nothing was published.
+**Unblocks.** Restore the helper (it must print the zevet ed25519 PRIVATE KEY pem from the DPAPI store) or run `npm run ship` from the machine that has it. Everything else is on origin/main (658b3a9): D-111 shell release 0.2.143 will be classified shell + hub.
+**Blast radius.** None: installs keep running 0.2.142 / feed 0.2.140. The closed-app job only takes effect once a shell carrying it is installed, so it is inert until this ships.
