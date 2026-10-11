@@ -137,6 +137,16 @@ export interface ZevetBridge {
   masoraSources?: () => Promise<{ sources?: { kind: string; status: string }[]; error?: string }>;
   masoraConnect?: (arg: { provider: string }) => Promise<{ ok?: boolean; error?: string }>;
   /**
+   * Every model this machine already has, verified: each vendor CLI's own login status, API keys found
+   * on disk or in the environment (presence only, never the key), and local model servers on loopback.
+   */
+  detectAccess?: () => Promise<{
+    ok?: boolean;
+    clis?: Array<{ id: string; installed: boolean; loggedIn: boolean | null; method?: "plan" | "key"; plan?: string }>;
+    keys?: Array<{ provider: string; from: string; stored: boolean }>;
+    local?: Array<{ provider: string; state: "connected" | "not_setup"; models: string[] }>;
+  }>;
+  /**
    * Model credentials (D-0NN). `listCredentials` merges team (fetched from
    * the hub) and personal (this machine's own safeStorage-encrypted store,
    * desktop/credentials.js) into one metadata-only list, plus the member's

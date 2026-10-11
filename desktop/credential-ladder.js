@@ -5,8 +5,7 @@
 // Deliberately its own module with no Electron, no fetch, no fs: the choice
 // itself is a few lines of arithmetic, and keeping it pure is what makes it
 // unit-testable without a network or a keychain. Everything that FEEDS it a
-// usage number — desktop/credential-usage.js's probe/cache — is a separate
-// concern on purpose.
+// usage number is a separate concern on purpose (no reader exists today).
 "use strict";
 
 /**

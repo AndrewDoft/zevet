@@ -219,6 +219,13 @@ Channel names have no "zevet:" prefix -- they are \`masora:sources\` /
 
 Connections panel: linked-source status, and connecting a new one.` },
     masoraConnect: { channel: "masora:connect", params: ["arg"], type: `(arg: { provider: string }) => Promise<{ ok?: boolean; error?: string }>`, optional: true },
+    detectAccess: { channel: "zevet:detectAccess", params: [], type: `() => Promise<{
+    ok?: boolean;
+    clis?: Array<{ id: string; installed: boolean; loggedIn: boolean | null; method?: "plan" | "key"; plan?: string }>;
+    keys?: Array<{ provider: string; from: string; stored: boolean }>;
+    local?: Array<{ provider: string; state: "connected" | "not_setup"; models: string[] }>;
+  }>`, optional: true, doc: `Every model this machine already has, verified: each vendor CLI's own login status, API keys found
+on disk or in the environment (presence only, never the key), and local model servers on loopback.` },
     listCredentials: { channel: "zevet:listCredentials", params: [], type: `() => Promise<{
     ok?: boolean;
     credentials?: Array<{
