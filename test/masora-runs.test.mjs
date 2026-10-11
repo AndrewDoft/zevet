@@ -510,13 +510,8 @@ describe("8. payer", () => {
   });
 
   const PAYER_RE = /^(plan|byok|open):[a-z0-9][a-z0-9._-]*$/;
-  const payerThroughWire = (files, env = {}) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-wire-payer-"));
-    for (const [rel, body] of Object.entries(files)) {
-      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
-      fs.writeFileSync(path.join(dir, rel), JSON.stringify(body));
-    }
-    const payerOf = (agent) => require(path.join(ROOT, "desktop", "payer.js")).payerFor(agent, { home: dir, env });
+  const payerThroughWire = (cli, env = {}) => {
+    const payerOf = (agent) => require(path.join(ROOT, "desktop", "payer.js")).payerFor(agent, { cli, env });
     const poller = wire.startMasoraRuns({
       masora: { readConfig: () => ({ runs: false, paired: false }) }, safeStorage: {}, consoleLog: {}, agentApi,
       payerOf, announceOutcome() {}, readWorkspaces: () => [], storedMode: () => "ask", startAndBrief() {},
@@ -528,14 +523,14 @@ describe("8. payer", () => {
   };
 
   test("the wire sends plan:claude for a subscription login and byok:claude for an API key", () => {
-    const login = { ".claude/.credentials.json": { claudeAiOauth: { subscriptionType: "max" } }, ".claude.json": { oauthAccount: { emailAddress: "andrew@example.com" } } };
+    const login = { claude: { loggedIn: true, method: "plan", plan: "max", email: "andrew@example.com" } };
     assert.equal(payerThroughWire(login), "plan:claude");
     assert.equal(payerThroughWire({}, { ANTHROPIC_API_KEY: "sk-ant-api03-FIXTURE" }), "byok:claude");
     assert.equal(payerThroughWire({}), "", "no credential: unknown stays empty, not 'unknown'");
   });
 
   test("no email or display label ever reaches payer", () => {
-    const login = { ".claude/.credentials.json": { claudeAiOauth: { subscriptionType: "max" } }, ".claude.json": { oauthAccount: { emailAddress: "andrew@example.com" } } };
+    const login = { claude: { loggedIn: true, method: "plan", plan: "max", email: "andrew@example.com" } };
     for (const sent of [payerThroughWire(login), payerThroughWire({}, { ANTHROPIC_API_KEY: "sk-ant-api03-FIXTURE" })]) {
       assert.match(sent, PAYER_RE);
       assert.ok(!/@|·|Max|\s/.test(sent));
