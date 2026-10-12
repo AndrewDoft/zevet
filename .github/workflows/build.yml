@@ -31,7 +31,12 @@ jobs:
           - os: ubuntu-latest
             script: dist:linux
             artifact: zevet-linux
-    runs-on: ${{ matrix.os }}
+    # The macOS leg moves to a self-hosted Apple Silicon runner when the repo
+    # variable MAC_RUNNER names its label (docs/MAC-RUNNER.md): the hosted
+    # macos-latest leg has timed out in smoke:mac's CDP attach since 2026-10-09,
+    # on unchanged code. Unset, it falls back to macos-latest. Safe on a public
+    # repo only because this workflow runs on tags and dispatch, never on PRs.
+    runs-on: ${{ matrix.os == 'macos-latest' && vars.MAC_RUNNER || matrix.os }}
     # Only the Windows leg's federated credential is scoped to this environment
     # (repo:AndrewDoft/zevet:environment:signing); the macOS leg never reaches
     # azure/login so this costs it nothing.
