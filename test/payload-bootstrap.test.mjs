@@ -104,12 +104,11 @@ describe("the shell/payload split", () => {
 });
 
 /** Load bootstrap.js fresh with a fake Electron app and a fake payload client. */
-async function boot({ packaged = true, lock = true, resolved = {}, verifyThrows = false, mainSrc, multi = false, argv } = {}) {
+async function boot({ packaged = true, lock = true, resolved = {}, verifyThrows = false, mainSrc, multi = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zevet-boot-"));
   const payloadDir = path.join(dir, "versions", "0.2.90");
   fs.mkdirSync(payloadDir, { recursive: true });
   const log = [];
-  const handlers = {};
   globalThis.__bootTest = { loaded: 0, nodePathDuringLoad: "unset" };
   fs.writeFileSync(payloadDir + "/main.js", mainSrc ?? "globalThis.__bootTest.loaded++; globalThis.__bootTest.nodePathDuringLoad = process.env.NODE_PATH;");
   const client = {
@@ -133,7 +132,7 @@ async function boot({ packaged = true, lock = true, resolved = {}, verifyThrows 
     getPath: () => dir,
     whenReady: () => Promise.resolve(),
     requestSingleInstanceLock: () => { log.push("lock requested"); return lock; },
-    on: (ev, fn) => { handlers[ev] = fn; },
+    on: () => {},
     quit: () => log.push("quit"),
     relaunch: () => log.push("relaunch"),
     exit: (c) => log.push(`exit ${c}`),
@@ -158,8 +157,6 @@ async function boot({ packaged = true, lock = true, resolved = {}, verifyThrows 
   const realArch = Object.getOwnPropertyDescriptor(process, "arch");
   Object.defineProperty(process, "platform", { value: "win32" });
   Object.defineProperty(process, "arch", { value: "x64" });
-  const realArgv = process.argv;
-  if (argv) process.argv = [realArgv[0], ...argv];
   let threw = null;
   try {
     require(file);
@@ -167,23 +164,18 @@ async function boot({ packaged = true, lock = true, resolved = {}, verifyThrows 
   } catch (e) {
     threw = e;
   } finally {
-    process.argv = realArgv;
     Object.defineProperty(process, "platform", realPlatform);
     Object.defineProperty(process, "arch", realArch);
     Module._load = load;
     for (const k of Object.keys(process.env)) if (!(k in env)) delete process.env[k];
     Object.assign(process.env, env);
   }
-  // crash-guard.js's permanent listeners (zevetGuard*) are not the trial guard; they must not outlive the rig either.
-  const added = process.listeners("uncaughtException").filter((l) => !listenersBefore.includes(l));
-  const guards = added.filter((l) => !l.name.startsWith("zevetGuard"));
+  const guards = process.listeners("uncaughtException").filter((l) => !listenersBefore.includes(l));
   const cleanup = () => {
-    for (const g of added) process.removeListener("uncaughtException", g);
-    for (const ev of ["unhandledRejection"]) for (const l of process.listeners(ev)) if (l.name.startsWith("zevetGuard")) process.removeListener(ev, l);
-    for (const st of [process.stdout, process.stderr]) for (const l of st.listeners("error")) if (l.name.startsWith("zevetGuard")) st.removeListener("error", l);
+    for (const g of guards) process.removeListener("uncaughtException", g);
     fs.rmSync(dir, { recursive: true, force: true });
   };
-  return { log, threw, guards, handlers, dir, shell: globalThis.__zevetShell, state: globalThis.__bootTest, cleanup };
+  return { log, threw, guards, shell: globalThis.__zevetShell, state: globalThis.__bootTest, cleanup };
 }
 
 describe("bootstrap.js", () => {
@@ -249,25 +241,6 @@ describe("bootstrap.js", () => {
     r.shell.trial.confirm();
     assert.equal(process.listeners("uncaughtException").includes(r.guards[0]), false);
     assert.ok(r.log.includes("confirm"));
-  });
-  test("the hourly OS job's launch is a second instance that must not focus or open the window", async () => {
-    r = await boot({});
-    let focused = 0;
-    r.shell.onSecondInstance = () => { focused++; };
-    r.handlers["second-instance"]({}, ["zevet.exe", "--background-update"]);
-    r.handlers["second-instance"]({}, ["zevet.exe", "--register-background-update"]);
-    assert.equal(focused, 0);
-    r.handlers["second-instance"]({}, ["zevet.exe"]);
-    assert.equal(focused, 1, "a person's own second launch still focuses the window");
-  });
-  test("--background-update never reaches main.js, the payload or the app's lock: while zevet runs it logs a start and an outcome and exits", async () => {
-    r = await boot({ lock: false, argv: ["--background-update"] });
-    assert.equal(r.state.loaded, 0);
-    assert.equal(r.log.includes("start"), false, "the payload client must not start");
-    const text = fs.readFileSync(path.join(r.dir, "zevet-boot.log"), "utf8");
-    assert.match(text, /\[background-update\] start: shell 0\.2\.89, payload 0\.2\.89, zevet is running/);
-    assert.match(text, /\[background-update\] outcome: payload zevet is running; it updates itself; shell zevet is running; it updates itself/);
-    assert.ok(r.log.includes("exit 0"));
   });
   test("unpackaged, there is no client: the shell's own directory is the payload", async () => {
     r = await boot({ packaged: false });

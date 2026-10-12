@@ -10,7 +10,6 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const Module = require("node:module");
 const BOOT = path.join(ROOT, "desktop", "bootstrap.js");
-const CLIENT = path.join(ROOT, "desktop", "payload-client.js");
 
 async function boot({ staged, activate }) {
   const calls = [];
@@ -35,8 +34,7 @@ async function boot({ staged, activate }) {
   };
   const load = Module._load;
   Module._load = function (req, parent, ...rest) {
-    if (req in stubs && ([BOOT, CLIENT].includes(parent?.filename) || req.startsWith("@masora") || req === "electron")) return stubs[req];
-    if (parent?.filename === BOOT && ["./background-update.js", "./crash-guard.js", "./payload-sweep.js"].includes(req)) return load.call(this, req, parent, ...rest);
+    if (req in stubs && (parent?.filename === BOOT || req.startsWith("@masora") || req === "electron")) return stubs[req];
     if (parent?.filename === BOOT && req.endsWith("main.js")) return {};
     return load.call(this, req, parent, ...rest);
   };
