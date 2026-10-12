@@ -22,7 +22,7 @@ jobs:
           - os: windows-latest
             script: dist:win
             artifact: zevet-windows
-          - os: macos-latest
+          - os: macos-15
             script: dist:mac
             artifact: zevet-macos
           # AppImage (linux x64). Built on ubuntu-latest; the Test step is skipped
