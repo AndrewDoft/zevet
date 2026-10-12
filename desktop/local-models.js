@@ -11,8 +11,12 @@ const TARGETS = [
 async function detectLocalModels({ fetch: http = globalThis.fetch, timeoutMs = 2000 } = {}) {
   return Promise.all(
     TARGETS.map(async (t) => {
+      // A plain timer, not AbortSignal.timeout(): that one is unref'd, so a hung probe could let
+      // the event loop drain with the promise still pending.
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), timeoutMs);
       try {
-        const res = await http(t.url, { signal: AbortSignal.timeout(timeoutMs) });
+        const res = await http(t.url, { signal: ac.signal });
         if (!res.ok) return { provider: t.provider, state: "not_setup", models: [] };
         const body = await res.json();
         if (!body || typeof body !== "object") return { provider: t.provider, state: "not_setup", models: [] };
@@ -20,6 +24,8 @@ async function detectLocalModels({ fetch: http = globalThis.fetch, timeoutMs = 2
         return { provider: t.provider, state: "connected", models };
       } catch {
         return { provider: t.provider, state: "not_setup", models: [] };
+      } finally {
+        clearTimeout(timer);
       }
     }),
   );
