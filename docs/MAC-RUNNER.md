@@ -41,9 +41,13 @@ touch other repos.
   `caffeinate` isn't needed between releases.
 - During `smoke:mac`, the Zevet app opens briefly with an isolated profile, then closes. Builds live in
   `~/actions-runner-zevet/_work`.
-- Only tag pushes and manual dispatches by repo writers run on it. Pull requests from forks never
-  do (`build.yml` has no `pull_request` trigger), which is what keeps a public repo safe on a
-  self-hosted runner. Don't add a PR trigger while this runner exists.
+- `build.yml` sends it only tag pushes and manual dispatches. That alone does NOT keep a public repo
+  safe: a fork PR runs its own copy of the workflows, so it can edit `ci.yml` (which has a
+  `pull_request` trigger) to `runs-on: zevet-mac` and run code on this Mac. The repo's fork-PR policy
+  is `first_time_contributors` (2026-10-12), so a returning contributor's PR would run unapproved.
+  Before registering the runner, require approval for every outside contributor:
+  `gh api -X PUT repos/AndrewDoft/zevet/actions/permissions/fork-pr-contributor-approval -f approval_policy=all_external_contributors`.
+  Read every fork PR's workflow diff before approving its run.
 - To remove it: `cd ~/actions-runner-zevet && ./svc.sh stop && ./svc.sh uninstall && ./config.sh remove --token <new token>`.
 
 ## Then (Andrew / orchestrator)
