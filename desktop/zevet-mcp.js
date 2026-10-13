@@ -431,6 +431,7 @@ async function doPermissionPrompt(args) {
     const permit = await requestPermit(toolName, clipStrings(input), {
       via: "claude",
       run: process.env.ZEVET_MCP_RUN || "",
+      toolUseId: typeof args.tool_use_id === "string" ? args.tool_use_id : "",
     });
     const decision = permit.ok
       ? { behavior: "allow", updatedInput: input }

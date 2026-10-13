@@ -3803,10 +3803,17 @@ function startMasoraBrowserTasks() {
 /** MCP run id -> the folder that run was started in (agent-tools.js record_memory). */
 const runRoots = new Map();
 
+/** Once-only claim per (run, tool call), kept across restarts (approval-claims.js). */
+let permitClaimsInst = null;
+function permitClaims() {
+  if (!permitClaimsInst) permitClaimsInst = require("./approval-claims.js").createApprovalClaims(path.join(app.getPath("userData"), "approval-claims.json"));
+  return permitClaimsInst;
+}
+
 function ensureAskServer() {
   if (!askServerPromise) {
     askServerPromise = askServer.start({
-      onPermit: (request) =>
+      onPermit: permitClaims().guard((request) =>
         new Promise((resolve) => {
           // "Always allow this" answered earlier in this run (permit-grants.js).
           const run = request && typeof request.run === "string" ? request.run : "";
@@ -3849,7 +3856,7 @@ function ensureAskServer() {
             ...(request || {}),
             ...(request && request.via === "claude" ? { canAlways: permitGrants.ruleKey(request.tool, request.arguments) !== null } : {}),
           });
-        }),
+        }), askServer.DEFAULT_TIMEOUT_MS),
       onAsk: (request) =>
         new Promise((resolve) => {
           const id = `a${++permitSeq}`;
