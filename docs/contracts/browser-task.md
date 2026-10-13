@@ -17,6 +17,12 @@ Installed into a throwaway venv under `%TEMP%` (outside the repo) with `pip inst
 (pulls `cdp-use 1.4.5`, `pydantic 2.13.5`, `openai 2.26.0`, `anthropic 0.76.0`), imported, and driven end to end
 by the tests (headless Chromium 153 from the Playwright cache). Python >= 3.11.
 
+## How it ships (D-112)
+
+The payload carries `runner.py` and `requirements.txt`; Python, browser-use and Chromium are the person's. Setup:
+`python -m venv V && V/Scripts/pip install -r requirements.txt`, then `python` in `<zevetHome>/browser-task.json` is
+`V/Scripts/python.exe`. The runner exits 78 on any other browser-use version; Zevet shows "needs Python ...".
+
 ## Docs fetched this session (2026-10-09)
 
 - <https://docs.browser-use.com/customize/browser/all-parameters> -- `headless`, `keep_alive`, `user_data_dir`,
@@ -114,7 +120,7 @@ installed source (paths relative to `site-packages/`), read, not assumed:
   only; nothing calls it. Not exercised by any test (tests open no window).
 - **Model.** From `config.models` (written by the Node side from `<zevetHome>/browser-task.json`) the first entry whose
   `provider` is in the claim's `allowed_providers` (null = any). None -> `failed` / `model_not_allowed` before any page
-  opens. See INSUF-B5-BROWSER-2 in `INSUFFICIENCIES.md`: Zevet has no in-process model path.
+  opens. See INSUF-014 in `INSUFFICIENCIES.md`: Zevet has no in-process model path.
 - **Output.** stdout carries exactly one JSON object; Python's `sys.stdout` is pointed at stderr while it runs.
   The Node side rebuilds the report field by field anyway (`buildReport`) and repeats Masora's re-check.
 

@@ -435,3 +435,35 @@ describe("cost_usd is always a number", () => {
     assert.equal(reports().length, 0);
   });
 });
+
+describe("packaging: the person's Python is the runtime, and a bad one is said out loud", () => {
+  const needs = async (run) => {
+    const outcomes = [];
+    const r = rig({ run, setOutcome: (id, t) => outcomes.push(t) });
+    queue.push(mkTask());
+    await (await r.poller.tick()).done;
+    assert.equal(reports()[0].body.reason, "error");
+    assert.match(outcomes.join("\n"), /needs Python/);
+  };
+  test("python not found: failed/error and a 'needs Python' outcome", () =>
+    needs((job) => bt.spawnRunner({ ...job, python: path.join(home.dir, "no-such-python") })));
+  test("runner exit 78 (no pinned browser-use): failed/error and a 'needs Python' outcome", () =>
+    needs((job) => bt.spawnRunner({ ...job, python: process.execPath, pyArgs: ["-e", "process.exit(78)"] })));
+});
+
+describe("runner.py invariants (source-level, no venv needed)", () => {
+  const src = fs.readFileSync(path.join(ROOT, "desktop", "browser-task", "runner.py"), "utf8");
+  test("telemetry and cloud sync are forced off", () => {
+    assert.match(src, /os\.environ\.update\(ANONYMIZED_TELEMETRY="false", BROWSER_USE_CLOUD_SYNC="false"/);
+    assert.doesNotMatch(src, /ANONYMIZED_TELEMETRY="true"|BROWSER_USE_CLOUD_SYNC="true"/);
+  });
+  test("a task run is headless; only --login (a person at the keyboard) opens a window", () => {
+    assert.equal((src.match(/headless=False/g) || []).length, 1);
+    assert.ok(src.indexOf("headless=False") > src.indexOf("async def login("), "headless=False must live in login()");
+    assert.match(src.slice(0, src.indexOf("async def login(")), /headless=True/);
+  });
+  test("the pin in requirements.txt is the one the runner enforces", () => {
+    const req = fs.readFileSync(path.join(ROOT, "desktop", "browser-task", "requirements.txt"), "utf8");
+    assert.equal(/browser-use==([\d.]+)/.exec(req)[1], /PINNED_BROWSER_USE = "([\d.]+)"/.exec(src)[1]);
+  });
+});

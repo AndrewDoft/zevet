@@ -16,6 +16,7 @@ import time
 from urllib.parse import urlparse, urlsplit
 
 PINNED_BROWSER_USE = "0.13.10"
+NEEDS_PINNED = 78  # exit code: this python lacks the pinned browser-use (masora-browser-tasks.js reads it)
 # Actions that read/write local files, run page JS, open a search engine or upload: not part of a fenced task.
 EXCLUDED_ACTIONS = ["search", "upload_file", "save_as_pdf", "write_file", "replace_file", "read_file", "evaluate"]
 VERBS = {  # Browser Use action name -> contract verb; anything unlisted is "other"
@@ -391,6 +392,17 @@ async def login(profile, url, chrome):
             break
 
 
+def need_pinned_browser_use():
+    """The venv is the person's, so check it: any other version is a different dependency tree than the one reviewed."""
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        got = version("browser-use")
+    except PackageNotFoundError:
+        got = None
+    if got != PINNED_BROWSER_USE:
+        raise RuntimeError(f"needs browser-use=={PINNED_BROWSER_USE} (found {got})")
+
+
 def main(argv):
     os.environ.update(ANONYMIZED_TELEMETRY="false", BROWSER_USE_CLOUD_SYNC="false", BROWSER_USE_LOGGING_LEVEL="warning")
     out, sys.stdout = sys.stdout, sys.stderr  # stray prints from any library must not corrupt the one JSON line
@@ -401,6 +413,11 @@ def main(argv):
             asyncio.run(login(a["--profile"], a.get("--url"), a.get("--chrome")))
             return 0
         start_url = "https://invalid.invalid/"
+        try:
+            need_pinned_browser_use()
+        except RuntimeError as e:
+            print(f"runner: {e}", file=sys.stderr)
+            return NEEDS_PINNED  # no JSON line: the Node side shows "needs Python" instead of a bare failure
         try:
             req = json.load(sys.stdin)
             start_url = strip_url(req["task"]["start_url"])

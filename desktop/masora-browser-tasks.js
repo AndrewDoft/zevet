@@ -38,6 +38,7 @@ const KILL_GRACE_MS = 30_000;
 const STDOUT_MAX = 1 << 20;
 const VERBS = new Set(["navigate", "click", "type", "select", "scroll", "wait", "extract", "upload", "other"]);
 const REASONS = new Set(["off_domain", "max_steps", "cost_cap", "model_not_allowed", "login_required", "error"]);
+const NEEDS_PYTHON = "needs Python with the pinned browser-use (desktop/browser-task/requirements.txt) in browser-task.json";
 const EMPTY_SHA256 = crypto.createHash("sha256").update("").digest("hex"); // "no screenshot": the hash of nothing
 const SHA256 = /^[0-9a-f]{64}$/;
 
@@ -376,7 +377,7 @@ class BrowserTaskPoller {
       out("failed · start_url is outside allowed_domains, not run");
     } else if (!cfg) {
       body = failedReport(task.start_url);
-      out("failed · browser runner not set up");
+      out(`failed · browser runner not set up: ${NEEDS_PYTHON}`);
     } else {
       const bound = this.#bound(task, claimedAt);
       const timeoutMs = Math.max(1000, bound - this.now());
@@ -390,6 +391,7 @@ class BrowserTaskPoller {
       } catch (err) {
         console.error(`zevet: browser task ${task.task_id}: runner failed (${err.message})`);
         body = failedReport(task.start_url);
+        if (err.code === "ENOENT" || /exited 78 /.test(err.message)) out(`failed · ${NEEDS_PYTHON}`); // python missing, or no pinned browser-use
       }
     }
     await this.#report(client, task.task_id, this.ledger.open[task.task_id], body, out);

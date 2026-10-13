@@ -399,3 +399,9 @@ the task is reported `failed` / `model_not_allowed` (or `error` when the file is
 **Unblocks.** A small local OpenAI-compatible endpoint in Zevet fronting the person's subscriptions or the free
 OpenRouter rungs, or an `allowed_providers` vocabulary agreed with Masora (the claim example is `["claude"]`; the
 runner matches an entry's `provider` string verbatim).
+
+## INSUF-015 — browser-use's dependencies are not hash-pinned
+
+**Missing.** `requirements.txt` pins `browser-use==0.13.10` only; browser-use 0.13.10 pins its own dependencies exactly, but pip does not check any file hashes, and no `--require-hashes` lockfile exists (the tree is platform-specific, so one needs generating per OS).
+**Unblocks.** `pip-compile --generate-hashes` on Windows and macOS against the pin, ship the lockfiles, install with `--require-hashes`.
+**Blast radius.** A tampered package file (or a re-uploaded pinned version) would run inside the runner, which holds the person's logged-in profile and scoped secrets. The version check cannot see it.
