@@ -15,8 +15,9 @@
 // desktop build may not have it (the hub serves one board to whatever build is
 // installed); `doc` lands in both outputs.
 const { defineIpc } = require("@masora/desktop-kit");
+const { withFragments, assertFragmentTargets } = require("./ipc-fragments.js");
 
-const zevet = defineIpc({
+const zevet = defineIpc(withFragments("zevet", {
   global: "zevet",
   typeName: "ZevetBridge",
   // Error reporting (Sentry) for the preload realm and setup.html; not an IPC call, so it rides as verbatim prelude.
@@ -276,9 +277,9 @@ The "Auto" rotation ladder — an ordered list of {credentialId, untilPct}.` },
   },
   events: {
   },
-});
+}));
 
-const zevetLocal = defineIpc({
+const zevetLocal = defineIpc(withFragments("zevetLocal", {
   global: "zevetLocal",
   typeName: "LocalBridge",
   declareWindow: false, // board/src/lib/bridge.ts declares the (looser, optional) Window shape
@@ -540,9 +541,9 @@ pair beside them: an older main process simply never sends one.` },
     onSteerEvent: { channel: "local:steerEvent", payload: "unknown", type: `(cb: (e: { kind: string; id: string; [k: string]: unknown }) => void) => () => void`, optional: true, doc: `Steering (D-058): \`ask\` an approval card for a teammate's steer, \`done\`
 when one was injected or declined, \`status\` for a steer this person sent.` },
   },
-});
+}));
 
-const zevetDoc = defineIpc({
+const zevetDoc = defineIpc(withFragments("zevetDoc", {
   global: "zevetDoc",
   typeName: "ZevetDocBridge",
   declareWindow: false, // board/src/lib/bridge.ts declares the (looser, optional) Window shape
@@ -669,6 +670,7 @@ the room refills rather than a duplicate to be filtered out.` },
  connection problem is reported — an editor that silently stops syncing is
  this project's worst failure, so the status is a first-class output.` },
   },
-});
+}));
 
+assertFragmentTargets(["zevet", "zevetLocal", "zevetDoc"]);
 module.exports = { tables: [zevet, zevetLocal, zevetDoc] };

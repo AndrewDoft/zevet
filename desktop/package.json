@@ -113,6 +113,11 @@
       "user-report.js",
       "setup.html",
       "fonts/**",
+      "mods-loader.js",
+      "mod-tools.js",
+      "ipc-fragments.js",
+      "mods/**",
+      "ipc/**",
       "build/icon.png",
       "build/icon.ico"
     ]

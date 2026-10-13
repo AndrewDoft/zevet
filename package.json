@@ -15,7 +15,8 @@
     "ship": "node scripts/ship.mjs",
     "ipc:gen": "node desktop/node_modules/@masora/desktop-kit/bin/ipc-gen.js desktop/ipc-table.js --preload desktop/preload.js --dts board/src/lib/bridge.generated.d.ts",
     "ipc:check": "npm run ipc:gen -- --check",
-    "typecheck": "npm --prefix board run typecheck"
+    "typecheck": "npm --prefix board run typecheck",
+    "ratchet": "node scripts/ratchets.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.63.0"

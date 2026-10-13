@@ -29,6 +29,8 @@ jobs:
       - run: npm ci --prefix desktop --omit=dev --omit=optional --ignore-scripts
       # The generated preload and bridge types must be what desktop/ipc-table.js produces.
       - run: npm run ipc:check
+      # Counts that may only go down (config/*-baseline.txt): file size, @ts-nocheck, child_process launches, root entries.
+      - run: npm run ratchet
       - run: npm test
       - run: npm run typecheck
       - run: node build.mjs

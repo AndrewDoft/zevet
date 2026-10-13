@@ -30,6 +30,9 @@ const { defang, asData } = require("./data-frame.mjs");
 
 const text = (t, isError = false) => ({ text: String(t), isError });
 
+// mods/tools/*.js (mod-tools.js): tools added without editing this file.
+const MOD_TOOLS = new Map(require("./mod-tools.js").loadModTools({ reserved: ["get_team_context", "claim_step", "message_agent", "record_memory"] }).map((t) => [t.name, t]));
+
 function decodePlan(raw) {
   try {
     const arr = JSON.parse(Buffer.from(String(raw || ""), "base64").toString("utf8"));
@@ -179,6 +182,10 @@ function createAgentTools(deps) {
         if (tool === "claim_step") return await claimStep(a);
         if (tool === "message_agent") return await messageAgent(a);
         if (tool === "record_memory") return await recordMemory(a, ctx);
+        if (MOD_TOOLS.has(tool)) {
+          const r = await MOD_TOOLS.get(tool).run(a, ctx, deps);
+          return r && typeof r === "object" && "text" in r ? text(r.text, Boolean(r.isError)) : text(r);
+        }
       } catch (err) {
         return text(`${tool} failed: ${defang(err && err.message, 200)}`, true);
       }

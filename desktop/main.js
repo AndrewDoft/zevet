@@ -5542,6 +5542,9 @@ function withActivity(systemPrompt) {
   return [systemPrompt, `${activityText}\n(This is a snapshot from when you started; ~/.zevet/activity.md is kept current.)`].filter(Boolean).join("\n\n");
 }
 
+// The mods folder (mods-loader.js) is the extension seam. Mods start here so they can register handlers before the check below.
+const mods = require("./mods-loader.js").loadMods({ app, ipcMain, bridge, log: console, readConfig });
+app.on("before-quit", () => mods.beforeQuit());
 bridge.assertComplete();
 
 /**

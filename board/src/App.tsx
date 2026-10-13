@@ -32,6 +32,13 @@ import { matches } from "./lib/keybindings.mjs";
 import { ChatMain, ChatRail, ModeSwitch } from "./components/chatmode";
 import { useChat, wireChat } from "./lib/chat";
 import { CHECK_MS, createStaleReload } from "./lib/stale-build.mjs";
+import { collectExt } from "./ext/registry.mjs";
+
+// ext/*.tsx: UI added without editing this file (ext/registry.mjs).
+const EXT = collectExt(import.meta.glob("./ext/*.tsx", { eager: true }));
+function ExtSlot({ slot }: { slot: "rail" | "overlay" }) {
+  return <>{EXT.filter((e) => e.slot === slot).map(({ id, Component }) => <Component key={id} />)}</>;
+}
 
 function RailFoot() {
   const theme = useBoard(selectTheme);
@@ -184,6 +191,7 @@ function App() {
           <ModeSwitch />
           <TeamName />
           <ChatRail />
+          <ExtSlot slot="rail" />
           <div className="rail-code">
           {/* The follow control sits here now, not in the Files column's own
               header - which let that header go, and the tree start at the top
@@ -296,6 +304,7 @@ function App() {
         <SubagentsPanel />
         <TeamChatPanel />
         <TasksPanel />
+        <ExtSlot slot="overlay" />
       </div>
     </ConsoleRuntimeProvider>
   );
