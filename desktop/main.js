@@ -790,7 +790,7 @@ function openBoard(cfg) {
   }));
   trackWindow("board", boardWindow);
 
-  if (winState.maximized) boardWindow.maximize();
+  if (winState.maximized && !HIDE_WINDOWS) boardWindow.maximize(); // maximize() also shows a hidden window
   windowState.track(boardWindow, WINDOW_STATE, atomicWriteJson);
 
   // Restore the remembered zoom. It has to be set per load, not once: a reload
