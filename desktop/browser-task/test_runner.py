@@ -280,6 +280,15 @@ def test_secret_in_a_prompt_is_refused_by_the_meter():
     assert guard.reason == "error"
 
 
+def test_fence_ignores_chrome_startup_urls():
+    # Flake root cause: under load the tap saw Chrome's own boot URLs before the first navigation and tripped off_domain.
+    f = runner.Fence(["127.0.0.1"], loopback=True)
+    for u in ["chrome-untrusted://new-tab-page/one-google-bar?paramsencoded=", "about:blank"]:
+        assert f.allows(u) and not f.real(u), u
+    for u in ["", "chrome-untrusted://new-tab-page.evil/", "chrome-untrusted://other/", "chrome://settings/", "http://localhost:1/", "file:///etc/hosts"]:
+        assert not f.allows(u), u
+
+
 def test_fence_url_confusion():
     f = runner.Fence(["good.com"])
     assert f.allows("https://good.com/x") and f.allows("https://GOOD.com./x?a=1#f") and f.allows("https://a.good.com:8443/")
@@ -421,7 +430,7 @@ def test_every_report_carries_a_numeric_cost():
 def test_abort_kills_the_browser_before_the_agent_cancels():
     import browser_use
     from browser_use.browser.session import BrowserSession
-    killed, cancelled, tripped = [], [], []
+    killed, killed_done, cancelled, tripped = [], [], [], []
     orig_run, orig_kill, orig_trip = browser_use.Agent.run, BrowserSession.kill, runner.Guard.trip
 
     async def lingering_run(self, *a, **k):
@@ -443,7 +452,10 @@ def test_abort_kills_the_browser_before_the_agent_cancels():
 
     async def timed_kill(self):
         killed.append(time.monotonic())
-        return await orig_kill(self)
+        try:
+            return await orig_kill(self)
+        finally:
+            killed_done.append(time.monotonic())
 
     def timed_trip(self, reason):
         if self.reason is None:
@@ -457,9 +469,10 @@ def test_abort_kills_the_browser_before_the_agent_cancels():
             assert r["status"] == "failed" and r["reason"] == "off_domain", r
             assert tripped and killed and cancelled, (tripped, killed, cancelled)
             assert killed[0] < cancelled[0], "the browser must be killed before the agent task is asked to cancel"
-            t0 = tripped[0]
-            late = [(round(t - t0, 2), p, path) for t, p, path in STAMPS if t > t0 + 1.5]
-            assert not late, f"requests kept arriving after the trip (secs after, port, path): {late[:5]}"
+            # Measured from when kill() RETURNED, not from the trip: how long Chrome takes to die is load, not the property under test.
+            t0 = killed_done[0]
+            late = [(round(t - t0, 2), p, path) for t, p, path in STAMPS if t > t0 + 0.5]
+            assert not late, f"requests kept arriving after the browser was killed (secs after, port, path): {late[:5]}"
             assert any(p == Site.other_port for _, p, _ in STAMPS), "the off-limits origin was never reached; the test proves nothing"
             assert any(path.startswith("/tick") for _, _, path in STAMPS), "the allowed origin never ticked; the test proves nothing"
 
@@ -479,12 +492,12 @@ def test_fence_tap_sees_real_cdp_events():
         assert {"Network.requestWillBeSent", "Page.frameNavigated"} <= {m for m, _ in seen}, seen
         assert ("Network.requestWillBeSent", base + "form") in seen, seen
         assert ("Page.frameNavigated", base + "form") in seen, seen
-        assert all(u in runner.INTERNAL_URLS or u.startswith(base) for _, u in seen), seen
+        assert all(runner.internal(u) or u.startswith(base) for _, u in seen), seen
 
     with_sites(go)
 
 
-NO_BROWSER = {"fence_boundaries", "fence_url_confusion", "fence_numeric_hosts", "scope_secrets_by_domain", "secrets_file_format",
+NO_BROWSER = {"fence_boundaries", "fence_ignores_chrome_startup_urls", "fence_url_confusion", "fence_numeric_hosts", "scope_secrets_by_domain", "secrets_file_format",
               "secret_in_a_prompt_is_refused_by_the_meter", "invalid_allowed_domain_never_opens", "legacy_flat_secrets_file_refuses_the_task",
               "missing_price_refuses_before_any_page"}  # these refuse before a browser would start
 TESTS = {k[5:]: v for k, v in globals().items() if k.startswith("test_")}

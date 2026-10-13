@@ -24,7 +24,14 @@ VERBS = {  # Browser Use action name -> contract verb; anything unlisted is "oth
     "select_dropdown": "select", "scroll": "scroll", "find_text": "scroll", "wait": "wait", "extract": "extract",
 }
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()  # "no screenshot": the hash of nothing
+# chrome-untrusted://new-tab-page/ is the new-tab page's own iframes (one-google-bar). Chrome emits them (and a "" page target, see observe)
+# while it boots, before the first navigation: a loaded machine sees them, an idle one does not.
 INTERNAL_URLS = {"about:blank", "about:srcdoc", "chrome://newtab/", "chrome://new-tab-page/", "chrome-error://chromewebdata/"}
+NTP_FRAMES = "chrome-untrusted://new-tab-page/"
+
+
+def internal(url):
+    return url in INTERNAL_URLS or (isinstance(url, str) and url.startswith(NTP_FRAMES))
 
 
 def strip_url(url):
@@ -75,7 +82,7 @@ class Fence:
         self.bad = [d for d in self.domains if not clean_host(d, loopback)]
 
     def allows(self, url):
-        if url in INTERNAL_URLS:
+        if internal(url):
             return True
         j = judge_url(url, self.loopback)
         if not j or self.bad:
@@ -87,7 +94,7 @@ class Fence:
 
     def real(self, url):
         """In the fence AND a real page (not an internal placeholder)."""
-        return url not in INTERNAL_URLS and self.allows(url)
+        return not internal(url) and self.allows(url)
 
 
 class Guard:
@@ -309,7 +316,7 @@ async def run_task(task, cfg, llm=None, on_observe=None):
             pass
 
     def observe(url):
-        if not fence.allows(url) and guard.off_url is None:
+        if url and not fence.allows(url) and guard.off_url is None:  # "": a page target Chrome has made but not yet navigated
             guard.off_url = url
             guard.trip("off_domain")
 
