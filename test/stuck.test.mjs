@@ -97,6 +97,16 @@ describe("detectStuck: near misses", () => {
   });
 });
 
+test("narration between identical calls does not hide the loop", () => {
+  const ev = times(REPEAT_SAME, () => [say("retrying"), ...call("Bash", { command: "ls" }, "x")]);
+  assert.equal(stuckOf(ev).pattern, "repeat");
+});
+
+test("results sharing a long prefix but differing in length are progress", () => {
+  const head = "h".repeat(500);
+  assert.equal(stuckOf(times(REPEAT_SAME, (i) => call("Bash", { command: "npm test" }, `${head}${"f".repeat(i + 1)}`))), null);
+});
+
 test("two calls alternating but with changing results is progress", () => {
   const ev = times(PING_PONG, (i) => (i % 2 ? call("Read", { f: "b" }, `B${i}`) : call("Edit", { f: "a" }, `A${i}`)));
   assert.equal(stuckOf(ev), null);

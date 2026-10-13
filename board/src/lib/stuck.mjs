@@ -21,24 +21,26 @@ export const MONOLOGUE = 3;
 
 /** How much of the tail is read; enough for every pattern above. */
 const TAIL = Math.max(REPEAT_SAME, ERROR_LOOP, PING_PONG, MONOLOGUE);
-/** A result is compared by its first characters; a huge one is not copied. */
+/** Narration between calls must not hide a loop: read up to twice as many events. */
+const SCAN = TAIL * 2;
+/** A result is compared by its length and first characters; a huge one is not copied. */
 const RESULT_CAP = 400;
 
 const norm = (s) => String(s).replace(/\s+/g, " ").trim();
 
 function resultKey(result) {
   const s = typeof result === "string" ? result : JSON.stringify(result);
-  return norm(s ?? "").slice(0, RESULT_CAP);
+  return `${(s ?? "").length}:${norm(s ?? "").slice(0, RESULT_CAP)}`;
 }
 
-/** The last TAIL events of the current run, oldest first: calls and texts. */
+/** The last SCAN events of the current run, oldest first: calls and texts. */
 function tailEvents(messages) {
   const out = [];
-  for (let i = messages.length - 1; i >= 0 && out.length < TAIL; i -= 1) {
+  for (let i = messages.length - 1; i >= 0 && out.length < SCAN; i -= 1) {
     const m = messages[i];
     if (!m || m.role === "user") break;
     const parts = typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || [];
-    for (let j = parts.length - 1; j >= 0 && out.length < TAIL; j -= 1) {
+    for (let j = parts.length - 1; j >= 0 && out.length < SCAN; j -= 1) {
       const p = parts[j];
       if (p.type === "tool-call") {
         const done = p.result !== undefined;
@@ -64,7 +66,8 @@ const lastN = (events, n) => (events.length >= n ? events.slice(-n) : null);
  * @returns {{ pattern: "repeat" | "error-loop" | "ping-pong" | "monologue", detail: string } | null}
  */
 export function detectStuck(messages) {
-  const events = tailEvents(Array.isArray(messages) ? messages : []);
+  const all = tailEvents(Array.isArray(messages) ? messages : []);
+  const events = all.filter((e) => e.kind === "call");
 
   const run = lastN(events, REPEAT_SAME);
   if (run && run.every((e) => e.kind === "call" && e.done && e.call === run[0].call && e.result === run[0].result)) {
@@ -86,7 +89,7 @@ export function detectStuck(messages) {
     return { pattern: "ping-pong", detail: `alternating between two calls ${PING_PONG} times` };
   }
 
-  const said = lastN(events, MONOLOGUE);
+  const said = lastN(all, MONOLOGUE);
   if (said && said.every((e) => e.kind === "text" && e.text === said[0].text)) {
     return { pattern: "monologue", detail: `same message ${MONOLOGUE} times, no tool use` };
   }
