@@ -3847,7 +3847,7 @@ function ensureAskServer() {
             ...(request || {}),
             ...(request && request.via === "claude" ? { canAlways: permitGrants.ruleKey(request.tool, request.arguments) !== null } : {}),
           });
-        })),
+        }), askServer.DEFAULT_TIMEOUT_MS),
       onAsk: (request) =>
         new Promise((resolve) => {
           const id = `a${++permitSeq}`;

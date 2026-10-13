@@ -1,5 +1,5 @@
 "use strict";
-// Once-only claim on a tool call (OpenDots' pattern): (thread, toolCallId) is
+// Once-only claim on a tool call (OpenDots' pattern): (agent, toolUseId) is
 // INSERT-OR-IGNORE into a file under userData, written before anything runs. The first
 // claimer asks and executes; a later claim (retry, replay, restart) gets the stored
 // outcome and is refused, so one tool call can never execute twice. Owner-only is
@@ -41,23 +41,33 @@ function createApprovalClaims(file) {
     /** Record how the first claim ended ("approved" | "denied"). */
     settle(thread, id, outcome) {
       const k = keyOf(thread, id);
-      if (!rows[k]) return;
+      if (!rows[k] || rows[k].outcome !== "pending") return;
       rows[k].outcome = outcome;
       save();
     },
-    /** Wrap an onPermit handler: calls with a stable (run, toolUseId) run at most once. */
-    guard(handler) {
+    /** Wrap an onPermit handler: a call with a toolUseId runs at most once. The thread is the agent
+     *  ("claude"), not the run: run ids are minted per spawn, so they would not survive a restart,
+     *  while Claude's tool_use_id is unique per call. An unanswered ask is settled "denied" at
+     *  timeoutMs, the same moment ask-server tells the agent no, so a late click cannot contradict it. */
+    guard(handler, timeoutMs = 120_000) {
       return (request) => {
         const r = request && typeof request === "object" ? request : {};
-        const thread = typeof r.run === "string" ? r.run : "";
+        const thread = typeof r.via === "string" ? r.via : "";
         const id = typeof r.toolUseId === "string" ? r.toolUseId : "";
         if (!thread || !id) return handler(request);
         const c = store.claim(thread, id);
         if (!c.first) return Promise.resolve({ ok: false, reason: `this tool call was already ${c.outcome === "pending" ? "asked once (outcome unknown)" : c.outcome}; not run again` });
-        return Promise.resolve(handler(request)).then((answer) => {
-          store.settle(thread, id, answer && answer.ok === true ? "approved" : "denied");
-          return answer;
-        });
+        const end = (outcome) => store.settle(thread, id, outcome);
+        const timer = setTimeout(() => end("denied"), timeoutMs);
+        timer.unref();
+        const done = (outcome) => {
+          clearTimeout(timer);
+          end(outcome);
+        };
+        return Promise.resolve(handler(request)).then(
+          (answer) => (done(answer && answer.ok === true ? "approved" : "denied"), answer),
+          (err) => (done("denied"), Promise.reject(err)),
+        );
       };
     },
   };

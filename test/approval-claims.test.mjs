@@ -26,18 +26,18 @@ test("double claim: the first runs, the second is refused with the stored outcom
   assert.match(again.reason, /already approved/);
   assert.equal(h.n, 1);
   assert.equal((await gated(req({ toolUseId: "toolu_2" }))).ok, true, "another call is its own claim");
-  assert.equal((await gated(req({ run: "r2" }))).ok, true, "another thread is its own claim");
+  assert.equal((await gated(req({ via: "codex" }))).ok, true, "another agent is its own claim");
 });
 
 test("a claim survives a restart, including one that never got an answer", async () => {
   const file = fresh();
   const a = createApprovalClaims(file);
   await a.guard(counting())(req());
-  a.claim("r1", "toolu_open"); // asked, app died before the answer
+  a.claim("claude", "toolu_open"); // asked, app died before the answer
   const b = createApprovalClaims(file); // "restart"
   const h = counting();
   const gated = b.guard(h);
-  assert.match((await gated(req())).reason, /already approved/);
+  assert.match((await gated(req({ run: "r-after-restart" }))).reason, /already approved/);
   assert.match((await gated(req({ toolUseId: "toolu_open" }))).reason, /outcome unknown/);
   assert.equal(h.n, 0);
 });
@@ -65,6 +65,18 @@ test("no stable id means no claim (nothing to key on)", async () => {
   await c.guard(h)(req({ toolUseId: "" }));
   await c.guard(h)(req({ toolUseId: "" }));
   assert.equal(h.n, 2);
+});
+
+test("an unanswered ask settles denied at the timeout; a late approval cannot flip it; a throw denies", async () => {
+  const c = createApprovalClaims(fresh());
+  let late;
+  c.guard(() => new Promise((r) => (late = r)), 20)(req());
+  await new Promise((r) => setTimeout(r, 60));
+  late({ ok: true });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match((await c.guard(counting())(req())).reason, /already denied/);
+  await assert.rejects(c.guard(() => Promise.reject(new Error("x")))(req({ toolUseId: "toolu_t" })));
+  assert.match((await c.guard(counting())(req({ toolUseId: "toolu_t" }))).reason, /already denied/);
 });
 
 test.after(() => rmSync(dir, { recursive: true, force: true }));
