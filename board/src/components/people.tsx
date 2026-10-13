@@ -73,6 +73,7 @@ import { withState } from "../lib/agents.mjs";
 import { agoLabel } from "../lib/fmt";
 import { foldRepoGroups, sessionBlurb, sessionProject } from "../lib/sessions.mjs";
 import { plainError } from "../lib/transcript.mjs";
+import { detectStuck } from "../lib/stuck.mjs";
 import { AgentLogo } from "./brand";
 import { SquareIcon, XIcon } from "lucide-react";
 import { useVisibleNow } from "../lib/usevisiblenow";
@@ -266,6 +267,7 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
   // Finished while you were looking at something else; board.ts § seenRuns.
   const unseen = Boolean(c && !c.running && c.id && !isOpen && !seenRuns.includes(c.id));
   const hasKids = Boolean(s) && Number(s!.children) > 0;
+  const stuck = c && c.running ? detectStuck(c.transcript.messages) : null;
 
   return (
     <div className="agent-row-wrap">
@@ -290,6 +292,11 @@ function AgentRow({ row, hue }: { row: Row; hue: number }) {
             <span className="agent-row-detail">{agentDetail(row)}</span>
           </span>
           <SessionClaimChip session={c?.sessionId} />
+          {stuck ? (
+            <span className="agent-row-stuck" data-pattern={stuck.pattern} title={`Stuck: ${stuck.detail}`}>
+              Stuck
+            </span>
+          ) : null}
           {c && c.running ? (
             <span className="agent-row-live" role="img" aria-label="Running" />
           ) : unseen ? (
