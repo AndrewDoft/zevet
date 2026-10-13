@@ -325,9 +325,11 @@ describe("spawnRunner (a real child process)", () => {
     await assert.rejects(go(script("empty.js", `process.exit(3)`)), /exited 3/);
   });
   test("a runner that hangs is killed at the timeout", async () => {
-    const t0 = Date.now();
-    await assert.rejects(go(script("hang.js", `setInterval(()=>{},1000)`), 600), /timed out/);
-    assert.ok(Date.now() - t0 < 4000);
+    // The property is "the child is gone once it rejects", not how fast the machine is: no wall-clock bound.
+    const pidFile = path.join(home.dir, "hang.pid");
+    await assert.rejects(go(script("hang.js", `require("fs").writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`), 1500), /timed out/);
+    const pid = Number(fs.readFileSync(pidFile, "utf8"));
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, "the hung runner was still alive after the timeout");
   });
 });
 
