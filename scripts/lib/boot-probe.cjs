@@ -109,6 +109,7 @@ function settle() {
   }
   r.appReady = r.appReady ?? null;
   r.version = app.getVersion();
+  r.settled = true; // perf-boot.mjs waits for this line
   r.reqCount = r.requests.length;
   r.fromCache = r.requests.filter((q) => q.c).length;
   if (out) fs.appendFileSync(out, JSON.stringify(r) + "\n");

@@ -30,6 +30,7 @@ test("setup window polls its configured hub build and keeps the same reload guar
   assert.match(setup, /setInterval\(checkHubBuild, 60000\)/);
   assert.match(setup, /Date\.now\(\) - lastInput >= 120000/);
   assert.match(setup, /holdsSetupWork\(\)/);
+  assert.match(setup, /Content-Security-Policy[^>]*connect-src https:/, "default-src 'none' blocks fetch(); without connect-src the poll silently never runs");
 });
 
 function drive(...args) {
