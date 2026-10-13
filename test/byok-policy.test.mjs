@@ -49,3 +49,14 @@ describe("the router takes a rung only when the CLI says it is signed in", () =>
     assert.match(cs, /codex: \["login", "status"\]/);
   });
 });
+
+describe("the startup scan does not touch the Keychain when there is nothing to adopt", () => {
+  // macOS safeStorage.isEncryptionAvailable() blocks the main thread on the Keychain; on a headless Mac that
+  // froze the CDP port 4s after launch and failed the macOS release leg's Electron e2e from v0.2.143 on.
+  test("adoptDetectedKeys looks for keys before it asks safeStorage", () => {
+    const main = code(readFileSync(path.join(DESKTOP, "main.js"), "utf8"));
+    const fn = main.slice(main.indexOf("async function adoptDetectedKeys"), main.indexOf("let accessCache"));
+    const found = fn.indexOf("keyDetect.detectKeys().length");
+    assert.ok(found > 0 && found < fn.indexOf("safeStorage.isEncryptionAvailable"));
+  });
+});
