@@ -6,7 +6,8 @@
 // A mod is `module.exports = { name?, start(ctx), beforeQuit(ctx) }` or just a function (= start).
 // A mod that throws is logged and skipped: a broken extra must never be why the app fails to start.
 // start() runs while main.js is still wiring handlers, BEFORE bridge.assertComplete(), so a mod can
-// register its own IPC handlers (ctx.bridge.handle) but must wait for app.whenReady() before
+// register its own IPC handlers (ctx.bridge.handle), synchronously; an async start is not awaited. The update path
+// (app.exit) skips before-quit, so a mod must not hold state that only beforeQuit can save but must wait for app.whenReady() before
 // touching windows or app paths.
 const fs = require("node:fs");
 const path = require("node:path");
@@ -24,7 +25,7 @@ function modFiles(dir) {
   const out = [];
   for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
     if (NOT_MODS.has(e.name)) continue;
-    if (e.isFile() && e.name.endsWith(".js")) out.push(path.join(dir, e.name));
+    if (e.isFile() && e.name.endsWith(".js") && !e.name.endsWith(".test.js")) out.push(path.join(dir, e.name));
     else if (e.isDirectory() && fs.existsSync(path.join(dir, e.name, "index.js"))) out.push(path.join(dir, e.name, "index.js"));
   }
   return out;
@@ -41,15 +42,19 @@ function loadMods(ctx, { dir = MODS_DIR, log = console } = {}) {
       if (!mod || (typeof mod.start !== "function" && typeof mod.beforeQuit !== "function")) throw new Error("exports neither start nor beforeQuit");
       const name = String(mod.name || rel.replace(/(\/index)?\.js$/, ""));
       loaded.push({ name, mod });
-      if (typeof mod.start === "function") Promise.resolve().then(() => mod.start(ctx)).catch(swallow(name, "start"));
+      // Synchronous on purpose: main.js runs bridge.assertComplete() right after this, and a mod's handlers must be in by then.
+      if (typeof mod.start === "function") Promise.resolve(mod.start(ctx)).catch(swallow(name, "start"));
     } catch (err) {
       swallow(rel, "load")(err);
     }
   }
+  let quit = false;
   return {
     names: loaded.map((m) => m.name),
-    /** Newest first, each isolated; before-quit cannot wait, so a promise is not awaited. */
+    /** Newest first, each isolated; before-quit cannot wait, so a promise is not awaited. Once only. */
     beforeQuit() {
+      if (quit) return;
+      quit = true;
       for (const { name, mod } of loaded.slice().reverse()) {
         if (typeof mod.beforeQuit !== "function") continue;
         try {

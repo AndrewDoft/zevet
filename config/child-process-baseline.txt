@@ -11,13 +11,13 @@
 2 desktop/build.cjs
 1 desktop/family.js
 2 desktop/local-fs.js
-7 desktop/main.js
+4 desktop/main.js
 2 desktop/masora-browser-tasks.js
 1 desktop/masora-push.js
 2 desktop/notarize-dmg.cjs
 1 desktop/payload-sweep.js
 1 desktop/pinned-memory.js
-2 desktop/repo-privacy.js
+1 desktop/repo-privacy.js
 1 desktop/repo-stats.js
 1 desktop/session-share.js
 1 desktop/staple-macos.cjs

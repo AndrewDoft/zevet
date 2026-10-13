@@ -17,7 +17,7 @@ module.exports = {
 `start` runs while `main.js` is still registering handlers, before `bridge.assertComplete()`,
 so `bridge.handle("zevet:thing", fn)` works here (for a channel from an ipc fragment). Wait for
 `app.whenReady()` before touching windows or `app.getPath`. A mod that throws is logged and
-skipped. `mods/tools/` is the tool registry, not a mod. Loader: `desktop/mods-loader.js`.
+skipped. `start` must register handlers synchronously (an async start is not awaited, and the check runs right after the loader returns). `beforeQuit` runs once; the update-restart path uses `app.exit`, which skips it, so never keep state only `beforeQuit` can save. `*.test.js` and `mods/tools/` are not mods. Loader: `desktop/mods-loader.js`.
 
 ## An IPC fragment (`desktop/ipc/*.js`)
 
@@ -48,7 +48,7 @@ module.exports = {
 
 `zevet-mcp.js` lists it in `tools/list`; the desktop (`agent-tools.js`) runs it. `ctx.root` is the
 run's repo folder, `deps` is `createAgentTools`'s dependencies (`getState`, `actor`, `memory`, …). Wrap
-anything a teammate wrote with `asData()`. A malformed file is skipped with a warning. Registry:
+anything a teammate wrote with `asData()`. A mod tool is NOT behind a permission card (like the four coordination tools), so it must be safe for an agent to call unprompted. A malformed file is skipped with a warning. Registry:
 `desktop/mod-tools.js`.
 
 ## A board extension (`board/src/ext/*.tsx`)
@@ -67,5 +67,5 @@ rebuild the committed bundle: `cd board && node build.mjs`, using a real `npm ci
 
 `config/*-baseline.txt` freeze file size (>1000 lines), `@ts-nocheck`, direct `child_process` launches
 and top-level repo entries at today's values. Growth fails, and so does a row that went stale (run
-`npm run ratchet -- --prune`). New code goes in a new file through the seams above, not into a
+`npm run ratchet -- --prune`; two batches that both shrink a baselined file will conflict on the baseline, re-prune after merging). The child_process count is a tripwire, not a proof (it misses `require("child_process").spawn(…)` and aliases). New code goes in a new file through the seams above, not into a
 big one. Framework ported from Orca (MIT), see `THIRD_PARTY_NOTICES.md`.

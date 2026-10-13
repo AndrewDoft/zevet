@@ -1,5 +1,5 @@
 import { SettingsIcon } from "lucide-react";
-import { useEffect } from "react";
+import { Component, useEffect, type ReactNode } from "react";
 import { PeoplePane } from "./components/people";
 import { InvitePlus } from "./components/invite";
 import { WorkspacesPane } from "./components/workspaces";
@@ -36,8 +36,18 @@ import { collectExt } from "./ext/registry.mjs";
 
 // ext/*.tsx: UI added without editing this file (ext/registry.mjs).
 const EXT = collectExt(import.meta.glob("./ext/*.tsx", { eager: true }));
+// One extension that throws while rendering must not unmount the board.
+class ExtBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
 function ExtSlot({ slot }: { slot: "rail" | "overlay" }) {
-  return <>{EXT.filter((e) => e.slot === slot).map(({ id, Component }) => <Component key={id} />)}</>;
+  return <>{EXT.filter((e) => e.slot === slot).map(({ id, Component: Ext }) => <ExtBoundary key={id}><Ext /></ExtBoundary>)}</>;
 }
 
 function RailFoot() {

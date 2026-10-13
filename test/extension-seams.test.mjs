@@ -34,13 +34,15 @@ describe("mods loader", () => {
     put("mods1/second/index.js", 'module.exports = (ctx) => ctx.events.push("second-start");');
     put("mods1/tools/index.js", 'module.exports = { name: "tools-dir", start(ctx) { ctx.events.push("tools-loaded"); } };');
     put("mods1/README.md", "not a mod");
+    put("mods1/helper.test.js", 'module.exports = { start(ctx) { ctx.events.push("test-file-loaded"); } };');
     const ctx = { events: [] };
     const mods = loadMods(ctx, { dir, log: silent });
     assert.deepEqual(mods.names, ["fixture", "second"]);
-    await tick();
+    // start has run by the time loadMods returns: main.js checks IPC completeness on the very next line
     assert.deepEqual(ctx.events, ["start", "second-start"]);
     mods.beforeQuit();
-    assert.deepEqual(ctx.events, ["start", "second-start", "quit"]);
+    mods.beforeQuit();
+    assert.deepEqual(ctx.events, ["start", "second-start", "quit"], "before-quit can fire twice; the hook runs once");
   });
 
   test("a mod that throws is skipped and the rest still load and quit", async () => {

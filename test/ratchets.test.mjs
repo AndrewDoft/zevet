@@ -57,7 +57,7 @@ describe("on a fixture repo", () => {
     assert.equal(run("max-lines"), 0);
     put(root, "big.js", "x\n".repeat(1001)); // regrowing past the pruned baseline fails
     assert.equal(run("max-lines"), 1);
-    put(root, "big.js", "x\n".repeat(1001));
+    assert.equal(run("max-lines", "--init"), 0); // accept it, so the next tests start from green
   });
 
   test("a NEW file over the limit fails", () => {
@@ -95,7 +95,16 @@ describe("on a fixture repo", () => {
     assert.equal(run("root-entries"), 1);
   });
 
-  test("an unknown ratchet name is an error, not a pass", () => assert.equal(run("nope"), 1));
+  test("an unknown ratchet name or flag is an error, not a pass", () => {
+    assert.equal(run("nope"), 1);
+    assert.equal(run("--prun"), 1);
+  });
+
+  test("a new untracked file over the limit fails before it is ever committed", () => {
+    put(root, "fresh.js", "x\n".repeat(1001));
+    assert.equal(run("max-lines"), 1);
+    rmSync(path.join(root, "fresh.js"));
+  });
 });
 
 test("collectors ignore tests, comments and the built hub bundle", () => {
@@ -108,7 +117,7 @@ test("collectors ignore tests, comments and the built hub bundle", () => {
     git(root, "add", "-A");
     assert.equal(collectMaxLines(root).size, 0);
     assert.deepEqual([...collectTsNocheck(root)], [["src/c.js", 1]]);
-    assert.deepEqual([...collectSpawns(root)], [["src/c.js", 2]]);
+    assert.deepEqual([...collectSpawns(root)], [["src/c.js", 1]], "regex .exec is not a launch");
     assert.deepEqual(collectRootEntries(root), ["hub", "src", "test"]);
     assert.equal(RATCHETS.length, 4);
   } finally {

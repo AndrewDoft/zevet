@@ -23,7 +23,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-// Zevet changes: git runs windowless (scripts-hide-windows.test), `pnpm check:` hints became `npm run ratchet`, and runCountRatchet was added
+// Zevet changes: new (untracked, not ignored) files are listed too, git runs windowless (scripts-hide-windows.test), `pnpm check:` hints became `npm run ratchet`, and runCountRatchet was added
 // (Orca keeps the count gate's loop in each checker; here the two gates share one runner).
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -32,9 +32,9 @@ import path from 'node:path'
 // Baselines shared by the ratchet gates. An entry baseline lists one allowed entry per line; a
 // count baseline holds `<count> <path> [# note]` rows. `#` lines and blanks are ignored in both.
 
-/** Tracked files under `pathspecs`, so build output and untracked scratch are never scanned. */
+/** Tracked and new-but-not-ignored files under `pathspecs`, so ignored build output is never scanned but a new file is seen before it is committed. */
 export function listTrackedFiles(root, pathspecs) {
-  return execFileSync('git', ['ls-files', ...pathspecs], {
+  return execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', ...pathspecs], {
     cwd: root,
     encoding: 'utf8',
     windowsHide: true,

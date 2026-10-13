@@ -184,7 +184,7 @@ function createAgentTools(deps) {
         if (tool === "record_memory") return await recordMemory(a, ctx);
         if (MOD_TOOLS.has(tool)) {
           const r = await MOD_TOOLS.get(tool).run(a, ctx, deps);
-          return r && typeof r === "object" && "text" in r ? text(r.text, Boolean(r.isError)) : text(r);
+          return r && typeof r === "object" && "text" in r ? text(r.text ?? "", Boolean(r.isError)) : text(r);
         }
       } catch (err) {
         return text(`${tool} failed: ${defang(err && err.message, 200)}`, true);

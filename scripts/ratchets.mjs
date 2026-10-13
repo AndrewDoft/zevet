@@ -35,14 +35,16 @@ export function collectTsNocheck(root) {
   return out;
 }
 
-const SPAWN = /(?<![.\w])(?:\w+\.)?(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(/g;
+const SPAWN = /(?<![.\w])(?:(\w+)\.)?(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(/g;
+// `re.exec(s)` is a regex, not a launch: a qualified call counts only on the child_process module itself.
+const CP_NAMES = new Set(["cp", "child_process", "childProcess", "proc"]);
 /** Direct child_process launches per file, in files that load child_process at all. */
 export function collectSpawns(root) {
   const out = new Map();
   for (const [rel, src] of readTrackedSources(root, CODE, isProduct)) {
     if (!/child_process/.test(src)) continue;
     const code = src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
-    const n = [...code.matchAll(SPAWN)].length;
+    const n = [...code.matchAll(SPAWN)].filter((m) => !m[1] || CP_NAMES.has(m[1])).length;
     if (n) out.set(rel, n);
   }
   return out;
@@ -90,6 +92,10 @@ export const RATCHETS = [
 
 export function main(root = process.cwd(), argv = process.argv.slice(2)) {
   const flag = argv.find((a) => a.startsWith("--"));
+  if (flag && !["--init", "--prune"].includes(flag)) {
+    console.error(`ratchet: unknown flag ${flag}; have --init, --prune`);
+    return 1;
+  }
   const only = argv.filter((a) => !a.startsWith("--"));
   const picked = RATCHETS.filter((r) => !only.length || only.includes(r.name));
   if (!picked.length) {
