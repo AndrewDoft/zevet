@@ -405,3 +405,14 @@ runner matches an entry's `provider` string verbatim).
 **Missing.** `requirements.txt` pins `browser-use==0.13.10` only; browser-use 0.13.10 pins its own dependencies exactly, but pip does not check any file hashes, and no `--require-hashes` lockfile exists (the tree is platform-specific, so one needs generating per OS).
 **Unblocks.** `pip-compile --generate-hashes` on Windows and macOS against the pin, ship the lockfiles, install with `--require-hashes`.
 **Blast radius.** A tampered package file (or a re-uploaded pinned version) would run inside the runner, which holds the person's logged-in profile and scoped secrets. The version check cannot see it.
+
+## INSUF-016 — browser tasks have no board UI: no toggle, and outcomes go nowhere visible
+
+**Missing.** `main.js` sends each task outcome on `local:masoraBrowserTask` but `preload.js`, `ipc-table.js` and the board have no subscriber, and `settings.tsx` has no toggle for `masoraBrowserTasksPoll` (compare `onMasoraRun`, `masoraRunsPoll`). Today the feature is enabled by writing `"browserTasks": true` into `masora.json`, and "needs Python" / off-fence / bad-hash outcomes reach Masora's report only. (Found by thermos; the board bundle rebuild and a browser walk were out of scope for landing the runner.)
+**Unblocks.** Add `onMasoraBrowserTask` (ipc-table, preload, `ipc:gen`), show the last outcome beside a settings toggle, add the channel to `test/desktop-bridges.test.mjs`.
+**Blast radius.** Off by default, so nothing runs unseen; a person who turns it on by hand sees failures only in Masora.
+
+## INSUF-017 — browser-task poller duplicates masora-runs.js
+
+**Missing.** Ledger read/write, claim/report/abandon, `TaskTokenExpired` and the run bound are copies of `masora-runs.js`; a fix to token expiry or ledger corruption must be made twice. The macOS/Linux process-group kill in `killTree` is untested (Windows only here).
+**Unblocks.** Extract a shared ledger and a generic claim/report poller taking a `kind` and an `execute` callback.

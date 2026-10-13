@@ -249,7 +249,7 @@ function createClient({ baseUrl, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS } = {
  */
 function spawnRunner({ python, script, input, timeoutMs, env, pyArgs = ["-I", "-B"] }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(python, [...pyArgs, script, "run"], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, env: env || process.env });
+    const child = spawn(python, [...pyArgs, script, "run"], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, env: env || process.env, detached: process.platform !== "win32" }); // own process group, so killTree reaches Chrome
     let out = "";
     let done = false;
     const finish = (fn, v) => {
@@ -271,7 +271,7 @@ function spawnRunner({ python, script, input, timeoutMs, env, pyArgs = ["-I", "-
       try {
         finish(resolve, JSON.parse(line));
       } catch {
-        finish(reject, new Error(`runner exited ${code} without a JSON result`));
+        finish(reject, Object.assign(new Error(`runner exited ${code} without a JSON result`), { needsPython: code === 78 }));
       }
     });
     child.stdin.on("error", () => {});
@@ -282,7 +282,7 @@ function spawnRunner({ python, script, input, timeoutMs, env, pyArgs = ["-I", "-
 function killTree(child) {
   try {
     if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true });
-    else child.kill("SIGKILL");
+    else process.kill(-child.pid, "SIGKILL");
   } catch {
     /* already gone */
   }
@@ -391,7 +391,7 @@ class BrowserTaskPoller {
       } catch (err) {
         console.error(`zevet: browser task ${task.task_id}: runner failed (${err.message})`);
         body = failedReport(task.start_url);
-        if (err.code === "ENOENT" || /exited 78 /.test(err.message)) out(`failed · ${NEEDS_PYTHON}`); // python missing, or no pinned browser-use
+        if (err.code === "ENOENT" || err.needsPython) out(`failed · ${NEEDS_PYTHON}`); // python missing, or no pinned browser-use
       }
     }
     await this.#report(client, task.task_id, this.ledger.open[task.task_id], body, out);
