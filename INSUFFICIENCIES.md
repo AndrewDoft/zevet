@@ -377,3 +377,42 @@ free is absent from OpenRouter's models API today, so it is not in the catalogue
 **Missing.** `C:/Users/andre/.claude/bin/update-signing-key.ps1` (called by `scripts/ship.mjs` `key()` as `pwsh -File ... zevet`) does not exist; `~/.claude/bin` has no signing helper and `~/.claude/secrets` holds no zevet update key. `npm run ship` dies at its first step (before any tag, push or upload), so nothing was published.
 **Unblocks.** Restore the helper (it must print the zevet ed25519 PRIVATE KEY pem from the DPAPI store) or run `npm run ship` from the machine that has it. Everything else is on origin/main (658b3a9): D-111 shell release 0.2.143 will be classified shell + hub.
 **Blast radius.** None: installs keep running 0.2.142 / feed 0.2.140. The closed-app job only takes effect once a shell carrying it is installed, so it is inert until this ships.
+
+## INSUF-013 — `browser.task` never run against a real legacy app with a real login
+
+**Missing.** Everything is proved on a local fixture site with a scripted model and headless Chromium.
+Not seen: a real Chrome profile the person logged into, a real legacy app (frames, popups, slow pages,
+captchas), a real model driving Browser Use's prompts, or `runner.py --login` (it opens a window; no test may).
+**Unblocks.** Pair a device, set `browserTasks` on, write `browser-task.json`, run `runner.py --login`, approve one task
+against a staging app with a throwaway account. Read the report on Masora and check the profile dir holds the session.
+**Blast radius.** The fence and caps are enforced and tested; what is unproven is task *success* on messy pages.
+
+## INSUF-014 — No in-process model path in Zevet for the runner
+
+**Missing.** Zevet reaches models only through the claude, codex and opencode CLIs (`desktop/zevet-router.js`
+rungs); there is no HTTP client, key store or router the Python runner can call. Browser Use needs a chat-completions
+style client (`ChatOpenAI(base_url=...)`, `ChatAnthropic`, ...).
+**What was done instead.** The model comes from the person's `browser-task.json` (`models: [{provider, client, model,
+base_url?, api_key_env?, usd_per_mtok_in?, usd_per_mtok_out?}]`); the key is read from the named environment variable.
+Nothing is defaulted, and no paid OpenRouter id is shipped (free models only, per Zevet policy). With no usable entry
+the task is reported `failed` / `model_not_allowed` (or `error` when the file is missing).
+**Unblocks.** A small local OpenAI-compatible endpoint in Zevet fronting the person's subscriptions or the free
+OpenRouter rungs, or an `allowed_providers` vocabulary agreed with Masora (the claim example is `["claude"]`; the
+runner matches an entry's `provider` string verbatim).
+
+## INSUF-015 — browser-use's dependencies are not hash-pinned
+
+**Missing.** `requirements.txt` pins `browser-use==0.13.10` only; browser-use 0.13.10 pins its own dependencies exactly, but pip does not check any file hashes, and no `--require-hashes` lockfile exists (the tree is platform-specific, so one needs generating per OS).
+**Unblocks.** `pip-compile --generate-hashes` on Windows and macOS against the pin, ship the lockfiles, install with `--require-hashes`.
+**Blast radius.** A tampered package file (or a re-uploaded pinned version) would run inside the runner, which holds the person's logged-in profile and scoped secrets. The version check cannot see it.
+
+## INSUF-016 — browser tasks have no board UI: no toggle, and outcomes go nowhere visible
+
+**Missing.** `main.js` sends each task outcome on `local:masoraBrowserTask` but `preload.js`, `ipc-table.js` and the board have no subscriber, and `settings.tsx` has no toggle for `masoraBrowserTasksPoll` (compare `onMasoraRun`, `masoraRunsPoll`). Today the feature is enabled by writing `"browserTasks": true` into `masora.json`, and "needs Python" / off-fence / bad-hash outcomes reach Masora's report only. (Found by thermos; the board bundle rebuild and a browser walk were out of scope for landing the runner.)
+**Unblocks.** Add `onMasoraBrowserTask` (ipc-table, preload, `ipc:gen`), show the last outcome beside a settings toggle, add the channel to `test/desktop-bridges.test.mjs`.
+**Blast radius.** Off by default, so nothing runs unseen; a person who turns it on by hand sees failures only in Masora.
+
+## INSUF-017 — browser-task poller duplicates masora-runs.js
+
+**Missing.** Ledger read/write, claim/report/abandon, `TaskTokenExpired` and the run bound are copies of `masora-runs.js`; a fix to token expiry or ledger corruption must be made twice. The macOS/Linux process-group kill in `killTree` is untested (Windows only here).
+**Unblocks.** Extract a shared ledger and a generic claim/report poller taking a `kind` and an `execute` callback.

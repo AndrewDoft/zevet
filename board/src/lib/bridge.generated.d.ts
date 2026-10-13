@@ -127,6 +127,8 @@ export interface ZevetBridge {
   masoraChatPush?: (on: boolean) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean }>;
   /** Run Masora's queued agent runs on this machine (masora-runs.js), off by default. */
   masoraRunsPoll?: (on: boolean) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean; runs?: boolean }>;
+  /** Run Masora's approved browser tasks in a dedicated headless profile (masora-browser-tasks.js), off by default. */
+  masoraBrowserTasksPoll?: (on: boolean) => Promise<{ url: string; paired: boolean; repos: Record<string, boolean>; chat?: boolean; runs?: boolean; browserTasks?: boolean }>;
   /**
    * Connections panel: which sources are linked, and connecting a new one.
    * Channel names have no "zevet:" prefix -- they are `masora:sources` /

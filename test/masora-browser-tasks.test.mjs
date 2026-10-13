@@ -1,0 +1,470 @@
+// Masora `browser.task` on the desktop (desktop/masora-browser-tasks.js; wire: docs/contracts/browser-task.md).
+// The server is a local fake of the contract's two routes; the runner is a fake `run` dep (the real Python
+// runner is covered by browser-task-runner.test.mjs).
+import { test, describe, before, after } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { tempDir, ROOT } from "./helpers.mjs";
+
+const home = tempDir("zevet-browser-tasks-");
+process.env.ZEVET_HOME = home.dir;
+const require = createRequire(import.meta.url);
+const bt = require(path.join(ROOT, "desktop", "masora-browser-tasks.js"));
+
+const jwt = (exp) => `h.${Buffer.from(JSON.stringify({ exp })).toString("base64url")}.s`;
+const inFuture = () => Math.floor(Date.now() / 1000) + 3600;
+const SHA = "a".repeat(64);
+const CONTRACT_KEYS = ["cost_usd", "final_url", "reason", "screenshot_sha256", "status", "steps"];
+
+let server;
+let base;
+let queue;
+let seen;
+let reportStatus; // what the fake answers to a report
+before(async () => {
+  server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      seen.push({ method: req.method, url: req.url, auth: req.headers.authorization, body: raw ? JSON.parse(raw) : null });
+      if (req.url === "/api/v2/browser-tasks/claim") {
+        const next = queue.shift();
+        if (!next) return res.writeHead(204).end();
+        return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(next));
+      }
+      res.writeHead(reportStatus, { "content-type": "application/json" }).end(JSON.stringify({ status: "done", reason: "" }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  base = `http://127.0.0.1:${server.address().port}`;
+});
+after(() => new Promise((r) => server.close(r)));
+
+const mkTask = (over = {}) => {
+  const t = {
+    task_id: "task-1", action_id: "act-1", start_url: "https://app.example.com/start?q=secret#frag", instruction: "do the thing",
+    allowed_domains: ["app.example.com"], max_steps: 5, max_usd: 2, allowed_providers: null,
+    deadline: new Date(Date.now() + 3600_000).toISOString(), task_token: jwt(inFuture()), ...over,
+  };
+  return { ...t, payload_sha256: bt.payloadHash(t) }; // the hash Masora would send for exactly this payload
+};
+const goodResult = (over = {}) => ({
+  status: "done", steps: [{ verb: "navigate", url: "https://app.example.com/start", ok: true }, { verb: "click", url: "https://app.example.com/x", ok: true }],
+  final_url: "https://app.example.com/done", screenshot_sha256: SHA, reason: null, cost_usd: 0.31, ...over,
+});
+const reports = () => seen.filter((x) => x.url.endsWith("/report"));
+
+let n = 0;
+function rig(over = {}) {
+  queue = [];
+  seen = [];
+  reportStatus = 200;
+  const ran = [];
+  const ledgerFile = path.join(home.dir, `ledger-${++n}.json`);
+  const deps = {
+    enabled: () => true,
+    credential: () => ({ baseUrl: base, token: "family-credential" }),
+    runnerConfig: () => ({ python: "py", script: "runner.py", config: { profile_dir: "p", models: [] } }),
+    run: async (job) => { ran.push(job); return goodResult(); },
+    setOutcome: () => {},
+    ledgerFile,
+    ...over,
+  };
+  return { poller: new bt.BrowserTaskPoller(deps), deps, ran, ledgerFile };
+}
+
+describe("claim and report: the contract's wire shapes", () => {
+  test("claim sends only device_id with the person credential; 204 is no task", async () => {
+    const { poller } = rig();
+    assert.equal(await poller.tick(), null);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, "/api/v2/browser-tasks/claim");
+    assert.equal(seen[0].auth, "Bearer family-credential");
+    assert.deepEqual(Object.keys(seen[0].body), ["device_id"]);
+  });
+
+  test("happy path: ledgered BEFORE the runner starts, runner never sees the task_token, report carries only contract keys", async () => {
+    let ledgerAtRun;
+    const r = rig({ run: async (job) => { ledgerAtRun = JSON.parse(fs.readFileSync(r.ledgerFile, "utf8")); r.ran.push(job); return goodResult(); } });
+    const task = mkTask();
+    queue.push(task);
+    await (await r.poller.tick()).done;
+    assert.ok(ledgerAtRun.open["task-1"], "the id must be on disk before the runner starts");
+    assert.equal(r.ran.length, 1);
+    assert.equal(JSON.stringify(r.ran[0]).includes(task.task_token), false, "the runner must not receive the task_token");
+    assert.equal(r.ran[0].input.task.instruction, "do the thing");
+    assert.ok(r.ran[0].input.config.timeout_s > 0 && r.ran[0].input.config.timeout_s <= 45 * 60);
+    const rep = reports()[0];
+    assert.equal(rep.url, "/api/v2/browser-tasks/task-1/report");
+    assert.equal(rep.auth, `Bearer ${task.task_token}`);
+    assert.deepEqual(Object.keys(rep.body).sort(), CONTRACT_KEYS);
+    assert.deepEqual(rep.body, goodResult());
+    assert.deepEqual(JSON.parse(fs.readFileSync(r.ledgerFile, "utf8")).open, {}, "closed after the report");
+  });
+
+  test("a report never carries a key outside the contract, nor page text", async () => {
+    const r = rig({ run: async () => goodResult({ page_text: "SECRET PAGE", html: "<b>", steps: [{ verb: "type", url: "https://app.example.com/a", ok: true, text: "hunter2", value: "x" }] }) });
+    queue.push(mkTask());
+    await (await r.poller.tick()).done;
+    const body = reports()[0].body;
+    assert.deepEqual(Object.keys(body).sort(), CONTRACT_KEYS);
+    assert.deepEqual(Object.keys(body.steps[0]).sort(), ["ok", "url", "verb"]);
+    assert.deepEqual(Object.keys(bt.buildReport(goodResult({ page_text: "x" }), mkTask())).sort(), CONTRACT_KEYS, "buildReport is a whitelist on its own");
+    assert.equal(JSON.stringify(body).includes("SECRET PAGE") || JSON.stringify(body).includes("hunter2"), false);
+  });
+
+  test("the client itself sends only the contract keys, whatever it is handed", async () => {
+    const r = rig();
+    await bt.createClient({ baseUrl: base, fetchImpl: undefined }).report("t9", jwt(inFuture()), Date.now(), { ...goodResult(), page_text: "LEAK", extra: 1 });
+    assert.deepEqual(Object.keys(reports().find((x) => x.url.includes("/t9/")).body).sort(), CONTRACT_KEYS);
+    void r;
+  });
+
+  test("query and fragment are dropped from step and final urls", () => {
+    const rep = bt.buildReport(goodResult({ steps: [{ verb: "click", url: "https://app.example.com/a?token=abc#f", ok: true }], final_url: "https://app.example.com/b?x=1" }), mkTask());
+    assert.equal(rep.steps[0].url, "https://app.example.com/a");
+    assert.equal(rep.final_url, "https://app.example.com/b");
+  });
+});
+
+describe("the report is re-checked against the fence and the approved limits", () => {
+  const task = mkTask();
+  test("an off-fence step url makes it failed/off_domain and the url is not forwarded", () => {
+    const rep = bt.buildReport(goodResult({ steps: [{ verb: "navigate", url: "https://evil.example.net/x", ok: true }] }), task);
+    assert.equal(rep.status, "failed");
+    assert.equal(rep.reason, "off_domain");
+    assert.equal(JSON.stringify(rep).includes("evil.example.net"), false);
+  });
+  test("a lookalike host (label boundary) is off-fence", () => {
+    const rep = bt.buildReport(goodResult({ final_url: "https://evilapp.example.com/" }), mkTask({ allowed_domains: ["app.example.com"] }));
+    assert.equal(rep.reason, "off_domain");
+    assert.equal(bt.inFence("https://x.app.example.com/", ["app.example.com"]), true);
+    assert.equal(bt.inFence("http://app.example.com/", ["app.example.com"]), false);
+  });
+  test("more steps than approved is failed/max_steps and truncated", () => {
+    const steps = Array.from({ length: 9 }, () => ({ verb: "click", url: "https://app.example.com/a", ok: true }));
+    const rep = bt.buildReport(goodResult({ steps }), task);
+    assert.equal(rep.status, "failed");
+    assert.equal(rep.reason, "max_steps");
+    assert.equal(rep.steps.length, 5);
+  });
+  test("cost over max_usd is failed/cost_cap", () => {
+    const rep = bt.buildReport(goodResult({ cost_usd: 2.5 }), task);
+    assert.equal(rep.status, "failed");
+    assert.equal(rep.reason, "cost_cap");
+  });
+  test("a verb or reason outside the vocabulary never goes out", () => {
+    const rep = bt.buildReport(goodResult({ steps: [{ verb: "exfiltrate", url: "https://app.example.com/a", ok: true }, { verb: "click", url: "https://app.example.com/a", ok: "yes" }], status: "failed", reason: "because" }), task);
+    assert.deepEqual(rep.steps, []);
+    assert.equal(rep.reason, "error");
+  });
+  test("done can never carry a reason; a bad hash becomes the empty-screenshot hash", () => {
+    const rep = bt.buildReport(goodResult({ reason: "error", screenshot_sha256: "nope" }), task);
+    assert.equal(rep.status, "failed");
+    assert.equal(rep.screenshot_sha256, bt.EMPTY_SHA256);
+  });
+  test("model_not_allowed passes through as the runner's failure reason", () => {
+    const rep = bt.buildReport({ status: "failed", steps: [], final_url: "https://app.example.com/start", screenshot_sha256: SHA, reason: "model_not_allowed", cost_usd: 0 }, task);
+    assert.equal(rep.reason, "model_not_allowed");
+  });
+});
+
+describe("runner failures are failed reports, never silence", () => {
+  for (const [name, run] of [
+    ["a crash", async () => { throw new Error("exit 1"); }],
+    ["a timeout", async () => { throw new Error("runner timed out"); }],
+    ["garbage", async () => "not an object"],
+    ["null", async () => null],
+  ]) {
+    test(name, async () => {
+      const r = rig({ run });
+      queue.push(mkTask());
+      await (await r.poller.tick()).done;
+      const b = reports()[0].body;
+      assert.equal(b.status, "failed");
+      assert.equal(b.reason, "error");
+      assert.deepEqual(Object.keys(b).sort(), CONTRACT_KEYS);
+      assert.equal(b.final_url, "https://app.example.com/start");
+    });
+  }
+  test("no runner configured: failed/error, visibly", async () => {
+    const outcomes = [];
+    const r = rig({ runnerConfig: () => null, setOutcome: (id, t) => outcomes.push(t) });
+    queue.push(mkTask());
+    await (await r.poller.tick()).done;
+    assert.equal(reports()[0].body.reason, "error");
+    assert.match(outcomes[0], /not set up/);
+  });
+});
+
+describe("a claim never runs twice", () => {
+  test("the same task_id offered again does not run again, even in a new poller", async () => {
+    const first = rig();
+    queue.push(mkTask());
+    await (await first.poller.tick()).done;
+    assert.equal(first.ran.length, 1);
+    queue.push(mkTask());
+    const again = new bt.BrowserTaskPoller({ ...first.deps, run: async () => assert.fail("ran twice") });
+    assert.equal(await again.tick(), null);
+  });
+
+  test("one task at a time: a busy poller does not claim", async () => {
+    let release;
+    const r = rig({ run: () => new Promise((res) => { release = () => res(goodResult()); }) });
+    queue.push(mkTask({ task_id: "a" }), mkTask({ task_id: "b" }));
+    const t = await r.poller.tick();
+    seen.length = 0;
+    assert.equal(await r.poller.tick(), null);
+    assert.equal(seen.length, 0);
+    release();
+    await t.done;
+  });
+});
+
+describe("restart safety", () => {
+  test("a claimed-but-unreported task is reported failed/error at the next start, then cleared", async () => {
+    const r = rig();
+    fs.writeFileSync(r.ledgerFile, JSON.stringify({ deviceId: "d", ids: ["old"], open: { old: { task_token: jwt(inFuture()), claimedAt: Date.now(), start_url: "https://app.example.com/start" } } }));
+    const p = new bt.BrowserTaskPoller(r.deps);
+    await p.tick();
+    const rep = reports().find((x) => x.url.includes("/old/report"));
+    assert.equal(rep.body.status, "failed");
+    assert.equal(rep.body.reason, "error");
+    assert.equal(rep.body.final_url, "https://app.example.com/start");
+    assert.deepEqual(JSON.parse(fs.readFileSync(r.ledgerFile, "utf8")).open, {});
+  });
+
+  test("owed even with the setting off, but nothing new is claimed", async () => {
+    const r = rig({ enabled: () => false });
+    fs.writeFileSync(r.ledgerFile, JSON.stringify({ deviceId: "d", ids: ["old"], open: { old: { task_token: jwt(inFuture()), claimedAt: Date.now(), start_url: "https://app.example.com/" } } }));
+    await new bt.BrowserTaskPoller(r.deps).tick();
+    assert.equal(reports().length, 1);
+    assert.equal(seen.some((x) => x.url.endsWith("/claim")), false);
+  });
+
+  test("a finished task whose report could not be delivered is re-sent as it was, not as a failure", async () => {
+    const r = rig();
+    queue.push(mkTask());
+    reportStatus = 500;
+    await (await r.poller.tick()).done;
+    assert.ok(JSON.parse(fs.readFileSync(r.ledgerFile, "utf8")).open["task-1"], "stays open");
+    reportStatus = 200;
+    seen.length = 0;
+    await new bt.BrowserTaskPoller(r.deps).tick();
+    assert.deepEqual(reports()[0].body, goodResult());
+    assert.deepEqual(JSON.parse(fs.readFileSync(r.ledgerFile, "utf8")).open, {});
+  });
+
+  test("a corrupt ledger is kept aside and nothing is claimed", async () => {
+    const r = rig();
+    fs.writeFileSync(r.ledgerFile, "{not json");
+    const p = new bt.BrowserTaskPoller(r.deps);
+    assert.equal(await p.tick(), null);
+    assert.equal(seen.length, 0);
+    assert.ok(fs.readdirSync(home.dir).some((f) => f.startsWith(path.basename(r.ledgerFile) + ".corrupt-")));
+  });
+});
+
+describe("expired task_token and the setting", () => {
+  test("a token already expired at claim is never used: no run, no report", async () => {
+    const r = rig();
+    queue.push(mkTask({ task_token: jwt(Math.floor(Date.now() / 1000) - 10) }));
+    assert.equal(await r.poller.tick(), null);
+    assert.equal(r.ran.length, 0);
+    assert.equal(reports().length, 0);
+  });
+
+  test("a token that expires while the runner works is not presented; the row is closed", async () => {
+    let t = Date.now();
+    const r = rig({ now: () => t, run: async () => { t += 2 * 3600_000; return goodResult(); } });
+    queue.push(mkTask({ task_token: jwt(Math.floor(t / 1000) + 3000), deadline: null }));
+    await (await r.poller.tick()).done;
+    assert.equal(reports().length, 0);
+    assert.deepEqual(JSON.parse(fs.readFileSync(r.ledgerFile, "utf8")).open, {});
+    await assert.rejects(bt.createClient({ baseUrl: base }).report("x", jwt(1), 0, goodResult(), Date.now()), bt.TaskTokenExpired);
+  });
+
+  test("a 401 on the report counts as expiry and closes the task", async () => {
+    const r = rig();
+    queue.push(mkTask());
+    reportStatus = 401;
+    await (await r.poller.tick()).done;
+    assert.deepEqual(JSON.parse(fs.readFileSync(r.ledgerFile, "utf8")).open, {});
+  });
+
+  test("off by default: disabled or unpaired requests nothing; only an explicit true turns the setting on", async () => {
+    const off = rig({ enabled: () => false });
+    const unpaired = rig({ credential: () => null });
+    await off.poller.tick();
+    await unpaired.poller.tick();
+    assert.equal(seen.length, 0);
+    const masora = require(path.join(ROOT, "desktop", "masora.js"));
+    assert.equal(masora.readConfig().browserTasks, false);
+    assert.equal(masora.setBrowserTasksPoll(true).browserTasks, true);
+    assert.equal(masora.setBrowserTasksPoll("yes").browserTasks, false);
+  });
+});
+
+describe("spawnRunner (a real child process)", () => {
+  const script = (name, body) => {
+    const f = path.join(home.dir, name);
+    fs.writeFileSync(f, body);
+    return f;
+  };
+  const go = (f, timeoutMs = 5000) => bt.spawnRunner({ python: process.execPath, pyArgs: [], script: f, input: { hello: 1 }, timeoutMs });
+
+  test("reads stdin, takes the last JSON line of stdout", async () => {
+    const f = script("ok.js", `let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{console.log("noise");console.log(JSON.stringify({got:JSON.parse(s)}))})`);
+    assert.deepEqual(await go(f), { got: { hello: 1 } });
+  });
+  test("garbage or an empty stdout rejects", async () => {
+    await assert.rejects(go(script("bad.js", `console.log("not json")`)), /without a JSON result/);
+    await assert.rejects(go(script("empty.js", `process.exit(3)`)), /exited 3/);
+  });
+  test("a runner that hangs is killed at the timeout", async () => {
+    const t0 = Date.now();
+    await assert.rejects(go(script("hang.js", `setInterval(()=>{},1000)`), 600), /timed out/);
+    assert.ok(Date.now() - t0 < 4000);
+  });
+});
+
+const BS = String.fromCharCode(92);
+
+describe("claim: payload_sha256 binds what we run to what Masora approved", () => {
+  test("the canonical hash equals Python's json.dumps(sort_keys, (',',':'), ensure_ascii=False) of the same object", () => {
+    const o = { start_url: "https://app.example.com/start?q=é#frag", instruction: 'do the thing — "quoted"\n日本', allowed_domains: ["app.example.com", "b.example.org"], max_steps: 5 };
+    assert.equal(bt.payloadHash(o), "d578917cc36aba985553113cd8c8a0991494e36a60953f9b97fbb361b89be97a");
+    assert.equal(bt.payloadHash({ max_steps: 5, allowed_domains: o.allowed_domains, instruction: o.instruction, start_url: o.start_url }), bt.payloadHash(o), "key order is irrelevant");
+  });
+
+  test("a matching hash runs", async () => {
+    const r = rig();
+    queue.push(mkTask());
+    await (await r.poller.tick()).done;
+    assert.equal(r.ran.length, 1);
+    assert.equal(reports()[0].body.status, "done");
+  });
+
+  for (const [name, change] of [
+    ["a wrong hash", (t) => ({ ...t, payload_sha256: "0".repeat(64) })],
+    ["a missing hash", ({ payload_sha256, ...t }) => t],
+    ["an instruction changed after the hash", (t) => ({ ...t, instruction: "do something else" })],
+    ["a start_url changed after the hash", (t) => ({ ...t, start_url: "https://app.example.com/other" })],
+    ["max_steps changed after the hash", (t) => ({ ...t, max_steps: 50 })],
+    ["allowed_domains widened after the hash", (t) => ({ ...t, allowed_domains: ["app.example.com", "evil.example.net"] })],
+  ]) {
+    test(`${name}: never launched, reported failed/error`, async () => {
+      const r = rig();
+      queue.push(change(mkTask()));
+      await (await r.poller.tick()).done;
+      assert.equal(r.ran.length, 0, "the runner must not start");
+      const b = reports()[0].body;
+      assert.equal(b.status, "failed");
+      assert.equal(b.reason, "error");
+      assert.equal(b.cost_usd, 0);
+    });
+  }
+});
+
+describe("the same fence rules, checked before the runner is launched", () => {
+  const f = ["good.com"];
+  test("URL-confusion shapes are off-domain; the plain shapes are in", () => {
+    for (const ok of ["https://good.com/x", "https://GOOD.com./x?a=1#f", "https://a.good.com:8443/"]) assert.equal(bt.inFence(ok, f), true, ok);
+    for (const bad of [
+      `https://evil.com${BS}.good.com/`, `https://good.com${BS}@evil.com/`, `https://evil.com${BS}@good.com/`, `https://good.com/a${BS}b`,
+      "https://good.com/a\tb", "https://good.com/a\nb", "https://good.com/a\rb", "https://good.com/a b", "https://good.com/a\x00b", " https://good.com/",
+      "https://evil.com\t.good.com/", "https://evil.com\n.good.com/", "https://user@good.com/", "https://good.com@evil.com/", "https://user:pw@good.com/",
+      "https://%65vil.com/", "https://good.com%2eevil.com/", "https://good.com%40evil.com/", "https://ｇood.com/", "https://göod.com/",
+      "https://[::1]/", "https://good.com:99999/", "https://good.com:80:90/", "https://good.com:abc/", "https:///good.com/",
+      "http://good.com/", "ftp://good.com/", "good.com/x", "", null, 5, "https://good.com.evil.io/", "https://evilgood.com/",
+    ]) assert.equal(bt.inFence(bad, f), false, JSON.stringify(bad));
+  });
+
+  test("numeric hosts, IP literals and localhost are never a host or an allowed-domain entry", () => {
+    for (const u of ["https://127.1/", "https://0x7f.1/", "https://2130706433/", "https://0177.0.0.1/", "https://127.0.0.1/", "https://[::1]/", "https://localhost/", "https://good.com.1/", "https://good.com.0x7f/", "https://a.localhost/"]) {
+      assert.equal(bt.judgeUrl(u), null, u);
+      assert.equal(bt.inFence(u, f), false, u);
+    }
+    for (const entry of ["127.1", "0x7f.1", "1.0x7f", "2130706433", "0177.0.0.1", "127.0.0.1", "[::1]", "::1", "localhost", "app.localhost", "good.com.1", "*.good.com", "good.com/x", "gööd.com", ""]) {
+      assert.equal(bt.cleanHost(entry), false, entry);
+      assert.equal(bt.inFence("https://good.com/", ["good.com", entry]), false, `a bad entry poisons the fence: ${entry}`);
+    }
+    assert.equal(bt.cleanHost("x-y.example.co.uk"), true);
+  });
+
+  test("a start_url outside the fence is reported failed/off_domain and the runner is never launched", async () => {
+    for (const start_url of [`https://evil.com${BS}.app.example.com/`, "https://evil.example.net/", "https://user@app.example.com/", "https://%61pp.example.com/", "http://app.example.com/"]) {
+      const r = rig();
+      queue.push(mkTask({ start_url }));
+      await (await r.poller.tick()).done;
+      assert.equal(r.ran.length, 0, start_url);
+      assert.equal(reports()[0].body.reason, "off_domain", start_url);
+      assert.equal(reports()[0].body.status, "failed");
+    }
+  });
+
+  test("an allowed_domains entry that is numeric or localhost is reported failed/error and never launched", async () => {
+    const r = rig();
+    queue.push(mkTask({ allowed_domains: ["app.example.com", "127.1"] }));
+    await (await r.poller.tick()).done;
+    assert.equal(r.ran.length, 0);
+    assert.equal(reports()[0].body.reason, "error");
+  });
+});
+
+describe("cost_usd is always a number", () => {
+  for (const [name, bad] of [["absent", undefined], ["null", null], ["a string", "0.3"], ["negative", -1], ["NaN", NaN]]) {
+    test(`a runner result with cost_usd ${name} is reported failed/error with cost_usd 0, never null`, async () => {
+      const r = rig({ run: async () => { const g = goodResult(); if (bad === undefined) delete g.cost_usd; else g.cost_usd = bad; return g; } });
+      queue.push(mkTask());
+      await (await r.poller.tick()).done;
+      const b = reports()[0].body;
+      assert.equal(b.status, "failed");
+      assert.equal(b.reason, "error");
+      assert.equal(b.cost_usd, 0);
+    });
+  }
+  test("the client refuses to send a report without a numeric cost_usd", async () => {
+    rig();
+    for (const bad of [null, undefined, "1", NaN]) {
+      await assert.rejects(bt.createClient({ baseUrl: base }).report("t8", jwt(inFuture()), Date.now(), { ...goodResult(), cost_usd: bad }), bt.BrowserTasksError);
+    }
+    assert.equal(reports().length, 0);
+  });
+});
+
+describe("packaging: the person's Python is the runtime, and a bad one is said out loud", () => {
+  const needs = async (run) => {
+    const outcomes = [];
+    const r = rig({ run, setOutcome: (id, t) => outcomes.push(t) });
+    queue.push(mkTask());
+    await (await r.poller.tick()).done;
+    assert.equal(reports()[0].body.reason, "error");
+    assert.match(outcomes.join("\n"), /needs Python/);
+  };
+  test("python not found: failed/error and a 'needs Python' outcome", () =>
+    needs((job) => bt.spawnRunner({ ...job, python: path.join(home.dir, "no-such-python") })));
+  test("runner exit 78 (no pinned browser-use): failed/error and a 'needs Python' outcome", () =>
+    needs((job) => bt.spawnRunner({ ...job, python: process.execPath, pyArgs: ["-e", "process.exit(78)"] })));
+});
+
+describe("runner.py invariants (source-level, no venv needed)", () => {
+  const src = fs.readFileSync(path.join(ROOT, "desktop", "browser-task", "runner.py"), "utf8");
+  test("telemetry, cloud sync and the PyPI version check are forced off", () => {
+    assert.match(src, /os\.environ\.update\(ANONYMIZED_TELEMETRY="false", BROWSER_USE_CLOUD_SYNC="false", BROWSER_USE_VERSION_CHECK="false"/);
+    assert.doesNotMatch(src, /BROWSER_USE_VERSION_CHECK="true"/);
+    assert.doesNotMatch(src, /ANONYMIZED_TELEMETRY="true"|BROWSER_USE_CLOUD_SYNC="true"/);
+  });
+  test("a task run is headless; only --login (a person at the keyboard) opens a window", () => {
+    assert.equal((src.match(/headless=False/g) || []).length, 1);
+    assert.ok(src.indexOf("headless=False") > src.indexOf("async def login("), "headless=False must live in login()");
+    assert.match(src.slice(0, src.indexOf("async def login(")), /headless=True/);
+  });
+  test("the pin in requirements.txt is the one the runner enforces", () => {
+    const req = fs.readFileSync(path.join(ROOT, "desktop", "browser-task", "requirements.txt"), "utf8");
+    assert.equal(/browser-use==([\d.]+)/.exec(req)[1], /PINNED_BROWSER_USE = "([\d.]+)"/.exec(src)[1]);
+  });
+});
