@@ -746,9 +746,9 @@ function openBoard(cfg) {
     boardWindow.focus();
     return;
   }
+  const winState = windowState.clamp(windowState.load(WINDOW_STATE), (r) => screen.getDisplayMatching(r).workArea);
   // Background, after onboarding: never awaited, so it cannot gate the window.
   masoraLink.start();
-  const winState = windowState.clamp(windowState.load(WINDOW_STATE), (r) => screen.getDisplayMatching(r).workArea);
   boardWindow = new BrowserWindow(windowOptions("board", {
     width: winState.width,
     height: winState.height,
