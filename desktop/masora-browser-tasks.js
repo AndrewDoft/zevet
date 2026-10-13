@@ -252,21 +252,28 @@ function spawnRunner({ python, script, input, timeoutMs, env, pyArgs = ["-I", "-
     const child = spawn(python, [...pyArgs, script, "run"], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, env: env || process.env, detached: process.platform !== "win32" }); // own process group, so killTree reaches Chrome
     let out = "";
     let done = false;
+    let timedOut = false;
+    let grace;
     const finish = (fn, v) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      clearTimeout(grace);
       fn(v);
     };
+    // Reject on 'close' after the kill, so the child is reaped (not a zombie) when the caller hears "timed out";
+    // the grace timer only covers a kill that never lands.
     const timer = setTimeout(() => {
+      timedOut = true;
       killTree(child);
-      finish(reject, new Error("runner timed out"));
+      grace = setTimeout(() => finish(reject, new Error("runner timed out")), 5000);
     }, timeoutMs);
     child.stdout.on("data", (c) => {
       if (out.length < STDOUT_MAX) out += c;
     });
     child.on("error", (e) => finish(reject, e));
     child.on("close", (code) => {
+      if (timedOut) return finish(reject, new Error("runner timed out"));
       const line = out.trim().split(/\r?\n/).filter(Boolean).pop();
       try {
         finish(resolve, JSON.parse(line));
