@@ -32,7 +32,7 @@ describe("mods loader", () => {
   test("loads a fixture mod, starts it with the context, and calls its before-quit hook", async () => {
     const dir = put("mods1/fixture.js", 'module.exports = { name: "fixture", start(ctx) { ctx.events.push("start"); }, beforeQuit(ctx) { ctx.events.push("quit"); } };');
     put("mods1/second/index.js", 'module.exports = (ctx) => ctx.events.push("second-start");');
-    put("mods1/tools/ignored.js", 'throw new Error("tools/ is not a mod");');
+    put("mods1/tools/index.js", 'throw new Error("tools/ is not a mod");');
     put("mods1/README.md", "not a mod");
     const ctx = { events: [] };
     const mods = loadMods(ctx, { dir, log: silent });
