@@ -5,6 +5,7 @@ export function answerBoardRequest(
     startAgent: (name: string, launch: any) => Promise<{ ok: boolean; id?: string; engine?: string; error?: string }>;
     sendPrompt: (key: number, text: string) => void;
     findConsole: (id: string) => { key: number; id: string | null; running: boolean } | undefined;
+    closeConsole: (key: number) => void;
     agents: () => { name: string; models?: { id: string }[] }[];
   },
 ): Promise<{ ok: boolean; id?: string; engine?: string; error?: string; notFound?: boolean }>;
