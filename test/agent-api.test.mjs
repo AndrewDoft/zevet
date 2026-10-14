@@ -47,6 +47,10 @@ function fakeBackend() {
       e.running = false;
       return { ok: true };
     },
+    forgetAgent: (id) => {
+      entries.delete(id);
+      return { ok: true };
+    },
     getConsole: (id) => entries.get(id),
     listConsoles: () => [...entries.values()],
   };
@@ -206,6 +210,41 @@ describe("GET /status, /output, /list", () => {
       body.consoles.map((c) => c.label).sort(),
       ["a", "b"],
     );
+  });
+});
+
+describe("POST /forget", () => {
+  async function spawn(url, token) {
+    const res = await fetch(`${url}/spawn`, authed(token, { method: "POST", body: JSON.stringify({ cwd: "/repo" }) }));
+    return (await res.json()).id;
+  }
+  const ids = async (url, token) => (await (await fetch(`${url}/list`, authed(token))).json()).consoles.map((c) => c.id);
+
+  test("a finished console is removed from /list", async (t) => {
+    const { url, token, close, backend } = await startApi();
+    t.after(close);
+    const id = await spawn(url, token);
+    backend.entries.get(id).running = false;
+    const res = await fetch(`${url}/forget?id=${id}`, authed(token, { method: "POST" }));
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true });
+    assert.deepEqual(await ids(url, token), []);
+  });
+
+  test("a running console is refused with 409 and stays listed", async (t) => {
+    const { url, token, close } = await startApi();
+    t.after(close);
+    const id = await spawn(url, token);
+    const res = await fetch(`${url}/forget?id=${id}`, authed(token, { method: "POST" }));
+    assert.equal(res.status, 409);
+    assert.deepEqual(await ids(url, token), [id]);
+  });
+
+  test("an unknown id is a 404", async (t) => {
+    const { url, token, close } = await startApi();
+    t.after(close);
+    const res = await fetch(`${url}/forget?id=nope`, authed(token, { method: "POST" }));
+    assert.equal(res.status, 404);
   });
 });
 

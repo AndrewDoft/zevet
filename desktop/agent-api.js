@@ -163,6 +163,7 @@ function summarize(entry) {
  *   - startAgentCore({agent, cwd, opts, trusted}) -> {ok, id, engine, error}
  *   - sendToAgentCore(id, text) -> {ok, error}
  *   - stopAgentCore(id) -> {ok, error}
+ *   - forgetAgent(id) -> {ok}: drop a finished console's row (same as the board's local:forgetAgent)
  *   - setOnce(id) -> marks a console to end after its first result (optional; `spawn --once`)
  *   - getConsole(id) -> the consoleLog entry, or undefined
  *   - listConsoles() -> every consoleLog entry
@@ -170,8 +171,8 @@ function summarize(entry) {
  *     answered in time (optional; `via: "board"` -- see board-ask.js)
  */
 async function start(deps = {}) {
-  const { startAgentCore, sendToAgentCore, stopAgentCore, setOnce, getConsole, listConsoles, askBoard, isRelaunching = () => false } = deps;
-  for (const name of ["startAgentCore", "sendToAgentCore", "stopAgentCore", "getConsole", "listConsoles"]) {
+  const { startAgentCore, sendToAgentCore, stopAgentCore, forgetAgent, setOnce, getConsole, listConsoles, askBoard, isRelaunching = () => false } = deps;
+  for (const name of ["startAgentCore", "sendToAgentCore", "stopAgentCore", "forgetAgent", "getConsole", "listConsoles"]) {
     if (typeof deps[name] !== "function") throw new Error(`agent-api: start() requires a ${name}() function`);
   }
   const token = randomBytes(24).toString("hex");
@@ -244,6 +245,14 @@ async function start(deps = {}) {
     return { status: r.ok ? 200 : 404, body: r };
   }
 
+  function handleForget(id) {
+    const entry = getConsole(id);
+    if (!entry) return { status: 404, body: { ok: false, error: "no such console" } };
+    // A live process (working or idle between turns) still has a run to stop first.
+    if (entry.running) return { status: 409, body: { ok: false, error: "agent is still running; stop it first" } };
+    return { status: 200, body: forgetAgent(id) };
+  }
+
   async function handleWait(id, timeoutMs) {
     const deadline = Date.now() + (Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_WAIT_TIMEOUT_MS);
     for (;;) {
@@ -310,6 +319,8 @@ async function start(deps = {}) {
           result = await handleSend(id, body || {});
         } else if (req.method === "POST" && url.pathname === "/stop") {
           result = handleStop(id);
+        } else if (req.method === "POST" && url.pathname === "/forget") {
+          result = handleForget(id);
         } else if (req.method === "POST" && url.pathname === "/wait") {
           result = await handleWait(id, Number(url.searchParams.get("timeoutMs")));
         } else {

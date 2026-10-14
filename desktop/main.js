@@ -4455,14 +4455,17 @@ bridge.handle("local:consoles", () => consoleLog.snapshot());
 bridge.handle("local:integrateAgent", (_e, id) => integrateAgentById(String(id || "")));
 bridge.handle("local:discardAgent", (_e, id) => discardAgentById(String(id || "")));
 
-bridge.handle("local:forgetAgent", (_e, id) => {
-  consoleLog.forget(String(id || ""));
-  const place = placementOf(String(id || ""));
+/** Shared by the board's IPC and the loopback API's /forget. consoleLog is what the
+ *  resume snapshot is written from, so a forgotten row is not persisted either. */
+function forgetAgentCore(id) {
+  consoleLog.forget(id);
+  const place = placementOf(id);
   if (place) void releasePlacement(place);
-  const left = pendingIntegrations.get(String(id || ""));
+  const left = pendingIntegrations.get(id);
   if (left) { pendingIntegrations.delete(left.id); void worktrees.release(left.worktree, left.title); }
   return { ok: true };
-});
+}
+bridge.handle("local:forgetAgent", (_e, id) => forgetAgentCore(String(id || "")));
 
 // An agent outliving the window that started it is a process nobody can see
 // and nobody asked for. Called on quit and on window close — NOT on reload,
@@ -5581,6 +5584,11 @@ async function startAgentApi() {
     },
     sendToAgentCore,
     stopAgentCore,
+    forgetAgent: (id) => {
+      const r = forgetAgentCore(id);
+      void boardAsk.ask("close", { id }); // the row goes live; no board window -> nothing to tell
+      return r;
+    },
     setOnce: (id) => consoleLog.setOnce(id),
     getConsole: (id) => consoleLog.get(id),
     listConsoles: () => consoleLog.snapshot().consoles,

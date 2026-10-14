@@ -21,7 +21,7 @@ const AGENTS = [{ name: "claude", models: [{ id: "claude-opus-5-5" }, { id: "cla
 
 /** The main-process half (board-ask + a direct backend) wired to a fake board window. */
 async function rig({ window = true, answers = true, timeoutMs = 2000, consoles = [], reply } = {}) {
-  const log = { direct: [], directSends: [], asked: [], launches: [], prompts: [] };
+  const log = { direct: [], directSends: [], asked: [], launches: [], prompts: [], closed: [] };
   const state = { activeConsole: 7, consoles: [...consoles] };
   const board = {
     startAgent: async (name, launch) => {
@@ -32,6 +32,7 @@ async function rig({ window = true, answers = true, timeoutMs = 2000, consoles =
       return { ok: true, id: "board-1", engine: launch.engine };
     },
     sendPrompt: (key, text) => log.prompts.push({ key, text }),
+    closeConsole: (key) => log.closed.push(key),
     findConsole: (id) => state.consoles.find((c) => c.id === id),
     agents: () => AGENTS,
   };
@@ -58,6 +59,7 @@ async function rig({ window = true, answers = true, timeoutMs = 2000, consoles =
       return { ok: true };
     },
     stopAgentCore: () => ({ ok: true }),
+    forgetAgent: () => ({ ok: true }),
     getConsole: (id) => entries.get(id),
     listConsoles: () => [...entries.values()],
   });
@@ -170,6 +172,16 @@ describe("POST /send via board", () => {
   });
 });
 
+describe("close request (the API's /forget telling the board)", () => {
+  test("closes the board's row for that id, and tolerates an id it does not hold", async () => {
+    const closed = [];
+    const deps = { findConsole: (id) => (id === "a" ? { key: 7, id } : undefined), closeConsole: (k) => closed.push(k) };
+    assert.deepEqual(await answerBoardRequest({ kind: "close", id: "a" }, deps), { ok: true });
+    assert.deepEqual(await answerBoardRequest({ kind: "close", id: "zz" }, deps), { ok: true });
+    assert.deepEqual(closed, [7]);
+  });
+});
+
 describe("pieces", () => {
   test("pickerModel turns an alias into the picker's id and leaves the rest alone", () => {
     assert.equal(pickerModel("claude", "sonnet", AGENTS), "claude-sonnet-5");
@@ -202,6 +214,12 @@ describe("wiring (board.ts and main.js cannot run here, so their contract is rea
 
   test("board.ts answers main's request through boardReply", () => {
     assert.match(board, /onBoardRequest\(\(req\) =>[\s\S]*?answerBoardRequest\(req,[\s\S]*?boardReply!\(req\.reqId, r\)/);
+  });
+
+  test("forget: the IPC handler and the API share forgetAgentCore, and the board is told to close the row", () => {
+    assert.match(main, /bridge\.handle\("local:forgetAgent", \(_e, id\) => forgetAgentCore\(String\(id \|\| ""\)\)\)/);
+    assert.match(main, /forgetAgent: \(id\) => \{\s*const r = forgetAgentCore\(id\);\s*void boardAsk\.ask\("close", \{ id \}\);/);
+    assert.match(board, /closeConsole: s\.closeConsole,/);
   });
 
   test("main.js: only a root the API itself asked about is trusted through the board's start", () => {

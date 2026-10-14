@@ -11,7 +11,7 @@ export function pickerModel(agent, model, agents) {
 }
 
 /** `deps`: startAgent(name, launch) -> Promise<{ok,id,engine,error}>, sendPrompt(key, text),
- *  findConsole(id), agents(). Answers with the result main relays to the caller. */
+ *  findConsole(id), closeConsole(key), agents(). Answers with the result main relays to the caller. */
 export async function answerBoardRequest(req, deps) {
   if (req.kind === "start") {
     const r = await deps.startAgent(req.agent, {
@@ -30,6 +30,11 @@ export async function answerBoardRequest(req, deps) {
     if (!c) return { ok: false, notFound: true };
     if (!c.id && c.running) return { ok: false, error: "still starting" };
     deps.sendPrompt(c.key, req.prompt);
+    return { ok: true };
+  }
+  if (req.kind === "close") {
+    const c = deps.findConsole(req.id);
+    if (c) deps.closeConsole(c.key);
     return { ok: true };
   }
   return { ok: false, error: `unknown request ${req.kind}` };
