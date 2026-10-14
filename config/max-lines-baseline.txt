@@ -3,7 +3,7 @@
 1390 board/src/components/settings.tsx
 3589 board/src/lib/board.ts
 1050 desktop/agent-console.js
-5688 desktop/main.js
+5691 desktop/main.js
 1499 hub/accounts.mjs
 4057 hub/server.mjs
 1419 test/app-update.test.mjs
