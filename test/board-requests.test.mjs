@@ -206,6 +206,7 @@ describe("pieces", () => {
 describe("wiring (board.ts and main.js cannot run here, so their contract is read)", () => {
   const board = readFileSync(path.join(ROOT, "board", "src", "lib", "board.ts"), "utf8");
   const main = readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8");
+  const agentApi = readFileSync(path.join(ROOT, "desktop", "agent-api.js"), "utf8");
 
   test("board.ts: a background start does not take activeConsole or the launcher's own picks", () => {
     assert.match(board, /\.\.\.\(background \? \{\} : \{ activeConsole: c\.key, launching: false, \.\.\.showConversation\(\) \}\)/);
@@ -218,8 +219,9 @@ describe("wiring (board.ts and main.js cannot run here, so their contract is rea
 
   test("forget: the IPC handler and the API share forgetAgentCore, and the board is told to close the row", () => {
     assert.match(main, /bridge\.handle\("local:forgetAgent", \(_e, id\) => forgetAgentCore\(String\(id \|\| ""\)\)\)/);
-    assert.match(main, /forgetAgent: \(id\) => \{\s*const r = forgetAgentCore\(id\);\s*void boardAsk\.ask\("close", \{ id \}\);/);
-    assert.match(board, /closeConsole: s\.closeConsole,/);
+    assert.match(main, /forgetAgent: forgetAgentCore,/);
+    assert.match(agentApi, /forgetAgent\(id\);\s*if \(askBoard\) await askBoard\("close", \{ id \}\)/);
+    assert.match(board, /closeConsole: s\.closeConsole/);
   });
 
   test("main.js: only a root the API itself asked about is trusted through the board's start", () => {

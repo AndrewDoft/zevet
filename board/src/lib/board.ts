@@ -3207,8 +3207,7 @@ export function boot(): void {
       const s = useBoard.getState();
       void answerBoardRequest(req, {
         startAgent: s.startAgent,
-        sendPrompt: s.sendPrompt,
-        closeConsole: s.closeConsole,
+        sendPrompt: s.sendPrompt, closeConsole: s.closeConsole,
         findConsole: (id: string) => useBoard.getState().myConsoles.find((x) => x.id === id),
         agents: () => useBoard.getState().localAgents,
       })

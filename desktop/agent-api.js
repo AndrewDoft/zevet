@@ -245,12 +245,14 @@ async function start(deps = {}) {
     return { status: r.ok ? 200 : 404, body: r };
   }
 
-  function handleForget(id) {
+  async function handleForget(id) {
     const entry = getConsole(id);
     if (!entry) return { status: 404, body: { ok: false, error: "no such console" } };
     // A live process (working or idle between turns) still has a run to stop first.
     if (entry.running) return { status: 409, body: { ok: false, error: "agent is still running; stop it first" } };
-    return { status: 200, body: forgetAgent(id) };
+    const r = forgetAgent(id);
+    if (askBoard) await askBoard("close", { id }); // the row goes live; no board window -> nothing to tell
+    return { status: 200, body: r };
   }
 
   async function handleWait(id, timeoutMs) {
@@ -320,7 +322,7 @@ async function start(deps = {}) {
         } else if (req.method === "POST" && url.pathname === "/stop") {
           result = handleStop(id);
         } else if (req.method === "POST" && url.pathname === "/forget") {
-          result = handleForget(id);
+          result = await handleForget(id);
         } else if (req.method === "POST" && url.pathname === "/wait") {
           result = await handleWait(id, Number(url.searchParams.get("timeoutMs")));
         } else {
