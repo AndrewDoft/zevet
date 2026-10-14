@@ -4020,6 +4020,9 @@ const cliStatus = createCliStatus({ run: runCliStatus });
 const REMOVED_KEYS = path.join(HOME, "removed-keys.json");
 const PROVIDER_NAME = { anthropic: "Anthropic", openai: "OpenAI", gemini: "Gemini", openrouter: "OpenRouter" };
 async function adoptDetectedKeys() {
+  // Nothing found: do not touch safeStorage. On macOS isEncryptionAvailable() reads the Keychain, which blocks
+  // the main thread (and with it the CDP port) on a machine nobody is sitting at -- every CI Mac, 4s after launch.
+  if (!keyDetect.detectKeys().length) return [];
   if (!safeStorage.isEncryptionAvailable()) return [];
   return keyDetect.adoptKeys({
     removedPath: REMOVED_KEYS,
