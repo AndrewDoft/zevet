@@ -338,6 +338,10 @@
   .agent-row-ago {
     flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle);
   }
+  .agent-row-stuck {
+    flex: none; padding: 0 4px; border-radius: 3px; font-size: 9px; line-height: 14px;
+    font-family: var(--font-mono); color: var(--alert); border: 1px solid var(--alert);
+  }
   .agent-row-live {
     flex: none; width: 6px; height: 6px; margin: 0 4px; border-radius: 50%;
     background: var(--who);
