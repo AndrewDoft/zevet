@@ -2562,3 +2562,14 @@ if it does not, `installers` fails on Authenticode before anything is uploaded.
 - **Visible failures.** No `browser-task.json`, python path missing (`ENOENT`), or a python without exactly the pinned browser-use (runner exits 78 before reading the task) each report the task `failed`/`error` to Masora and emit a `needs Python ...` outcome through `setOutcome`. **The board does not show it yet** (INSUF-016). The runner re-checks the installed version itself because the venv is the person's.
 - **Invariants (tests, `test/masora-browser-tasks.test.mjs`).** Telemetry and cloud sync forced off; a task run is headless and only `--login` (a person present) opens a window; `requirements.txt` and the runner's pin agree; the two needs-Python paths. Each was mutated and went red.
 - **Not done.** No `--require-hashes` lockfile (INSUF-015): versions are pinned (browser-use pins its own dependencies exactly) but pip checks no file hashes.
+
+## D-113 — Shipped: 0.2.148, Board-requests types: closeConsole dep (shell release, hub deploy)
+
+**Decided (automatic, `npm run ship`, 2026-10-14).** 48 commit(s) past v0.2.142.
+
+- **Shell release.** desktop/app-update.js, desktop/background-entry.js, desktop/background-update.js, desktop/bootstrap.js, desktop/browser-task/test_runner.py, desktop/crash-guard.js, … changed: installers + signed installer feed (`zevet-latest.json` -> 0.2.148) + payload.
+- **Verified.** Gate `node scripts/run-tests.mjs` green on the release tree; tag `v0.2.148`; `build.yml` both legs green; exe Authenticode `Valid CN=Andrew Doft`. sha256: exe `adb17ec9…` (153187968 B), dmg `ed08d51e…` (205378070 B), win-arm64 exe `6f435174…` (160456288 B), AppImage `3a527f54…` (387446162 B); the stable links serve those bytes.
+- **Payload:** stable, verified over HTTPS; seq 2148 on both platforms. Manifests win `3c0efbd5…`, mac `d081953e…`. Delta: 27 new blob(s) uploaded. 111 blobs per platform brotli-decode to their manifest hashes; pulses verify under `zevet-2026-09`.
+- **Hub** redeployed from the tag in place; `BUILD_ID` `a6fb6d47a40f` -> `0f9d743e15fb`; `/healthz` ok.
+
+**Not verified.** No live app was launched, restarted or killed (the installed Zevet was left alone).
