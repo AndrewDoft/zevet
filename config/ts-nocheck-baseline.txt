@@ -1,0 +1,1 @@
+# Files carrying a `@ts-nocheck` directive. A RATCHET: rows only shrink; none is the goal.

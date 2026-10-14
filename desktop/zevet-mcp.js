@@ -22,6 +22,7 @@ const { execFile } = require("node:child_process");
 
 const { makeLineSplitter } = require("./agent-console.js")._internals;
 const computer = require("./computer.js");
+const { loadModTools, publicDef } = require("./mod-tools.js");
 
 const PROTOCOL_VERSION = "2025-06-18";
 const SERVER_INFO = { name: "zevet-computer-use", version: "0.1.0" };
@@ -212,12 +213,15 @@ const TEAM_TOOLS = [
   },
 ];
 
+// mods/tools/*.js (mod-tools.js): extra tools, run by the desktop like the coordination tools above.
+const MOD_TOOLS = loadModTools({ reserved: [...ASK_TOOLS, ...COMPUTER_TOOLS, ...TEAM_TOOLS, { name: "permission_prompt" }].map((t) => t.name) });
+
 /** What this server offers this run. See ASK_TOOLS on why it is sets. */
 function toolsFor(env = process.env) {
   let out = ASK_TOOLS.slice();
   if (env.ZEVET_MCP_COMPUTER === "1") out = out.concat(COMPUTER_TOOLS);
   if (env.ZEVET_MCP_TEAM === "1") out = out.concat(TEAM_TOOLS);
-  return out;
+  return out.concat(MOD_TOOLS.filter((t) => t.scope === "always" || env.ZEVET_MCP_TEAM === "1").map(publicDef));
 }
 
 /** Forward a coordination tool to the desktop. Never a permit: see ask-server's /tool. */
@@ -394,7 +398,7 @@ async function doKey(args) {
   return textResult(`pressed ${args.key}`);
 }
 
-const OWN_TOOLS = new Set(["ask_user", "get_team_context", "claim_step", "message_agent", "record_memory", "screenshot", "click", "type_text", "press_key"]);
+const OWN_TOOLS = new Set(["ask_user", "get_team_context", "claim_step", "message_agent", "record_memory", "screenshot", "click", "type_text", "press_key", ...MOD_TOOLS.map((t) => t.name)]);
 
 /** The gate's body is capped (ask-server MAX_BODY_BYTES), and a Write of a big
  *  file would exceed it and be denied. The card only needs to show what is
@@ -458,6 +462,11 @@ async function callTool(name, rawArgs) {
   if (name === "permission_prompt") return doPermissionPrompt(args);
 
   if (TEAM_TOOLS.some((t) => t.name === name)) {
+    if (!toolsFor().some((t) => t.name === name)) return textResult(`"${name}" is not available in this run`, true);
+    return teamTool(name, args);
+  }
+
+  if (MOD_TOOLS.some((t) => t.name === name)) {
     if (!toolsFor().some((t) => t.name === name)) return textResult(`"${name}" is not available in this run`, true);
     return teamTool(name, args);
   }

@@ -11,6 +11,9 @@ cd "$(dirname "$0")/.."
 echo "== zevet gate =="
 node --version
 
+# The ratchets (config/*-baseline.txt) first: they are cheap and say what to split, not just "red".
+node scripts/ratchets.mjs || { echo; echo "GATE RED (a ratchet grew or went stale) — do not commit, do not deploy."; exit 1; }
+
 # tee, not a pipe, so the status below belongs to node and not to a reader.
 # editor/test is a SECOND glob, not part of the first: the editor lives outside
 # test/ because it has its own package.json and its own (build-time only)

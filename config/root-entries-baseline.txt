@@ -1,0 +1,26 @@
+# Top-level entries of the repository. A RATCHET: the list only shrinks.
+.env.example
+.gitattributes
+.github
+.gitignore
+DECISIONS.md
+FIXES-2026-09-28.md
+INSUFFICIENCIES.md
+LICENSE
+README.md
+THIRD_PARTY_NOTICES.md
+artifacts
+board
+client
+codemagic.yaml
+config
+design
+desktop
+dist
+docs
+editor
+hub
+package-lock.json
+package.json
+scripts
+test

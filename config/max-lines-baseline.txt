@@ -1,0 +1,13 @@
+# Files over 1000 lines (physical lines), grandfathered at today's size. A RATCHET: rows only shrink.
+# A bigger file, or a new one over the limit, fails. Split the file; do not raise the row.
+1390 board/src/components/settings.tsx
+3589 board/src/lib/board.ts
+1050 desktop/agent-console.js
+5688 desktop/main.js
+1499 hub/accounts.mjs
+4057 hub/server.mjs
+1419 test/app-update.test.mjs
+1026 test/client.test.mjs
+1044 test/code-index.test.mjs
+1210 test/hub-ws.test.mjs
+1094 test/local-fs.test.mjs
